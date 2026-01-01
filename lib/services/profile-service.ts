@@ -38,43 +38,43 @@ class ProfileService extends BaseDocumentService<User> {
   async query(options: QueryOptions = {}): Promise<DocumentResult<User>> {
     try {
       const sdk = await getWasmSdk();
-      
-      // Build query
-      const query: any = {
+
+      // Build query params for EvoSDK facade
+      const queryParams: {
+        contractId: string;
+        type: string;
+        where?: unknown;
+        orderBy?: unknown;
+        limit?: number;
+        startAfter?: string;
+        startAt?: string;
+      } = {
         contractId: this.contractId,
-        documentType: this.documentType
+        type: this.documentType,
       };
 
       if (options.where) {
-        query.where = JSON.stringify(options.where);
+        queryParams.where = options.where;
       }
 
       if (options.orderBy) {
-        query.orderBy = JSON.stringify(options.orderBy);
+        queryParams.orderBy = options.orderBy;
       }
 
       if (options.limit) {
-        query.limit = options.limit;
+        queryParams.limit = options.limit;
       }
 
       if (options.startAfter) {
-        query.startAfter = options.startAfter;
+        queryParams.startAfter = options.startAfter;
       } else if (options.startAt) {
-        query.startAt = options.startAt;
+        queryParams.startAt = options.startAt;
       }
 
-      console.log(`Querying ${this.documentType} documents:`, query);
-      
-      const response = await get_documents(
-        sdk,
-        this.contractId,
-        this.documentType,
-        query.where || null,
-        query.orderBy || null,
-        query.limit || 25,
-        query.startAfter || null,
-        query.startAt || null
-      );
+      console.log(`Querying ${this.documentType} documents:`, queryParams);
+
+      // Use EvoSDK documents facade
+      const response = await sdk.documents.query(queryParams);
 
       // get_documents returns an object directly, not JSON string
       let result = response;
@@ -122,9 +122,9 @@ class ProfileService extends BaseDocumentService<User> {
     console.log('ProfileService: transformDocument input:', doc);
     
     // Handle both $ prefixed and non-prefixed properties
-    const ownerId = doc.$ownerId || doc.ownerId;
-    const createdAt = doc.$createdAt || doc.createdAt;
-    const data = doc.data || doc;
+    const ownerId = doc.$ownerId || (doc as any).ownerId;
+    const createdAt = doc.$createdAt || (doc as any).createdAt;
+    const data = (doc as any).data || doc;
     
     // Return a basic User object - additional data will be loaded separately
     const user: User = {
@@ -359,16 +359,15 @@ class ProfileService extends BaseDocumentService<User> {
   private async getAvatarDocument(avatarId: string): Promise<AvatarDocument | null> {
     try {
       const sdk = await getWasmSdk();
-      
-      const response = await get_document(
-        sdk,
+
+      // Use EvoSDK documents facade
+      const response = await sdk.documents.get(
         this.contractId,
         'avatar',
         avatarId
       );
 
       if (response) {
-        // get_document returns an object directly
         return response;
       }
     } catch (error) {
@@ -390,18 +389,17 @@ class ProfileService extends BaseDocumentService<User> {
 
     try {
       const sdk = await getWasmSdk();
-      
-      const response = await get_document(
-        sdk,
+
+      // Use EvoSDK documents facade
+      const response = await sdk.documents.get(
         this.contractId,
         'avatar',
         avatarId
       );
 
       if (response) {
-        // get_document returns an object directly
         const doc = response as AvatarDocument;
-        
+
         // Cache the result with avatar tag
         cacheManager.set(this.AVATAR_CACHE, avatarId, doc.data, {
           ttl: 1800000, // 30 minutes (avatars change less frequently)
@@ -528,24 +526,18 @@ class ProfileService extends BaseDocumentService<User> {
       }
 
       console.log('ProfileService: Getting profiles for identity IDs:', identityIds);
-      
+
       const sdk = await getWasmSdk();
-      
+
       // Query profiles where $ownerId is in the array
       // Need to add orderBy for 'in' queries
-      const where = [['$ownerId', 'in', identityIds]];
-      const orderBy = [['$ownerId', 'asc']];
-      
-      const response = await get_documents(
-        sdk,
-        this.contractId,
-        this.documentType,
-        JSON.stringify(where),
-        JSON.stringify(orderBy),
-        100, // Get up to 100 profiles
-        null,
-        null
-      );
+      const response = await sdk.documents.query({
+        contractId: this.contractId,
+        type: this.documentType,
+        where: [['$ownerId', 'in', identityIds]],
+        orderBy: [['$ownerId', 'asc']],
+        limit: 100
+      });
 
       // Handle response format
       if (Array.isArray(response)) {
@@ -555,7 +547,7 @@ class ProfileService extends BaseDocumentService<User> {
         console.log(`ProfileService: Found ${response.documents.length} profiles`);
         return response.documents;
       }
-      
+
       return [];
     } catch (error) {
       console.error('ProfileService: Error getting profiles by identity IDs:', error);
@@ -569,5 +561,4 @@ export const profileService = new ProfileService();
 
 // Import at the bottom to avoid circular dependency
 import { getWasmSdk } from './wasm-sdk-service';
-import { get_document, get_documents } from '../dash-wasm/wasm_sdk';
 import { stateTransitionService } from './state-transition-service';

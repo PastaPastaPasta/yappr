@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react'
 import { wasmSdkService } from '@/lib/services'
-import { get_documents } from '@/lib/dash-wasm/wasm_sdk'
 
 const DPNS_CONTRACT_ID = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
 
@@ -26,28 +25,26 @@ export default function TestDpnsDebugPage() {
     }
   }
 
-  const testQuery = async (whereClause?: string, description?: string) => {
+  const testQuery = async (where?: unknown[], description?: string) => {
     try {
       setLoading(true)
       setError(null)
       setResult(null)
-      
+
       const sdk = await wasmSdkService.getSdk()
-      
+
       console.log(`Testing query: ${description}`)
-      console.log('Where clause:', whereClause)
-      
-      const response = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        'domain',
-        whereClause || null,
-        JSON.stringify([['$createdAt', 'desc']]),
-        5,
-        null,
-        null
-      )
-      
+      console.log('Where clause:', where)
+
+      // Use EvoSDK documents facade
+      const response = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: 'domain',
+        where,
+        orderBy: [['$createdAt', 'desc']],
+        limit: 5
+      })
+
       setResult(response)
       console.log('Response:', response)
     } catch (err: any) {
@@ -70,10 +67,10 @@ export default function TestDpnsDebugPage() {
         >
           Test: Get All Domains (no where)
         </button>
-        
+
         <button
           onClick={() => testQuery(
-            JSON.stringify([['normalizedLabel', '==', 'test']]),
+            [['normalizedLabel', '==', 'test']],
             'Query by normalizedLabel'
           )}
           className="bg-green-500 text-white px-4 py-2 rounded"
@@ -81,13 +78,13 @@ export default function TestDpnsDebugPage() {
         >
           Test: Query by normalizedLabel
         </button>
-        
+
         <button
           onClick={() => testQuery(
-            JSON.stringify([
+            [
               ['normalizedParentDomainName', '==', 'dash'],
               ['normalizedLabel', '==', 'test']
-            ]),
+            ],
             'Query by parentNameAndLabel index'
           )}
           className="bg-purple-500 text-white px-4 py-2 rounded"
@@ -95,10 +92,10 @@ export default function TestDpnsDebugPage() {
         >
           Test: Query by parentNameAndLabel
         </button>
-        
+
         <button
           onClick={() => testQuery(
-            JSON.stringify([['$ownerId', '==', process.env.NEXT_PUBLIC_IDENTITY_ID]]),
+            [['$ownerId', '==', process.env.NEXT_PUBLIC_IDENTITY_ID]],
             'Query by $ownerId'
           )}
           className="bg-yellow-500 text-white px-4 py-2 rounded"

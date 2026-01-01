@@ -81,9 +81,14 @@ class BiometricStorage {
       }
       
       // Store credential ID and public key for later use
+      const attestationResponse = credential.response as AuthenticatorAttestationResponse
+      const publicKey = attestationResponse.getPublicKey()
+      if (!publicKey) {
+        throw new Error('Failed to get public key from credential')
+      }
       const storedCred: StoredCredential = {
         credentialId: this.arrayBufferToBase64(credential.rawId),
-        publicKey: credential.response.publicKey!
+        publicKey: publicKey
       }
       
       localStorage.setItem(this.CREDENTIAL_KEY, JSON.stringify({
@@ -324,10 +329,10 @@ class BiometricStorage {
   }
   
   /**
-   * Convert ArrayBuffer to base64
+   * Convert ArrayBuffer or Uint8Array to base64
    */
-  private arrayBufferToBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer)
+  private arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
     let binary = ''
     for (let i = 0; i < bytes.length; i++) {
       binary += String.fromCharCode(bytes[i])

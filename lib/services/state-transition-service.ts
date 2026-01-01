@@ -1,6 +1,4 @@
 import { getWasmSdk } from './wasm-sdk-service';
-import { wait_for_state_transition_result } from '../dash-wasm/wasm_sdk';
-import type { WasmSdk } from '../dash-wasm/wasm_sdk';
 
 export interface StateTransitionResult {
   success: boolean;
@@ -90,16 +88,16 @@ class StateTransitionService {
       console.log(`Creating ${documentType} document with data:`, documentData);
       console.log(`Contract ID: ${contractId}`);
       console.log(`Owner ID: ${ownerId}`);
-      
-      // Create the document using the SDK method
-      const result = await sdk.documentCreate(
+
+      // Create the document using the EvoSDK facade
+      const result = await sdk.documents.create({
         contractId,
-        documentType,
+        type: documentType,
         ownerId,
-        JSON.stringify(documentData),
-        entropy,
-        privateKey
-      );
+        data: documentData,
+        entropyHex: entropy,
+        privateKeyWif: privateKey
+      });
       
       console.log('Document creation result:', result);
       
@@ -134,18 +132,17 @@ class StateTransitionService {
       const privateKey = await this.getPrivateKey(ownerId);
       
       console.log(`Updating ${documentType} document ${documentId}...`);
-      
-      // Update the document using the SDK method
-      const result = await sdk.documentReplace(
+
+      // Update the document using the EvoSDK facade
+      const result = await sdk.documents.replace({
         contractId,
-        documentType,
+        type: documentType,
         documentId,
         ownerId,
-        JSON.stringify(documentData),
-        BigInt(revision),
-        privateKey,
-        0 // key_id - using 0 as default (matches index.html)
-      );
+        data: documentData,
+        revision: BigInt(revision),
+        privateKeyWif: privateKey
+      });
       
       return {
         success: true,
@@ -175,16 +172,15 @@ class StateTransitionService {
       const privateKey = await this.getPrivateKey(ownerId);
       
       console.log(`Deleting ${documentType} document ${documentId}...`);
-      
-      // Delete the document using the SDK method
-      const result = await sdk.documentDelete(
+
+      // Delete the document using the EvoSDK facade
+      const result = await sdk.documents.delete({
         contractId,
-        documentType,
+        type: documentType,
         documentId,
         ownerId,
-        privateKey,
-        0 // key_id - using 0 as default
-      );
+        privateKeyWif: privateKey
+      });
       
       return {
         success: true,
@@ -232,8 +228,9 @@ class StateTransitionService {
         });
         
         // Race the wait call against the timeout
+        // Use sdk.wasm to get the underlying WasmSdk for the method call
         const result = await Promise.race([
-          wait_for_state_transition_result(sdk, transactionHash),
+          sdk.wasm.waitForStateTransitionResult(transactionHash),
           timeoutPromise
         ]);
         

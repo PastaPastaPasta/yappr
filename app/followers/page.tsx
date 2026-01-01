@@ -68,7 +68,7 @@ function FollowersPage() {
 
       // Get unique identity IDs from followers
       const identityIds = follows
-        .map(f => f.$ownerId || f.ownerId)
+        .map(f => f.$ownerId || (f as any).ownerId)
         .filter(Boolean)
       
       if (identityIds.length === 0) {
@@ -112,7 +112,7 @@ function FollowersPage() {
       // Create maps for easy lookup
       const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
       
       // Create enriched user data
       const followers = follows.map((follow: any) => {
@@ -137,11 +137,11 @@ function FollowersPage() {
           isFollowingBack: followingBackMap.get(followerId) || false,
           allUsernames: allUsernames
         }
-      }).filter(Boolean) // Remove any null entries
+      }).filter(Boolean) as Follower[] // Remove any null entries
 
       // Cache the results
       cacheManager.set('followers', cacheKey, followers)
-      
+
       setData(followers)
       console.log(`Followers: Successfully loaded ${followers.length} followers`)
 

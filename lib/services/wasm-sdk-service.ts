@@ -1,5 +1,4 @@
-import init, { WasmSdkBuilder, WasmSdk, prefetch_trusted_quorums_testnet, prefetch_trusted_quorums_mainnet, data_contract_fetch } from '../dash-wasm/wasm_sdk';
-import { contractService } from './contract-service';
+import { EvoSDK } from '@dashevo/evo-sdk';
 
 export interface WasmSdkConfig {
   network: 'testnet' | 'mainnet';
@@ -7,21 +6,19 @@ export interface WasmSdkConfig {
 }
 
 class WasmSdkService {
-  private sdk: WasmSdk | null = null;
+  private sdk: EvoSDK | null = null;
   private initPromise: Promise<void> | null = null;
   private config: WasmSdkConfig | null = null;
   private _isInitialized = false;
   private _isInitializing = false;
-  private static wasmModuleInitialized = false;
-  private static wasmInitPromise: Promise<void> | null = null;
 
   /**
-   * Initialize the WASM SDK with configuration
+   * Initialize the SDK with configuration
    */
   async initialize(config: WasmSdkConfig): Promise<void> {
     // If already initialized with same config, return immediately
-    if (this._isInitialized && this.config && 
-        this.config.network === config.network && 
+    if (this._isInitialized && this.config &&
+        this.config.network === config.network &&
         this.config.contractId === config.contractId) {
       return;
     }
@@ -33,16 +30,16 @@ class WasmSdkService {
     }
 
     // If config changed, cleanup first
-    if (this._isInitialized && this.config && 
+    if (this._isInitialized && this.config &&
         (this.config.network !== config.network || this.config.contractId !== config.contractId)) {
       await this.cleanup();
     }
 
     this.config = config;
     this._isInitializing = true;
-    
+
     this.initPromise = this._performInitialization();
-    
+
     try {
       await this.initPromise;
     } finally {
@@ -50,160 +47,38 @@ class WasmSdkService {
     }
   }
 
-  /**
-   * Ensure WASM module is initialized (shared static method to prevent race conditions)
-   */
-  private static async _ensureWasmModuleInitialized(): Promise<void> {
-    if (WasmSdkService.wasmModuleInitialized) {
-      return;
-    }
-
-    if (WasmSdkService.wasmInitPromise) {
-      await WasmSdkService.wasmInitPromise;
-      return;
-    }
-
-    WasmSdkService.wasmInitPromise = (async () => {
-      try {
-        console.log('WasmSdkService: Initializing WASM module...');
-        // Use the same pattern as the working index.html - just call init() without parameters
-        // The init() function will automatically fetch and load the WASM file
-        await init();
-        console.log('WasmSdkService: WASM initialized successfully');
-        WasmSdkService.wasmModuleInitialized = true;
-        console.log('WasmSdkService: WASM module loaded successfully');
-      } catch (error) {
-        // Reset on error so retry is possible
-        WasmSdkService.wasmInitPromise = null;
-        throw error;
-      }
-    })();
-
-    await WasmSdkService.wasmInitPromise;
-  }
-
-  private async _ensureWasmModuleInitialized(): Promise<void> {
-    return WasmSdkService._ensureWasmModuleInitialized();
-  }
-
-  /**
-   * We need to avoid network requests for our yappr contract.
-   * The solution is to perform a controlled fetch that provides local contract data.
-   */
-  private async _preloadYapprContract(): Promise<void> {
-    if (!this.config || !this.sdk) {
-      return;
-    }
-
-    try {
-      console.log('WasmSdkService: Adding yappr contract to trusted context...');
-      
-      const contractId = this.config.contractId;
-      
-      // Since we can't directly insert the contract, we need to intercept or mock the fetch.
-      // For now, let's try the fetch and see if it succeeds (it might if the contract exists on testnet)
-      try {
-        await data_contract_fetch(this.sdk, contractId);
-        console.log('WasmSdkService: Yappr contract found on network and cached in trusted context');
-      } catch (error) {
-        console.log('WasmSdkService: Contract not found on network (expected for local development)');
-        console.log('WasmSdkService: Local contract operations will be handled gracefully');
-        
-        // The contract is not on the network, which is expected for local development.
-        // The WASM SDK will attempt to fetch it on first document operation and fail.
-        // Our error handling in dash-platform-client.ts will catch this and return empty results.
-        // This is acceptable for development - users can still create posts, they just won't see existing ones.
-      }
-      
-    } catch (error) {
-      console.error('WasmSdkService: Error during contract setup:', error);
-      // Don't throw - we can still operate
-    }
-  }
-
   private async _performInitialization(): Promise<void> {
     try {
-      // Ensure WASM module is initialized first (shared across all instances)
-      await this._ensureWasmModuleInitialized();
-      
-      // Now create the SDK instance for this service
-      // Prefetch trusted quorums and create SDK builder based on network
+      console.log('WasmSdkService: Creating EvoSDK instance...');
+
+      // Create SDK with trusted mode based on network
       if (this.config!.network === 'testnet') {
-        console.log('WasmSdkService: Prefetching testnet quorum information...');
-        await prefetch_trusted_quorums_testnet();
         console.log('WasmSdkService: Building testnet SDK in trusted mode...');
-        // Create builder - new_testnet_trusted() returns a Result that throws on error
-        console.log('WasmSdkService: Creating testnet builder...');
-        let builder;
-        try {
-          builder = WasmSdkBuilder.new_testnet_trusted();
-          console.log('WasmSdkService: Builder created successfully');
-        } catch (error) {
-          console.error('WasmSdkService: Failed to create testnet builder:', error);
-          throw error;
-        }
-        
-        // Set request timeout to 8 seconds (8000ms)
-        console.log('WasmSdkService: Setting request timeout to 8 seconds...');
-        try {
-          builder = builder.with_settings(undefined, 8000, undefined, undefined);
-          console.log('WasmSdkService: Settings applied successfully');
-        } catch (error) {
-          console.error('WasmSdkService: Failed to apply settings:', error);
-          throw error;
-        }
-        
-        console.log('WasmSdkService: Building SDK...');
-        try {
-          this.sdk = builder.build();
-          console.log('WasmSdkService: SDK built successfully');
-        } catch (error) {
-          console.error('WasmSdkService: Failed to build SDK:', error);
-          throw error;
-        }
-        console.log('WasmSdkService: Testnet SDK built successfully with 8s timeout');
+        this.sdk = EvoSDK.testnetTrusted({
+          settings: {
+            timeoutMs: 8000,
+          }
+        });
       } else {
-        console.log('WasmSdkService: Prefetching mainnet quorum information...');
-        await prefetch_trusted_quorums_mainnet();
-        console.log('Building mainnet SDK in trusted mode...');
-        // Create builder - new_mainnet_trusted() returns a Result that throws on error
-        console.log('WasmSdkService: Creating mainnet builder...');
-        let builder;
-        try {
-          builder = WasmSdkBuilder.new_mainnet_trusted();
-          console.log('WasmSdkService: Builder created successfully');
-        } catch (error) {
-          console.error('WasmSdkService: Failed to create mainnet builder:', error);
-          throw error;
-        }
-        
-        // Set request timeout to 8 seconds (8000ms)
-        console.log('WasmSdkService: Setting request timeout to 8 seconds...');
-        try {
-          builder = builder.with_settings(undefined, 8000, undefined, undefined);
-          console.log('WasmSdkService: Settings applied successfully');
-        } catch (error) {
-          console.error('WasmSdkService: Failed to apply settings:', error);
-          throw error;
-        }
-        
-        console.log('WasmSdkService: Building SDK...');
-        try {
-          this.sdk = builder.build();
-          console.log('WasmSdkService: SDK built successfully');
-        } catch (error) {
-          console.error('WasmSdkService: Failed to build SDK:', error);
-          throw error;
-        }
+        console.log('WasmSdkService: Building mainnet SDK in trusted mode...');
+        this.sdk = EvoSDK.mainnetTrusted({
+          settings: {
+            timeoutMs: 8000,
+          }
+        });
       }
-      
+
+      console.log('WasmSdkService: Connecting to network...');
+      await this.sdk.connect();
+      console.log('WasmSdkService: Connected successfully');
+
       this._isInitialized = true;
-      console.log('WasmSdkService: WASM SDK initialized successfully, _isInitialized = true');
-      
+      console.log('WasmSdkService: SDK initialized successfully');
+
       // Preload the yappr contract into the trusted context
       await this._preloadYapprContract();
     } catch (error) {
-      console.error('WasmSdkService: Failed to initialize WASM SDK:', error);
+      console.error('WasmSdkService: Failed to initialize SDK:', error);
       console.error('WasmSdkService: Error details:', {
         message: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined
@@ -215,12 +90,39 @@ class WasmSdkService {
   }
 
   /**
+   * Preload the yappr contract to cache it
+   */
+  private async _preloadYapprContract(): Promise<void> {
+    if (!this.config || !this.sdk) {
+      return;
+    }
+
+    try {
+      console.log('WasmSdkService: Adding yappr contract to trusted context...');
+
+      const contractId = this.config.contractId;
+
+      try {
+        await this.sdk.contracts.fetch(contractId);
+        console.log('WasmSdkService: Yappr contract found on network and cached');
+      } catch (error) {
+        console.log('WasmSdkService: Contract not found on network (expected for local development)');
+        console.log('WasmSdkService: Local contract operations will be handled gracefully');
+      }
+
+    } catch (error) {
+      console.error('WasmSdkService: Error during contract setup:', error);
+      // Don't throw - we can still operate
+    }
+  }
+
+  /**
    * Get the SDK instance, initializing if necessary
    */
-  async getSdk(): Promise<WasmSdk> {
+  async getSdk(): Promise<EvoSDK> {
     if (!this._isInitialized || !this.sdk) {
       if (!this.config) {
-        throw new Error('WASM SDK not configured. Call initialize() first.');
+        throw new Error('SDK not configured. Call initialize() first.');
       }
       await this.initialize(this.config);
     }
@@ -245,10 +147,7 @@ class WasmSdkService {
    * Clean up resources
    */
   async cleanup(): Promise<void> {
-    if (this.sdk) {
-      // SDK cleanup if needed
-      this.sdk = null;
-    }
+    this.sdk = null;
     this._isInitialized = false;
     this._isInitializing = false;
     this.initPromise = null;
@@ -275,9 +174,9 @@ class WasmSdkService {
 export const wasmSdkService = new WasmSdkService();
 
 // Export helper to ensure SDK is initialized
-export async function getWasmSdk(): Promise<WasmSdk> {
+export async function getWasmSdk(): Promise<EvoSDK> {
   return wasmSdkService.getSdk();
 }
 
-// Initialize from environment on import - removed to prevent race conditions
-// SDK will be initialized on first use instead
+// Re-export EvoSDK type for convenience
+export type { EvoSDK };

@@ -21,7 +21,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { dpns_convert_to_homograph_safe } from '@/lib/dash-wasm/wasm_sdk'
+import { WasmSdk } from '@dashevo/wasm-sdk'
+
+// Helper wrapper for DPNS utility function
+const dpns_convert_to_homograph_safe = (input: string): string => WasmSdk.dpnsConvertToHomographSafe(input);
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
 
 interface FollowingUser {
@@ -119,7 +122,7 @@ function FollowingPage() {
       // Create maps for easy lookup
       const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
       
       // Create enriched user data
       const followingUsers = follows.map((follow: any) => {
@@ -144,11 +147,11 @@ function FollowingPage() {
           isFollowing: true,
           allUsernames: allUsernames
         }
-      }).filter(Boolean) // Remove any null entries
+      }).filter(Boolean) as FollowingUser[] // Remove any null entries
 
       // Cache the results
       cacheManager.set('following', cacheKey, followingUsers)
-      
+
       setData(followingUsers)
       console.log(`Following: Successfully loaded ${followingUsers.length} following`)
 
@@ -246,7 +249,7 @@ function FollowingPage() {
         }
         
         // Create a map of identity ID to profile for easy lookup
-        const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
+        const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
         
         // Group DPNS names by owner to handle multiple names per owner
         const ownerToNames = new Map<string, string[]>()

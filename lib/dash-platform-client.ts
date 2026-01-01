@@ -1,12 +1,6 @@
 'use client'
 
-// Import the WASM SDK functions we need
-import { 
-  identity_fetch,
-  get_documents 
-} from './dash-wasm/wasm_sdk'
-
-// Import the centralized WASM service
+// Import the centralized SDK service (now using EvoSDK)
 import { wasmSdkService } from './services/wasm-sdk-service'
 import { YAPPR_CONTRACT_ID } from './constants'
 
@@ -177,20 +171,19 @@ export class DashPlatformClient {
       
       const contractId = YAPPR_CONTRACT_ID
       
-      // Create the document using the SDK
+      // Create the document using EvoSDK facade
       let result
       try {
-        
-        result = await this.sdk.documentCreate(
+        result = await this.sdk.documents.create({
           contractId,
-          'post',
-          identityId,
-          JSON.stringify(postData),
+          type: 'post',
+          ownerId: identityId,
+          data: postData,
           entropyHex,
-          privateKeyWIF
-        )
+          privateKeyWif: privateKeyWIF
+        })
       } catch (sdkError) {
-        console.error('SDK documentCreate error:', sdkError)
+        console.error('SDK documents.create error:', sdkError)
         console.error('Error type:', typeof sdkError)
         console.error('Error details:', {
           message: sdkError instanceof Error ? sdkError.message : String(sdkError),
@@ -242,17 +235,14 @@ export class DashPlatformClient {
       }
       
       const contractId = YAPPR_CONTRACT_ID
-      
-      const profileResponse = await get_documents(
-        this.sdk,
+
+      // Use EvoSDK documents facade
+      const profileResponse = await this.sdk.documents.query({
         contractId,
-        'profile',
-        JSON.stringify(query.where),
-        null,
-        query.limit,
-        null,
-        null
-      )
+        type: 'profile',
+        where: query.where,
+        limit: query.limit
+      })
       
       console.log('Profile query response:', profileResponse)
       
@@ -350,16 +340,15 @@ export class DashPlatformClient {
       const orderBy = [['$createdAt', 'desc']]
       
       try {
-        const postsResponse = await get_documents(
-          this.sdk,
+        // Use EvoSDK documents facade
+        const postsResponse = await this.sdk.documents.query({
           contractId,
-          'post',
-          where.length > 0 ? JSON.stringify(where) : null,
-          JSON.stringify(orderBy),
-          options?.limit || 20,
-          options?.startAfter || null,
-          null // startAt
-        )
+          type: 'post',
+          where: where.length > 0 ? where : undefined,
+          orderBy,
+          limit: options?.limit || 20,
+          startAfter: options?.startAfter || undefined
+        })
         
         console.log('DashPlatformClient: Posts query response received')
         

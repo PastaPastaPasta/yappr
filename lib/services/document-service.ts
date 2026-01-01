@@ -1,5 +1,4 @@
 import { getWasmSdk } from './wasm-sdk-service';
-import { get_documents, get_document } from '../dash-wasm/wasm_sdk';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
 
@@ -34,43 +33,43 @@ export abstract class BaseDocumentService<T> {
   async query(options: QueryOptions = {}): Promise<DocumentResult<T>> {
     try {
       const sdk = await getWasmSdk();
-      
-      // Build query
-      const query: any = {
+
+      // Build query params for EvoSDK facade
+      const queryParams: {
+        contractId: string;
+        type: string;
+        where?: unknown;
+        orderBy?: unknown;
+        limit?: number;
+        startAfter?: string;
+        startAt?: string;
+      } = {
         contractId: this.contractId,
-        documentType: this.documentType
+        type: this.documentType,
       };
 
       if (options.where) {
-        query.where = JSON.stringify(options.where);
+        queryParams.where = options.where;
       }
 
       if (options.orderBy) {
-        query.orderBy = JSON.stringify(options.orderBy);
+        queryParams.orderBy = options.orderBy;
       }
 
       if (options.limit) {
-        query.limit = options.limit;
+        queryParams.limit = options.limit;
       }
 
       if (options.startAfter) {
-        query.startAfter = options.startAfter;
+        queryParams.startAfter = options.startAfter;
       } else if (options.startAt) {
-        query.startAt = options.startAt;
+        queryParams.startAt = options.startAt;
       }
 
-      console.log(`Querying ${this.documentType} documents:`, query);
-      
-      const response = await get_documents(
-        sdk,
-        this.contractId,
-        this.documentType,
-        query.where || null,
-        query.orderBy || null,
-        query.limit || 25,
-        query.startAfter || null,
-        query.startAt || null
-      );
+      console.log(`Querying ${this.documentType} documents:`, queryParams);
+
+      // Use EvoSDK documents facade
+      const response = await sdk.documents.query(queryParams);
 
       // get_documents returns an object directly, not JSON string
       let result = response;
@@ -128,9 +127,9 @@ export abstract class BaseDocumentService<T> {
       }
 
       const sdk = await getWasmSdk();
-      
-      const response = await get_document(
-        sdk,
+
+      // Use EvoSDK documents facade
+      const response = await sdk.documents.get(
         this.contractId,
         this.documentType,
         documentId

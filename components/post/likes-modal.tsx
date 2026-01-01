@@ -76,14 +76,14 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
             <LoadingState
               loading={likesState.loading}
               error={likesState.error}
-              isEmpty={likesState.data.length === 0}
+              isEmpty={likesState.data?.length === 0}
               onRetry={loadLikes}
               loadingText="Loading likes..."
               emptyText="No likes yet"
               emptyDescription="Be the first to like this post!"
             >
               <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                {likesState.data.map((like) => (
+                {(likesState.data ?? []).map((like) => (
                   <div key={like.$id} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">

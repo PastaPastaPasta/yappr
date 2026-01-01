@@ -5,16 +5,16 @@ const nextConfig = {
     domains: ['images.unsplash.com', 'api.dicebear.com'],
   },
   webpack: (config, { isServer }) => {
-    // Optimize Dash SDK bundle size
+    // Optimize EvoSDK bundle size
     if (!isServer) {
       config.optimization = {
         ...config.optimization,
         splitChunks: {
           chunks: 'all',
           cacheGroups: {
-            dash: {
-              test: /[\\/]node_modules[\\/]dash[\\/]/,
-              name: 'dash-sdk',
+            dashevo: {
+              test: /[\\/]node_modules[\\/]@dashevo[\\/]/,
+              name: 'evo-sdk',
               priority: 10,
               reuseExistingChunk: true,
             },
@@ -22,13 +22,13 @@ const nextConfig = {
         },
       }
     }
-    
-    // Handle WASM files
+
+    // Handle WASM files (required for @dashevo/evo-sdk)
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
     }
-    
+
     return config
   },
   async headers() {
@@ -56,23 +56,6 @@ const nextConfig = {
           },
           {
             key: 'Cross-Origin-Opener-Policy', 
-            value: 'same-origin'
-          }
-        ]
-      },
-      {
-        source: '/dash-wasm/:path*.wasm',
-        headers: [
-          {
-            key: 'Content-Type',
-            value: 'application/wasm'
-          },
-          {
-            key: 'Cross-Origin-Embedder-Policy',
-            value: 'require-corp'
-          },
-          {
-            key: 'Cross-Origin-Opener-Policy',
             value: 'same-origin'
           }
         ]

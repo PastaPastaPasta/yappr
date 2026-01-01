@@ -3,7 +3,10 @@
 import { Fragment } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
-import { dpns_is_contested_username } from '@/lib/dash-wasm/wasm_sdk'
+import { WasmSdk } from '@dashevo/wasm-sdk'
+
+// Helper wrapper for DPNS utility function
+const dpns_is_contested_username = (label: string): boolean => WasmSdk.dpnsIsContestedUsername(label);
 
 interface UsernamesModalProps {
   isOpen: boolean

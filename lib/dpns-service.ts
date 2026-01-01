@@ -1,7 +1,6 @@
 'use client'
 
 import { getDashPlatformClient } from './dash-platform-client'
-import { get_documents } from './dash-wasm/wasm_sdk'
 import { DPNS_CONTRACT_ID } from './constants'
 
 /**
@@ -133,16 +132,12 @@ export class DPNSService {
       console.log('📋 Querying all domains first...')
       
       try {
-        const allDomainsResponse = await get_documents(
-          sdk,
-          DPNS_CONTRACT_ID,
-          'domain',
-          null, // no where clause
-          null, // orderBy
-          10,   // limit
-          null, // startAfter
-          null  // startAt
-        )
+        // Use EvoSDK documents facade
+        const allDomainsResponse = await sdk.documents.query({
+          contractId: DPNS_CONTRACT_ID,
+          type: 'domain',
+          limit: 10
+        })
         
         console.log('🗂️ All domains response:', allDomainsResponse)
         
@@ -181,27 +176,24 @@ export class DPNSService {
       }
       
       // Now try the specific query for this identity
-      const whereClause = JSON.stringify([
+      const where = [
         ['records.dashUniqueIdentityId', '==', identityId]
-      ])
-      
+      ]
+
       console.log('🎯 Querying DPNS with specific identity:', {
         contractId: DPNS_CONTRACT_ID,
         documentType: 'domain',
-        whereClause,
+        where,
         identityId
       })
-      
-      const domainsResponse = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        'domain',
-        whereClause,
-        null, // orderBy
-        1,    // limit
-        null, // startAfter
-        null  // startAt
-      )
+
+      // Use EvoSDK documents facade
+      const domainsResponse = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: 'domain',
+        where,
+        limit: 1
+      })
       
       console.log('🎯 DPNS specific domains response:', domainsResponse)
       
@@ -268,27 +260,24 @@ export class DPNSService {
       }
       
       // Query for domain documents with the specific label
-      const whereClause = JSON.stringify([
+      const where = [
         ['normalizedLabel', '==', username.toLowerCase()],
         ['normalizedParentDomainName', '==', 'dash']
-      ])
-      
+      ]
+
       console.log('Resolving DPNS with:', {
         contractId: DPNS_CONTRACT_ID,
         documentType: 'domain',
-        whereClause
+        where
       })
-      
-      const domainsResponse = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        'domain',
-        whereClause,
-        null, // orderBy
-        1,    // limit
-        null, // startAfter
-        null  // startAt
-      )
+
+      // Use EvoSDK documents facade
+      const domainsResponse = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: 'domain',
+        where,
+        limit: 1
+      })
       
       console.log('DPNS resolution response:', domainsResponse)
       

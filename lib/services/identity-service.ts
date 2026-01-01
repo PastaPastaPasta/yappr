@@ -1,5 +1,4 @@
 import { getWasmSdk } from './wasm-sdk-service';
-import { identity_fetch, get_identity_balance } from '../dash-wasm/wasm_sdk';
 
 export interface IdentityInfo {
   id: string;
@@ -30,10 +29,10 @@ class IdentityService {
       }
 
       const sdk = await getWasmSdk();
-      
-      // Fetch identity
+
+      // Fetch identity using EvoSDK facade
       console.log(`Fetching identity: ${identityId}`);
-      const identityResponse = await identity_fetch(sdk, identityId);
+      const identityResponse = await sdk.identities.fetch(identityId);
       
       if (!identityResponse) {
         console.warn(`Identity not found: ${identityId}`);
@@ -78,10 +77,10 @@ class IdentityService {
       }
 
       const sdk = await getWasmSdk();
-      
-      // Fetch balance
+
+      // Fetch balance using EvoSDK facade
       console.log(`Fetching balance for: ${identityId}`);
-      const balanceResponse = await get_identity_balance(sdk, identityId);
+      const balanceResponse = await sdk.identities.balance(identityId);
       
       // get_identity_balance returns an object directly
       const balance = balanceResponse;

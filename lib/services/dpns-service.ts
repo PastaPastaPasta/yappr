@@ -1,14 +1,12 @@
 import { getWasmSdk } from './wasm-sdk-service';
-import { 
-  get_documents,
-  dpns_convert_to_homograph_safe,
-  dpns_is_valid_username,
-  dpns_is_contested_username,
-  dpns_register_name,
-  dpns_is_name_available,
-  dpns_resolve_name 
-} from '../dash-wasm/wasm_sdk';
+// Import WasmSdk for static DPNS utility methods
+import { WasmSdk } from '@dashevo/wasm-sdk';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
+
+// Helper wrappers for DPNS utility functions (using WasmSdk static methods)
+const dpns_is_valid_username = (label: string): boolean => WasmSdk.dpnsIsValidUsername(label);
+const dpns_is_contested_username = (label: string): boolean => WasmSdk.dpnsIsContestedUsername(label);
+const dpns_convert_to_homograph_safe = (input: string): string => WasmSdk.dpnsConvertToHomographSafe(input);
 
 interface DpnsDocument {
   $id: string;
@@ -52,17 +50,16 @@ class DpnsService {
       console.log(`DPNS: Fetching all usernames for identity: ${identityId}`);
       
       const sdk = await getWasmSdk();
-      
+
       // Try the dedicated DPNS usernames function first
       try {
-        const { get_dpns_usernames } = await import('../dash-wasm/wasm_sdk');
-        const response = await get_dpns_usernames(sdk, identityId, 20); // Get up to 20 usernames
-        
+        const response = await sdk.dpns.usernames(identityId, { limit: 20 });
+
         console.log('DPNS: Usernames response:', response);
-        
+
         // Parse the response
         let usernames: string[] = [];
-        
+
         if (Array.isArray(response)) {
           usernames = response.filter(u => typeof u === 'string' && u.length > 0);
         } else if (response && typeof response === 'object' && response.usernames) {
@@ -75,28 +72,22 @@ class DpnsService {
             usernames = jsonResponse.usernames;
           }
         }
-        
+
         if (usernames.length > 0) {
           console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId}`);
           return usernames;
         }
       } catch (error) {
-        console.warn('DPNS: get_dpns_usernames failed, trying document query:', error);
+        console.warn('DPNS: sdk.dpns.usernames failed, trying document query:', error);
       }
-      
+
       // Fallback: Query DPNS documents by identity ID
-      const response = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        DPNS_DOCUMENT_TYPE,
-        JSON.stringify([
-          ['records.identity', '==', identityId]
-        ]),
-        null,
-        20, // Get up to 20 usernames
-        null,
-        null
-      );
+      const response = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: DPNS_DOCUMENT_TYPE,
+        where: [['records.identity', '==', identityId]],
+        limit: 20
+      });
       
       if (response && response.documents && response.documents.length > 0) {
         const usernames = response.documents.map((doc: DpnsDocument) => 
@@ -184,10 +175,10 @@ class DpnsService {
       console.log(`DPNS: Resolving identity for username: ${normalizedUsername}`);
       
       const sdk = await getWasmSdk();
-      
-      // Try native resolution first
+
+      // Try native resolution first using EvoSDK facade
       try {
-        const result = await dpns_resolve_name(sdk, normalizedUsername);
+        const result = await sdk.dpns.resolveName(normalizedUsername);
         if (result && result.identity_id) {
           console.log(`DPNS: Found identity ${result.identity_id} for username ${normalizedUsername} via native resolver`);
           this._cacheEntry(normalizedUsername, result.identity_id);
@@ -196,25 +187,21 @@ class DpnsService {
       } catch (error) {
         console.warn('DPNS: Native resolver failed, trying document query:', error);
       }
-      
+
       // Fallback: Query DPNS documents
       const parts = normalizedUsername.split('.');
       const label = parts[0];
       const parentDomain = parts.slice(1).join('.') || 'dash';
-      
-      const response = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        DPNS_DOCUMENT_TYPE,
-        JSON.stringify([
+
+      const response = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: DPNS_DOCUMENT_TYPE,
+        where: [
           ['normalizedLabel', '==', label.toLowerCase()],
           ['normalizedParentDomainName', '==', parentDomain.toLowerCase()]
-        ]),
-        null,
-        1,
-        null,
-        null
-      );
+        ],
+        limit: 1
+      });
       
       if (response && response.documents && response.documents.length > 0) {
         const dpnsDoc = response.documents[0] as DpnsDocument;
@@ -245,7 +232,7 @@ class DpnsService {
       // Try native availability check first (more efficient)
       try {
         const sdk = await getWasmSdk();
-        const isAvailable = await dpns_is_name_available(sdk, normalizedUsername);
+        const isAvailable = await sdk.dpns.isNameAvailable(normalizedUsername);
         console.log(`DPNS: Username ${normalizedUsername} availability (native): ${isAvailable}`);
         return isAvailable;
       } catch (error) {
@@ -283,22 +270,19 @@ class DpnsService {
         ['normalizedParentDomainName', '==', 'dash']
       ];
       const orderBy = [['normalizedLabel', 'asc']];
-      
-      const documents = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        DPNS_DOCUMENT_TYPE,
-        JSON.stringify(where),
-        JSON.stringify(orderBy),
-        limit,
-        null,
-        null
-      );
-      
+
+      const documents = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: DPNS_DOCUMENT_TYPE,
+        where,
+        orderBy,
+        limit
+      });
+
       // The response is an array of documents
       if (documents && Array.isArray(documents)) {
         console.log(`DPNS: Found ${documents.length} documents`);
-        
+
         // Map documents to results with owner IDs
         const results = documents.map((doc: any) => {
           // Access the data field which contains the DPNS document fields
@@ -306,16 +290,16 @@ class DpnsService {
           const label = data.label || data.normalizedLabel || 'unknown';
           const parentDomain = data.normalizedParentDomainName || 'dash';
           const ownerId = doc.ownerId || doc.$ownerId || '';
-          
+
           return {
             username: `${label}.${parentDomain}`,
             ownerId: ownerId
           };
         });
-        
+
         return results;
       }
-      
+
       return [];
     } catch (error) {
       console.error('DPNS: Error searching usernames with details:', error);
@@ -329,36 +313,33 @@ class DpnsService {
   async searchUsernames(prefix: string, limit: number = 10): Promise<string[]> {
     try {
       const sdk = await getWasmSdk();
-      
+
       // Remove .dash suffix if present for search
       const searchPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
-      
+
       // Search DPNS names by prefix
       console.log(`DPNS: Searching usernames with prefix: ${searchPrefix}`);
       console.log(`DPNS: Using contract ID: ${DPNS_CONTRACT_ID}`);
       console.log(`DPNS: Document type: ${DPNS_DOCUMENT_TYPE}`);
-      
+
       // Build where clause for starts-with query on normalizedLabel
       const where = [
         ['normalizedLabel', 'startsWith', searchPrefix],
         ['normalizedParentDomainName', '==', 'dash']
       ];
       const orderBy = [['normalizedLabel', 'asc']];
-      
+
       console.log('DPNS: Query where clause:', JSON.stringify(where));
       console.log('DPNS: Query orderBy:', JSON.stringify(orderBy));
-      
-      const documents = await get_documents(
-        sdk,
-        DPNS_CONTRACT_ID,
-        DPNS_DOCUMENT_TYPE,
-        JSON.stringify(where),
-        JSON.stringify(orderBy),
-        limit,
-        null,
-        null
-      );
-      
+
+      const documents = await sdk.documents.query({
+        contractId: DPNS_CONTRACT_ID,
+        type: DPNS_DOCUMENT_TYPE,
+        where,
+        orderBy,
+        limit
+      });
+
       console.log('DPNS: Search response:', documents);
       console.log('DPNS: Response type:', typeof documents);
       console.log('DPNS: Is array?:', Array.isArray(documents));
@@ -420,21 +401,20 @@ class DpnsService {
 
       // Check availability
       const sdk = await getWasmSdk();
-      const isAvailable = await dpns_is_name_available(sdk, label);
+      const isAvailable = await sdk.dpns.isNameAvailable(label);
       if (!isAvailable) {
         throw new Error(`Username ${label} is already taken`);
       }
 
-      // Register the name
+      // Register the name using EvoSDK facade
       console.log(`Registering DPNS name: ${label}`);
-      const result = await dpns_register_name(
-        sdk,
+      const result = await sdk.dpns.registerName({
         label,
         identityId,
         publicKeyId,
         privateKeyWif,
-        onPreorderSuccess || null
-      );
+        onPreorder: onPreorderSuccess
+      });
 
       // Clear cache for this identity
       this.clearCache(undefined, identityId);
