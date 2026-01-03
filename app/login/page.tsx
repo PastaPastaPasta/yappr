@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { useRouter } from 'next/navigation'
@@ -11,10 +11,35 @@ import {
   getLastUsedIdentityId,
   storeEncryptedCredential
 } from '@/lib/password-encrypted-storage'
+import { identityService } from '@/lib/services/identity-service'
+import { dpnsService } from '@/lib/services/dpns-service'
+import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
+
+// Check if input looks like an Identity ID (base58, ~44 chars)
+function isLikelyIdentityId(input: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(input)
+}
+
+interface ResolvedIdentity {
+  id: string
+  balance: number
+  publicKeys: any[]
+  dpnsUsername?: string
+}
 
 export default function LoginPage() {
-  const [identityId, setIdentityId] = useState('')
+  // Identity lookup states
+  const [identityInput, setIdentityInput] = useState('')
+  const [isLookingUp, setIsLookingUp] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [resolvedIdentity, setResolvedIdentity] = useState<ResolvedIdentity | null>(null)
+
+  // Private key states
   const [privateKey, setPrivateKey] = useState('')
+  const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle')
+  const [keyValidationResult, setKeyValidationResult] = useState<KeyValidationResult | null>(null)
+
+  // Form states
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [rememberMe, setRememberMe] = useState(false)
@@ -34,15 +59,112 @@ export default function LoginPage() {
     const lastId = getLastUsedIdentityId()
     if (lastId) {
       setStoredIdentityId(lastId)
-      setIdentityId(lastId)
+      setIdentityInput(lastId)
       const hasStored = hasStoredCredential(lastId)
       setHasStoredCred(hasStored)
       if (hasStored) {
-        // Automatically show unlock modal for returning users
         setShowUnlockModal(true)
       }
     }
   }, [])
+
+  // Debounced identity lookup
+  useEffect(() => {
+    if (!identityInput || identityInput.length < 3) {
+      setResolvedIdentity(null)
+      setLookupError(null)
+      return
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsLookingUp(true)
+      setLookupError(null)
+      setResolvedIdentity(null)
+      // Reset key validation when identity changes
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+
+      try {
+        let identityId = identityInput.trim()
+
+        // Check if input looks like a DPNS name
+        if (!isLikelyIdentityId(identityId)) {
+          // Resolve DPNS to identity ID
+          const resolved = await dpnsService.resolveIdentity(identityId)
+          if (!resolved) {
+            setLookupError('Username not found')
+            setIsLookingUp(false)
+            return
+          }
+          identityId = resolved
+        }
+
+        // Fetch identity details
+        const identity = await identityService.getIdentity(identityId)
+        if (!identity) {
+          setLookupError('Identity not found')
+          setIsLookingUp(false)
+          return
+        }
+
+        // Resolve DPNS username for display (if we entered an ID)
+        let dpnsUsername: string | undefined
+        if (isLikelyIdentityId(identityInput.trim())) {
+          dpnsUsername = await dpnsService.resolveUsername(identityId) || undefined
+        } else {
+          // We entered a DPNS name, use it
+          dpnsUsername = identityInput.trim().toLowerCase().replace(/\.dash$/, '') + '.dash'
+        }
+
+        setResolvedIdentity({
+          id: identity.id,
+          balance: identity.balance,
+          publicKeys: identity.publicKeys,
+          dpnsUsername
+        })
+      } catch (err) {
+        console.error('Identity lookup error:', err)
+        setLookupError('Failed to lookup identity')
+      } finally {
+        setIsLookingUp(false)
+      }
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+  }, [identityInput])
+
+  // Debounced private key validation
+  useEffect(() => {
+    if (!privateKey || !resolvedIdentity) {
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+      return
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setKeyValidationStatus('validating')
+
+      try {
+        const result = await keyValidationService.validatePrivateKey(
+          privateKey,
+          resolvedIdentity.id,
+          'testnet'
+        )
+        setKeyValidationResult(result)
+        setKeyValidationStatus(result.isValid ? 'valid' : 'invalid')
+      } catch (err) {
+        console.error('Key validation error:', err)
+        setKeyValidationStatus('invalid')
+        setKeyValidationResult({
+          isValid: false,
+          error: 'Failed to validate key',
+          errorType: 'INVALID_WIF'
+        })
+      }
+    }, 300)
+
+    return () => clearTimeout(timeoutId)
+  }, [privateKey, resolvedIdentity])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -50,14 +172,14 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
+      // Use the resolved identity ID
+      const identityId = resolvedIdentity?.id || identityInput
       await login(identityId, privateKey)
 
-      // If remember me is checked, show password set modal
       if (rememberMe) {
         setPendingCredentials({ identityId, privateKey })
         setShowPasswordSetModal(true)
       }
-      // Navigation handled by auth context
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to login')
     } finally {
@@ -72,7 +194,6 @@ export default function LoginPage() {
 
     try {
       await login(storedIdentityId!, decryptedPrivateKey)
-      // Navigation handled by auth context
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to login')
     } finally {
@@ -83,9 +204,10 @@ export default function LoginPage() {
   const handleUseDifferent = () => {
     setShowUnlockModal(false)
     setHasStoredCred(false)
-    setIdentityId('')
+    setIdentityInput('')
     setPrivateKey('')
     setStoredIdentityId(null)
+    setResolvedIdentity(null)
   }
 
   const handlePasswordSetSuccess = async (password: string) => {
@@ -105,6 +227,8 @@ export default function LoginPage() {
     setPendingCredentials(null)
   }
 
+  const canSubmit = resolvedIdentity && keyValidationStatus === 'valid' && !isLoading
+
   return (
     <div className="min-h-screen bg-white dark:bg-black flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8">
@@ -115,34 +239,89 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-6">
           <div className="space-y-4">
+            {/* Identity ID / DPNS Input */}
             <div>
-              <label htmlFor="identityId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Identity ID
+              <label htmlFor="identityInput" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Identity ID or DPNS Username
               </label>
-              <input
-                id="identityId"
-                type="text"
-                value={identityId}
-                onChange={(e) => setIdentityId(e.target.value)}
-                placeholder="e.g., 5DbLwAxGBzUzo81VewMUwn4b5P4bpv9FNFybi25XB5Bk"
-                className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
-                required
-              />
+              <div className="relative">
+                <input
+                  id="identityInput"
+                  type="text"
+                  value={identityInput}
+                  onChange={(e) => setIdentityInput(e.target.value)}
+                  placeholder="e.g., john.dash or 5DbLwAxGBzUzo81VewMUwn4b5P4bpv9FNFybi25XB5Bk"
+                  className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                  required
+                />
+                {/* Status indicator */}
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  {isLookingUp && (
+                    <svg className="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {!isLookingUp && resolvedIdentity && (
+                    <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {!isLookingUp && lookupError && (
+                    <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </div>
+              </div>
+
+              {/* Identity lookup error */}
+              {lookupError && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{lookupError}</p>
+              )}
             </div>
 
+            {/* Private Key Input */}
             <div>
               <label htmlFor="privateKey" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Private Key (WIF format)
               </label>
-              <input
-                id="privateKey"
-                type="password"
-                value={privateKey}
-                onChange={(e) => setPrivateKey(e.target.value)}
-                placeholder="e.g., XK6CFyvYUMvY9FVQLeYBZBF..."
-                className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
-                required
-              />
+              <div className="relative">
+                <input
+                  id="privateKey"
+                  type="password"
+                  value={privateKey}
+                  onChange={(e) => setPrivateKey(e.target.value)}
+                  placeholder={resolvedIdentity ? "Enter your private key..." : "First enter Identity ID above"}
+                  disabled={!resolvedIdentity}
+                  className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  required
+                />
+                {/* Status indicator */}
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  {keyValidationStatus === 'validating' && (
+                    <svg className="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {keyValidationStatus === 'valid' && (
+                    <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {keyValidationStatus === 'invalid' && (
+                    <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </div>
+              </div>
+
+              {/* Key validation error */}
+              {keyValidationStatus === 'invalid' && keyValidationResult?.error && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{keyValidationResult.error}</p>
+              )}
             </div>
 
             {/* Remember Me Toggle */}
@@ -177,7 +356,7 @@ export default function LoginPage() {
           <div className="space-y-3">
             <Button
               type="submit"
-              disabled={isLoading || !identityId || !privateKey}
+              disabled={!canSubmit}
               className="w-full shadow-yappr-lg"
               size="lg"
             >
@@ -193,16 +372,47 @@ export default function LoginPage() {
                 'Sign In'
               )}
             </Button>
-
           </div>
         </form>
 
         <div className="mt-8 space-y-4 text-sm text-gray-600 dark:text-gray-400">
+          {/* Need an Identity Section */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+            <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Need an Identity?</h3>
+            <p className="text-blue-700 dark:text-blue-300 mb-3">
+              Get test credits and create your Dash Platform identity:
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <a
+                href="https://faucet.thepasta.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Faucet
+              </a>
+              <a
+                href="https://bridge.thepasta.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                Bridge
+              </a>
+            </div>
+          </div>
+
           <div className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg p-4 space-y-2">
             <h3 className="font-medium text-gray-900 dark:text-gray-100">Requirements:</h3>
             <ul className="list-disc list-inside space-y-1">
               <li>A Dash Platform identity</li>
-              <li>At least one high security key</li>
+              <li>A HIGH or CRITICAL security key</li>
               <li>Private key in WIF format</li>
             </ul>
           </div>
