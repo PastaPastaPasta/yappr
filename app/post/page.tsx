@@ -44,6 +44,16 @@ function PostDetailContent() {
           return
         }
 
+        // If this is a reply, fetch the parent post for the "Replying to:" section
+        // We fetch this explicitly rather than relying on background enrichment
+        // to ensure the parent is available before we render
+        if (loadedPost.replyToId) {
+          const parentPost = await postService.getPostById(loadedPost.replyToId)
+          if (parentPost) {
+            loadedPost.replyTo = parentPost
+          }
+        }
+
         setPost(loadedPost)
 
         try {
@@ -116,7 +126,7 @@ function PostDetailContent() {
     return (
       <div className="min-h-screen flex">
         <Sidebar />
-        <main className="flex-1 mr-[350px] max-w-[600px] border-x border-gray-200 dark:border-gray-800">
+        <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
           <div className="p-8 text-center text-gray-500">
             <p>Post not found</p>
           </div>
@@ -130,7 +140,7 @@ function PostDetailContent() {
     <div className="min-h-screen flex">
       <Sidebar />
 
-      <main className="flex-1 mr-[350px] max-w-[600px] border-x border-gray-200 dark:border-gray-800">
+      <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
         <header className="sticky top-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center gap-4 px-4 py-3">
             <button
@@ -222,7 +232,7 @@ function LoadingFallback() {
   return (
     <div className="min-h-screen flex">
       <Sidebar />
-      <main className="flex-1 mr-[350px] max-w-[600px] border-x border-gray-200 dark:border-gray-800">
+      <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
         <div className="p-8 text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
           <p className="text-gray-500">Loading post...</p>

@@ -68,24 +68,31 @@ class PostService extends BaseDocumentService<Post> {
         id: id + '-media',
         type: 'image',
         url: mediaUrl
-      }] : undefined
+      }] : undefined,
+      // Expose IDs for lazy loading at component level
+      replyToId: replyToId || undefined,
+      quotedPostId: quotedPostId || undefined
     };
 
-    // Queue async operations to enrich the post
-    this.enrichPost(post, id, ownerId, replyToId, quotedPostId);
+    // Fire-and-forget enrichment for background data (author, stats)
+    // Related entities (replyTo, quotedPost) should be fetched explicitly by components that need them
+    this.enrichPost(post, id, ownerId);
 
     return post;
   }
 
   /**
-   * Enrich post with async data
+   * Enrich post with background data (author, stats, interactions).
+   * This is fire-and-forget - mutates the post object asynchronously.
+   *
+   * NOTE: Related entities (replyTo, quotedPost) are NOT fetched here.
+   * Components that need them should fetch explicitly using the replyToId/quotedPostId fields.
+   * This prevents cascade fetching and gives components control over what they load.
    */
   private async enrichPost(
     post: Post,
     postId: string,
-    ownerId: string,
-    replyToId?: string,
-    quotedPostId?: string
+    ownerId: string
   ): Promise<void> {
     try {
       // Get author information
@@ -109,22 +116,6 @@ class PostService extends BaseDocumentService<Post> {
         post.liked = interactions.liked;
         post.reposted = interactions.reposted;
         post.bookmarked = interactions.bookmarked;
-      }
-
-      // Load reply-to post if exists
-      if (replyToId) {
-        const replyTo = await this.get(replyToId);
-        if (replyTo) {
-          post.replyTo = replyTo;
-        }
-      }
-
-      // Load quoted post if exists
-      if (quotedPostId) {
-        const quoted = await this.get(quotedPostId);
-        if (quoted) {
-          post.quotedPost = quoted;
-        }
       }
     } catch (error) {
       console.error('Error enriching post:', error);
@@ -195,13 +186,37 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get a single post by its document ID using direct lookup.
    * More efficient than querying all posts and filtering.
+   * Awaits author resolution to prevent "Unknown User" race condition.
    */
   async getPostById(postId: string): Promise<Post | null> {
     try {
-      return await this.get(postId);
+      const post = await this.get(postId);
+      if (!post) return null;
+
+      // For single post fetch, await author resolution to prevent race condition
+      await this.resolvePostAuthor(post);
+
+      return post;
     } catch (error) {
       console.error('Error getting post by ID:', error);
       return null;
+    }
+  }
+
+  /**
+   * Resolve and set the author for a post (awaited).
+   * This prevents the "Unknown User" race condition for single post views.
+   */
+  private async resolvePostAuthor(post: Post): Promise<void> {
+    if (!post.author?.id || post.author.id === 'unknown') return;
+
+    try {
+      const author = await profileService.getProfileWithUsername(post.author.id);
+      if (author) {
+        post.author = author;
+      }
+    } catch (error) {
+      console.error('Error resolving post author:', error);
     }
   }
 
@@ -303,7 +318,8 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get replies to a post
+   * Get replies to a post.
+   * Awaits author resolution for all replies to prevent "Unknown User" race condition.
    */
   async getReplies(postId: string, options: QueryOptions = {}): Promise<DocumentResult<Post>> {
     // Pass identifier as base58 string - the SDK handles conversion
@@ -318,7 +334,12 @@ class PostService extends BaseDocumentService<Post> {
       ...options
     };
 
-    return this.query(queryOptions);
+    const result = await this.query(queryOptions);
+
+    // Await author resolution for all replies to prevent race condition
+    await Promise.all(result.documents.map(post => this.resolvePostAuthor(post)));
+
+    return result;
   }
 
   /**

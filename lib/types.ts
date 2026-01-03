@@ -27,7 +27,9 @@ export interface Post {
   reposted?: boolean
   bookmarked?: boolean
   media?: Media[]
+  replyToId?: string    // ID of parent post (for fetching if replyTo not populated)
   replyTo?: Post
+  quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPost?: Post
 }
 

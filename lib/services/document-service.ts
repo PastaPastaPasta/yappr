@@ -90,14 +90,14 @@ export abstract class BaseDocumentService<T> {
           console.log(`Transforming ${this.documentType} document:`, doc);
           return this.transformDocument(doc);
         });
-        
+
         return {
           documents,
           nextCursor: undefined,
           prevCursor: undefined
         };
       }
-      
+
       // Otherwise expect object with documents property
       const documents = result?.documents?.map((doc: any) => {
         console.log(`Transforming ${this.documentType} document:`, doc);
@@ -142,7 +142,7 @@ export abstract class BaseDocumentService<T> {
       // get_document returns an object directly
       const doc = response;
       const transformed = this.transformDocument(doc);
-      
+
       // Cache the result
       this.cache.set(documentId, {
         data: transformed,
@@ -176,10 +176,10 @@ export abstract class BaseDocumentService<T> {
       if (!result.success) {
         throw new Error(result.error || 'Failed to create document');
       }
-      
+
       // Clear relevant caches
       this.clearCache();
-      
+
       return this.transformDocument(result.document);
     } catch (error) {
       console.error(`Error creating ${this.documentType} document:`, error);

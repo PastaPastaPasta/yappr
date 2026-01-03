@@ -1,4 +1,5 @@
 import { EvoSDK } from '@dashevo/evo-sdk';
+import { DPNS_CONTRACT_ID } from '../constants';
 
 export interface EvoSdkConfig {
   network: 'testnet' | 'mainnet';
@@ -75,8 +76,8 @@ class EvoSdkService {
       this._isInitialized = true;
       console.log('EvoSdkService: SDK initialized successfully');
 
-      // Preload the yappr contract into the trusted context
-      await this._preloadYapprContract();
+      // Preload contracts to avoid repeated fetches
+      await this._preloadContracts();
     } catch (error) {
       console.error('EvoSdkService: Failed to initialize SDK:', error);
       console.error('EvoSdkService: Error details:', {
@@ -90,29 +91,35 @@ class EvoSdkService {
   }
 
   /**
-   * Preload the yappr contract to cache it
+   * Preload contracts to cache them and avoid repeated fetches
    */
-  private async _preloadYapprContract(): Promise<void> {
+  private async _preloadContracts(): Promise<void> {
     if (!this.config || !this.sdk) {
       return;
     }
 
     try {
-      console.log('EvoSdkService: Adding yappr contract to trusted context...');
+      console.log('EvoSdkService: Preloading contracts...');
 
-      const contractId = this.config.contractId;
-
+      // Preload yappr contract
+      const yapprContractId = this.config.contractId;
       try {
-        await this.sdk.contracts.fetch(contractId);
-        console.log('EvoSdkService: Yappr contract found on network and cached');
+        await this.sdk.contracts.fetch(yapprContractId);
+        console.log('EvoSdkService: Yappr contract cached');
       } catch (error) {
-        console.log('EvoSdkService: Contract not found on network (expected for local development)');
-        console.log('EvoSdkService: Local contract operations will be handled gracefully');
+        console.log('EvoSdkService: Yappr contract not found (expected for local development)');
+      }
+
+      // Preload DPNS contract
+      try {
+        await this.sdk.contracts.fetch(DPNS_CONTRACT_ID);
+        console.log('EvoSdkService: DPNS contract cached');
+      } catch (error) {
+        console.log('EvoSdkService: DPNS contract fetch failed:', error);
       }
 
     } catch (error) {
-      console.error('EvoSdkService: Error during contract setup:', error);
-      // Don't throw - we can still operate
+      console.error('EvoSdkService: Error during contract preload:', error);
     }
   }
 

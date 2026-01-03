@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { withAuth, useAuth } from '@/contexts/auth-context'
+import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { Loader2 } from 'lucide-react'
 
@@ -55,17 +56,17 @@ function CreateProfilePage() {
       return
     }
     
-    // Check if private key is in session storage
-    const storedPrivateKey = sessionStorage.getItem('yappr_pk')
+    // Check if private key is in secure storage
+    const storedPrivateKey = user ? getPrivateKey(user.identityId) : null
     if (!storedPrivateKey && !privateKey) {
       setShowPrivateKeyInput(true)
       toast.error('Please enter your private key to continue')
       return
     }
-    
-    // If private key was entered, store it
-    if (privateKey && !storedPrivateKey) {
-      sessionStorage.setItem('yappr_pk', privateKey)
+
+    // If private key was entered, store it in secure storage
+    if (privateKey && !storedPrivateKey && user) {
+      storePrivateKey(user.identityId, privateKey)
     }
     
     setIsSubmitting(true)
@@ -242,7 +243,7 @@ function CreateProfilePage() {
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Identity: {user?.identityId.slice(0, 8)}...
             </p>
-            {!sessionStorage.getItem('yappr_pk') && (
+            {(!user || !getPrivateKey(user.identityId)) && (
               <button
                 type="button"
                 onClick={() => setShowPrivateKeyInput(!showPrivateKeyInput)}
