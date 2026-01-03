@@ -87,3 +87,9 @@ export interface Conversation {
   unreadCount: number
   updatedAt: Date
 }
+
+// Query options for post service methods
+export interface PostQueryOptions {
+  /** Skip automatic enrichment - caller will handle enrichment manually */
+  skipEnrichment?: boolean
+}

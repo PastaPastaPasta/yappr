@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { SparklesIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
@@ -16,9 +16,7 @@ import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { cacheManager } from '@/lib/cache-manager'
-import { dpnsService } from '@/lib/services/dpns-service'
-import { profileService } from '@/lib/services/profile-service'
-import { postService } from '@/lib/services/post-service'
+import { usePostEnrichment } from '@/hooks/use-post-enrichment'
 
 function FeedPage() {
   const [isHydrated, setIsHydrated] = useState(false)
@@ -29,10 +27,8 @@ function FeedPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
 
-  // Track enrichment to prevent duplicate requests
-  // Uses a batch ID (hash of post IDs) to detect new loads vs updates to existing posts
-  const lastEnrichedBatchId = useRef<string | null>(null)
-  const enrichmentInProgress = useRef(false)
+  // Hook for enriching posts with stats/interactions (handles deduplication internally)
+  const { enrich: enrichPosts, reset: resetEnrichment } = usePostEnrichment()
   
   // Prevent hydration mismatches
   useEffect(() => {
@@ -93,19 +89,24 @@ function FeedPage() {
         const authorIdStr = doc.ownerId || 'unknown'
 
         return {
-          id: doc.id || Math.random().toString(36).substr(2, 9),
+          id: doc.id || doc.$id || Math.random().toString(36).substr(2, 9),
           content: data.content || 'No content',
           author: {
             id: authorIdStr,
             username: `user_${authorIdStr.slice(-6)}`,
             handle: `user_${authorIdStr.slice(-6)}`,
             displayName: `User ${authorIdStr.slice(-6)}`,
-            verified: false
+            avatar: '',
+            followers: 0,
+            following: 0,
+            verified: false,
+            joinedAt: new Date()
           },
-          createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : new Date().toISOString(),
+          createdAt: new Date(doc.createdAt || Date.now()),
           likes: 0,
           replies: 0,
           reposts: 0,
+          views: 0,
           liked: false,
           reposted: false,
           bookmarked: false
@@ -114,9 +115,7 @@ function FeedPage() {
 
       // Sort posts by createdAt to ensure newest first
       const sortedPosts = transformedPosts.sort((a: any, b: any) => {
-        const dateA = new Date(a.createdAt).getTime()
-        const dateB = new Date(b.createdAt).getTime()
-        return dateB - dateA
+        return b.createdAt.getTime() - a.createdAt.getTime()
       })
 
       // If no posts found, show empty state
@@ -133,9 +132,8 @@ function FeedPage() {
       setLastPostId(sortedPosts[sortedPosts.length - 1].id)
       setHasMore(sortedPosts.length >= 20)
 
-      // IMMEDIATELY show posts with placeholder usernames
+      // Show posts immediately with placeholder data
       if (startAfter) {
-        // Use functional update to get current posts (avoids stale closure)
         setData((currentPosts: any[] | null) => {
           const allPosts = [...(currentPosts || []), ...sortedPosts]
           console.log(`Feed: Appended ${sortedPosts.length} posts to ${currentPosts?.length || 0} existing`)
@@ -143,79 +141,53 @@ function FeedPage() {
         })
       } else {
         setData(sortedPosts)
-        console.log(`Feed: Showing ${sortedPosts.length} posts (resolving usernames in background)`)
+        console.log(`Feed: Showing ${sortedPosts.length} posts`)
       }
 
-      // Resolve DPNS usernames and profiles in background (non-blocking)
-      const uniqueAuthorIds = Array.from(new Set(sortedPosts.map((p: any) => p.author.id)))
-      console.log(`Feed: Resolving ${uniqueAuthorIds.length} unique usernames and profiles in background`)
+      // Enrich posts in background and update state with enriched data
+      enrichPosts(sortedPosts).then(enrichedPosts => {
+        // Skip merge if posts were not enriched (returned same reference due to deduplication)
+        if (enrichedPosts === sortedPosts) return
 
-      // Batch resolve all usernames in a single query (much more efficient)
-      dpnsService.resolveUsernamesBatch(uniqueAuthorIds as string[]).then(usernameMap => {
-        console.log(`Feed: Batch DPNS resolution complete, found ${Array.from(usernameMap.values()).filter(Boolean).length} usernames`)
+        // Merge enriched data into current posts
+        const enrichedMap = new Map(enrichedPosts.map(p => [p.id, p]))
         setData((currentPosts: any[] | null) => {
           if (!currentPosts) return currentPosts
           return currentPosts.map(post => {
-            const username = usernameMap.get(post.author.id)
-            if (username) {
+            const enriched = enrichedMap.get(post.id)
+            if (enriched) {
               return {
                 ...post,
+                likes: enriched.likes,
+                reposts: enriched.reposts,
+                replies: enriched.replies,
+                liked: enriched.liked,
+                reposted: enriched.reposted,
+                bookmarked: enriched.bookmarked,
                 author: {
                   ...post.author,
-                  username,
-                  handle: username,
-                  hasDpns: true
+                  username: enriched.author?.username || post.author.username,
+                  displayName: enriched.author?.displayName || post.author.displayName,
+                  hasDpns: (enriched.author as any)?.hasDpns
                 }
               }
             }
             return post
           })
         })
+
+        // Cache after enrichment
+        if (!startAfter) {
+          setData((currentPosts: any[] | null) => {
+            if (currentPosts && currentPosts.length > 0) {
+              cacheManager.set('feed', cacheKey, currentPosts)
+            }
+            return currentPosts
+          })
+        }
       }).catch(err => {
-        console.warn('Feed: Failed to batch resolve usernames:', err)
+        console.warn('Feed: Failed to enrich posts:', err)
       })
-
-      // Fetch profiles to get actual display names (separate from DPNS)
-      profileService.getProfilesByIdentityIds(uniqueAuthorIds as string[]).then(profiles => {
-        console.log(`Feed: Fetched ${profiles.length} profiles for display names`)
-        profiles.forEach((profile: any) => {
-          const ownerId = profile.$ownerId || profile.ownerId
-          const data = profile.data || profile
-          const displayName = data.displayName
-
-          if (displayName) {
-            setData((currentPosts: any[] | null) => {
-              if (!currentPosts) return currentPosts
-              return currentPosts.map(post => {
-                if (post.author.id === ownerId) {
-                  return {
-                    ...post,
-                    author: {
-                      ...post.author,
-                      displayName
-                    }
-                  }
-                }
-                return post
-              })
-            })
-          }
-        })
-      }).catch(err => {
-        console.warn('Feed: Failed to fetch profiles:', err)
-      })
-
-      // Note: Stats/interactions enrichment moved to separate effect to prevent duplicate requests
-
-      // Cache results after usernames have had time to resolve
-      setTimeout(() => {
-        setData((currentPosts: any[] | null) => {
-          if (currentPosts && currentPosts.length > 0 && !startAfter) {
-            cacheManager.set('feed', cacheKey, currentPosts)
-          }
-          return currentPosts
-        })
-      }, 5000)
       
     } catch (error) {
       console.error('Feed: Failed to load posts from platform:', error)
@@ -235,7 +207,7 @@ function FeedPage() {
     } finally {
       setLoading(false)
     }
-  }, [postsState.setLoading, postsState.setError, postsState.setData])
+  }, [postsState.setLoading, postsState.setError, postsState.setData, enrichPosts])
 
   // Load more posts (pagination)
   const loadMore = useCallback(async () => {
@@ -255,9 +227,8 @@ function FeedPage() {
 
     // Listen for new posts created
     const handlePostCreated = () => {
-      // Clear enrichment tracking on refresh so new data gets fetched
-      lastEnrichedBatchId.current = null
-      enrichmentInProgress.current = false
+      // Reset enrichment tracking so new data gets enriched
+      resetEnrichment()
       loadPosts(true) // Force refresh when new post is created
     }
 
@@ -266,86 +237,7 @@ function FeedPage() {
     return () => {
       window.removeEventListener('post-created', handlePostCreated)
     }
-  }, [loadPosts])
-
-  // Separate effect for enriching posts with stats/interactions
-  // Uses batch ID to ensure we only enrich once per unique set of posts
-  useEffect(() => {
-    const posts = postsState.data
-    if (!posts || posts.length === 0) return
-
-    // Create a batch ID from the post IDs to detect if this is a new load
-    const batchId = posts.map(p => p.id).sort().join(',')
-
-    // Skip if we've already enriched this batch or enrichment is in progress
-    if (lastEnrichedBatchId.current === batchId || enrichmentInProgress.current) {
-      return
-    }
-
-    // Mark enrichment as in progress
-    enrichmentInProgress.current = true
-    lastEnrichedBatchId.current = batchId
-
-    // Enrich all posts using batch queries (much more efficient)
-    const enrichAll = async () => {
-      const postIds = posts.map(p => p.id)
-
-      try {
-        // Batch queries: 3 for interactions (total) + 3 per post for stats
-        // Much better than 6 queries per post
-        const [statsMap, interactionsMap] = await Promise.all([
-          postService.getBatchPostStats(postIds),
-          postService.getBatchUserInteractions(postIds)
-        ])
-
-        const enrichedData = posts.map(post => {
-          const stats = statsMap.get(post.id)
-          const interactions = interactionsMap.get(post.id)
-          return {
-            id: post.id,
-            likes: stats?.likes ?? 0,
-            reposts: stats?.reposts ?? 0,
-            replies: stats?.replies ?? 0,
-            liked: interactions?.liked ?? false,
-            reposted: interactions?.reposted ?? false,
-            bookmarked: interactions?.bookmarked ?? false
-          }
-        })
-
-        // Create a map for quick lookup
-        const enrichmentMap = new Map(
-          enrichedData.map(e => [e.id, e])
-        )
-
-        // Update all posts in a single setData call
-        postsState.setData((currentPosts: any[] | null) => {
-          if (!currentPosts) return currentPosts
-          const updated = currentPosts.map(p => {
-            const enrichment = enrichmentMap.get(p.id)
-            if (enrichment) {
-              return {
-                ...p,
-                likes: enrichment.likes,
-                reposts: enrichment.reposts,
-                replies: enrichment.replies,
-                liked: enrichment.liked,
-                reposted: enrichment.reposted,
-                bookmarked: enrichment.bookmarked
-              }
-            }
-            return p
-          })
-          return updated
-        })
-      } catch (err) {
-        console.error('Feed: Failed to enrich posts:', err)
-      } finally {
-        enrichmentInProgress.current = false
-      }
-    }
-
-    enrichAll()
-  }, [postsState.data, postsState.setData])
+  }, [loadPosts, resetEnrichment])
 
   return (
     <div className="min-h-screen flex">
@@ -357,9 +249,7 @@ function FeedPage() {
             <h1 className="text-xl font-bold">Home</h1>
             <button
               onClick={() => {
-                // Clear enrichment tracking on manual refresh
-                lastEnrichedBatchId.current = null
-                enrichmentInProgress.current = false
+                resetEnrichment()
                 loadPosts(true)
               }}
               disabled={postsState.loading}

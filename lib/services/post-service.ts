@@ -1,7 +1,8 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Post, User } from '../types';
+import { Post, User, PostQueryOptions } from '../types';
 import { identityService } from './identity-service';
 import { profileService } from './profile-service';
+import { dpnsService } from './dpns-service';
 
 export interface PostDocument {
   $id: string;
@@ -28,32 +29,15 @@ export interface PostStats {
 
 class PostService extends BaseDocumentService<Post> {
   private statsCache: Map<string, { data: PostStats; timestamp: number }> = new Map();
-  // Use a counter instead of boolean to handle concurrent calls (e.g., React Strict Mode)
-  private _skipEnrichmentCount = 0;
 
   constructor() {
     super('post');
   }
 
   /**
-   * Temporarily skip background enrichment for batch operations.
-   * Use this when you'll handle enrichment yourself via batch methods.
-   * Uses a counter to handle concurrent calls properly.
-   */
-  setSkipEnrichment(skip: boolean): void {
-    if (skip) {
-      this._skipEnrichmentCount++;
-    } else {
-      this._skipEnrichmentCount = Math.max(0, this._skipEnrichmentCount - 1);
-    }
-  }
-
-  private get _skipEnrichment(): boolean {
-    return this._skipEnrichmentCount > 0;
-  }
-
-  /**
-   * Transform document to Post type
+   * Transform document to Post type.
+   * Returns a Post with default placeholder values - callers should use
+   * enrichPostFull() or enrichPostsBatch() to populate stats and author data.
    */
   protected transformDocument(doc: any): Post {
     // SDK may nest document fields under 'data' property
@@ -92,13 +76,6 @@ class PostService extends BaseDocumentService<Post> {
       replyToId: replyToId || undefined,
       quotedPostId: quotedPostId || undefined
     };
-
-    // Fire-and-forget enrichment for background data (author, stats)
-    // Related entities (replyTo, quotedPost) should be fetched explicitly by components that need them
-    // Skip if _skipEnrichment is set (for batch operations that handle enrichment separately)
-    if (!this._skipEnrichment) {
-      this.enrichPost(post, id, ownerId);
-    }
 
     return post;
   }
@@ -142,6 +119,104 @@ class PostService extends BaseDocumentService<Post> {
     } catch (error) {
       console.error('Error enriching post:', error);
     }
+  }
+
+  /**
+   * Enrich a single post with all data (stats, interactions, author).
+   * This is the explicit, awaitable alternative to fire-and-forget enrichment.
+   * Returns a new Post object with enriched data.
+   */
+  async enrichPostFull(post: Post): Promise<Post> {
+    try {
+      const [stats, interactions, author] = await Promise.all([
+        this.getPostStats(post.id),
+        this.getUserInteractions(post.id),
+        profileService.getProfileWithUsername(post.author.id)
+      ]);
+
+      return {
+        ...post,
+        likes: stats.likes,
+        reposts: stats.reposts,
+        replies: stats.replies,
+        views: stats.views,
+        liked: interactions.liked,
+        reposted: interactions.reposted,
+        bookmarked: interactions.bookmarked,
+        author: author || post.author
+      };
+    } catch (error) {
+      console.error('Error enriching post:', error);
+      return post;
+    }
+  }
+
+  /**
+   * Batch enrich multiple posts efficiently.
+   * Uses batch queries to minimize network requests.
+   * Returns new Post objects with enriched data.
+   */
+  async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
+    if (posts.length === 0) return posts;
+
+    try {
+      const postIds = posts.map(p => p.id);
+      const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)));
+
+      const [statsMap, interactionsMap, usernameMap, profiles] = await Promise.all([
+        this.getBatchPostStats(postIds),
+        this.getBatchUserInteractions(postIds),
+        dpnsService.resolveUsernamesBatch(authorIds),
+        profileService.getProfilesByIdentityIds(authorIds)
+      ]);
+
+      // Build profile map for quick lookup
+      const profileMap = new Map<string, any>();
+      profiles.forEach((profile: any) => {
+        const ownerId = profile.$ownerId || profile.ownerId;
+        if (ownerId) {
+          profileMap.set(ownerId, profile);
+        }
+      });
+
+      return posts.map(post => {
+        const stats = statsMap.get(post.id);
+        const interactions = interactionsMap.get(post.id);
+        const username = usernameMap.get(post.author.id);
+        const profile = profileMap.get(post.author.id);
+        const profileData = profile?.data || profile;
+
+        return {
+          ...post,
+          likes: stats?.likes ?? post.likes,
+          reposts: stats?.reposts ?? post.reposts,
+          replies: stats?.replies ?? post.replies,
+          views: stats?.views ?? post.views,
+          liked: interactions?.liked ?? post.liked,
+          reposted: interactions?.reposted ?? post.reposted,
+          bookmarked: interactions?.bookmarked ?? post.bookmarked,
+          author: {
+            ...post.author,
+            username: username || post.author.username,
+            displayName: profileData?.displayName || post.author.displayName,
+            hasDpns: username ? true : false
+          }
+        };
+      });
+    } catch (error) {
+      console.error('Error batch enriching posts:', error);
+      return posts;
+    }
+  }
+
+  /**
+   * Get a fully enriched post by ID.
+   * Convenience method that fetches and enriches in one call.
+   */
+  async getEnrichedPostById(postId: string): Promise<Post | null> {
+    const post = await this.get(postId);
+    if (!post) return null;
+    return this.enrichPostFull(post);
   }
 
   /**
@@ -209,15 +284,17 @@ class PostService extends BaseDocumentService<Post> {
    * Get a single post by its document ID using direct lookup.
    * More efficient than querying all posts and filtering.
    * Awaits author resolution to prevent "Unknown User" race condition.
+   *
+   * @param postId - The post document ID
+   * @param options - Query options (skipEnrichment to disable auto-enrichment)
    */
-  async getPostById(postId: string): Promise<Post | null> {
+  async getPostById(postId: string, options: PostQueryOptions = {}): Promise<Post | null> {
     try {
       const post = await this.get(postId);
       if (!post) return null;
 
       // For single post fetch, await author resolution to prevent race condition
-      // Skip if enrichment is disabled (batch operations handle this separately)
-      if (!this._skipEnrichment) {
+      if (!options.skipEnrichment) {
         await this.resolvePostAuthor(post);
       }
 
@@ -345,8 +422,13 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get replies to a post.
    * Awaits author resolution for all replies to prevent "Unknown User" race condition.
+   *
+   * @param postId - The parent post ID
+   * @param options - Query options (including skipEnrichment to disable auto-enrichment)
    */
-  async getReplies(postId: string, options: QueryOptions = {}): Promise<DocumentResult<Post>> {
+  async getReplies(postId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Post>> {
+    const { skipEnrichment, ...queryOpts } = options;
+
     // Pass identifier as base58 string - the SDK handles conversion
     // Dash Platform requires a where clause on the orderBy field for ordering to work
     const queryOptions: QueryOptions = {
@@ -356,14 +438,13 @@ class PostService extends BaseDocumentService<Post> {
       ],
       orderBy: [['$createdAt', 'asc']],
       limit: 20,
-      ...options
+      ...queryOpts
     };
 
     const result = await this.query(queryOptions);
 
     // Await author resolution for all replies to prevent race condition
-    // Skip if enrichment is disabled (batch operations handle this separately)
-    if (!this._skipEnrichment) {
+    if (!skipEnrichment) {
       await Promise.all(result.documents.map(post => this.resolvePostAuthor(post)));
     }
 
