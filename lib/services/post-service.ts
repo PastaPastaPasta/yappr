@@ -798,6 +798,184 @@ class PostService extends BaseDocumentService<Post> {
 
     return result;
   }
+
+  /**
+   * Count unique authors across all posts
+   * Paginates through all posts and counts unique $ownerId values
+   */
+  async countUniqueAuthors(): Promise<number> {
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+
+      const sdk = await getEvoSdk();
+      const uniqueAuthors = new Set<string>();
+      let startAfter: string | undefined = undefined;
+      const PAGE_SIZE = 100;
+
+      while (true) {
+        const queryParams: any = {
+          contractId: this.contractId,
+          type: 'post',
+          where: [['$createdAt', '>', 0]],
+          orderBy: [['$createdAt', 'asc']],
+          limit: PAGE_SIZE
+        };
+
+        if (startAfter) {
+          queryParams.startAfter = startAfter;
+        }
+
+        const response = await sdk.documents.query(queryParams);
+
+        let documents: any[];
+        if (Array.isArray(response)) {
+          documents = response;
+        } else if (response && response.documents) {
+          documents = response.documents;
+        } else if (response && typeof response.toJSON === 'function') {
+          const json = response.toJSON();
+          documents = Array.isArray(json) ? json : json.documents || [];
+        } else {
+          documents = [];
+        }
+
+        // Collect unique author IDs
+        for (const doc of documents) {
+          const ownerId = doc.$ownerId || doc.ownerId;
+          if (ownerId) {
+            uniqueAuthors.add(ownerId);
+          }
+        }
+
+        // If we got fewer than PAGE_SIZE, we've reached the end
+        if (documents.length < PAGE_SIZE) {
+          break;
+        }
+
+        // Get the last document's ID for pagination
+        const lastDoc = documents[documents.length - 1];
+        const lastId = lastDoc.$id || lastDoc.id;
+        if (!lastId) {
+          break;
+        }
+        startAfter = lastId;
+      }
+
+      return uniqueAuthors.size;
+    } catch (error) {
+      console.error('Error counting unique authors:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get top posts by like count
+   * Fetches recent posts, gets their stats, and sorts by likes
+   */
+  async getTopPostsByLikes(limit: number = 5): Promise<Post[]> {
+    try {
+      // Fetch recent posts (more than we need to find top liked ones)
+      const result = await this.getTimeline({ limit: 50 });
+      const posts = result.documents;
+
+      if (posts.length === 0) return [];
+
+      // Get stats for all posts in batch
+      const postIds = posts.map(p => p.id);
+      const statsMap = await this.getBatchPostStats(postIds);
+
+      // Sort by likes descending
+      const postsWithLikes = posts.map(post => ({
+        post,
+        likes: statsMap.get(post.id)?.likes || 0
+      }));
+
+      postsWithLikes.sort((a, b) => b.likes - a.likes);
+
+      // Take top N and enrich them
+      const topPosts = postsWithLikes.slice(0, limit).map(p => p.post);
+
+      // Enrich posts with full data (stats, authors, interactions)
+      return this.enrichPostsBatch(topPosts);
+    } catch (error) {
+      console.error('Error getting top posts by likes:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get post counts per author
+   * Returns a Map of authorId -> post count
+   */
+  async getAuthorPostCounts(limit: number = 50): Promise<Map<string, number>> {
+    const authorCounts = new Map<string, number>();
+
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+
+      const sdk = await getEvoSdk();
+      let startAfter: string | undefined = undefined;
+      const PAGE_SIZE = 100;
+      let totalProcessed = 0;
+      const MAX_POSTS = 500; // Limit to prevent excessive queries
+
+      while (totalProcessed < MAX_POSTS) {
+        const queryParams: any = {
+          contractId: this.contractId,
+          type: 'post',
+          where: [['$createdAt', '>', 0]],
+          orderBy: [['$createdAt', 'desc']],
+          limit: PAGE_SIZE
+        };
+
+        if (startAfter) {
+          queryParams.startAfter = startAfter;
+        }
+
+        const response = await sdk.documents.query(queryParams);
+
+        let documents: any[];
+        if (Array.isArray(response)) {
+          documents = response;
+        } else if (response && response.documents) {
+          documents = response.documents;
+        } else if (response && typeof response.toJSON === 'function') {
+          const json = response.toJSON();
+          documents = Array.isArray(json) ? json : json.documents || [];
+        } else {
+          documents = [];
+        }
+
+        // Count posts per author
+        for (const doc of documents) {
+          const ownerId = doc.$ownerId || doc.ownerId;
+          if (ownerId) {
+            authorCounts.set(ownerId, (authorCounts.get(ownerId) || 0) + 1);
+          }
+        }
+
+        totalProcessed += documents.length;
+
+        // If we got fewer than PAGE_SIZE, we've reached the end
+        if (documents.length < PAGE_SIZE) {
+          break;
+        }
+
+        // Get the last document's ID for pagination
+        const lastDoc = documents[documents.length - 1];
+        const lastId = lastDoc.$id || lastDoc.id;
+        if (!lastId) {
+          break;
+        }
+        startAfter = lastId;
+      }
+
+      return authorCounts;
+    } catch (error) {
+      console.error('Error getting author post counts:', error);
+      return authorCounts;
+    }
+  }
 }
 
 // Singleton instance
