@@ -214,7 +214,7 @@ function MessagesPage() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 max-w-[1200px] border-x border-gray-200 dark:border-gray-800 flex">
+      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex">
         {/* Conversations List */}
         <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
           <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">

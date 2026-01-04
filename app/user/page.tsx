@@ -173,7 +173,7 @@ function UserProfileContent() {
     return (
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
-        <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
+        <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
           <div className="p-8 text-center text-gray-500">
             <p>User not found</p>
           </div>
@@ -187,7 +187,7 @@ function UserProfileContent() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
+      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
         <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl">
           <div className="flex items-center gap-4 px-4 py-3">
             <button
@@ -351,7 +351,7 @@ function LoadingFallback() {
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
-      <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
+      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
         <div className="p-8">
           <div className="h-48 bg-gray-100 dark:bg-gray-900 animate-pulse" />
           <div className="px-4 pb-4">

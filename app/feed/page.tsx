@@ -243,7 +243,7 @@ function FeedPage() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
       
-      <main className="flex-1 min-w-0 max-w-[700px] border-x border-gray-200 dark:border-gray-800">
+      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
         <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl">
           <div className="px-4 py-3 flex items-center justify-between">
             <h1 className="text-xl font-bold">Home</h1>
@@ -260,10 +260,10 @@ function FeedPage() {
           </div>
         </header>
 
-        <div className="border-b border-gray-200 dark:border-gray-800 p-4">
+        <div className="border-b border-gray-200 dark:border-gray-800 px-4 py-2 md:p-4">
           {user ? (
             <div className="flex gap-3">
-              <div className="h-12 w-12 rounded-full overflow-hidden bg-gray-100">
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-gray-100 flex-shrink-0">
                 {isHydrated ? (
                   avatarFeatures ? (
                     <AvatarCanvas features={avatarFeatures} size={48} />
@@ -287,10 +287,10 @@ function FeedPage() {
               </button>
             </div>
           ) : (
-            <div className="flex items-center justify-center py-2">
+            <div className="flex items-center justify-center">
               <Link
                 href="/login"
-                className="text-yappr-500 hover:text-yappr-600 font-medium"
+                className="text-yappr-500 hover:text-yappr-600 font-medium py-1"
               >
                 Login to share your thoughts
               </Link>

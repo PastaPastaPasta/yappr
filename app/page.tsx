@@ -34,8 +34,8 @@ export default function PublicHomePage() {
   if (!isHydrated) {
     return (
       <div className="min-h-[calc(100vh-40px)] flex">
-        {/* Sidebar skeleton */}
-        <div className="fixed h-[calc(100vh-40px)] w-[275px] px-2 py-4 top-[40px]">
+        {/* Sidebar skeleton - hidden on mobile */}
+        <div className="hidden md:block fixed h-[calc(100vh-40px)] w-[275px] px-2 py-4 top-[40px]">
           <div className="h-8 w-20 bg-gray-200 dark:bg-gray-800 rounded mb-6 animate-pulse" />
           <div className="space-y-2">
             {[...Array(6)].map((_, i) => (
@@ -46,13 +46,13 @@ export default function PublicHomePage() {
         </div>
 
         {/* Main content skeleton */}
-        <main className="flex-1 max-w-[1200px] mx-auto px-8 py-16">
-          <div className="text-center mb-16">
-            <div className="h-16 w-96 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-4 animate-pulse" />
-            <div className="h-6 w-[500px] bg-gray-100 dark:bg-gray-900 rounded mx-auto mb-8 animate-pulse" />
-            <div className="flex gap-4 justify-center">
-              <div className="h-12 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-              <div className="h-12 w-32 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+        <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 py-8 md:py-16">
+          <div className="text-center mb-8 md:mb-16">
+            <div className="h-10 md:h-16 w-full max-w-72 md:max-w-96 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-4 animate-pulse" />
+            <div className="h-5 md:h-6 w-full max-w-[300px] md:max-w-[500px] bg-gray-100 dark:bg-gray-900 rounded mx-auto mb-6 md:mb-8 animate-pulse" />
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-0">
+              <div className="h-12 w-full sm:w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+              <div className="h-12 w-full sm:w-32 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
             </div>
           </div>
         </main>
@@ -64,23 +64,23 @@ export default function PublicHomePage() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 max-w-[1200px] mx-auto px-8">
+      <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 overflow-x-hidden">
         {/* Hero Section */}
-        <section className="py-16 text-center">
+        <section className="py-8 md:py-16 text-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
-            <h1 className="text-5xl font-bold mb-4">
+            <h1 className="text-3xl md:text-5xl font-bold mb-4">
               Welcome to <span className="text-gradient">Yappr</span>
             </h1>
-            <p className="text-xl text-gray-600 dark:text-gray-400 mb-8 max-w-2xl mx-auto">
+            <p className="text-base md:text-xl text-gray-600 dark:text-gray-400 mb-6 md:mb-8 max-w-2xl mx-auto px-2">
               The decentralized social platform where you own your data, your identity, and your voice.
               Built on Dash Platform.
             </p>
 
-            <div className="flex gap-4 justify-center">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-0">
               <Button size="lg" asChild className="shadow-yappr-lg">
                 <Link href="/login">
                   Get Started

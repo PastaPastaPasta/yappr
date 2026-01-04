@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast'
 import { Providers } from '@/components/providers'
 import ErrorBoundary from '@/components/error-boundary'
 import { DevelopmentBanner } from '@/components/ui/development-banner'
+import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -28,10 +29,12 @@ export default function RootLayout({
             <ErrorBoundary level="page">
               {children}
             </ErrorBoundary>
+            <div className="h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
+            <MobileBottomNav />
           </Providers>
         </ErrorBoundary>
         <Toaster
-          position="bottom-center"
+          position="top-center"
           toastOptions={{
             duration: 3000,
             style: {

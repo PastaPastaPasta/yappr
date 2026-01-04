@@ -82,7 +82,7 @@ export function Sidebar() {
   }
 
   return (
-    <div className="h-[calc(100vh-40px)] w-[275px] shrink-0 flex flex-col px-2 sticky top-[40px]">
+    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
         <Link href="/" className="flex items-center px-3 py-4 mb-2 group">
           <div className="text-2xl font-bold text-gradient">Yappr</div>

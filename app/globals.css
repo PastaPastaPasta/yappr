@@ -43,4 +43,12 @@
   .text-gradient {
     @apply bg-gradient-to-r from-yappr-500 to-yappr-600 bg-clip-text text-transparent;
   }
+
+  .safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .safe-area-inset-top {
+    padding-top: env(safe-area-inset-top, 0);
+  }
 }
