@@ -26,6 +26,7 @@ import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { getDefaultAvatarUrl } from '@/lib/avatar-utils'
 import { LikesModal } from './likes-modal'
+import { PostContent } from './post-content'
 
 interface PostCardProps {
   post: Post
@@ -305,7 +306,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
             </Link>
           )}
 
-          <div className="mt-1 whitespace-pre-wrap break-words">{post.content}</div>
+          <PostContent content={post.content} className="mt-1" />
 
           {post.quotedPost && (
             <div className="mt-3 border border-gray-200 dark:border-gray-800 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors">
@@ -336,7 +337,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
                 <span>·</span>
                 <span>{formatTime(post.quotedPost.createdAt)}</span>
               </div>
-              <div className="mt-1 text-sm">{post.quotedPost.content}</div>
+              <PostContent content={post.quotedPost.content} className="mt-1 text-sm" />
             </div>
           )}
 

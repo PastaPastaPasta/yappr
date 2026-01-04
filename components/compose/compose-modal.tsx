@@ -12,6 +12,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { getDefaultAvatarUrl } from '@/lib/avatar-utils'
+import { extractHashtags } from '@/lib/post-helpers'
+import { hashtagService } from '@/lib/services/hashtag-service'
 
 export function ComposeModal() {
   const { isComposeOpen, setComposeOpen, replyingTo, setReplyingTo } = useAppStore()
@@ -52,15 +54,35 @@ export function ComposeModal() {
       
       if (result.success) {
         toast.success('Post created successfully!')
-        
+
+        // Create hashtag documents for the post
+        const hashtags = extractHashtags(postContent)
+        // Post ID can be in different fields depending on SDK response format
+        const postId = result.data?.documentId || result.data?.document?.id || result.data?.$id || result.data?.id
+        console.log('Post creation result:', { hashtags, postId, resultData: result.data })
+
+        if (hashtags.length > 0 && postId) {
+          // Create hashtag documents in background (don't block UI)
+          hashtagService.createPostHashtags(postId, user.identityId, hashtags)
+            .then(results => {
+              const successCount = results.filter(r => r).length
+              console.log(`Created ${successCount}/${hashtags.length} hashtag documents`)
+            })
+            .catch(err => {
+              console.error('Failed to create hashtag documents:', err)
+            })
+        } else if (hashtags.length > 0) {
+          console.warn('Could not create hashtag documents - no post ID found in result:', result)
+        }
+
         // Clear the form and close modal
         setContent('')
         setComposeOpen(false)
         setReplyingTo(null)
-        
+
         // Trigger feed refresh if possible
-        window.dispatchEvent(new CustomEvent('post-created', { 
-          detail: { post: result.data } 
+        window.dispatchEvent(new CustomEvent('post-created', {
+          detail: { post: result.data }
         }))
       } else {
         throw result.error || new Error('Post creation failed')

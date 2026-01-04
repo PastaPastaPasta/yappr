@@ -12,11 +12,15 @@ import { Button } from '@/components/ui/button'
 import { getInitials } from '@/lib/utils'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useAuth } from '@/contexts/auth-context'
+import { useRouter } from 'next/navigation'
+import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
+import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 
 type TabType = 'trending' | 'news' | 'sports' | 'entertainment'
 
 export default function ExplorePage() {
   const { user } = useAuth()
+  const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('trending')
@@ -24,6 +28,8 @@ export default function ExplorePage() {
   const [posts, setPosts] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchResults, setSearchResults] = useState<any[]>([])
+  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
+  const [isLoadingTrends, setIsLoadingTrends] = useState(true)
 
   // Load trending posts (public data, no auth required)
   useEffect(() => {
@@ -63,6 +69,34 @@ export default function ExplorePage() {
     }
     
     loadTrendingPosts()
+  }, [])
+
+  // Load trending hashtags
+  useEffect(() => {
+    const loadTrendingHashtags = async () => {
+      // Check if hashtag contract is deployed
+      if (!HASHTAG_CONTRACT_ID) {
+        console.log('Hashtag contract not deployed yet, using mock data')
+        setIsLoadingTrends(false)
+        return
+      }
+
+      try {
+        setIsLoadingTrends(true)
+        const trending = await hashtagService.getTrendingHashtags({
+          timeWindowHours: 48,
+          minPosts: 1,
+          limit: 12
+        })
+        setTrendingHashtags(trending)
+      } catch (error) {
+        console.error('Failed to load trending hashtags:', error)
+      } finally {
+        setIsLoadingTrends(false)
+      }
+    }
+
+    loadTrendingHashtags()
   }, [])
 
   // Search posts when query changes
@@ -109,27 +143,11 @@ export default function ExplorePage() {
 
   const displayPosts = searchQuery ? searchResults : posts
   
-  // Mock trends with funny/creative hashtags
-  const mockTrends = [
-    { topic: '#Cancun', posts: 15420, popularity: Math.log10(15420).toFixed(2), trend: 'up' },
-    { topic: '#AllDogsGoToHeaven', posts: 8234, popularity: Math.log10(8234).toFixed(2), trend: 'up' },
-    { topic: '#PineapplePizzaDebate', posts: 6789, popularity: Math.log10(6789).toFixed(2), trend: 'stable' },
-    { topic: '#CoffeeIsLife', posts: 5432, popularity: Math.log10(5432).toFixed(2), trend: 'up' },
-    { topic: '#MondayMotivation', posts: 4321, popularity: Math.log10(4321).toFixed(2), trend: 'down' },
-    { topic: '#CatsOfYappr', posts: 3456, popularity: Math.log10(3456).toFixed(2), trend: 'up' },
-    { topic: '#Web3Memes', posts: 2876, popularity: Math.log10(2876).toFixed(2), trend: 'stable' },
-    { topic: '#TouchGrass', posts: 2345, popularity: Math.log10(2345).toFixed(2), trend: 'up' },
-    { topic: '#DecentralizedDating', posts: 1987, popularity: Math.log10(1987).toFixed(2), trend: 'up' },
-    { topic: '#CryptoKaraoke', posts: 1654, popularity: Math.log10(1654).toFixed(2), trend: 'stable' },
-    { topic: '#BananaForScale', posts: 1432, popularity: Math.log10(1432).toFixed(2), trend: 'down' },
-    { topic: '#SocksWithSandals', posts: 1234, popularity: Math.log10(1234).toFixed(2), trend: 'up' },
-  ]
+  // Use real trending data only - no mock fallback
+  const displayTrends = trendingHashtags
 
-  const trendsByCategory = {
-    trending: mockTrends,
-    news: mockTrends,
-    sports: [],
-    entertainment: [],
+  const handleHashtagClick = (hashtag: string) => {
+    router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
   }
 
   return (
@@ -326,44 +344,53 @@ export default function ExplorePage() {
                   Trending Hashtags
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
-                  Popularity score based on log of recent posts
+                  Based on recent post activity
                 </p>
               </div>
 
               {/* Trending Topics */}
               <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                {trendsByCategory[activeTab].map((trend, index) => (
-                  <motion.button
-                    key={index}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm text-gray-500">#{index + 1}</span>
-                          <p className="font-bold text-lg text-yappr-500 hover:underline">{trend.topic}</p>
-                          {trend.trend === 'up' && <ArrowTrendingUpIcon className="h-4 w-4 text-green-500" />}
-                          {trend.trend === 'down' && <ArrowTrendingUpIcon className="h-4 w-4 text-red-500 rotate-180" />}
-                          {trend.trend === 'stable' && <div className="h-4 w-4 bg-gray-400 rounded-full" />}
+                {isLoadingTrends ? (
+                  <div className="p-8 text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                    <p className="text-gray-500">Loading trending hashtags...</p>
+                  </div>
+                ) : displayTrends.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-500">No trending hashtags yet</p>
+                    <p className="text-sm text-gray-400 mt-1">Post with #hashtags to see them here!</p>
+                  </div>
+                ) : (
+                  displayTrends.map((trend, index) => (
+                    <motion.button
+                      key={trend.hashtag}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      onClick={() => handleHashtagClick(trend.hashtag)}
+                      className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm text-gray-500">#{index + 1}</span>
+                            <p className="font-bold text-lg text-yappr-500 hover:underline">#{trend.hashtag}</p>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-gray-500">
+                            <span>{formatNumber(trend.postCount)} posts</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-4 text-sm text-gray-500">
-                          <span>{formatNumber(trend.posts)} posts</span>
-                          <span>•</span>
-                          <span className="flex items-center gap-1">
-                            Popularity: 
-                            <strong className="text-gray-900 dark:text-gray-100">{trend.popularity}</strong>
-                          </span>
-                        </div>
+                        <button
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full transition-colors"
+                        >
+                          <EllipsisHorizontalIcon className="h-5 w-5 text-gray-500" />
+                        </button>
                       </div>
-                      <button className="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full transition-colors">
-                        <EllipsisHorizontalIcon className="h-5 w-5 text-gray-500" />
-                      </button>
-                    </div>
-                  </motion.button>
-                ))}
+                    </motion.button>
+                  ))
+                )}
               </div>
 
               {/* Featured Posts */}

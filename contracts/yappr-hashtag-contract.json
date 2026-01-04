@@ -1,0 +1,56 @@
+{
+  "postHashtag": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "hashtagAndTime",
+        "properties": [
+          { "hashtag": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "postHashtags",
+        "properties": [
+          { "postId": "asc" },
+          { "hashtag": "asc" }
+        ],
+        "unique": true
+      },
+      {
+        "name": "ownerHashtags",
+        "properties": [
+          { "$ownerId": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      }
+    ],
+    "mutable": false,
+    "required": [
+      "$createdAt",
+      "postId",
+      "hashtag"
+    ],
+    "properties": {
+      "postId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the post containing this hashtag",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "hashtag": {
+        "type": "string",
+        "pattern": "^[a-z0-9_]{1,63}$",
+        "position": 1,
+        "maxLength": 63,
+        "minLength": 1,
+        "description": "Hashtag without the # prefix (lowercase normalized)"
+      }
+    },
+    "description": "Links a hashtag to a post for efficient querying. Note: ownership filtering must be done at app level - anyone can technically create these documents.",
+    "additionalProperties": false
+  }
+}

@@ -10,6 +10,7 @@ export { repostService } from './repost-service';
 export { bookmarkService } from './bookmark-service';
 export { stateTransitionService } from './state-transition-service';
 export { directMessageService } from './direct-message-service';
+export { hashtagService } from './hashtag-service';
 
 // Export types
 export type { EvoSdkConfig } from './evo-sdk-service';
@@ -23,3 +24,4 @@ export type { BookmarkDocument } from './bookmark-service';
 export type { StateTransitionResult } from './state-transition-service';
 export type { QueryOptions, DocumentResult } from './document-service';
 export type { DirectMessageDocument } from './direct-message-service';
+export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
