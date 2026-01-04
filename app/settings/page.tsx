@@ -69,6 +69,7 @@ function SettingsPage() {
     }
   }
 
+  // TODO: Implement account deletion
   const handleDeleteAccount = () => {
     if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
       toast.error('Account deletion is not yet implemented')
@@ -110,8 +111,8 @@ function SettingsPage() {
             <p className="font-mono">
               {(() => {
                 const balance = user?.balance || 0;
-                // Balance is in duffs, convert to DASH (1 DASH = 100,000,000 duffs)
-                const dashBalance = balance / 100000000;
+                // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
+                const dashBalance = balance / 100000000000;
                 return `${dashBalance.toFixed(8)} DASH`;
               })()}
             </p>
@@ -295,35 +296,41 @@ function SettingsPage() {
           <div className="relative">
             <RadioGroup.Item
               value="light"
+              id="theme-light"
               className="peer sr-only"
             />
             <label
+              htmlFor="theme-light"
               className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
             >
               <SunIcon className="h-8 w-8" />
               <span className="text-sm font-medium">Light</span>
             </label>
           </div>
-          
+
           <div className="relative">
             <RadioGroup.Item
               value="dark"
+              id="theme-dark"
               className="peer sr-only"
             />
             <label
+              htmlFor="theme-dark"
               className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
             >
               <MoonIcon className="h-8 w-8" />
               <span className="text-sm font-medium">Dark</span>
             </label>
           </div>
-          
+
           <div className="relative">
             <RadioGroup.Item
               value="system"
+              id="theme-system"
               className="peer sr-only"
             />
             <label
+              htmlFor="theme-system"
               className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
             >
               <ComputerDesktopIcon className="h-8 w-8" />
@@ -416,8 +423,9 @@ function SettingsPage() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+      <div className="flex-1 flex justify-center min-w-0">
+        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}
@@ -438,7 +446,8 @@ function SettingsPage() {
         >
           {renderSection()}
         </motion.div>
-      </main>
+        </main>
+      </div>
 
       <RightSidebar />
     </div>

@@ -134,6 +134,10 @@ class PostService extends BaseDocumentService<Post> {
         profileService.getProfileWithUsername(post.author.id)
       ]);
 
+      // Determine if author has DPNS username (not a truncated ID)
+      const authorToUse = author || post.author;
+      const hasDpns = authorToUse.username && !authorToUse.username.includes('...');
+
       return {
         ...post,
         likes: stats.likes,
@@ -143,7 +147,10 @@ class PostService extends BaseDocumentService<Post> {
         liked: interactions.liked,
         reposted: interactions.reposted,
         bookmarked: interactions.bookmarked,
-        author: author || post.author
+        author: {
+          ...authorToUse,
+          hasDpns
+        } as any
       };
     } catch (error) {
       console.error('Error enriching post:', error);
@@ -264,6 +271,77 @@ class PostService extends BaseDocumentService<Post> {
     };
 
     return this.query(defaultOptions);
+  }
+
+  /**
+   * Get posts from followed users (following feed)
+   * Uses $ownerId 'in' query for efficiency
+   */
+  async getFollowingFeed(
+    userId: string,
+    options: QueryOptions = {}
+  ): Promise<DocumentResult<Post>> {
+    try {
+      // Get list of followed user IDs
+      const { followService } = await import('./follow-service');
+      const following = await followService.getFollowing(userId, { limit: 100 });
+
+      if (following.length === 0) {
+        return { documents: [], nextCursor: undefined, prevCursor: undefined };
+      }
+
+      const followingIds = following.map(f => f.followingId);
+
+      // Query posts where $ownerId is in the following list
+      // Note: 'in' queries require orderBy on the 'in' field first
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+
+      const queryParams: any = {
+        contractId: this.contractId,
+        type: 'post',
+        where: [['$ownerId', 'in', followingIds]],
+        orderBy: [['$ownerId', 'asc']],  // Required for 'in' queries
+        limit: options.limit || 50,
+      };
+
+      if (options.startAfter) {
+        queryParams.startAfter = options.startAfter;
+      }
+
+      const response = await sdk.documents.query(queryParams);
+
+      // Handle response format
+      let documents: any[];
+      if (Array.isArray(response)) {
+        documents = response;
+      } else if (response && response.documents) {
+        documents = response.documents;
+      } else if (response && typeof response.toJSON === 'function') {
+        const json = response.toJSON();
+        documents = Array.isArray(json) ? json : json.documents || [];
+      } else {
+        documents = [];
+      }
+
+      // Transform documents
+      const posts = documents.map(doc => this.transformDocument(doc));
+
+      // Sort by createdAt descending (since 'in' query can't order by $createdAt)
+      posts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      // Determine next cursor for pagination
+      const lastPost = posts.length > 0 ? posts[posts.length - 1] : null;
+
+      return {
+        documents: posts,
+        nextCursor: lastPost ? lastPost.id : undefined,
+        prevCursor: undefined
+      };
+    } catch (error) {
+      console.error('Error getting following feed:', error);
+      return { documents: [], nextCursor: undefined, prevCursor: undefined };
+    }
   }
 
   /**

@@ -1,5 +1,6 @@
 'use client'
 
+import { ThemeProvider } from 'next-themes'
 import { AuthProvider } from '@/contexts/auth-context'
 import { SdkProvider } from '@/contexts/sdk-context'
 import { UsernameModalProvider } from '@/components/dpns/username-modal-provider'
@@ -14,13 +15,20 @@ function BiometricPromptWrapper() {
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <SdkProvider>
-      <AuthProvider>
-        {children}
-        <UsernameModalProvider />
-        <BiometricPromptWrapper />
-        <KeyBackupModal />
-      </AuthProvider>
-    </SdkProvider>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+    >
+      <SdkProvider>
+        <AuthProvider>
+          {children}
+          <UsernameModalProvider />
+          <BiometricPromptWrapper />
+          <KeyBackupModal />
+        </AuthProvider>
+      </SdkProvider>
+    </ThemeProvider>
   )
 }

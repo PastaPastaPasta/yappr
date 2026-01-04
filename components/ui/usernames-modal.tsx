@@ -1,12 +1,19 @@
 'use client'
 
-import { Fragment } from 'react'
+import { Fragment, useMemo } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { WasmSdk } from '@dashevo/wasm-sdk'
 
-// Helper wrapper for DPNS utility function
-const dpns_is_contested_username = (label: string): boolean => WasmSdk.dpnsIsContestedUsername(label);
+// Helper wrapper for DPNS utility function with error handling
+const dpns_is_contested_username = (label: string): boolean => {
+  try {
+    return WasmSdk.dpnsIsContestedUsername(label)
+  } catch (e) {
+    // SDK may not be initialized yet, return false as fallback
+    return false
+  }
+}
 
 interface UsernamesModalProps {
   isOpen: boolean
@@ -17,20 +24,22 @@ interface UsernamesModalProps {
 }
 
 export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, identityId }: UsernamesModalProps) {
-  // Sort usernames with contested ones first
-  const sortedUsernames = [...usernames].sort((a, b) => {
-    const aContested = dpns_is_contested_username(a.split('.')[0])
-    const bContested = dpns_is_contested_username(b.split('.')[0])
-    
-    if (aContested && !bContested) return -1
-    if (!aContested && bContested) return 1
-    
-    // Put primary username first if both have same contested status
-    if (a === primaryUsername) return -1
-    if (b === primaryUsername) return 1
-    
-    return a.localeCompare(b)
-  })
+  // Sort usernames with contested ones first - memoized to avoid re-sorting on every render
+  const sortedUsernames = useMemo(() => {
+    return [...usernames].sort((a, b) => {
+      const aContested = dpns_is_contested_username(a.split('.')[0])
+      const bContested = dpns_is_contested_username(b.split('.')[0])
+
+      if (aContested && !bContested) return -1
+      if (!aContested && bContested) return 1
+
+      // Put primary username first if both have same contested status
+      if (a === primaryUsername) return -1
+      if (b === primaryUsername) return 1
+
+      return a.localeCompare(b)
+    })
+  }, [usernames, primaryUsername])
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>

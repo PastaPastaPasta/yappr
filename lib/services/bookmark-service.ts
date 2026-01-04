@@ -17,11 +17,29 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
    * Transform document
    */
   protected transformDocument(doc: any): BookmarkDocument {
+    // Handle different document structures from SDK
+    // Batch queries return: { id, ownerId, data: { postId } }
+    // Regular queries return: { $id, $ownerId, postId }
+    const data = doc.data || doc;
+    let postId = data.postId || doc.postId;
+
+    // Convert postId from bytes to base58 string if needed
+    if (postId && typeof postId !== 'string') {
+      try {
+        const bytes = postId instanceof Uint8Array ? postId : new Uint8Array(postId);
+        const bs58 = require('bs58');
+        postId = bs58.encode(bytes);
+      } catch (e) {
+        console.warn('Failed to convert postId to base58:', e);
+        postId = String(postId);
+      }
+    }
+
     return {
-      $id: doc.$id,
-      $ownerId: doc.$ownerId,
-      $createdAt: doc.$createdAt,
-      postId: doc.postId
+      $id: doc.$id || doc.id,
+      $ownerId: doc.$ownerId || doc.ownerId,
+      $createdAt: doc.$createdAt || doc.createdAt,
+      postId
     };
   }
 

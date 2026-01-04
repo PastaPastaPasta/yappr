@@ -9,7 +9,7 @@
   }
 
   .dark {
-    --background: 0 0% 0%;
+    --background: 0 0% 7%;
     --foreground: 210 40% 98%;
   }
 }
@@ -29,7 +29,7 @@
   }
 
   .glass-effect {
-    @apply backdrop-blur-xl bg-white/80 dark:bg-black/80;
+    @apply backdrop-blur-xl bg-white/80 dark:bg-neutral-900/80;
   }
 
   .glass-border {

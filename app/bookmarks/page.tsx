@@ -50,88 +50,94 @@ function BookmarksPage() {
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
 
   useEffect(() => {
-    // In a real app, this would fetch bookmarked posts from Dash Platform
-    // For now, we'll simulate some bookmarked posts
-    setTimeout(() => {
-      const mockBookmarks: BookmarkedPost[] = [
-        {
-          id: '1',
-          content: 'Just deployed my first dApp on Dash Platform! 🚀 The future is decentralized.',
-          author: {
-            id: 'user123',
-            username: 'user123...',
-            handle: 'user123',
-            displayName: 'User 123',
-            avatar: '',
-            followers: 0,
-            following: 0,
-            joinedAt: new Date()
-          },
-          createdAt: new Date(Date.now() - 1000 * 60 * 60),
-          timestamp: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-          likes: 42,
-          replies: 5,
-          reposts: 12,
-          views: 234,
-          bookmarkedAt: new Date(Date.now() - 1000 * 60 * 30)
-        },
-        {
-          id: '2',
-          content: 'Building decentralized social media is the future. No more centralized control over our data and conversations.',
-          author: {
-            id: 'user456',
-            username: 'user456...',
-            handle: 'user456',
-            displayName: 'User 456',
-            avatar: '',
-            followers: 0,
-            following: 0,
-            joinedAt: new Date()
-          },
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24),
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-          likes: 128,
-          replies: 23,
-          reposts: 45,
-          views: 1234,
-          bookmarkedAt: new Date(Date.now() - 1000 * 60 * 60 * 2)
-        },
-        {
-          id: '3',
-          content: 'Dash Platform makes it so easy to build decentralized applications. The developer experience is amazing! #DashPlatform #Web3',
-          author: {
-            id: 'user789',
-            username: 'user789...',
-            handle: 'user789',
-            displayName: 'User 789',
-            avatar: '',
-            followers: 0,
-            following: 0,
-            joinedAt: new Date()
-          },
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 48),
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-          likes: 89,
-          replies: 17,
-          reposts: 28,
-          views: 567,
-          bookmarkedAt: new Date(Date.now() - 1000 * 60 * 60 * 24)
-        }
-      ]
-      setBookmarks(mockBookmarks)
-      setIsLoading(false)
-    }, 1000)
-  }, [])
+    const loadBookmarks = async () => {
+      if (!user) return
 
-  const removeBookmark = (postId: string) => {
+      setIsLoading(true)
+      try {
+        const { bookmarkService } = await import('@/lib/services/bookmark-service')
+        const { postService } = await import('@/lib/services/post-service')
+
+        // Get bookmark documents
+        const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
+
+        // Fetch full post data for each bookmark
+        const postsWithBookmarkData = await Promise.all(
+          bookmarkDocs.map(async (bookmark) => {
+            const post = await postService.getEnrichedPostById(bookmark.postId)
+            if (!post) return null
+            return {
+              ...post,
+              bookmarkedAt: new Date(bookmark.$createdAt)
+            }
+          })
+        )
+
+        // Filter out deleted posts and set bookmarks
+        setBookmarks(postsWithBookmarkData.filter((p): p is BookmarkedPost => p !== null))
+      } catch (error) {
+        console.error('Error loading bookmarks:', error)
+        toast.error('Failed to load bookmarks')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadBookmarks()
+  }, [user])
+
+  const removeBookmark = async (postId: string) => {
+    if (!user) return
+
+    // Optimistic update
+    const previousBookmarks = bookmarks
     setBookmarks(prev => prev.filter(post => post.id !== postId))
-    toast.success('Removed from bookmarks')
+
+    try {
+      const { bookmarkService } = await import('@/lib/services/bookmark-service')
+      const success = await bookmarkService.removeBookmark(postId, user.identityId)
+      if (success) {
+        toast.success('Removed from bookmarks')
+      } else {
+        // Rollback on failure
+        setBookmarks(previousBookmarks)
+        toast.error('Failed to remove bookmark')
+      }
+    } catch (error) {
+      console.error('Error removing bookmark:', error)
+      setBookmarks(previousBookmarks)
+      toast.error('Failed to remove bookmark')
+    }
   }
 
-  const clearAllBookmarks = () => {
-    if (confirm('Are you sure you want to clear all bookmarks?')) {
-      setBookmarks([])
-      toast.success('All bookmarks cleared')
+  const clearAllBookmarks = async () => {
+    if (!user) return
+    if (!confirm('Are you sure you want to clear all bookmarks?')) return
+
+    const previousBookmarks = bookmarks
+    setBookmarks([])
+
+    try {
+      const { bookmarkService } = await import('@/lib/services/bookmark-service')
+
+      // Remove all bookmarks
+      const results = await Promise.all(
+        previousBookmarks.map(post =>
+          bookmarkService.removeBookmark(post.id, user.identityId)
+        )
+      )
+
+      const allSucceeded = results.every(r => r)
+      if (allSucceeded) {
+        toast.success('All bookmarks cleared')
+      } else {
+        // Some failed, reload to get current state
+        toast.error('Some bookmarks could not be removed')
+      }
+    } catch (error) {
+      console.error('Error clearing bookmarks:', error)
+      setBookmarks(previousBookmarks)
+      toast.error('Failed to clear bookmarks')
     }
   }
 
@@ -150,8 +156,9 @@ function BookmarksPage() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+      <div className="flex-1 flex justify-center min-w-0">
+        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
@@ -167,7 +174,7 @@ function BookmarksPage() {
               
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-[200px] bg-white dark:bg-black rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                  className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
@@ -241,14 +248,14 @@ function BookmarksPage() {
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
-                      <button className="p-2 bg-white/90 dark:bg-black/90 backdrop-blur-sm rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900">
+                      <button className="p-2 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900">
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
                     </DropdownMenu.Trigger>
                     
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content
-                        className="min-w-[180px] bg-white dark:bg-black rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                        className="min-w-[180px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                         sideOffset={5}
                       >
                         <DropdownMenu.Item
@@ -277,7 +284,8 @@ function BookmarksPage() {
             ))}
           </div>
         )}
-      </main>
+        </main>
+      </div>
 
       <RightSidebar />
     </div>

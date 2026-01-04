@@ -301,7 +301,7 @@ export default function LoginPage() {
   })()
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black flex items-center justify-center px-4">
+    <div className="min-h-screen bg-white dark:bg-neutral-900 flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
           <h1 className="text-4xl font-bold text-gradient mb-2">Yappr</h1>
