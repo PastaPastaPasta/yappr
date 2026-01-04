@@ -51,20 +51,7 @@ export function KeyBackupSettings() {
     if (!user) return
 
     // Get the private key from storage
-    let privateKey = getPrivateKey(user.identityId)
-
-    if (!privateKey) {
-      // Try biometric storage
-      try {
-        const { getPrivateKeyWithBiometric, biometricStorage } = await import('@/lib/biometric-storage')
-        const isAvailable = await biometricStorage.isAvailable()
-        if (isAvailable) {
-          privateKey = await getPrivateKeyWithBiometric(user.identityId)
-        }
-      } catch (error) {
-        console.error('Error getting key from biometric storage:', error)
-      }
-    }
+    const privateKey = getPrivateKey(user.identityId)
 
     if (!privateKey) {
       toast.error('Cannot access private key. Please log in again.')

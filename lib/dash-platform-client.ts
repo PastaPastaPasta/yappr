@@ -102,33 +102,13 @@ export class DashPlatformClient {
       
       console.log('Creating post for identity:', identityId)
       
-      // Get the private key from secure storage (with biometric fallback)
+      // Get the private key from secure storage
       const { getPrivateKey } = await import('./secure-storage')
-      let privateKeyWIF = getPrivateKey(identityId)
-      
-      // If not in memory, try biometric storage
-      if (!privateKeyWIF) {
-        try {
-          console.log('Private key not in memory, attempting biometric retrieval...')
-          const { getPrivateKeyWithBiometric } = await import('./biometric-storage')
-          privateKeyWIF = await getPrivateKeyWithBiometric(identityId)
-          
-          if (privateKeyWIF) {
-            console.log('Retrieved private key with biometric authentication')
-            // Also store in memory for this session to avoid repeated biometric prompts
-            const { storePrivateKey } = await import('./secure-storage')
-            storePrivateKey(identityId, privateKeyWIF, 3600000) // 1 hour TTL
-          }
-        } catch (e) {
-          console.log('Biometric retrieval failed:', e)
-        }
-      }
-      
+      const privateKeyWIF = getPrivateKey(identityId)
+
       if (!privateKeyWIF) {
         throw new Error('Private key not found. Please log in again.')
       }
-      
-      // Private key retrieved successfully
       
       // Create the post document using WASM SDK
       // Note: The actual contract doesn't have authorId - it uses $ownerId system field

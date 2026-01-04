@@ -142,18 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Store private key securely in memory for this session only
       // This is needed for signing transactions
       const { storePrivateKey } = await import('@/lib/secure-storage')
-      storePrivateKey(identityId, privateKey, 3600000) // 1 hour TTL
-      
-      // Also try to store with biometric protection for longer-term access
-      try {
-        const { storePrivateKeyWithBiometric } = await import('@/lib/biometric-storage')
-        const stored = await storePrivateKeyWithBiometric(identityId, privateKey)
-        if (stored) {
-          console.log('Private key stored with biometric protection')
-        }
-      } catch (e) {
-        console.log('Biometric storage not available:', e)
-      }
+      storePrivateKey(identityId, privateKey)
 
       setUser(authUser)
       

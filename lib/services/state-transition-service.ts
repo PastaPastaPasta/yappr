@@ -15,43 +15,14 @@ class StateTransitionService {
     if (typeof window === 'undefined') {
       throw new Error('State transitions can only be performed in browser');
     }
-    
-    // First try to get from memory (session storage)
+
     const { getPrivateKey } = await import('../secure-storage');
-    let privateKey = getPrivateKey(identityId);
-    
-    // If not in memory, try biometric storage
-    if (!privateKey) {
-      console.log('Private key not in session storage, attempting biometric retrieval...');
-      try {
-        const { biometricStorage, getPrivateKeyWithBiometric } = await import('../biometric-storage');
-        
-        // Check if biometric is available
-        const isAvailable = await biometricStorage.isAvailable();
-        console.log('Biometric available:', isAvailable);
-        
-        // Try to get the key
-        privateKey = await getPrivateKeyWithBiometric(identityId);
-        console.log('Biometric retrieval result:', privateKey ? 'Success' : 'Failed');
-        
-        if (privateKey) {
-          console.log('Retrieved private key with biometric authentication');
-          // Also store in memory for this session to avoid repeated biometric prompts
-          const { storePrivateKey } = await import('../secure-storage');
-          storePrivateKey(identityId, privateKey, 3600000); // 1 hour TTL
-        } else {
-          console.log('No private key found in biometric storage for identity:', identityId);
-        }
-      } catch (e) {
-        console.error('Biometric retrieval error:', e);
-      }
-    }
-    
+    const privateKey = getPrivateKey(identityId);
+
     if (!privateKey) {
       throw new Error('No private key found. Please log in again.');
     }
-    
-    
+
     return privateKey;
   }
 

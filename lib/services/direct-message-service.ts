@@ -11,7 +11,7 @@ import {
   formatEncryptedContent,
   base64ToUint8Array
 } from '../message-encryption'
-import { getPrivateKey, storePrivateKey } from '../secure-storage'
+import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID } from '../constants'
 import bs58 from 'bs58'
 
@@ -124,7 +124,7 @@ class DirectMessageService extends BaseDocumentService<DirectMessageDocument> {
       const publicKeyBytes = this.extractPublicKeyBytes(ecdsaKey)
 
       // 2. Get sender's private key for encryption
-      const privateKey = await this.getPrivateKeyWithFallback(senderId)
+      const privateKey = this.getPrivateKeyFromStorage(senderId)
       if (!privateKey) {
         return { success: false, error: 'Please log in again to send messages' }
       }
@@ -420,8 +420,8 @@ class DirectMessageService extends BaseDocumentService<DirectMessageDocument> {
     // Parse encrypted content
     const encrypted = parseEncryptedContent(doc.encryptedContent)
 
-    // Get current user's private key (with biometric fallback)
-    const privateKey = await this.getPrivateKeyWithFallback(currentUserId)
+    // Get current user's private key
+    const privateKey = this.getPrivateKeyFromStorage(currentUserId)
     if (!privateKey) {
       console.warn('No private key available for decryption')
       return {
@@ -573,37 +573,10 @@ class DirectMessageService extends BaseDocumentService<DirectMessageDocument> {
   }
 
   /**
-   * Get private key with biometric fallback (same pattern as state-transition-service)
+   * Get private key from secure storage
    */
-  private async getPrivateKeyWithFallback(identityId: string): Promise<string | null> {
-    // First try to get from memory (session storage)
-    let privateKey = getPrivateKey(identityId)
-
-    // If not in memory, try biometric storage
-    if (!privateKey) {
-      console.log('Private key not in session storage, attempting biometric retrieval...')
-      try {
-        const { biometricStorage, getPrivateKeyWithBiometric } = await import('../biometric-storage')
-
-        // Check if biometric is available
-        const isAvailable = await biometricStorage.isAvailable()
-        console.log('Biometric available:', isAvailable)
-
-        // Try to get the key
-        privateKey = await getPrivateKeyWithBiometric(identityId)
-        console.log('Biometric retrieval result:', privateKey ? 'Success' : 'Failed')
-
-        if (privateKey) {
-          console.log('Retrieved private key with biometric authentication')
-          // Also store in memory for this session to avoid repeated biometric prompts
-          storePrivateKey(identityId, privateKey, 3600000) // 1 hour TTL
-        }
-      } catch (e) {
-        console.error('Biometric retrieval error:', e)
-      }
-    }
-
-    return privateKey
+  private getPrivateKeyFromStorage(identityId: string): string | null {
+    return getPrivateKey(identityId)
   }
 }
 
