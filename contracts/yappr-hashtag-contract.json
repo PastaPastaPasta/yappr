@@ -3,14 +3,26 @@
     "type": "object",
     "indices": [
       {
-        "name": "hashtagAndTime",
+        "name": "byTime",
+        "properties": [
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "byHashtag",
         "properties": [
           { "hashtag": "asc" },
           { "$createdAt": "asc" }
         ]
       },
       {
-        "name": "postHashtags",
+        "name": "byPost",
+        "properties": [
+          { "postId": "asc" }
+        ]
+      },
+      {
+        "name": "byPostHashtag",
         "properties": [
           { "postId": "asc" },
           { "hashtag": "asc" }
@@ -18,7 +30,7 @@
         "unique": true
       },
       {
-        "name": "ownerHashtags",
+        "name": "byOwner",
         "properties": [
           { "$ownerId": "asc" },
           { "$createdAt": "asc" }
@@ -50,7 +62,7 @@
         "description": "Hashtag without the # prefix (lowercase normalized)"
       }
     },
-    "description": "Links a hashtag to a post for efficient querying. Note: ownership filtering must be done at app level - anyone can technically create these documents.",
+    "description": "Links a hashtag to a post for efficient querying.",
     "additionalProperties": false
   }
 }

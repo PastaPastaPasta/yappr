@@ -206,7 +206,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       if (!normalizedTag) return [];
 
-      // Use hashtagAndTime index: [hashtag, $createdAt]
+      // Use byHashtag index: [hashtag, $createdAt] - desc supported at query time
       const response = await sdk.documents.query({
         contractId: this.contractId,
         type: this.documentType,
@@ -245,10 +245,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Calculate timestamp for X hours ago
       const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
 
-      // Use ownerHashtags index: [$ownerId, $createdAt]
-      // We need to query all documents created after cutoffTime
-      // Unfortunately we can't query just by $createdAt without $ownerId in this index
-      // So we use the timeline-style approach with a range
+      // Use byTime index: [$createdAt] - desc supported at query time
       const response = await sdk.documents.query({
         contractId: this.contractId,
         type: this.documentType,
@@ -256,7 +253,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
           ['$createdAt', '>', cutoffTime]
         ],
         orderBy: [['$createdAt', 'desc']],
-        limit: 100 // Dash Platform max limit is 100
+        limit: 100
       });
 
       let documents: any[] = [];

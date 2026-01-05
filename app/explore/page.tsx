@@ -45,20 +45,22 @@ export default function ExplorePage() {
         })
         
         // Transform posts
-        const transformedPosts = fetchedPosts.map((post: any) => ({
-          id: post.$id,
-          content: post.content,
-          author: {
-            id: post.authorId,
-            username: post.authorId.slice(0, 8) + '...',
-            handle: post.authorId.slice(0, 8).toLowerCase()
-          },
-          timestamp: new Date(post.$createdAt).toISOString(),
-          likes: 0,
-          replies: 0,
-          reposts: 0,
-          views: 0
-        }))
+        const transformedPosts = fetchedPosts
+          .filter((post: any) => post.$ownerId)
+          .map((post: any) => ({
+            id: post.$id,
+            content: post.content,
+            author: {
+              id: post.$ownerId,
+              username: post.$ownerId.slice(0, 8) + '...',
+              handle: post.$ownerId.slice(0, 8).toLowerCase()
+            },
+            timestamp: new Date(post.$createdAt || 0).toISOString(),
+            likes: 0,
+            replies: 0,
+            reposts: 0,
+            views: 0
+          }))
         
         setPosts(transformedPosts)
       } catch (error) {
@@ -74,9 +76,8 @@ export default function ExplorePage() {
   // Load trending hashtags
   useEffect(() => {
     const loadTrendingHashtags = async () => {
-      // Check if hashtag contract is deployed
       if (!HASHTAG_CONTRACT_ID) {
-        console.log('Hashtag contract not deployed yet, using mock data')
+        console.log('Hashtag contract not deployed yet')
         setIsLoadingTrends(false)
         return
       }
@@ -114,22 +115,25 @@ export default function ExplorePage() {
         // Simple content search - in production you'd want full-text search
         const allPosts = await dashClient.queryPosts({ limit: 100 })
         
-        const filtered = allPosts.filter((post: any) => 
-          post.content.toLowerCase().includes(searchQuery.toLowerCase())
-        ).map((post: any) => ({
-          id: post.$id,
-          content: post.content,
-          author: {
-            id: post.authorId,
-            username: post.authorId.slice(0, 8) + '...',
-            handle: post.authorId.slice(0, 8).toLowerCase()
-          },
-          timestamp: new Date(post.$createdAt).toISOString(),
-          likes: 0,
-          replies: 0,
-          reposts: 0,
-          views: 0
-        }))
+        const filtered = allPosts
+          .filter((post: any) =>
+            post.$ownerId &&
+            post.content?.toLowerCase().includes(searchQuery.toLowerCase())
+          )
+          .map((post: any) => ({
+            id: post.$id,
+            content: post.content,
+            author: {
+              id: post.$ownerId,
+              username: post.$ownerId.slice(0, 8) + '...',
+              handle: post.$ownerId.slice(0, 8).toLowerCase()
+            },
+            timestamp: new Date(post.$createdAt || 0).toISOString(),
+            likes: 0,
+            replies: 0,
+            reposts: 0,
+            views: 0
+          }))
         
         setSearchResults(filtered)
       } catch (error) {
@@ -363,13 +367,13 @@ export default function ExplorePage() {
                   </div>
                 ) : (
                   displayTrends.map((trend, index) => (
-                    <motion.button
+                    <motion.div
                       key={trend.hashtag}
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
                       onClick={() => handleHashtagClick(trend.hashtag)}
-                      className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left"
+                      className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -378,7 +382,7 @@ export default function ExplorePage() {
                             <p className="font-bold text-lg text-yappr-500 hover:underline">#{trend.hashtag}</p>
                           </div>
                           <div className="flex items-center gap-4 text-sm text-gray-500">
-                            <span>{formatNumber(trend.postCount)} posts</span>
+                            <span>{formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}</span>
                           </div>
                         </div>
                         <button
@@ -388,7 +392,7 @@ export default function ExplorePage() {
                           <EllipsisHorizontalIcon className="h-5 w-5 text-gray-500" />
                         </button>
                       </div>
-                    </motion.button>
+                    </motion.div>
                   ))
                 )}
               </div>
