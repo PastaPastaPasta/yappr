@@ -170,7 +170,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
   }
 
   const handleShare = () => {
-    navigator.clipboard.writeText(`https://yappr.app/post?id=${post.id}`)
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
+    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`)
     toast.success('Link copied to clipboard')
   }
 
