@@ -26,14 +26,18 @@ function FeedPage() {
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'forYou' | 'following'>('following')
+  const [activeTab, setActiveTab] = useState<'forYou' | 'following'>('forYou')
 
   // Hook for enriching posts with stats/interactions (handles deduplication internally)
   const { enrich: enrichPosts, reset: resetEnrichment } = usePostEnrichment()
-  
-  // Prevent hydration mismatches
+
+  // Prevent hydration mismatches and restore tab from localStorage
   useEffect(() => {
     setIsHydrated(true)
+    const savedTab = localStorage.getItem('feed-tab')
+    if (savedTab === 'forYou' || savedTab === 'following') {
+      setActiveTab(savedTab)
+    }
   }, [])
 
   // Load posts function - using real WASM SDK with updated version
@@ -306,7 +310,10 @@ function FeedPage() {
           {/* Feed Tabs */}
           <div className="flex border-b border-gray-200 dark:border-gray-800">
             <button
-              onClick={() => setActiveTab('forYou')}
+              onClick={() => {
+                setActiveTab('forYou')
+                localStorage.setItem('feed-tab', 'forYou')
+              }}
               className={cn(
                 'flex-1 py-4 text-center font-medium transition-colors relative',
                 activeTab === 'forYou'
@@ -320,7 +327,10 @@ function FeedPage() {
               )}
             </button>
             <button
-              onClick={() => setActiveTab('following')}
+              onClick={() => {
+                setActiveTab('following')
+                localStorage.setItem('feed-tab', 'following')
+              }}
               className={cn(
                 'flex-1 py-4 text-center font-medium transition-colors relative',
                 activeTab === 'following'
