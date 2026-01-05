@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { MagnifyingGlassIcon, ChartBarIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
 import { formatNumber } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
@@ -202,10 +203,10 @@ export function RightSidebar() {
       )}
 
       <div className="px-4 py-2 text-xs text-gray-500 space-x-2">
-        <a href="#" className="hover:underline">Terms</a>
-        <a href="#" className="hover:underline">Privacy</a>
-        <a href="#" className="hover:underline">Cookies</a>
-        <a href="#" className="hover:underline">About</a>
+        <Link href="/terms" className="hover:underline">Terms</Link>
+        <Link href="/privacy" className="hover:underline">Privacy</Link>
+        <Link href="/cookies" className="hover:underline">Cookies</Link>
+        <Link href="/about" className="hover:underline">About</Link>
       </div>
     </div>
   )
