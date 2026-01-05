@@ -1,77 +1,109 @@
 'use client'
 
 /**
- * Secure in-memory storage for sensitive data like private keys
- * This avoids storing sensitive data in localStorage/sessionStorage
- * Keys persist until page unload/close
+ * Secure storage for sensitive data like private keys using sessionStorage
+ * - Survives page reloads within the same tab
+ * - Automatically cleared when tab/browser is closed
+ * - Isolated per tab (other tabs cannot access)
  */
 class SecureStorage {
-  private storage: Map<string, any> = new Map()
+  private prefix = 'yappr_secure_'
+
+  private isAvailable(): boolean {
+    if (typeof window === 'undefined') return false
+    try {
+      const test = '__storage_test__'
+      sessionStorage.setItem(test, test)
+      sessionStorage.removeItem(test)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   /**
-   * Store a value securely in memory
+   * Store a value securely
    */
   set(key: string, value: any): void {
-    this.storage.set(key, value)
+    if (!this.isAvailable()) return
+    try {
+      sessionStorage.setItem(this.prefix + key, JSON.stringify(value))
+    } catch (e) {
+      console.error('SecureStorage: Failed to store value:', e)
+    }
   }
 
   /**
    * Get a value from secure storage
    */
   get(key: string): any {
-    return this.storage.get(key)
+    if (!this.isAvailable()) return null
+    try {
+      const item = sessionStorage.getItem(this.prefix + key)
+      return item ? JSON.parse(item) : null
+    } catch {
+      return null
+    }
   }
 
   /**
    * Check if a key exists
    */
   has(key: string): boolean {
-    return this.storage.has(key)
+    if (!this.isAvailable()) return false
+    return sessionStorage.getItem(this.prefix + key) !== null
   }
 
   /**
    * Delete a value from secure storage
    */
   delete(key: string): boolean {
-    return this.storage.delete(key)
+    if (!this.isAvailable()) return false
+    const existed = this.has(key)
+    sessionStorage.removeItem(this.prefix + key)
+    return existed
   }
 
   /**
-   * Clear all stored values
+   * Clear all stored values with our prefix
    */
   clear(): void {
-    this.storage.clear()
+    if (!this.isAvailable()) return
+    const keysToRemove: string[] = []
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
+      if (key?.startsWith(this.prefix)) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(key => sessionStorage.removeItem(key))
   }
 
   /**
    * Get all keys (for debugging - should not expose actual values)
    */
   keys(): string[] {
-    return Array.from(this.storage.keys())
+    if (!this.isAvailable()) return []
+    const keys: string[] = []
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
+      if (key?.startsWith(this.prefix)) {
+        keys.push(key.slice(this.prefix.length))
+      }
+    }
+    return keys
   }
 
   /**
    * Get storage size
    */
   size(): number {
-    return this.storage.size
+    return this.keys().length
   }
 }
 
 // Singleton instance
 const secureStorage = new SecureStorage()
-
-// Clean up on page unload
-if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
-    secureStorage.clear()
-  })
-
-  // Also clean up on page hide (mobile support)
-  window.addEventListener('pagehide', () => {
-    secureStorage.clear()
-  })
-}
 
 export default secureStorage
 
