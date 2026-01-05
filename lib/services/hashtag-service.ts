@@ -256,7 +256,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
           ['$createdAt', '>', cutoffTime]
         ],
         orderBy: [['$createdAt', 'desc']],
-        limit: 500 // Get enough for trending calculation
+        limit: 100 // Dash Platform max limit is 100
       });
 
       let documents: any[] = [];
