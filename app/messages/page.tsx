@@ -136,7 +136,34 @@ function MessagesPage() {
         if (cancelled) return
 
         if (newMsgs.length > 0) {
-          setMessages(prev => [...prev, ...newMsgs])
+          setMessages(prev => {
+            const result = [...prev]
+            const existingIds = new Set(prev.map(m => m.id))
+
+            for (const newMsg of newMsgs) {
+              // Skip if we already have this exact ID
+              if (existingIds.has(newMsg.id)) continue
+
+              // Check if this matches a pending/optimistic message (has temp ID)
+              // that was added by sendMessage before we got the real document ID
+              const duplicateIndex = result.findIndex(m =>
+                m.id.startsWith('temp-') &&
+                m.senderId === newMsg.senderId &&
+                m.content === newMsg.content &&
+                Math.abs(m.createdAt.getTime() - newMsg.createdAt.getTime()) < 60000
+              )
+
+              if (duplicateIndex !== -1) {
+                // Replace the temp message with the real one (has actual document ID)
+                result[duplicateIndex] = newMsg
+              } else {
+                // Truly new message from other party
+                result.push(newMsg)
+              }
+            }
+
+            return result
+          })
         }
       } catch (error) {
         console.debug('Message poll error:', error)
@@ -172,8 +199,18 @@ function MessagesPage() {
       )
 
       if (result.success && result.message) {
-        // Add message to UI
-        setMessages(prev => [...prev, result.message!])
+        // Add message to UI (with deduplication in case poll already added it)
+        setMessages(prev => {
+          const msg = result.message!
+          // Check if poll already added this message (with real ID while we have temp)
+          const alreadyExists = prev.some(m =>
+            m.id === msg.id ||
+            (m.senderId === msg.senderId &&
+             m.content === msg.content &&
+             Math.abs(m.createdAt.getTime() - msg.createdAt.getTime()) < 60000)
+          )
+          return alreadyExists ? prev : [...prev, msg]
+        })
 
         // Update conversation's last message
         setConversations(prev => prev.map(conv =>
