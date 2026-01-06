@@ -36,9 +36,12 @@ interface PostCardProps {
   isOwnPost?: boolean
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
+
+  // Compute isOwnPost from auth context if not explicitly provided
+  const isOwnPost = isOwnPostProp ?? (user?.identityId === post.author.id)
   const [liked, setLiked] = useState(post.liked || false)
   const [likes, setLikes] = useState(post.likes)
   const [reposted, setReposted] = useState(post.reposted || false)
