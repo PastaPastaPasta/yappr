@@ -1,6 +1,8 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
+import { postService } from './post-service';
 import { wallet } from '@dashevo/evo-sdk';
+import { TipInfo } from '../types';
 
 export interface TipResult {
   success: boolean;
@@ -9,6 +11,17 @@ export interface TipResult {
   errorCode?: 'INSUFFICIENT_BALANCE' | 'SELF_TIP' | 'NETWORK_ERROR' | 'INVALID_AMOUNT' | 'INVALID_KEY';
 }
 
+// Regex to parse tip content: tip:AMOUNT_CREDITS followed by optional message
+// Format: tip:CREDITS\nmessage (message is optional)
+// Using [\s\S]* instead of .* with 's' flag for cross-line matching
+//
+// TODO: Once the Dash Platform SDK exposes transition IDs from creditTransfer(),
+// update format to: tip:CREDITS@TRANSITION_ID\nmessage
+// This will allow on-chain verification of tip amounts.
+// See: wasm-sdk/src/state_transitions/identity/mod.rs - identity_credit_transfer
+// currently returns { status, senderId, recipientId, amount, message } but no hash.
+const TIP_CONTENT_REGEX = /^tip:(\d+)(?:\n([\s\S]*))?$/;
+
 // Conversion: 1 DASH = 100,000,000,000 credits on Dash Platform
 // (Platform credits are different from core duffs)
 export const CREDITS_PER_DASH = 100_000_000_000;
@@ -16,18 +29,22 @@ export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
   /**
-   * Send a tip (credit transfer) to another user
+   * Send a tip (credit transfer) to another user and create a tip post
    * @param senderId - The sender's identity ID
-   * @param recipientId - The recipient's identity ID
+   * @param recipientId - The recipient's identity ID (post author)
+   * @param postId - The post being tipped
    * @param amountCredits - Amount in credits
    * @param transferKeyWif - The sender's transfer private key in WIF format
+   * @param message - Optional tip message
    * @param keyId - Optional key ID to use (if identity has multiple keys)
    */
   async sendTip(
     senderId: string,
     recipientId: string,
+    postId: string,
     amountCredits: number,
     transferKeyWif: string,
+    message?: string,
     keyId?: number
   ): Promise<TipResult> {
     // Validation: prevent self-tipping
@@ -152,19 +169,28 @@ class TipService {
 
       console.log('Tip transfer result:', result);
 
+      // Create tip post as a reply to the tipped post
+      // TODO: Once SDK returns transition ID, pass it for on-chain verification
+      await this.createTipPost(senderId, postId, amountCredits, message);
+
       return {
         success: true,
-        transactionHash: result?.transitionId || result?.$id || 'confirmed'
+        // TODO: Return actual transaction hash once SDK exposes it
+        transactionHash: 'confirmed'
       };
 
     } catch (error) {
       console.error('Tip transfer error:', error);
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       // Handle known DAPI timeout issue (like in state-transition-service)
-      if (message.includes('504') || message.includes('timeout') || message.includes('wait_for_state_transition_result')) {
+      if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
         // Assume success - clear cache and return optimistic result
         identityService.clearCache(senderId);
+
+        // Create tip post (amount is known even if confirmation timed out)
+        await this.createTipPost(senderId, postId, amountCredits, message);
+
         return {
           success: true,
           transactionHash: 'pending-confirmation'
@@ -172,7 +198,7 @@ class TipService {
       }
 
       // Check for invalid key errors
-      if (message.includes('private') || message.includes('key') || message.includes('signature')) {
+      if (errorMessage.includes('private') || errorMessage.includes('key') || errorMessage.includes('signature')) {
         return {
           success: false,
           error: 'Invalid transfer key. Please check your key and try again.',
@@ -182,9 +208,39 @@ class TipService {
 
       return {
         success: false,
-        error: message,
+        error: errorMessage,
         errorCode: 'NETWORK_ERROR'
       };
+    }
+  }
+
+  /**
+   * Create a tip post as a reply to the tipped post
+   *
+   * TODO: Once SDK exposes transition IDs, include it in content for verification:
+   * Format will become: tip:CREDITS@TRANSITION_ID\nmessage
+   */
+  private async createTipPost(
+    senderId: string,
+    postId: string,
+    amountCredits: number,
+    tipMessage?: string
+  ): Promise<void> {
+    try {
+      // Format: tip:CREDITS\nmessage (message is optional)
+      // Amount is self-reported until SDK provides transition ID for verification
+      const content = tipMessage
+        ? `tip:${amountCredits}\n${tipMessage}`
+        : `tip:${amountCredits}`;
+
+      await postService.createPost(senderId, content, {
+        replyToId: postId
+      });
+
+      console.log('Tip post created successfully');
+    } catch (error) {
+      // Log but don't fail the tip - the credit transfer already succeeded
+      console.error('Failed to create tip post:', error);
     }
   }
 
@@ -217,6 +273,41 @@ class TipService {
    */
   getMinTipDash(): number {
     return this.creditsToDash(MIN_TIP_CREDITS);
+  }
+
+  /**
+   * Parse tip content from post content
+   * Returns TipInfo if the content is a tip post, null otherwise
+   *
+   * Current format: tip:CREDITS\nmessage
+   * TODO: Future format with verification: tip:CREDITS@TRANSITION_ID\nmessage
+   */
+  parseTipContent(content: string): TipInfo | null {
+    const match = content.match(TIP_CONTENT_REGEX);
+    if (!match) return null;
+
+    return {
+      amount: parseInt(match[1], 10),
+      message: (match[2] || '').trim()
+    };
+  }
+
+  /**
+   * Check if post content is a tip
+   */
+  isTipPost(content: string): boolean {
+    return TIP_CONTENT_REGEX.test(content);
+  }
+
+  /**
+   * Get tip amount from a transition ID
+   * TODO: Implement actual lookup via SDK when available
+   */
+  async getTransitionAmount(transitionId: string): Promise<number | null> {
+    // For now, return null - amount display is optional
+    // In the future, we could look up the transition to get the actual amount
+    console.log('getTransitionAmount not yet implemented for:', transitionId);
+    return null;
   }
 }
 

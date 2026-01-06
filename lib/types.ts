@@ -29,6 +29,17 @@ export interface Post {
   replyTo?: Post
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPost?: Post
+  tipInfo?: TipInfo     // Populated if this post is a tip (parsed from content)
+}
+
+// Tip metadata parsed from post content (format: tip:CREDITS\nmessage)
+// NOTE: Amount is currently self-reported and unverified.
+// TODO: Once SDK exposes transition IDs, format will become tip:CREDITS@TRANSITION_ID
+// which will allow on-chain verification of tip amounts.
+export interface TipInfo {
+  amount: number        // Tip amount in credits (self-reported, unverified)
+  message: string       // The tip message (content after the tip: line)
+  transitionId?: string // Future: will be used for on-chain verification
 }
 
 export interface Media {

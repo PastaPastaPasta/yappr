@@ -358,9 +358,9 @@ class PostService extends BaseDocumentService<Post> {
       content
     };
 
-    // Add optional fields
+    // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
-    if (options.replyToId) data.replyToId = options.replyToId;
+    if (options.replyToId) data.replyToPostId = options.replyToId;
     if (options.quotedPostId) data.quotedPostId = options.quotedPostId;
     if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
     if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;

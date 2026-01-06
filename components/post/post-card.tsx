@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
@@ -30,6 +30,7 @@ import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
+import { tipService } from '@/lib/services/tip-service'
 
 interface PostCardProps {
   post: Post
@@ -64,6 +65,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
     setReposts(post.reposts)
     setBookmarked(post.bookmarked || false)
   }, [post.liked, post.likes, post.reposted, post.reposts, post.bookmarked])
+
+  // Check if this post is a tip and parse tip info
+  const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
+  const isTipPost = !!tipInfo
 
   const handleLike = async () => {
     if (hideAvatar) {
@@ -313,7 +318,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
             </div>
           </div>
 
-          {post.replyTo && (
+          {post.replyTo && !isTipPost && (
             <Link
               href={`/post?id=${post.replyTo.id}`}
               onClick={(e) => e.stopPropagation()}
@@ -323,7 +328,46 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
             </Link>
           )}
 
-          <PostContent content={post.content} className="mt-1" />
+          {/* Tip post - show tip badge with recipient and message */}
+          {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
+          {isTipPost ? (
+            <div className="mt-2">
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium mb-2 cursor-help">
+                      <CurrencyDollarIcon className="h-4 w-4" />
+                      <span>
+                        Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
+                        {post.replyTo && (
+                          <> to <Link
+                            href={`/user?id=${post.replyTo.author.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-semibold hover:underline"
+                          >
+                            @{post.replyTo.author.username || post.replyTo.author.displayName}
+                          </Link></>
+                        )}
+                      </span>
+                    </div>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content
+                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                      sideOffset={5}
+                    >
+                      Unverified - awaiting SDK support
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              </Tooltip.Provider>
+              {tipInfo.message && (
+                <PostContent content={tipInfo.message} className="mt-1" />
+              )}
+            </div>
+          ) : (
+            <PostContent content={post.content} className="mt-1" />
+          )}
 
           {post.quotedPost && (
             <div className="mt-3 border border-gray-200 dark:border-gray-800 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors">

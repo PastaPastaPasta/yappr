@@ -21,6 +21,7 @@ export function TipModal() {
   const { user } = useAuth()
 
   const [amount, setAmount] = useState('')
+  const [tipMessage, setTipMessage] = useState('')
   const [transferKey, setTransferKey] = useState('')
   const [state, setState] = useState<ModalState>('input')
   const [error, setError] = useState<string | null>(null)
@@ -42,6 +43,7 @@ export function TipModal() {
   useEffect(() => {
     if (!isOpen) {
       setAmount('')
+      setTipMessage('')
       setTransferKey('')
       setState('input')
       setError(null)
@@ -99,8 +101,10 @@ export function TipModal() {
     const result = await tipService.sendTip(
       user.identityId,
       post.author.id,
+      post.id,
       credits,
-      transferKey
+      transferKey,
+      tipMessage.trim() || undefined
     )
 
     // Clear sensitive data from memory immediately
@@ -222,6 +226,24 @@ export function TipModal() {
                       ))}
                     </div>
 
+                    {/* Optional message */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Message (optional)
+                      </label>
+                      <textarea
+                        value={tipMessage}
+                        onChange={(e) => setTipMessage(e.target.value)}
+                        placeholder="Add a note with your tip..."
+                        maxLength={280}
+                        rows={2}
+                        className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                      />
+                      <p className="mt-1 text-xs text-gray-500 text-right">
+                        {tipMessage.length}/280
+                      </p>
+                    </div>
+
                     {/* Transfer key input */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -267,6 +289,12 @@ export function TipModal() {
                         <span className="text-gray-600 dark:text-gray-400">To</span>
                         <span className="font-medium">{recipientName}</span>
                       </div>
+                      {tipMessage.trim() && (
+                        <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+                          <span className="text-gray-600 dark:text-gray-400 text-sm">Message:</span>
+                          <p className="text-sm mt-1">{tipMessage}</p>
+                        </div>
+                      )}
                     </div>
 
                     <p className="text-sm text-gray-500 text-center">
