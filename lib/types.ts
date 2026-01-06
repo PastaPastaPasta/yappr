@@ -66,14 +66,41 @@ export interface Trend {
   category?: string
 }
 
+// V2 DM contract document types (raw from platform)
+export interface ConversationInviteDocument {
+  $id: string
+  $ownerId: string  // sender
+  $createdAt: number
+  recipientId: Uint8Array  // 32 bytes
+  conversationId: Uint8Array  // 8 bytes
+  senderPubKey?: Uint8Array  // 33 bytes, optional (for hash160 identities)
+}
+
+export interface DirectMessageDocument {
+  $id: string
+  $ownerId: string  // sender
+  $createdAt: number
+  conversationId: Uint8Array  // 8 bytes
+  encryptedContent: Uint8Array  // binary: [12 bytes IV | ciphertext]
+}
+
+export interface ReadReceiptDocument {
+  $id: string
+  $ownerId: string  // reader (who owns this receipt)
+  $createdAt: number
+  $updatedAt: number
+  $revision?: number
+  conversationId: Uint8Array  // 8 bytes
+  lastReadAt: number  // timestamp
+}
+
+// Decrypted message for UI display
 export interface DirectMessage {
   id: string
   senderId: string
   recipientId: string
-  conversationId: string
+  conversationId: string  // base58 encoded
   content: string  // Decrypted content for display
-  encryptedContent: string
-  read: boolean
   createdAt: Date
 }
 

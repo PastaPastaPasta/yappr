@@ -36,6 +36,7 @@ function MessagesPage() {
   const [showNewConversation, setShowNewConversation] = useState(false)
   const [newConversationInput, setNewConversationInput] = useState('')
   const [isResolvingUser, setIsResolvingUser] = useState(false)
+  const [participantLastRead, setParticipantLastRead] = useState<number | null>(null)
 
   // Load conversations on mount
   useEffect(() => {
@@ -60,15 +61,26 @@ function MessagesPage() {
     const loadMessages = async () => {
       if (!selectedConversation || !user) return
       setIsLoadingMessages(true)
+      setParticipantLastRead(null) // Reset while loading
       try {
         const msgs = await directMessageService.getConversationMessages(
           selectedConversation.id,
-          user.identityId
+          user.identityId,
+          selectedConversation.participantId
         )
         setMessages(msgs)
 
-        // Mark messages as read
-        await directMessageService.markAsRead(selectedConversation.id, user.identityId)
+        // Get when participant last read (for read receipts)
+        const lastRead = await directMessageService.getParticipantLastRead(
+          selectedConversation.id,
+          selectedConversation.participantId
+        )
+        setParticipantLastRead(lastRead)
+
+        // Only mark as read if there are unread messages
+        if (selectedConversation.unreadCount > 0) {
+          await directMessageService.markAsRead(selectedConversation.id, user.identityId)
+        }
 
         // Update conversation unread count in UI
         setConversations(prev => prev.map(conv =>
@@ -343,8 +355,17 @@ function MessagesPage() {
                   <p>No messages yet. Start the conversation!</p>
                 </div>
               ) : (
-                messages.map((message) => {
+                messages.map((message, index) => {
                   const isOwn = message.senderId === user?.identityId
+                  // Check if this sent message was read by the other party
+                  const isRead = isOwn && participantLastRead && message.createdAt.getTime() <= participantLastRead
+                  // Only show "Read" on the last read message (not all of them)
+                  const isLastReadMessage = isRead && (
+                    index === messages.length - 1 ||
+                    !messages.slice(index + 1).some(m =>
+                      m.senderId === user?.identityId && m.createdAt.getTime() <= participantLastRead
+                    )
+                  )
                   return (
                     <motion.div
                       key={message.id}
@@ -362,9 +383,14 @@ function MessagesPage() {
                         >
                           <p className="text-sm">{message.content}</p>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1 px-2">
-                          {formatDistanceToNow(message.createdAt, { addSuffix: true })}
-                        </p>
+                        <div className={`flex items-center gap-1 mt-1 px-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                          <p className="text-xs text-gray-500">
+                            {formatDistanceToNow(message.createdAt, { addSuffix: true })}
+                          </p>
+                          {isLastReadMessage && (
+                            <span className="text-xs text-yappr-500 font-medium">· Read</span>
+                          )}
+                        </div>
                       </div>
                     </motion.div>
                   )

@@ -23,7 +23,9 @@ export interface EncryptedMessage {
 /**
  * Generate a deterministic conversation ID from two participant IDs
  * Sorts alphabetically to ensure same ID regardless of sender/recipient order
- * Returns 32 bytes for the identifier format required by the contract
+ * Returns 10 bytes (first 10 bytes of SHA-256 hash)
+ *
+ * Note: 10 bytes is the minimum for platform's byteArray auto-detection heuristic
  */
 export async function generateConversationId(userId1: string, userId2: string): Promise<Uint8Array> {
   const sorted = [userId1, userId2].sort()
@@ -31,7 +33,7 @@ export async function generateConversationId(userId1: string, userId2: string): 
 
   const encoder = new TextEncoder()
   const hash = await crypto.subtle.digest('SHA-256', encoder.encode(combined))
-  return new Uint8Array(hash)
+  return new Uint8Array(hash).slice(0, 10)  // 10 bytes for platform compatibility
 }
 
 /**
@@ -169,6 +171,75 @@ export async function decryptMessage(
 export function getPublicKeyFromPrivate(privateKeyWif: string): Uint8Array {
   const privateKey = wifToPrivateKey(privateKeyWif)
   return secp256k1.getPublicKey(privateKey, true) // compressed format (33 bytes)
+}
+
+/**
+ * Encrypt a message to binary format for v2 contract
+ * Returns Uint8Array with IV prepended: [12 bytes IV | ciphertext]
+ * Sender's public key is NOT included (stored in conversationInvite instead)
+ */
+export async function encryptToBinary(
+  message: string,
+  senderPrivateKeyWif: string,
+  recipientPublicKeyBytes: Uint8Array
+): Promise<Uint8Array> {
+  // 1. Convert WIF to raw private key
+  const privateKey = wifToPrivateKey(senderPrivateKeyWif)
+
+  // 2. Derive shared secret using ECDH
+  const sharedSecret = deriveSharedSecret(privateKey, recipientPublicKeyBytes)
+
+  // 3. Derive AES key from shared secret
+  const aesKey = await deriveAesKey(sharedSecret)
+
+  // 4. Generate random IV (12 bytes for AES-GCM)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+
+  // 5. Encrypt the message
+  const encoder = new TextEncoder()
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    encoder.encode(message)
+  )
+
+  // 6. Prepend IV to ciphertext
+  const result = new Uint8Array(12 + ciphertext.byteLength)
+  result.set(iv, 0)
+  result.set(new Uint8Array(ciphertext), 12)
+  return result
+}
+
+/**
+ * Decrypt a message from binary format (v2 contract)
+ * Expects Uint8Array with IV prepended: [12 bytes IV | ciphertext]
+ */
+export async function decryptFromBinary(
+  encryptedContent: Uint8Array,
+  recipientPrivateKeyWif: string,
+  senderPublicKeyBytes: Uint8Array
+): Promise<string> {
+  // 1. Convert WIF to raw private key
+  const privateKey = wifToPrivateKey(recipientPrivateKeyWif)
+
+  // 2. Derive shared secret using ECDH
+  const sharedSecret = deriveSharedSecret(privateKey, senderPublicKeyBytes)
+
+  // 3. Derive AES key from shared secret
+  const aesKey = await deriveAesKey(sharedSecret)
+
+  // 4. Extract IV (first 12 bytes) and ciphertext (rest)
+  const iv = encryptedContent.slice(0, 12)
+  const ciphertext = encryptedContent.slice(12)
+
+  // 5. Decrypt
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    ciphertext
+  )
+
+  return new TextDecoder().decode(decrypted)
 }
 
 /**

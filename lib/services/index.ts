@@ -25,7 +25,11 @@ export type { RepostDocument } from './repost-service';
 export type { BookmarkDocument } from './bookmark-service';
 export type { StateTransitionResult } from './state-transition-service';
 export type { QueryOptions, DocumentResult } from './document-service';
-export type { DirectMessageDocument } from './direct-message-service';
+export type {
+  DirectMessageDocument,
+  ConversationInviteDocument,
+  ReadReceiptDocument
+} from '../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
 export type { AvatarDocument, AvatarSettings } from './avatar-service';
 export type { TipResult } from './tip-service';
