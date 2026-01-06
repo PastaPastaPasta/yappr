@@ -1,5 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
+import { identifierToBase58 } from './sdk-helpers';
 
 export interface RepostDocument {
   $id: string;
@@ -21,23 +22,18 @@ class RepostService extends BaseDocumentService<RepostDocument> {
     // Batch queries return: { id, ownerId, data: { postId } }
     // Regular queries return: { $id, $ownerId, postId }
     const data = doc.data || doc;
-    let postId = data.postId || doc.postId;
+    const rawPostId = data.postId || doc.postId;
+    const rawId = doc.$id || doc.id;
+    const rawOwnerId = doc.$ownerId || doc.ownerId;
 
-    // Convert postId from bytes to base58 string if needed
-    if (postId && typeof postId !== 'string') {
-      try {
-        const bytes = postId instanceof Uint8Array ? postId : new Uint8Array(postId);
-        const bs58 = require('bs58');
-        postId = bs58.encode(bytes);
-      } catch (e) {
-        console.warn('Failed to convert postId to base58:', e);
-        postId = String(postId);
-      }
-    }
+    // Use identifierToBase58 for proper conversion from any format
+    const postId = rawPostId ? identifierToBase58(rawPostId) || String(rawPostId) : '';
+    const id = identifierToBase58(rawId) || String(rawId);
+    const ownerId = identifierToBase58(rawOwnerId) || String(rawOwnerId);
 
     return {
-      $id: doc.$id || doc.id,
-      $ownerId: doc.$ownerId || doc.ownerId,
+      $id: id,
+      $ownerId: ownerId,
       $createdAt: doc.$createdAt || doc.createdAt,
       postId
     };
@@ -199,20 +195,25 @@ class RepostService extends BaseDocumentService<RepostDocument> {
       // Use 'in' operator for batch query on postId
       // Must include orderBy to match the postReposts index: [postId, $createdAt]
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: 'repost',
+        dataContractId: this.contractId,
+        documentTypeName: 'repost',
         where: [['postId', 'in', postIds]],
         orderBy: [['postId', 'asc']],
         limit: 100
-      });
+      } as any);
 
+      // Handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 

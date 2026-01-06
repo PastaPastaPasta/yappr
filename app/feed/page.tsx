@@ -17,6 +17,7 @@ import ErrorBoundary from '@/components/error-boundary'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { cacheManager } from '@/lib/cache-manager'
 import { usePostEnrichment } from '@/hooks/use-post-enrichment'
+import { identifierToBase58 } from '@/lib/services/sdk-helpers'
 
 function FeedPage() {
   const [isHydrated, setIsHydrated] = useState(false)
@@ -121,29 +122,18 @@ function FeedPage() {
         const rawPosts = await dashClient.queryPosts(queryOptions)
 
         // Transform posts to match our UI format
+        // SDK v3 toJSON() returns system fields with $ prefix ($id, $ownerId, etc.)
         posts = rawPosts.map((doc: any) => {
           const data = doc.data || doc
-          const authorIdStr = doc.ownerId || 'unknown'
+          const authorIdStr = doc.$ownerId || doc.ownerId || 'unknown'
 
-          // Convert replyToPostId from bytes to base58 string if present
-          let replyToId: string | undefined
+          // replyToPostId comes as base64 from SDK v3 toJSON()
+          // Convert to base58 for consistent handling
           const rawReplyToId = data.replyToPostId || doc.replyToPostId
-          if (rawReplyToId) {
-            if (typeof rawReplyToId === 'string') {
-              replyToId = rawReplyToId
-            } else if (rawReplyToId instanceof Uint8Array || Array.isArray(rawReplyToId)) {
-              try {
-                const bs58 = require('bs58')
-                const bytes = rawReplyToId instanceof Uint8Array ? rawReplyToId : new Uint8Array(rawReplyToId)
-                replyToId = bs58.encode(bytes)
-              } catch (e) {
-                console.warn('Failed to convert replyToPostId to base58:', e)
-              }
-            }
-          }
+          const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) : undefined
 
           return {
-            id: doc.id || doc.$id || Math.random().toString(36).substr(2, 9),
+            id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
             content: data.content || 'No content',
             author: {
               id: authorIdStr,
@@ -156,7 +146,7 @@ function FeedPage() {
               verified: false,
               joinedAt: new Date()
             },
-            createdAt: new Date(doc.createdAt || Date.now()),
+            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
             likes: 0,
             replies: 0,
             reposts: 0,

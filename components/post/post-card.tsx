@@ -5,13 +5,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { motion } from 'framer-motion'
-import { 
-  ChatBubbleOvalLeftIcon, 
-  ArrowPathIcon, 
-  HeartIcon, 
+import {
+  ChatBubbleOvalLeftIcon,
+  ArrowPathIcon,
+  HeartIcon,
   ArrowUpTrayIcon,
   BookmarkIcon,
   EllipsisHorizontalIcon,
+  CurrencyDollarIcon,
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
@@ -27,6 +28,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
+import { useTipModal } from '@/hooks/use-tip-modal'
 
 interface PostCardProps {
   post: Post
@@ -47,6 +49,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
   const { setReplyingTo, setComposeOpen } = useAppStore()
+  const { open: openTipModal } = useTipModal()
 
   // Sync local state with prop changes (e.g., when parent enriches post data)
   useEffect(() => {
@@ -173,6 +176,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
     navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`)
     toast.success('Link copied to clipboard')
+  }
+
+  const handleTip = () => {
+    if (!user) {
+      toast.error('Please log in to send tips')
+      return
+    }
+    openTipModal(post)
   }
 
   const handleCardClick = () => {
@@ -466,6 +477,27 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
                 </Tooltip.Portal>
               </Tooltip.Root>
 
+              {/* Tip button - only show if not own post */}
+              {!isOwnPost && (
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleTip(); }}
+                      className="group flex items-center gap-1 p-2 rounded-full hover:bg-amber-50 dark:hover:bg-amber-950 transition-colors"
+                    >
+                      <CurrencyDollarIcon className="h-5 w-5 text-gray-500 group-hover:text-amber-500 transition-colors" />
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content
+                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                      sideOffset={5}
+                    >
+                      Tip
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              )}
 
               <div className="flex items-center gap-1">
                 <Tooltip.Root>

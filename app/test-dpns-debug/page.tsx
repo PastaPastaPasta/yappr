@@ -38,9 +38,9 @@ export default function TestDpnsDebugPage() {
 
       // Use EvoSDK documents facade
       const response = await sdk.documents.query({
-        contractId: DPNS_CONTRACT_ID,
-        type: 'domain',
-        where,
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: 'domain',
+        where: where as any,
         orderBy: [['$createdAt', 'desc']],
         limit: 5
       })

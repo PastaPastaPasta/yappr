@@ -29,6 +29,8 @@ export interface UseAvatarSettingsResult {
  */
 export function useAvatar(userId: string): UseAvatarResult {
   const [avatarUrl, setAvatarUrl] = useState(() => {
+    // Guard against empty userId to prevent seed= URLs
+    if (!userId) return ''
     // Check cache first
     const cached = avatarCache.get(userId)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {

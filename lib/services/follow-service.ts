@@ -1,5 +1,7 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
+import { queryDocuments, identifierToBase58 } from './sdk-helpers';
+import { getEvoSdk } from './evo-sdk-service';
 
 export interface FollowDocument {
   $id: string;
@@ -16,54 +18,41 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   /**
    * Transform document
    */
-  protected transformDocument(doc: any): FollowDocument {
-    console.log('Transforming follow document:', doc);
-    
+  protected transformDocument(doc: Record<string, unknown>): FollowDocument {
     // Handle both direct properties and nested data structure
-    const id = doc.$id || doc.id;
-    const ownerId = doc.$ownerId || doc.ownerId;
-    const createdAt = doc.$createdAt || doc.createdAt;
-    const data = doc.data || doc;
-    
-    // followingId might be a byte array or base58 string
-    let followingId = data.followingId;
-    
-    // If it's a byte array, convert to base58
-    if (followingId && Array.isArray(followingId)) {
-      // Import bs58 dynamically
-      const bs58 = require('bs58');
-      followingId = bs58.encode(Buffer.from(followingId));
-    }
-    
+    const id = (doc.$id || doc.id) as string;
+    const ownerId = (doc.$ownerId || doc.ownerId) as string;
+    const createdAt = (doc.$createdAt || doc.createdAt) as number;
+    const data = (doc.data || doc) as Record<string, unknown>;
+
+    // SDK v3 toJSON() returns byte array fields as base64 strings
+    // Convert to base58 for consistent handling
+    const rawFollowingId = data.followingId;
+    const followingId = identifierToBase58(rawFollowingId) || String(rawFollowingId);
+
     return {
       $id: id,
       $ownerId: ownerId,
       $createdAt: createdAt,
-      followingId: followingId
+      followingId
     };
   }
 
   /**
    * Follow a user
-   * @param followerUserId - The identity ID of the user who is following
-   * @param targetUserId - The identity ID of the user being followed
    */
   async followUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
     try {
-      // Check if already following
       const existing = await this.getFollow(targetUserId, followerUserId);
       if (existing) {
         console.log('Already following user');
         return { success: true };
       }
 
-      // Convert targetUserId to byte array
-      // Use Array.from() because Uint8Array doesn't serialize properly through SDK
       const bs58Module = await import('bs58');
       const bs58 = bs58Module.default;
       const followingIdBytes = Array.from(bs58.decode(targetUserId));
 
-      // Use state transition service for creation
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
@@ -83,8 +72,6 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
   /**
    * Unfollow a user
-   * @param followerUserId - The identity ID of the user who is unfollowing
-   * @param targetUserId - The identity ID of the user being unfollowed
    */
   async unfollowUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
     try {
@@ -94,7 +81,6 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         return { success: true };
       }
 
-      // Use state transition service for deletion
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
         this.documentType,
@@ -105,9 +91,9 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       return result;
     } catch (error) {
       console.error('Error unfollowing user:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to unfollow user' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to unfollow user'
       };
     }
   }
@@ -125,7 +111,6 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    */
   async getFollow(targetUserId: string, followerUserId: string): Promise<FollowDocument | null> {
     try {
-      // Pass identifier as base58 string - the SDK handles conversion
       const result = await this.query({
         where: [
           ['$ownerId', '==', followerUserId],
@@ -146,7 +131,6 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    */
   async getFollowers(userId: string, options: QueryOptions = {}): Promise<FollowDocument[]> {
     try {
-      // Pass identifier as base58 string - the SDK handles conversion
       const result = await this.query({
         where: [['followingId', '==', userId]],
         orderBy: [['$createdAt', 'asc']],
@@ -181,18 +165,15 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Count followers - uses direct SDK query for reliability
+   * Count followers - uses queryDocuments helper
    */
   async countFollowers(userId: string): Promise<number> {
     try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-
       const sdk = await getEvoSdk();
 
-      // Pass identifier as base58 string - the SDK handles conversion
-      const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: 'follow',
+      const documents = await queryDocuments(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: 'follow',
         where: [
           ['followingId', '==', userId],
           ['$createdAt', '>', 0]
@@ -201,60 +182,32 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         limit: 100
       });
 
-      let documents;
-      if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
-      }
-
       return documents.length;
-    } catch (error: any) {
-      // WasmSdkError doesn't display message properly - extract it
-      const errorMessage = error?.message || error?.toString?.() || JSON.stringify(error);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('Error counting followers:', errorMessage, error);
       return 0;
     }
   }
 
   /**
-   * Count following - uses direct SDK query for reliability
+   * Count following - uses queryDocuments helper
    */
   async countFollowing(userId: string): Promise<number> {
     try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-
       const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: 'follow',
+      const documents = await queryDocuments(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: 'follow',
         where: [['$ownerId', '==', userId]],
         orderBy: [['$createdAt', 'asc']],
         limit: 100
       });
 
-      let documents;
-      if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
-      }
-
       return documents.length;
-    } catch (error: any) {
-      // WasmSdkError doesn't display message properly - extract it
-      const errorMessage = error?.message || error?.toString?.() || JSON.stringify(error);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('Error counting following:', errorMessage, error);
       return 0;
     }

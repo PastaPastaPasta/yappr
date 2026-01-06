@@ -88,6 +88,11 @@ export interface AvatarData {
  * Generate avatar URL from config
  */
 export function getAvatarUrl(config: AvatarConfig): string {
+  // Guard against empty seed to prevent seed= URLs
+  if (!config.seed) {
+    console.warn('avatar-utils: getAvatarUrl called with empty seed')
+    return ''
+  }
   return `https://api.dicebear.com/7.x/${config.style}/svg?seed=${encodeURIComponent(config.seed)}`
 }
 
@@ -95,6 +100,11 @@ export function getAvatarUrl(config: AvatarConfig): string {
  * Get default avatar URL using user ID as seed (backwards compatible)
  */
 export function getDefaultAvatarUrl(userId: string): string {
+  // Guard against empty userId
+  if (!userId) {
+    console.warn('avatar-utils: getDefaultAvatarUrl called with empty userId')
+    return ''
+  }
   return getAvatarUrl({ style: DEFAULT_STYLE, seed: userId })
 }
 

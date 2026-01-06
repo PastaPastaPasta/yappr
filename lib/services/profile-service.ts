@@ -32,16 +32,16 @@ class ProfileService extends BaseDocumentService<User> {
 
       // Build query params for EvoSDK facade
       const queryParams: {
-        contractId: string;
-        type: string;
+        dataContractId: string;
+        documentTypeName: string;
         where?: unknown;
         orderBy?: unknown;
         limit?: number;
         startAfter?: string;
         startAt?: string;
       } = {
-        contractId: this.contractId,
-        type: this.documentType,
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
       };
 
       if (options.where) {
@@ -65,36 +65,55 @@ class ProfileService extends BaseDocumentService<User> {
       console.log(`Querying ${this.documentType} documents:`, queryParams);
 
       // Use EvoSDK documents facade
-      const response = await sdk.documents.query(queryParams);
+      const response = await sdk.documents.query(queryParams as any);
 
-      // get_documents returns an object directly, not JSON string
-      let result = response;
-      
-      // Handle different response formats
-      if (response && typeof response.toJSON === 'function') {
-        result = response.toJSON();
-      }
-      
-      console.log(`${this.documentType} query result:`, result);
-      
-      // Check if result is an array (direct documents response)
-      if (Array.isArray(result)) {
-        const documents = result.map((doc: any) => {
-          return this.transformDocument(doc, { cachedUsername: this.cachedUsername });
-        });
-        
+      console.log(`${this.documentType} query result:`, response);
+
+      // Handle Map response (v3 SDK)
+      if (response instanceof Map) {
+        const documents: User[] = [];
+        const entries = Array.from(response.values());
+        for (const doc of entries) {
+          if (doc) {
+            const docData = typeof (doc as any).toJSON === 'function'
+              ? (doc as any).toJSON()
+              : doc;
+            documents.push(this.transformDocument(docData, { cachedUsername: this.cachedUsername }));
+          }
+        }
         return {
           documents,
           nextCursor: undefined,
           prevCursor: undefined
         };
       }
-      
+
+      // Fallback: handle legacy response formats
+      let result: any = response;
+
+      // Handle different response formats
+      if (response && typeof (response as any).toJSON === 'function') {
+        result = (response as any).toJSON();
+      }
+
+      // Check if result is an array (direct documents response)
+      if (Array.isArray(result)) {
+        const documents = result.map((doc: any) => {
+          return this.transformDocument(doc, { cachedUsername: this.cachedUsername });
+        });
+
+        return {
+          documents,
+          nextCursor: undefined,
+          prevCursor: undefined
+        };
+      }
+
       // Otherwise expect object with documents property
       const documents = result?.documents?.map((doc: any) => {
         return this.transformDocument(doc, { cachedUsername: this.cachedUsername });
       }) || [];
-      
+
       return {
         documents,
         nextCursor: result?.nextCursor,
@@ -109,30 +128,32 @@ class ProfileService extends BaseDocumentService<User> {
   /**
    * Transform document to User type
    */
-  protected transformDocument(doc: ProfileDocument, options?: { cachedUsername?: string }): User {
+  protected transformDocument(doc: Record<string, unknown>, options?: Record<string, unknown>): User {
     console.log('ProfileService: transformDocument input:', doc);
-    
+    const profileDoc = doc as unknown as ProfileDocument;
+    const cachedUsername = options?.cachedUsername as string | undefined;
+
     // Handle both $ prefixed and non-prefixed properties
-    const ownerId = doc.$ownerId || (doc as any).ownerId;
-    const createdAt = doc.$createdAt || (doc as any).createdAt;
-    const data = (doc as any).data || doc;
-    
+    const ownerId = profileDoc.$ownerId || (doc as Record<string, unknown>).ownerId as string;
+    const createdAt = profileDoc.$createdAt || (doc as Record<string, unknown>).createdAt;
+    const data = (doc as Record<string, unknown>).data || doc;
+
     // Return a basic User object - additional data will be loaded separately
     const user: User = {
       id: ownerId,
-      username: options?.cachedUsername || (ownerId.substring(0, 8) + '...'),
-      displayName: data.displayName,
+      username: cachedUsername || (ownerId.substring(0, 8) + '...'),
+      displayName: (data as Record<string, unknown>).displayName as string,
       avatar: getDefaultAvatarUrl(ownerId),
-      bio: data.bio,
+      bio: (data as Record<string, unknown>).bio as string | undefined,
       followers: 0,
       following: 0,
       verified: false,
-      joinedAt: new Date(createdAt)
+      joinedAt: new Date(createdAt as number)
     };
 
     // Queue async operations to enrich the user
     // Skip username resolution if we already have a cached username
-    this.enrichUser(user, doc, !!options?.cachedUsername);
+    this.enrichUser(user, profileDoc, !!cachedUsername);
 
     return user;
   }
@@ -360,27 +381,55 @@ class ProfileService extends BaseDocumentService<User> {
         return [];
       }
 
-      console.log('ProfileService: Getting profiles for identity IDs:', identityIds);
+      // Filter to only valid base58 identity IDs (32 bytes when decoded)
+      // This filters out placeholder values like 'unknown'
+      const bs58 = (await import('bs58')).default;
+      const validIds = identityIds.filter(id => {
+        if (!id || id === 'unknown') return false;
+        try {
+          const decoded = bs58.decode(id);
+          return decoded.length === 32;
+        } catch {
+          return false;
+        }
+      });
+
+      if (validIds.length === 0) {
+        console.log('ProfileService: No valid identity IDs to query');
+        return [];
+      }
+
+      console.log('ProfileService: Getting profiles for', validIds.length, 'identity IDs');
 
       const sdk = await getEvoSdk();
 
       // Query profiles where $ownerId is in the array
-      // Need to add orderBy for 'in' queries
+      // SDK v3 expects base58 identifier strings for 'in' queries on system fields
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: this.documentType,
-        where: [['$ownerId', 'in', identityIds]],
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [['$ownerId', 'in', validIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: 100
-      });
+      } as any);
 
-      // Handle response format
-      if (Array.isArray(response)) {
-        console.log(`ProfileService: Found ${response.length} profiles`);
-        return response;
-      } else if (response && response.documents) {
-        console.log(`ProfileService: Found ${response.documents.length} profiles`);
-        return response.documents;
+      // Handle Map response (v3 SDK)
+      if (response instanceof Map) {
+        const documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+        console.log(`ProfileService: Found ${documents.length} profiles`);
+        return documents;
+      }
+
+      // Handle array response
+      const anyResponse = response as any;
+      if (Array.isArray(anyResponse)) {
+        console.log(`ProfileService: Found ${anyResponse.length} profiles`);
+        return anyResponse;
+      } else if (anyResponse && anyResponse.documents) {
+        console.log(`ProfileService: Found ${anyResponse.documents.length} profiles`);
+        return anyResponse.documents;
       }
 
       return [];

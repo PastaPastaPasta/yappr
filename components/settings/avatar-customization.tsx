@@ -28,6 +28,15 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
   const [style, setStyle] = useState<DiceBearStyle>(DEFAULT_STYLE)
   const [seed, setSeed] = useState('')
   const [hasChanges, setHasChanges] = useState(false)
+  const [avatarsReady, setAvatarsReady] = useState(false)
+
+  // Delay loading avatar images by 1 second to prevent rate limiting from page spam
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAvatarsReady(true)
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [])
 
   // Initialize from settings
   useEffect(() => {
@@ -86,7 +95,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
     }
   }
 
-  if (loadingSettings) {
+  if (loadingSettings || !avatarsReady) {
     return (
       <div className="space-y-4">
         <h3 className="font-semibold">Avatar</h3>
@@ -94,7 +103,12 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
           <div className="flex justify-center">
             <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800" />
           </div>
-          <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2" />
+          <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2 mx-auto" />
+          <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="aspect-square rounded-lg bg-gray-200 dark:bg-gray-800" />
+            ))}
+          </div>
         </div>
       </div>
     )

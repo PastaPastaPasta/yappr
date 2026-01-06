@@ -40,16 +40,23 @@ class AvatarService extends BaseDocumentService<AvatarDocument> {
   }
 
   protected transformDocument(doc: any): AvatarDocument {
-    const data = doc.data || doc;
+    // SDK v3 may nest content fields under 'data' property
+    // Check if doc.data is an object (nested content) or string (actual data field)
+    const isNestedFormat = doc.data && typeof doc.data === 'object' && !Array.isArray(doc.data);
+    const content = isNestedFormat ? doc.data : doc;
+
+    // The 'data' field in avatar document contains JSON string {"seed":"...", "style":"..."}
+    const avatarData = isNestedFormat ? content.data : doc.data;
+
     return {
       $id: doc.$id || doc.id,
       $ownerId: doc.$ownerId || doc.ownerId,
       $createdAt: doc.$createdAt || doc.createdAt,
       $updatedAt: doc.$updatedAt || doc.updatedAt,
       $revision: doc.$revision || doc.revision,
-      version: data.version || 1,
-      data: data.data || '',
-      style: data.style,
+      version: content.version || 1,
+      data: typeof avatarData === 'string' ? avatarData : '',
+      style: content.style,
     };
   }
 
@@ -57,6 +64,12 @@ class AvatarService extends BaseDocumentService<AvatarDocument> {
    * Get avatar settings for a user
    */
   async getAvatarSettings(ownerId: string): Promise<AvatarSettings | null> {
+    // Guard against empty ownerId
+    if (!ownerId) {
+      console.warn('AvatarService: getAvatarSettings called with empty ownerId');
+      return null;
+    }
+
     try {
       // Check cache
       const cached = cacheManager.get<AvatarSettings>(this.AVATAR_CACHE, ownerId);
@@ -80,10 +93,13 @@ class AvatarService extends BaseDocumentService<AvatarDocument> {
       const doc = result.documents[0];
       const parsed = parseAvatarData(doc.data);
 
+      // Guard against empty seed - fall back to ownerId if seed is empty
+      const seed = parsed.seed || ownerId;
+
       const settings: AvatarSettings = {
         style: parsed.style,
-        seed: parsed.seed,
-        avatarUrl: getAvatarUrl({ style: parsed.style, seed: parsed.seed }),
+        seed: seed,
+        avatarUrl: getAvatarUrl({ style: parsed.style, seed: seed }),
       };
 
       // Cache result
@@ -104,6 +120,12 @@ class AvatarService extends BaseDocumentService<AvatarDocument> {
    * Get avatar URL for a user, falling back to default
    */
   async getAvatarUrl(ownerId: string): Promise<string> {
+    // Guard against empty ownerId to prevent seed= URLs
+    if (!ownerId) {
+      console.warn('AvatarService: getAvatarUrl called with empty ownerId');
+      return '';
+    }
+
     try {
       const settings = await this.getAvatarSettings(ownerId);
       if (settings) {

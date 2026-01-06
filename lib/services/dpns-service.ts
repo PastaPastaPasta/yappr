@@ -28,11 +28,34 @@ class DpnsService {
   private readonly CACHE_TTL = 3600000; // 1 hour cache for DPNS
 
   /**
-   * Convert a value to base58 string if it's bytes, or return as-is if already a string
+   * Convert a value to base58 string.
+   * Handles base64 strings (from SDK v3 toJSON), Uint8Array, and number arrays.
    */
   private toBase58String(value: unknown): string | null {
     if (typeof value === 'string') {
-      return value;
+      // First check if it's already valid base58
+      try {
+        const decoded = bs58.decode(value);
+        if (decoded.length === 32) {
+          return value; // Already base58
+        }
+      } catch {
+        // Not base58, try base64
+      }
+
+      // Try base64 (SDK v3 returns base64 for records.identity)
+      if (value.includes('+') || value.includes('/') || value.endsWith('=')) {
+        try {
+          const bytes = this.base64ToBytes(value);
+          if (bytes.length === 32) {
+            return bs58.encode(bytes);
+          }
+        } catch {
+          // Not valid base64
+        }
+      }
+
+      return null;
     }
     if (value instanceof Uint8Array) {
       return bs58.encode(value);
@@ -41,6 +64,22 @@ class DpnsService {
       return bs58.encode(new Uint8Array(value));
     }
     return null;
+  }
+
+  /**
+   * Convert base64 string to bytes
+   */
+  private base64ToBytes(base64: string): Uint8Array {
+    if (typeof atob === 'function') {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    } else {
+      return new Uint8Array(Buffer.from(base64, 'base64'));
+    }
   }
 
   /**
@@ -61,29 +100,12 @@ class DpnsService {
       
       const sdk = await getEvoSdk();
 
-      // Try the dedicated DPNS usernames function first
+      // Try the dedicated DPNS usernames function first (v3 SDK returns string[] directly)
       try {
-        const response = await sdk.dpns.usernames(identityId, { limit: 20 });
+        const usernames = await sdk.dpns.usernames({ identityId, limit: 20 });
+        console.log('DPNS: Usernames response:', usernames);
 
-        console.log('DPNS: Usernames response:', response);
-
-        // Parse the response
-        let usernames: string[] = [];
-
-        if (Array.isArray(response)) {
-          usernames = response.filter(u => typeof u === 'string' && u.length > 0);
-        } else if (response && typeof response === 'object' && response.usernames) {
-          usernames = response.usernames;
-        } else if (response && typeof response.toJSON === 'function') {
-          const jsonResponse = response.toJSON();
-          if (Array.isArray(jsonResponse)) {
-            usernames = jsonResponse.filter(u => typeof u === 'string' && u.length > 0);
-          } else if (jsonResponse && jsonResponse.usernames) {
-            usernames = jsonResponse.usernames;
-          }
-        }
-
-        if (usernames.length > 0) {
+        if (usernames && usernames.length > 0) {
           console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId}`);
           return usernames;
         }
@@ -93,17 +115,27 @@ class DpnsService {
 
       // Fallback: Query DPNS documents by identity ID
       const response = await sdk.documents.query({
-        contractId: DPNS_CONTRACT_ID,
-        type: DPNS_DOCUMENT_TYPE,
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [['records.identity', '==', identityId]],
         limit: 20
-      });
-      
-      if (response && response.documents && response.documents.length > 0) {
-        const usernames = response.documents.map((doc: DpnsDocument) => 
+      } as any);
+
+      // Handle Map response (v3 SDK)
+      if (response instanceof Map) {
+        const docs = Array.from(response.values()).filter(Boolean);
+        if (docs.length > 0) {
+          const usernames = docs.map((doc: any) => {
+            const docData = typeof doc.toJSON === 'function' ? doc.toJSON() : doc;
+            return `${docData.label}.${docData.normalizedParentDomainName}`;
+          });
+          console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId} via document query`);
+          return usernames;
+        }
+      } else if (response && (response as any).documents && (response as any).documents.length > 0) {
+        const usernames = (response as any).documents.map((doc: DpnsDocument) =>
           `${doc.label}.${doc.normalizedParentDomainName}`
         );
-        
         console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId} via document query`);
         return usernames;
       }
@@ -170,30 +202,37 @@ class DpnsService {
     try {
       const sdk = await getEvoSdk();
 
+      // Note: records.identity stores identity IDs as JSON strings (not bytes)
+      // So we pass them as-is without byte conversion
       // Batch query using 'in' operator (max 100 per query)
       // Must include orderBy to satisfy Dash Platform query requirements
       const response = await sdk.documents.query({
-        contractId: DPNS_CONTRACT_ID,
-        type: DPNS_DOCUMENT_TYPE,
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [['records.identity', 'in', uncachedIds]],
         orderBy: [['records.identity', 'asc']],
         limit: 100
-      });
+      } as any);
 
-      // Process results
+      // Process results - handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response?.documents) {
-        documents = response.documents;
-      } else if (response?.toJSON) {
-        const json = response.toJSON();
+      } else if ((response as any)?.documents) {
+        documents = (response as any).documents;
+      } else if ((response as any)?.toJSON) {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 
       for (const doc of documents) {
         const data = doc.data || doc;
         const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
+        // Convert base64 identity to base58 for consistent map keys
         const identityId = this.toBase58String(rawId);
         const label = data.label || data.normalizedLabel;
         const parentDomain = data.normalizedParentDomainName || 'dash';
@@ -263,21 +302,14 @@ class DpnsService {
 
       const sdk = await getEvoSdk();
 
-      // Try native resolution first using EvoSDK facade
+      // Try native resolution first using EvoSDK facade (v3 SDK returns string directly)
       try {
         if (sdk.dpns?.resolveName) {
-          const result = await sdk.dpns.resolveName(normalizedUsername);
+          const identityId = await sdk.dpns.resolveName(normalizedUsername);
 
-          if (result) {
-            // Handle various return formats from the SDK
-            const rawId = result.identity_id || result.identityId || result.id ||
-                         (typeof result === 'string' ? result : null);
-            const identityId = this.toBase58String(rawId);
-
-            if (identityId) {
-              this._cacheEntry(normalizedUsername, identityId);
-              return identityId;
-            }
+          if (identityId) {
+            this._cacheEntry(normalizedUsername, identityId);
+            return identityId;
           }
         }
       } catch (error) {
@@ -290,23 +322,27 @@ class DpnsService {
       const parentDomain = parts.slice(1).join('.') || 'dash';
 
       const response = await sdk.documents.query({
-        contractId: DPNS_CONTRACT_ID,
-        type: DPNS_DOCUMENT_TYPE,
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [
           ['normalizedLabel', '==', label.toLowerCase()],
           ['normalizedParentDomainName', '==', parentDomain.toLowerCase()]
         ],
         limit: 1
-      });
+      } as any);
 
-      // Handle both array and object response formats
+      // Handle response formats - v3 SDK returns Map
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response?.documents) {
-        documents = response.documents;
-      } else if (response?.toJSON) {
-        const json = response.toJSON();
+      } else if ((response as any)?.documents) {
+        documents = (response as any).documents;
+      } else if ((response as any)?.toJSON) {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 
@@ -379,16 +415,25 @@ class DpnsService {
       ];
       const orderBy = [['normalizedLabel', 'asc']];
 
-      const documents = await sdk.documents.query({
-        contractId: DPNS_CONTRACT_ID,
-        type: DPNS_DOCUMENT_TYPE,
+      const response = await sdk.documents.query({
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: DPNS_DOCUMENT_TYPE,
         where,
         orderBy,
         limit
-      });
+      } as any);
 
-      // The response is an array of documents
-      if (documents && Array.isArray(documents)) {
+      // Handle Map response (v3 SDK)
+      let documents: any[] = [];
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
+        documents = response;
+      }
+
+      if (documents.length > 0) {
         console.log(`DPNS: Found ${documents.length} documents`);
 
         // Map documents to results with owner IDs
@@ -440,44 +485,52 @@ class DpnsService {
       console.log('DPNS: Query where clause:', JSON.stringify(where));
       console.log('DPNS: Query orderBy:', JSON.stringify(orderBy));
 
-      const documents = await sdk.documents.query({
-        contractId: DPNS_CONTRACT_ID,
-        type: DPNS_DOCUMENT_TYPE,
+      const response = await sdk.documents.query({
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: DPNS_DOCUMENT_TYPE,
         where,
         orderBy,
         limit
-      });
+      } as any);
 
-      console.log('DPNS: Search response:', documents);
-      console.log('DPNS: Response type:', typeof documents);
-      console.log('DPNS: Is array?:', Array.isArray(documents));
-      
-      // The response is an array of documents
-      if (documents && Array.isArray(documents)) {
+      console.log('DPNS: Search response:', response);
+      console.log('DPNS: Response type:', typeof response);
+
+      // Handle Map response (v3 SDK)
+      let documents: any[] = [];
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
+        documents = response;
+      }
+
+      if (documents.length > 0) {
         console.log(`DPNS: Found ${documents.length} documents`);
-        
+
         // Map documents to usernames
         const usernames = documents.map((doc: any) => {
           console.log('DPNS: Processing document:', doc);
-          
+
           // Access the data field which contains the DPNS document fields
           const data = doc.data || doc;
           const label = data.label || data.normalizedLabel || 'unknown';
           const parentDomain = data.normalizedParentDomainName || 'dash';
-          
-          console.log('DPNS: Document fields:', { 
-            label: data.label, 
-            normalizedLabel: data.normalizedLabel, 
+
+          console.log('DPNS: Document fields:', {
+            label: data.label,
+            normalizedLabel: data.normalizedLabel,
             parentDomain: data.normalizedParentDomainName,
             ownerId: doc.ownerId || doc.$ownerId
           });
-          
+
           return `${label}.${parentDomain}`;
         });
-        
+
         return usernames;
       }
-      
+
       console.log('DPNS: No documents found in response');
       return [];
     } catch (error) {

@@ -218,25 +218,30 @@ export class DashPlatformClient {
 
       // Use EvoSDK documents facade
       const profileResponse = await this.sdk.documents.query({
-        contractId,
-        type: 'profile',
+        dataContractId: contractId,
+        documentTypeName: 'profile',
         where: query.where,
         limit: query.limit
       })
       
       console.log('Profile query response:', profileResponse)
-      
-      // Convert response if needed
-      let profiles
-      if (profileResponse && typeof profileResponse.toJSON === 'function') {
-        profiles = profileResponse.toJSON()
-      } else {
+
+      // Convert Map response (v3 SDK) to array
+      let profiles: unknown[] = []
+      if (profileResponse instanceof Map) {
+        profiles = Array.from(profileResponse.values())
+          .filter(Boolean)
+          .map((doc: unknown) => {
+            const d = doc as { toJSON?: () => unknown }
+            return typeof d.toJSON === 'function' ? d.toJSON() : doc
+          })
+      } else if (Array.isArray(profileResponse)) {
         profiles = profileResponse
       }
-      
+
       console.log('Profiles found:', profiles)
-      
-      if (profiles && profiles.length > 0) {
+
+      if (profiles.length > 0) {
         return profiles[0]
       }
       
@@ -338,8 +343,8 @@ export class DashPlatformClient {
       try {
         // Use EvoSDK documents facade
         const postsResponse = await this.sdk.documents.query({
-          contractId,
-          type: 'post',
+          dataContractId: contractId,
+          documentTypeName: 'post',
           where: where.length > 0 ? where : undefined,
           orderBy,
           limit: options?.limit || 20,
@@ -347,17 +352,20 @@ export class DashPlatformClient {
         })
         
         console.log('DashPlatformClient: Posts query response received')
-        
-        // Convert response if needed
-        let posts
-        if (postsResponse && typeof postsResponse.toJSON === 'function') {
-          posts = postsResponse.toJSON()
-        } else if (postsResponse && postsResponse.documents) {
-          posts = postsResponse.documents
-        } else {
-          posts = postsResponse || []
+
+        // Convert Map response (v3 SDK) to array
+        let posts: unknown[] = []
+        if (postsResponse instanceof Map) {
+          posts = Array.from(postsResponse.values())
+            .filter(Boolean)
+            .map((doc: unknown) => {
+              const d = doc as { toJSON?: () => unknown }
+              return typeof d.toJSON === 'function' ? d.toJSON() : doc
+            })
+        } else if (Array.isArray(postsResponse)) {
+          posts = postsResponse
         }
-        
+
         console.log(`DashPlatformClient: Found ${posts.length} posts`)
         
         // Cache the results

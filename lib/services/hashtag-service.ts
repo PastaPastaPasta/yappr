@@ -1,5 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
+import { identifierToBase58 } from './sdk-helpers';
 import { HASHTAG_CONTRACT_ID, YAPPR_CONTRACT_ID } from '../constants';
 
 export interface PostHashtagDocument {
@@ -31,20 +32,12 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    */
   protected transformDocument(doc: any): PostHashtagDocument {
     const data = doc.data || doc;
-    let postId = data.postId || doc.postId;
-    let hashtag = data.hashtag || doc.hashtag;
+    const rawPostId = data.postId || doc.postId;
+    const hashtag = data.hashtag || doc.hashtag;
 
-    // Convert postId from bytes to base58 string if needed
-    if (postId && typeof postId !== 'string') {
-      try {
-        const bytes = postId instanceof Uint8Array ? postId : new Uint8Array(postId);
-        const bs58 = require('bs58');
-        postId = bs58.encode(bytes);
-      } catch (e) {
-        console.warn('Failed to convert postId to base58:', e);
-        postId = String(postId);
-      }
-    }
+    // SDK v3 toJSON() returns byte array fields as base64 strings
+    // Convert to base58 for consistent handling
+    const postId = identifierToBase58(rawPostId) || String(rawPostId);
 
     return {
       $id: doc.$id || doc.id,
@@ -132,22 +125,27 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       if (!normalizedTag) return null;
 
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: this.documentType,
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
         where: [
           ['postId', '==', postId],
           ['hashtag', '==', normalizedTag]
         ],
         limit: 1
-      });
+      } as any);
 
-      let documents;
-      if (Array.isArray(response)) {
+      // Handle Map response (v3 SDK)
+      let documents: any[];
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       } else {
         documents = [];
@@ -168,23 +166,28 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: this.documentType,
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
         where: [
           ['postId', '==', postId],
           ['hashtag', '>', '']  // Range query to enable ordering
         ],
         orderBy: [['postId', 'asc'], ['hashtag', 'asc']],
         limit: 20
-      });
+      } as any);
 
+      // Handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 
@@ -208,23 +211,28 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       // Use byHashtag index: [hashtag, $createdAt] - desc supported at query time
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: this.documentType,
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
         where: [
           ['hashtag', '==', normalizedTag],
           ['$createdAt', '>', 0]
         ],
         orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
         limit: options.limit || 50
-      });
+      } as any);
 
+      // Handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 
@@ -247,22 +255,27 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       // Use byTime index: [$createdAt] - desc supported at query time
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: this.documentType,
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
         where: [
           ['$createdAt', '>', cutoffTime]
         ],
         orderBy: [['$createdAt', 'desc']],
         limit: 100
-      });
+      } as any);
 
+      // Handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 

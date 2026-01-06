@@ -78,16 +78,18 @@ class IdentityService {
 
       const sdk = await getEvoSdk();
 
-      // Fetch balance using EvoSDK facade
+      // Fetch balance using EvoSDK facade (v3 SDK returns bigint | null)
       console.log(`Fetching balance for: ${identityId}`);
       const balanceResponse = await sdk.identities.balance(identityId);
-      
-      // get_identity_balance returns an object directly
-      const balance = balanceResponse;
-      
+
+      // Convert bigint to number, handle null
+      const confirmedBalance = balanceResponse ? Number(balanceResponse) : 0;
+
+      console.log(`Balance for ${identityId}: ${confirmedBalance} credits`);
+
       const balanceInfo: IdentityBalance = {
-        confirmed: balance.confirmed || 0,
-        total: balance.total || balance.confirmed || 0
+        confirmed: confirmedBalance,
+        total: confirmedBalance
       };
 
       // Cache the result

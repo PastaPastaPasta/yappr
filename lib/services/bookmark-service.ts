@@ -1,5 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
+import { identifierToBase58 } from './sdk-helpers';
 
 export interface BookmarkDocument {
   $id: string;
@@ -21,19 +22,11 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     // Batch queries return: { id, ownerId, data: { postId } }
     // Regular queries return: { $id, $ownerId, postId }
     const data = doc.data || doc;
-    let postId = data.postId || doc.postId;
+    const rawPostId = data.postId || doc.postId;
 
-    // Convert postId from bytes to base58 string if needed
-    if (postId && typeof postId !== 'string') {
-      try {
-        const bytes = postId instanceof Uint8Array ? postId : new Uint8Array(postId);
-        const bs58 = require('bs58');
-        postId = bs58.encode(bytes);
-      } catch (e) {
-        console.warn('Failed to convert postId to base58:', e);
-        postId = String(postId);
-      }
-    }
+    // SDK v3 toJSON() returns byte array fields as base64 strings
+    // Convert to base58 for consistent handling
+    const postId = identifierToBase58(rawPostId) || String(rawPostId);
 
     return {
       $id: doc.$id || doc.id,

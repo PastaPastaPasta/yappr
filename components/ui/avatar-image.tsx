@@ -9,6 +9,12 @@ const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const pendingRequests = new Map<string, Promise<string>>()
 
 async function fetchAvatarUrl(userId: string): Promise<string> {
+  // Guard against empty userId to prevent seed= URLs
+  if (!userId) {
+    console.warn('AvatarImage: fetchAvatarUrl called with empty userId')
+    return ''
+  }
+
   // Check cache first
   const cached = avatarCache.get(userId)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -69,6 +75,8 @@ export const UserAvatar = memo(function UserAvatar({
 }: AvatarImageProps) {
   // Start with cached URL if available, otherwise null (loading state)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => {
+    // Guard against empty userId
+    if (!userId) return null
     const cached = avatarCache.get(userId)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return cached.url
@@ -82,7 +90,8 @@ export const UserAvatar = memo(function UserAvatar({
     let mounted = true
 
     fetchAvatarUrl(userId).then((url) => {
-      if (mounted) {
+      // Only set if mounted and we got a valid URL
+      if (mounted && url) {
         setAvatarUrl(url)
       }
     })

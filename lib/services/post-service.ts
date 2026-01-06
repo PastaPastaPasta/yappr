@@ -3,6 +3,7 @@ import { Post, User, PostQueryOptions } from '../types';
 import { identityService } from './identity-service';
 import { profileService } from './profile-service';
 import { dpnsService } from './dpns-service';
+import { identifierToBase58 } from './sdk-helpers';
 
 export interface PostDocument {
   $id: string;
@@ -44,47 +45,27 @@ class PostService extends BaseDocumentService<Post> {
     const data = doc.data || doc;
 
     // Handle different field naming conventions from SDK
-    const id = doc.$id || doc.id;
-    const ownerId = doc.$ownerId || doc.ownerId;
+    // SDK v3 toJSON() returns:
+    // - System fields ($id, $ownerId): base58 strings
+    // - Byte array fields (replyToPostId, etc): base64 strings
+    // identifierToBase58 handles both formats
+    const rawId = doc.$id || doc.id;
+    const rawOwnerId = doc.$ownerId || doc.ownerId;
+    const id = identifierToBase58(rawId) || String(rawId);
+    const ownerId = identifierToBase58(rawOwnerId) || String(rawOwnerId);
     const createdAt = doc.$createdAt || doc.createdAt;
 
     // Content and other fields may be in data or at root level
     const content = data.content || doc.content || '';
     const mediaUrl = data.mediaUrl || doc.mediaUrl;
 
-    // Convert replyToPostId from bytes to base58 string if present
-    let replyToId: string | undefined;
+    // Convert replyToPostId from base64 to base58 for consistent storage
     const rawReplyToId = data.replyToPostId || doc.replyToPostId;
-    if (rawReplyToId) {
-      if (typeof rawReplyToId === 'string') {
-        replyToId = rawReplyToId;
-      } else if (rawReplyToId instanceof Uint8Array || Array.isArray(rawReplyToId)) {
-        try {
-          const bs58 = require('bs58');
-          const bytes = rawReplyToId instanceof Uint8Array ? rawReplyToId : new Uint8Array(rawReplyToId);
-          replyToId = bs58.encode(bytes);
-        } catch (e) {
-          console.warn('Failed to convert replyToPostId to base58:', e);
-        }
-      }
-    }
+    const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) || undefined : undefined;
 
-    // Convert quotedPostId from bytes to base58 string if present
-    let quotedPostId: string | undefined;
+    // Convert quotedPostId from base64 to base58 for consistent storage
     const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
-    if (rawQuotedPostId) {
-      if (typeof rawQuotedPostId === 'string') {
-        quotedPostId = rawQuotedPostId;
-      } else if (rawQuotedPostId instanceof Uint8Array || Array.isArray(rawQuotedPostId)) {
-        try {
-          const bs58 = require('bs58');
-          const bytes = rawQuotedPostId instanceof Uint8Array ? rawQuotedPostId : new Uint8Array(rawQuotedPostId);
-          quotedPostId = bs58.encode(bytes);
-        } catch (e) {
-          console.warn('Failed to convert quotedPostId to base58:', e);
-        }
-      }
-    }
+    const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) || undefined : undefined;
 
     // Return a basic Post object - additional data will be loaded separately
     const post: Post = {
@@ -202,28 +183,48 @@ class PostService extends BaseDocumentService<Post> {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
 
-      // Batch fetch parent posts using 'in' query
-      const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: 'post',
-        where: [['$id', 'in', parentPostIds]],
-        limit: parentPostIds.length
-      });
+      // SDK v3 toJSON() returns base64 for byte array fields (like replyToPostId)
+      // but $id queries expect base58. Convert all IDs to base58 first.
+      const base58PostIds = parentPostIds
+        .map(id => identifierToBase58(id))
+        .filter((id): id is string => id !== null);
 
+      if (base58PostIds.length === 0) {
+        console.log('getParentPostOwners: No valid post IDs after conversion');
+        return result;
+      }
+
+      console.log('getParentPostOwners: Querying', base58PostIds.length, 'posts');
+
+      // Batch fetch parent posts using 'in' query with base58 IDs
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [['$id', 'in', base58PostIds]],
+        limit: base58PostIds.length
+      } as any);
+
+      // Handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 
-      // Extract owner IDs
+      // Extract owner IDs, using identifierToBase58 to handle various formats
       for (const doc of documents) {
-        const postId = doc.$id || doc.id;
-        const ownerId = doc.$ownerId || doc.ownerId;
+        const rawPostId = doc.$id || doc.id;
+        const rawOwnerId = doc.$ownerId || doc.ownerId;
+        const postId = identifierToBase58(rawPostId);
+        const ownerId = identifierToBase58(rawOwnerId);
         if (postId && ownerId) {
           result.set(postId, ownerId);
         }
@@ -408,13 +409,14 @@ class PostService extends BaseDocumentService<Post> {
       const followingIds = [...following.map(f => f.followingId), userId];
 
       // Query posts where $ownerId is in the following list
+      // SDK v3 expects identifier strings for 'in' queries
       // Note: 'in' queries require orderBy on the 'in' field first
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
 
       const queryParams: any = {
-        contractId: this.contractId,
-        type: 'post',
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
         where: [['$ownerId', 'in', followingIds]],
         orderBy: [['$ownerId', 'asc']],  // Required for 'in' queries
         limit: options.limit || 50,
@@ -424,16 +426,20 @@ class PostService extends BaseDocumentService<Post> {
         queryParams.startAfter = options.startAfter;
       }
 
-      const response = await sdk.documents.query(queryParams);
+      const response = await sdk.documents.query(queryParams as any);
 
-      // Handle response format
+      // Handle Map response (v3 SDK)
       let documents: any[];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       } else {
         documents = [];
@@ -525,20 +531,25 @@ class PostService extends BaseDocumentService<Post> {
       const sdk = await getEvoSdk();
 
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: 'post',
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
         where: [['$ownerId', '==', userId]],
         orderBy: [['$createdAt', 'asc']],
         limit: 100
-      });
+      } as any);
 
-      let documents;
-      if (Array.isArray(response)) {
+      // Handle Map response (v3 SDK)
+      let documents: any[];
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       } else {
         documents = [];
@@ -565,8 +576,8 @@ class PostService extends BaseDocumentService<Post> {
 
       while (true) {
         const queryParams: any = {
-          contractId: this.contractId,
-          type: 'post',
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
           orderBy: [['$createdAt', 'asc']],
           limit: PAGE_SIZE
         };
@@ -575,15 +586,20 @@ class PostService extends BaseDocumentService<Post> {
           queryParams.startAfter = startAfter;
         }
 
-        const response = await sdk.documents.query(queryParams);
+        const response = await sdk.documents.query(queryParams as any);
 
+        // Handle Map response (v3 SDK)
         let documents: any[];
-        if (Array.isArray(response)) {
+        if (response instanceof Map) {
+          documents = Array.from(response.values())
+            .filter(Boolean)
+            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+        } else if (Array.isArray(response)) {
           documents = response;
-        } else if (response && response.documents) {
-          documents = response.documents;
-        } else if (response && typeof response.toJSON === 'function') {
-          const json = response.toJSON();
+        } else if (response && (response as any).documents) {
+          documents = (response as any).documents;
+        } else if (response && typeof (response as any).toJSON === 'function') {
+          const json = (response as any).toJSON();
           documents = Array.isArray(json) ? json : json.documents || [];
         } else {
           documents = [];
@@ -894,41 +910,34 @@ class PostService extends BaseDocumentService<Post> {
       // Use 'in' operator for batch query on replyToPostId
       // Must include orderBy to match the replyToPost index: [replyToPostId, $createdAt]
       const response = await sdk.documents.query({
-        contractId: this.contractId,
-        type: 'post',
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
         where: [['replyToPostId', 'in', postIds]],
         orderBy: [['replyToPostId', 'asc']],
         limit: 100
-      });
+      } as any);
 
+      // Handle Map response (v3 SDK)
       let documents: any[] = [];
-      if (Array.isArray(response)) {
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
         documents = response;
-      } else if (response && response.documents) {
-        documents = response.documents;
-      } else if (response && typeof response.toJSON === 'function') {
-        const json = response.toJSON();
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
         documents = Array.isArray(json) ? json : json.documents || [];
       }
 
       // Count replies per parent post
       for (const doc of documents) {
         // Handle different document structures from SDK
-        // Batch queries return: { id, ownerId, data: { replyToPostId } }
         const data = doc.data || doc;
-        let parentId = data.replyToPostId || doc.replyToPostId;
-
-        // Convert replyToPostId from bytes to base58 string if needed
-        if (parentId && typeof parentId !== 'string') {
-          try {
-            const bytes = parentId instanceof Uint8Array ? parentId : new Uint8Array(parentId);
-            const bs58 = require('bs58');
-            parentId = bs58.encode(bytes);
-          } catch (e) {
-            console.warn('Failed to convert replyToPostId to base58:', e);
-            continue;
-          }
-        }
+        const rawParentId = data.replyToPostId || doc.replyToPostId;
+        const parentId = rawParentId ? identifierToBase58(rawParentId) : null;
 
         if (parentId && result.has(parentId)) {
           result.set(parentId, (result.get(parentId) || 0) + 1);
@@ -1007,8 +1016,8 @@ class PostService extends BaseDocumentService<Post> {
 
       while (true) {
         const queryParams: any = {
-          contractId: this.contractId,
-          type: 'post',
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
           where: [['$createdAt', '>', 0]],
           orderBy: [['$createdAt', 'asc']],
           limit: PAGE_SIZE
@@ -1018,15 +1027,20 @@ class PostService extends BaseDocumentService<Post> {
           queryParams.startAfter = startAfter;
         }
 
-        const response = await sdk.documents.query(queryParams);
+        const response = await sdk.documents.query(queryParams as any);
 
+        // Handle Map response (v3 SDK)
         let documents: any[];
-        if (Array.isArray(response)) {
+        if (response instanceof Map) {
+          documents = Array.from(response.values())
+            .filter(Boolean)
+            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+        } else if (Array.isArray(response)) {
           documents = response;
-        } else if (response && response.documents) {
-          documents = response.documents;
-        } else if (response && typeof response.toJSON === 'function') {
-          const json = response.toJSON();
+        } else if (response && (response as any).documents) {
+          documents = (response as any).documents;
+        } else if (response && typeof (response as any).toJSON === 'function') {
+          const json = (response as any).toJSON();
           documents = Array.isArray(json) ? json : json.documents || [];
         } else {
           documents = [];
@@ -1114,8 +1128,8 @@ class PostService extends BaseDocumentService<Post> {
 
       while (totalProcessed < MAX_POSTS) {
         const queryParams: any = {
-          contractId: this.contractId,
-          type: 'post',
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
           where: [['$createdAt', '>', 0]],
           orderBy: [['$createdAt', 'desc']],
           limit: PAGE_SIZE
@@ -1125,15 +1139,20 @@ class PostService extends BaseDocumentService<Post> {
           queryParams.startAfter = startAfter;
         }
 
-        const response = await sdk.documents.query(queryParams);
+        const response = await sdk.documents.query(queryParams as any);
 
+        // Handle Map response (v3 SDK)
         let documents: any[];
-        if (Array.isArray(response)) {
+        if (response instanceof Map) {
+          documents = Array.from(response.values())
+            .filter(Boolean)
+            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+        } else if (Array.isArray(response)) {
           documents = response;
-        } else if (response && response.documents) {
-          documents = response.documents;
-        } else if (response && typeof response.toJSON === 'function') {
-          const json = response.toJSON();
+        } else if (response && (response as any).documents) {
+          documents = (response as any).documents;
+        } else if (response && typeof (response as any).toJSON === 'function') {
+          const json = (response as any).toJSON();
           documents = Array.isArray(json) ? json : json.documents || [];
         } else {
           documents = [];
