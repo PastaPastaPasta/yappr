@@ -477,27 +477,34 @@ export function PostCard({ post, hideAvatar = false, isOwnPost = false }: PostCa
                 </Tooltip.Portal>
               </Tooltip.Root>
 
-              {/* Tip button - only show if not own post */}
-              {!isOwnPost && (
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleTip(); }}
-                      className="group flex items-center gap-1 p-2 rounded-full hover:bg-amber-50 dark:hover:bg-amber-950 transition-colors"
-                    >
-                      <CurrencyDollarIcon className="h-5 w-5 text-gray-500 group-hover:text-amber-500 transition-colors" />
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                      sideOffset={5}
-                    >
-                      Tip
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-              )}
+              {/* Tip button - disabled for own posts */}
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (!isOwnPost) handleTip(); }}
+                    disabled={isOwnPost}
+                    className={cn(
+                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                      isOwnPost
+                        ? "opacity-40 cursor-not-allowed"
+                        : "hover:bg-amber-50 dark:hover:bg-amber-950"
+                    )}
+                  >
+                    <CurrencyDollarIcon className={cn(
+                      "h-5 w-5 transition-colors",
+                      isOwnPost ? "text-gray-400" : "text-gray-500 group-hover:text-amber-500"
+                    )} />
+                  </button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content
+                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                    sideOffset={5}
+                  >
+                    {isOwnPost ? "Can't tip yourself" : "Tip"}
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
 
               <div className="flex items-center gap-1">
                 <Tooltip.Root>
