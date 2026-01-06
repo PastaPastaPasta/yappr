@@ -73,8 +73,11 @@ function HashtagPageContent() {
 
         // Sort by creation date (newest first)
         fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-        setPosts(fetchedPosts)
-        setPostCount(fetchedPosts.length)
+
+        // Enrich posts with author data (DPNS names, displayNames, stats)
+        const enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
+        setPosts(enrichedPosts)
+        setPostCount(enrichedPosts.length)
       } catch (error) {
         console.error('Failed to load hashtag posts:', error)
         setPosts([])
