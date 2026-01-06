@@ -206,12 +206,12 @@ export function TipModal() {
                     </div>
 
                     {/* Preset amounts */}
-                    <div className="flex gap-2 flex-wrap">
+                    <div className="flex gap-2 overflow-x-auto">
                       {PRESET_AMOUNTS.map((preset) => (
                         <button
                           key={preset}
                           onClick={() => handlePresetClick(preset)}
-                          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                          className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
                             amount === preset.toString()
                               ? 'bg-amber-500 text-white'
                               : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
