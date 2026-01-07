@@ -10,7 +10,7 @@ import {
   ShareIcon,
   NoSymbolIcon,
   Cog6ToothIcon,
-  SparklesIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -336,9 +336,9 @@ function UserProfileContent() {
                     <button
                       onClick={() => setIsEditingAvatar(true)}
                       className="absolute bottom-1 right-1 p-2 bg-yappr-500 rounded-full hover:bg-yappr-600 transition-colors shadow-lg"
-                      title="Change avatar"
+                      title="Edit avatar"
                     >
-                      <SparklesIcon className="h-4 w-4 text-white" />
+                      <PencilIcon className="h-4 w-4 text-white" />
                     </button>
                   )}
                 </div>
@@ -607,7 +607,7 @@ function UserProfileContent() {
             className="absolute inset-0 bg-black/50"
             onClick={() => setIsEditingAvatar(false)}
           />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">Customize Avatar</h2>
               <button

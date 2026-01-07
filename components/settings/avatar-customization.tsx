@@ -104,9 +104,9 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
             <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800" />
           </div>
           <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2 mx-auto" />
-          <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="aspect-square rounded-lg bg-gray-200 dark:bg-gray-800" />
+          <div className={`grid ${compact ? 'grid-cols-7 gap-1' : 'grid-cols-4 sm:grid-cols-5 gap-2'}`}>
+            {Array.from({ length: compact ? 28 : 8 }).map((_, i) => (
+              <div key={i} className={`aspect-square rounded-lg bg-gray-200 dark:bg-gray-800 ${compact ? 'p-1' : ''}`} />
             ))}
           </div>
         </div>
@@ -137,7 +137,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
       {/* Style Selection */}
       <div>
         <label className="text-sm font-medium mb-2 block">Style</label>
-        <div className={`grid gap-2 ${compact ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+        <div className={`grid ${compact ? 'grid-cols-7 gap-1' : 'grid-cols-4 sm:grid-cols-5 gap-2'}`}>
           {DICEBEAR_STYLES.map((s) => {
             const isSelected = style === s
             const stylePreviewUrl = getAvatarUrl({ style: s, seed: seed || 'preview' })
@@ -146,7 +146,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
               <button
                 key={s}
                 onClick={() => setStyle(s)}
-                className={`relative p-2 rounded-lg border-2 transition-all ${
+                className={`relative ${compact ? 'p-1' : 'p-2'} rounded-lg border-2 transition-all ${
                   isSelected
                     ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-950/20'
                     : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
@@ -159,7 +159,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
                   className="w-full aspect-square rounded"
                   crossOrigin="anonymous"
                 />
-                <p className="text-[10px] text-center mt-1 truncate">{DICEBEAR_STYLE_LABELS[s]}</p>
+                {!compact && <p className="text-[10px] text-center mt-1 truncate">{DICEBEAR_STYLE_LABELS[s]}</p>}
               </button>
             )
           })}
