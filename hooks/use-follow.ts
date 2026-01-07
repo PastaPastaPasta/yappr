@@ -3,10 +3,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
-
-// Module-level cache for follow status
-const followCache = new Map<string, { isFollowing: boolean; timestamp: number }>()
-const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
+import {
+  getFollowStatus,
+  setFollowStatus,
+  deleteFollowStatus,
+  clearFollowCache as clearSharedFollowCache,
+  seedFollowStatusCache
+} from '@/lib/caches/user-status-cache'
 
 export interface UseFollowResult {
   isFollowing: boolean
@@ -15,13 +18,20 @@ export interface UseFollowResult {
   refresh: () => void
 }
 
+export interface UseFollowOptions {
+  /** Initial follow status from batch prefetch (skips initial query if provided) */
+  initialValue?: boolean
+}
+
 /**
  * Hook to manage follow state for a target user
  */
-export function useFollow(targetUserId: string): UseFollowResult {
+export function useFollow(targetUserId: string, options: UseFollowOptions = {}): UseFollowResult {
+  const { initialValue } = options
   const { user } = useAuth()
-  const [isFollowing, setIsFollowing] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isFollowing, setIsFollowing] = useState(initialValue ?? false)
+  // Only show loading if no initial value was provided
+  const [isLoading, setIsLoading] = useState(initialValue === undefined)
 
   const cacheKey = user?.identityId ? `${user.identityId}:${targetUserId}` : ''
 
@@ -31,11 +41,16 @@ export function useFollow(targetUserId: string): UseFollowResult {
       return
     }
 
-    // Check cache unless forcing refresh
+    // Skip initial fetch if initialValue was provided (unless force refresh)
+    if (initialValue !== undefined && !forceRefresh) {
+      return
+    }
+
+    // Check shared cache unless forcing refresh
     if (!forceRefresh && cacheKey) {
-      const cached = followCache.get(cacheKey)
-      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        setIsFollowing(cached.isFollowing)
+      const cached = getFollowStatus(cacheKey)
+      if (cached !== null) {
+        setIsFollowing(cached)
         setIsLoading(false)
         return
       }
@@ -49,7 +64,7 @@ export function useFollow(targetUserId: string): UseFollowResult {
 
       // Cache the result
       if (cacheKey) {
-        followCache.set(cacheKey, { isFollowing: following, timestamp: Date.now() })
+        setFollowStatus(cacheKey, following)
       }
       setIsFollowing(following)
     } catch (error) {
@@ -57,7 +72,7 @@ export function useFollow(targetUserId: string): UseFollowResult {
     } finally {
       setIsLoading(false)
     }
-  }, [user?.identityId, targetUserId, cacheKey])
+  }, [user?.identityId, targetUserId, cacheKey, initialValue])
 
   useEffect(() => {
     checkFollowStatus()
@@ -79,7 +94,7 @@ export function useFollow(targetUserId: string): UseFollowResult {
 
     // Update cache optimistically
     if (cacheKey) {
-      followCache.set(cacheKey, { isFollowing: !wasFollowing, timestamp: Date.now() })
+      setFollowStatus(cacheKey, !wasFollowing)
     }
 
     try {
@@ -98,7 +113,7 @@ export function useFollow(targetUserId: string): UseFollowResult {
       // Rollback
       setIsFollowing(wasFollowing)
       if (cacheKey) {
-        followCache.set(cacheKey, { isFollowing: wasFollowing, timestamp: Date.now() })
+        setFollowStatus(cacheKey, wasFollowing)
       }
       console.error('useFollow: Error toggling follow:', error)
       toast.error('Failed to update follow status')
@@ -109,7 +124,7 @@ export function useFollow(targetUserId: string): UseFollowResult {
 
   const refresh = useCallback(() => {
     if (cacheKey) {
-      followCache.delete(cacheKey)
+      deleteFollowStatus(cacheKey)
     }
     checkFollowStatus(true)
   }, [cacheKey, checkFollowStatus])
@@ -121,5 +136,8 @@ export function useFollow(targetUserId: string): UseFollowResult {
  * Clear all follow caches
  */
 export function clearFollowCache(): void {
-  followCache.clear()
+  clearSharedFollowCache()
 }
+
+// Re-export for convenience
+export { seedFollowStatusCache }

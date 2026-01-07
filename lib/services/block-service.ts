@@ -157,6 +157,39 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
+   * Batch check if any of the target users are blocked by the current user.
+   * Efficient: reuses getBlockedUserIds (1 query) then does Set intersection.
+   * @returns Map of targetUserId -> isBlocked
+   */
+  async getBlockStatusBatch(targetUserIds: string[], blockerId: string): Promise<Map<string, boolean>> {
+    const result = new Map<string, boolean>();
+
+    // Initialize all as not blocked
+    for (const id of targetUserIds) {
+      result.set(id, false);
+    }
+
+    if (!blockerId || targetUserIds.length === 0) {
+      return result;
+    }
+
+    try {
+      // Get all blocked IDs for this user (1 query)
+      const blockedIds = await this.getBlockedUserIds(blockerId);
+      const blockedSet = new Set(blockedIds);
+
+      // Check each target against the blocked set
+      for (const targetId of targetUserIds) {
+        result.set(targetId, blockedSet.has(targetId));
+      }
+    } catch (error) {
+      console.error('Error getting batch block status:', error);
+    }
+
+    return result;
+  }
+
+  /**
    * Count blocked users
    */
   async countUserBlocks(userId: string): Promise<number> {

@@ -248,66 +248,28 @@ function FeedPage() {
         setHasMore(sortedPosts.length >= 20)
       }
 
-      // Show posts immediately with placeholder data
+      // Enrich posts BEFORE rendering to seed caches and avoid N+1 queries
+      // This ensures block/follow/avatar data is cached before PostCard hooks mount
+      const enrichedPosts = await enrichPosts(sortedPosts)
+      const postsToShow = enrichedPosts !== sortedPosts ? enrichedPosts : sortedPosts
+
       if (isPaginating) {
         setData((currentPosts: any[] | null) => {
           // Deduplicate - filter out posts that already exist
           const existingIds = new Set((currentPosts || []).map(p => p.id))
-          const newPosts = sortedPosts.filter(p => !existingIds.has(p.id))
+          const newPosts = postsToShow.filter(p => !existingIds.has(p.id))
           const allPosts = [...(currentPosts || []), ...newPosts]
-          console.log(`Feed: Appended ${newPosts.length} new posts (${sortedPosts.length - newPosts.length} duplicates filtered)`)
+          console.log(`Feed: Appended ${newPosts.length} new posts (${postsToShow.length - newPosts.length} duplicates filtered)`)
           return allPosts
         })
       } else {
-        setData(sortedPosts)
-        console.log(`Feed: Showing ${sortedPosts.length} posts`)
-      }
-
-      // Enrich posts in background and update state with enriched data
-      enrichPosts(sortedPosts).then(enrichedPosts => {
-        // Skip merge if posts were not enriched (returned same reference due to deduplication)
-        if (enrichedPosts === sortedPosts) return
-
-        // Merge enriched data into current posts
-        const enrichedMap = new Map(enrichedPosts.map(p => [p.id, p]))
-        setData((currentPosts: any[] | null) => {
-          if (!currentPosts) return currentPosts
-          return currentPosts.map(post => {
-            const enriched = enrichedMap.get(post.id)
-            if (enriched) {
-              return {
-                ...post,
-                likes: enriched.likes,
-                reposts: enriched.reposts,
-                replies: enriched.replies,
-                liked: enriched.liked,
-                reposted: enriched.reposted,
-                bookmarked: enriched.bookmarked,
-                replyTo: enriched.replyTo,
-                author: {
-                  ...post.author,
-                  username: enriched.author?.username || post.author.username,
-                  displayName: enriched.author?.displayName || post.author.displayName,
-                  hasDpns: (enriched.author as any)?.hasDpns
-                }
-              }
-            }
-            return post
-          })
-        })
+        setData(postsToShow)
 
         // Cache after enrichment
-        if (!isPaginating) {
-          setData((currentPosts: any[] | null) => {
-            if (currentPosts && currentPosts.length > 0) {
-              cacheManager.set('feed', cacheKey, currentPosts)
-            }
-            return currentPosts
-          })
+        if (postsToShow.length > 0) {
+          cacheManager.set('feed', cacheKey, postsToShow)
         }
-      }).catch(err => {
-        console.warn('Feed: Failed to enrich posts:', err)
-      })
+      }
 
     } catch (error) {
       console.error('Feed: Failed to load posts from platform:', error)

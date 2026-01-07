@@ -164,6 +164,39 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
+   * Batch check if the current user follows any of the target users.
+   * Efficient: reuses getFollowing (1 query) then does Set intersection.
+   * @returns Map of targetUserId -> isFollowing
+   */
+  async getFollowStatusBatch(targetUserIds: string[], followerId: string): Promise<Map<string, boolean>> {
+    const result = new Map<string, boolean>();
+
+    // Initialize all as not following
+    for (const id of targetUserIds) {
+      result.set(id, false);
+    }
+
+    if (!followerId || targetUserIds.length === 0) {
+      return result;
+    }
+
+    try {
+      // Get all users this user follows (1 query)
+      const following = await this.getFollowing(followerId, { limit: 100 });
+      const followingSet = new Set(following.map(f => f.followingId));
+
+      // Check each target against the following set
+      for (const targetId of targetUserIds) {
+        result.set(targetId, followingSet.has(targetId));
+      }
+    } catch (error) {
+      console.error('Error getting batch follow status:', error);
+    }
+
+    return result;
+  }
+
+  /**
    * Count followers - uses queryDocuments helper
    */
   async countFollowers(userId: string): Promise<number> {

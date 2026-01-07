@@ -32,6 +32,14 @@ export interface Post {
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPost?: Post
   tipInfo?: TipInfo     // Populated if this post is a tip (parsed from content)
+  _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
+}
+
+/** Pre-fetched enrichment data to avoid N+1 queries in feed */
+export interface PostEnrichment {
+  authorIsBlocked: boolean
+  authorIsFollowing: boolean
+  authorAvatarUrl: string
 }
 
 // Tip metadata parsed from post content (format: tip:CREDITS\nmessage)

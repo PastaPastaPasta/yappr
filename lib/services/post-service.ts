@@ -3,7 +3,11 @@ import { Post, User, PostQueryOptions } from '../types';
 import { identityService } from './identity-service';
 import { profileService } from './profile-service';
 import { dpnsService } from './dpns-service';
+import { blockService } from './block-service';
+import { followService } from './follow-service';
+import { avatarService } from './avatar-service';
 import { identifierToBase58 } from './sdk-helpers';
+import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 
 export interface PostDocument {
   $id: string;
@@ -233,7 +237,7 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Batch enrich multiple posts efficiently.
    * Uses batch queries to minimize network requests.
-   * Returns new Post objects with enriched data.
+   * Returns new Post objects with enriched data including _enrichment for N+1 avoidance.
    */
   async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
     if (posts.length === 0) return posts;
@@ -247,13 +251,40 @@ class PostService extends BaseDocumentService<Post> {
         posts.map(p => p.replyToId).filter((id): id is string => !!id)
       ));
 
-      const [statsMap, interactionsMap, usernameMap, profiles, parentOwnerMap] = await Promise.all([
+      // Get current user ID for block/follow status
+      const currentUserId = this.getCurrentUserId();
+
+      const [
+        statsMap,
+        interactionsMap,
+        usernameMap,
+        profiles,
+        parentOwnerMap,
+        blockStatusMap,
+        followStatusMap,
+        avatarUrlMap
+      ] = await Promise.all([
         this.getBatchPostStats(postIds),
         this.getBatchUserInteractions(postIds),
         dpnsService.resolveUsernamesBatch(authorIds),
         profileService.getProfilesByIdentityIds(authorIds),
-        this.getParentPostOwners(parentPostIds)
+        this.getParentPostOwners(parentPostIds),
+        // Batch block/follow status (only if user is logged in)
+        currentUserId
+          ? blockService.getBlockStatusBatch(authorIds, currentUserId)
+          : Promise.resolve(new Map<string, boolean>()),
+        currentUserId
+          ? followService.getFollowStatusBatch(authorIds, currentUserId)
+          : Promise.resolve(new Map<string, boolean>()),
+        // Batch avatar URLs
+        avatarService.getAvatarUrlsBatch(authorIds)
       ]);
+
+      // Seed shared caches so PostCard hooks don't fire individual queries
+      if (currentUserId) {
+        seedBlockStatusCache(currentUserId, blockStatusMap);
+        seedFollowStatusCache(currentUserId, followStatusMap);
+      }
 
       // Resolve usernames for parent post owners
       const parentOwnerIds = Array.from(new Set(parentOwnerMap.values()));
@@ -275,6 +306,11 @@ class PostService extends BaseDocumentService<Post> {
         const username = usernameMap.get(post.author.id);
         const profile = profileMap.get(post.author.id);
         const profileData = profile?.data || profile;
+
+        // Get pre-fetched block/follow/avatar data
+        const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
+        const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
+        const authorAvatarUrl = avatarUrlMap.get(post.author.id) ?? '';
 
         // Build replyTo if this is a reply
         let replyTo = post.replyTo;
@@ -318,7 +354,14 @@ class PostService extends BaseDocumentService<Post> {
             ...post.author,
             username: username || post.author.username,
             displayName: profileData?.displayName || post.author.displayName,
+            avatar: authorAvatarUrl || post.author.avatar,
             hasDpns: username ? true : false
+          },
+          // Pre-fetched enrichment data to avoid N+1 queries in PostCard
+          _enrichment: {
+            authorIsBlocked,
+            authorIsFollowing,
+            authorAvatarUrl
           }
         };
       });

@@ -142,6 +142,105 @@ class AvatarService extends BaseDocumentService<AvatarDocument> {
   }
 
   /**
+   * Batch get avatar URLs for multiple users.
+   * Uses 'in' operator for efficient batch query (1 query instead of N).
+   * @returns Map of userId -> avatarUrl
+   */
+  async getAvatarUrlsBatch(userIds: string[]): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+
+    if (userIds.length === 0) return result;
+
+    // Check cache first for each user
+    const uncachedIds: string[] = [];
+    for (const userId of userIds) {
+      if (!userId) continue;
+
+      const cached = cacheManager.get<AvatarSettings>(this.AVATAR_CACHE, userId);
+      if (cached) {
+        result.set(userId, cached.avatarUrl);
+      } else {
+        uncachedIds.push(userId);
+      }
+    }
+
+    if (uncachedIds.length === 0) {
+      return result;
+    }
+
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+
+      // Batch query using 'in' operator
+      // Dash Platform requires orderBy on the 'in' field
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'avatar',
+        where: [['$ownerId', 'in', uncachedIds]],
+        orderBy: [['$ownerId', 'asc']],
+        limit: uncachedIds.length
+      } as any);
+
+      // Handle Map response (v3 SDK)
+      let documents: any[] = [];
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
+        documents = response;
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
+        documents = Array.isArray(json) ? json : json.documents || [];
+      }
+
+      // Process results and cache them
+      const foundUserIds = new Set<string>();
+      for (const doc of documents) {
+        const avatarDoc = this.transformDocument(doc);
+        const parsed = parseAvatarData(avatarDoc.data);
+        const seed = parsed.seed || avatarDoc.$ownerId;
+
+        const settings: AvatarSettings = {
+          style: parsed.style,
+          seed: seed,
+          avatarUrl: getAvatarUrl({ style: parsed.style, seed: seed }),
+        };
+
+        result.set(avatarDoc.$ownerId, settings.avatarUrl);
+        foundUserIds.add(avatarDoc.$ownerId);
+
+        // Cache for future use
+        cacheManager.set(this.AVATAR_CACHE, avatarDoc.$ownerId, settings, {
+          ttl: 300000, // 5 minutes
+          tags: ['avatar', `user:${avatarDoc.$ownerId}`],
+        });
+      }
+
+      // For users without custom avatars, use default
+      for (const userId of uncachedIds) {
+        if (!foundUserIds.has(userId)) {
+          result.set(userId, getDefaultAvatarUrl(userId));
+        }
+      }
+
+    } catch (error) {
+      console.error('AvatarService: Error getting batch avatar URLs:', error);
+      // Fall back to default avatars for all uncached
+      for (const userId of uncachedIds) {
+        if (!result.has(userId)) {
+          result.set(userId, getDefaultAvatarUrl(userId));
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Create or update avatar settings
    */
   async saveAvatarSettings(

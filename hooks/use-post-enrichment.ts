@@ -18,6 +18,9 @@ interface UsePostEnrichmentResult {
   reset: () => void
 }
 
+// Store pending enrichment promises so concurrent calls can wait
+const pendingEnrichments = new Map<string, Promise<Post[]>>()
+
 /**
  * Hook for batch enriching posts with deduplication.
  *
@@ -52,13 +55,22 @@ export function usePostEnrichment(
   })
 
   const enrich = useCallback(async (posts: Post[]): Promise<Post[]> => {
-    if (disabled || posts.length === 0) return posts
+    if (disabled || posts.length === 0) {
+      return posts
+    }
 
     // Generate batch ID from sorted post IDs
     const batchId = posts.map(p => p.id).sort().join(',')
 
-    // Skip if same batch already enriched or in progress
-    if (lastBatchIdRef.current === batchId || enrichingRef.current) {
+    // If there's already a pending enrichment for this batch, wait for it
+    // This handles React Strict Mode double-renders and concurrent calls
+    const pending = pendingEnrichments.get(batchId)
+    if (pending) {
+      return pending
+    }
+
+    // If this batch was already enriched and completed, skip
+    if (lastBatchIdRef.current === batchId && !enrichingRef.current) {
       return posts
     }
 
@@ -66,17 +78,25 @@ export function usePostEnrichment(
     setIsEnriching(true)
     lastBatchIdRef.current = batchId
 
-    try {
-      const enriched = await postService.enrichPostsBatch(posts)
-      onEnrichedRef.current?.(enriched)
-      return enriched
-    } catch (error) {
-      console.error('usePostEnrichment: Failed to enrich posts:', error)
-      return posts
-    } finally {
-      enrichingRef.current = false
-      setIsEnriching(false)
-    }
+    // Create the enrichment promise and store it so concurrent calls can wait
+    const enrichmentPromise = (async () => {
+      try {
+        const enriched = await postService.enrichPostsBatch(posts)
+        onEnrichedRef.current?.(enriched)
+        return enriched
+      } catch (error) {
+        console.error('usePostEnrichment: Failed to enrich posts:', error)
+        return posts
+      } finally {
+        enrichingRef.current = false
+        setIsEnriching(false)
+        // Clean up the pending promise after a short delay
+        setTimeout(() => pendingEnrichments.delete(batchId), 100)
+      }
+    })()
+
+    pendingEnrichments.set(batchId, enrichmentPromise)
+    return enrichmentPromise
   }, [disabled])
 
   const reset = useCallback(() => {

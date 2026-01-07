@@ -56,8 +56,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
   const { setReplyingTo, setComposeOpen } = useAppStore()
   const { open: openTipModal } = useTipModal()
-  const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id)
-  const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id)
+
+  // Use pre-fetched enrichment data to avoid N+1 queries
+  const enrichment = post._enrichment
+  const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id, {
+    initialValue: enrichment?.authorIsBlocked
+  })
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id, {
+    initialValue: enrichment?.authorIsFollowing
+  })
 
   // Sync local state with prop changes (e.g., when parent enriches post data)
   useEffect(() => {
@@ -216,7 +223,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
             onClick={(e) => e.stopPropagation()}
             className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
           >
-            <UserAvatar userId={post.author.id} size="lg" alt={post.author.displayName} />
+            <UserAvatar userId={post.author.id} size="lg" alt={post.author.displayName} preloadedUrl={enrichment?.authorAvatarUrl} />
           </Link>
         )}
 

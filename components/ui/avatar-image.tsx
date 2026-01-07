@@ -51,6 +51,8 @@ interface AvatarImageProps {
   alt?: string
   className?: string
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'full'
+  /** Pre-fetched avatar URL from batch enrichment (skips fetch if provided) */
+  preloadedUrl?: string
 }
 
 const sizeClasses = {
@@ -66,15 +68,19 @@ const sizeClasses = {
  * Avatar image component that automatically loads custom avatar settings
  * Uses caching to prevent redundant fetches across the app
  * Does not render until the correct avatar URL is known to avoid flashing
+ * Pass preloadedUrl to skip fetch and use batch-prefetched URL
  */
 export const UserAvatar = memo(function UserAvatar({
   userId,
   alt = 'User avatar',
   className = '',
   size = 'md',
+  preloadedUrl,
 }: AvatarImageProps) {
-  // Start with cached URL if available, otherwise null (loading state)
+  // Start with preloaded URL, cached URL, or null (loading state)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => {
+    // Use preloaded URL if provided
+    if (preloadedUrl) return preloadedUrl
     // Guard against empty userId
     if (!userId) return null
     const cached = avatarCache.get(userId)
@@ -85,6 +91,12 @@ export const UserAvatar = memo(function UserAvatar({
   })
 
   useEffect(() => {
+    // If preloaded URL is provided, use it and skip fetch
+    if (preloadedUrl) {
+      setAvatarUrl(preloadedUrl)
+      return
+    }
+
     if (!userId) return
 
     let mounted = true
@@ -99,7 +111,7 @@ export const UserAvatar = memo(function UserAvatar({
     return () => {
       mounted = false
     }
-  }, [userId])
+  }, [userId, preloadedUrl])
 
   const sizeClass = sizeClasses[size] || sizeClasses.md
 

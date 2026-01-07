@@ -3,10 +3,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
-
-// Module-level cache for block status
-const blockCache = new Map<string, { isBlocked: boolean; timestamp: number }>()
-const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
+import {
+  getBlockStatus,
+  setBlockStatus,
+  deleteBlockStatus,
+  clearBlockCache as clearSharedBlockCache,
+  seedBlockStatusCache
+} from '@/lib/caches/user-status-cache'
 
 export interface UseBlockResult {
   isBlocked: boolean
@@ -15,13 +18,20 @@ export interface UseBlockResult {
   refresh: () => void
 }
 
+export interface UseBlockOptions {
+  /** Initial block status from batch prefetch (skips initial query if provided) */
+  initialValue?: boolean
+}
+
 /**
  * Hook to manage block state for a target user
  */
-export function useBlock(targetUserId: string): UseBlockResult {
+export function useBlock(targetUserId: string, options: UseBlockOptions = {}): UseBlockResult {
+  const { initialValue } = options
   const { user } = useAuth()
-  const [isBlocked, setIsBlocked] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isBlocked, setIsBlocked] = useState(initialValue ?? false)
+  // Only show loading if no initial value was provided
+  const [isLoading, setIsLoading] = useState(initialValue === undefined)
 
   const cacheKey = user?.identityId ? `${user.identityId}:${targetUserId}` : ''
 
@@ -31,11 +41,16 @@ export function useBlock(targetUserId: string): UseBlockResult {
       return
     }
 
-    // Check cache unless forcing refresh
+    // Skip initial fetch if initialValue was provided (unless force refresh)
+    if (initialValue !== undefined && !forceRefresh) {
+      return
+    }
+
+    // Check shared cache unless forcing refresh
     if (!forceRefresh && cacheKey) {
-      const cached = blockCache.get(cacheKey)
-      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        setIsBlocked(cached.isBlocked)
+      const cached = getBlockStatus(cacheKey)
+      if (cached !== null) {
+        setIsBlocked(cached)
         setIsLoading(false)
         return
       }
@@ -49,7 +64,7 @@ export function useBlock(targetUserId: string): UseBlockResult {
 
       // Cache the result
       if (cacheKey) {
-        blockCache.set(cacheKey, { isBlocked: blocked, timestamp: Date.now() })
+        setBlockStatus(cacheKey, blocked)
       }
       setIsBlocked(blocked)
     } catch (error) {
@@ -57,7 +72,7 @@ export function useBlock(targetUserId: string): UseBlockResult {
     } finally {
       setIsLoading(false)
     }
-  }, [user?.identityId, targetUserId, cacheKey])
+  }, [user?.identityId, targetUserId, cacheKey, initialValue])
 
   useEffect(() => {
     checkBlockStatus()
@@ -79,7 +94,7 @@ export function useBlock(targetUserId: string): UseBlockResult {
 
     // Update cache optimistically
     if (cacheKey) {
-      blockCache.set(cacheKey, { isBlocked: !wasBlocked, timestamp: Date.now() })
+      setBlockStatus(cacheKey, !wasBlocked)
     }
 
     try {
@@ -101,7 +116,7 @@ export function useBlock(targetUserId: string): UseBlockResult {
       // Rollback
       setIsBlocked(wasBlocked)
       if (cacheKey) {
-        blockCache.set(cacheKey, { isBlocked: wasBlocked, timestamp: Date.now() })
+        setBlockStatus(cacheKey, wasBlocked)
       }
       console.error('useBlock: Error toggling block:', error)
       toast.error('Failed to update block status')
@@ -112,7 +127,7 @@ export function useBlock(targetUserId: string): UseBlockResult {
 
   const refresh = useCallback(() => {
     if (cacheKey) {
-      blockCache.delete(cacheKey)
+      deleteBlockStatus(cacheKey)
     }
     checkBlockStatus(true)
   }, [cacheKey, checkBlockStatus])
@@ -160,6 +175,9 @@ export function invalidateBlockedUsersCache(userId: string): void {
  * Clear all block caches
  */
 export function clearBlockCache(): void {
-  blockCache.clear()
+  clearSharedBlockCache()
   blockedUsersCache.clear()
 }
+
+// Re-export for convenience
+export { seedBlockStatusCache }
