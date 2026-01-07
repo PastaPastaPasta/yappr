@@ -27,7 +27,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
-import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 
 type SettingsSection = 'main' | 'account' | 'notifications' | 'privacy' | 'appearance' | 'about'
@@ -129,12 +128,6 @@ function SettingsPage() {
       <div>
         <h3 className="font-semibold mb-4">Account Actions</h3>
         <div className="space-y-3">
-          <Button variant="outline" className="w-full justify-start" asChild>
-            <Link href="/profile">
-              <UserIcon className="h-4 w-4 mr-2" />
-              Edit Profile
-            </Link>
-          </Button>
           <Button variant="outline" className="w-full justify-start" onClick={logout}>
             <KeyIcon className="h-4 w-4 mr-2" />
             Log Out
@@ -293,10 +286,7 @@ function SettingsPage() {
 
   const renderAppearanceSettings = () => (
     <div className="p-6 space-y-6">
-      {/* Avatar Customization */}
-      <AvatarCustomization />
-
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+      <div>
         <h3 className="font-semibold mb-4">Theme</h3>
         <RadioGroup.Root
           value={theme}
@@ -348,20 +338,6 @@ function SettingsPage() {
             </label>
           </div>
         </RadioGroup.Root>
-      </div>
-      
-      <div>
-        <h3 className="font-semibold mb-4">Display</h3>
-        <div className="space-y-4">
-          <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg">
-            <p className="text-sm text-gray-500 mb-2">Font Size</p>
-            <p className="text-sm">Default size (coming soon)</p>
-          </div>
-          <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg">
-            <p className="text-sm text-gray-500 mb-2">Color</p>
-            <p className="text-sm">Yappr Purple (default)</p>
-          </div>
-        </div>
       </div>
     </div>
   )
