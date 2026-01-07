@@ -12,6 +12,10 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: 'Yappr - Share Your Voice',
   description: 'A modern social platform for sharing thoughts and connecting with others',
+  icons: {
+    icon: '/yappr.png',
+    apple: '/yappr.png',
+  },
 }
 
 export default function RootLayout({
