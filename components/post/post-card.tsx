@@ -30,6 +30,7 @@ import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
+import { useFollow } from '@/hooks/use-follow'
 import { tipService } from '@/lib/services/tip-service'
 
 interface PostCardProps {
@@ -56,6 +57,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
   const { setReplyingTo, setComposeOpen } = useAppStore()
   const { open: openTipModal } = useTipModal()
   const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id)
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id)
 
   // Sync local state with prop changes (e.g., when parent enriches post data)
   useEffect(() => {
@@ -296,8 +298,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
                   className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                   sideOffset={5}
                 >
-                  <DropdownMenu.Item className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none">
-                    Follow {(post.author as any).hasDpns ? `@${post.author.username}` : post.author.displayName}
+                  <DropdownMenu.Item
+                    onClick={(e) => { e.stopPropagation(); toggleFollow(); }}
+                    disabled={followLoading}
+                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
+                  >
+                    {isFollowing ? 'Unfollow' : 'Follow'} {(post.author as any).hasDpns ? `@${post.author.username}` : post.author.displayName}
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none">
                     Add to Lists
