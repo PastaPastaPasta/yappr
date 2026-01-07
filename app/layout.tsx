@@ -15,8 +15,8 @@ export const metadata: Metadata = {
   title: 'Yappr - Share Your Voice',
   description: 'A modern social platform for sharing thoughts and connecting with others',
   icons: {
-    icon: `${basePath}/yappr.png`,
-    apple: `${basePath}/yappr.png`,
+    icon: `${basePath}/yappr.jpg`,
+    apple: `${basePath}/yappr.jpg`,
   },
 }
 
