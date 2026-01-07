@@ -129,6 +129,7 @@ export interface Conversation {
   id: string  // conversationId (derived from participants)
   participantId: string  // The other participant (not current user)
   participantUsername?: string  // DPNS username if available
+  participantDisplayName?: string  // Profile display name if available
   lastMessage?: DirectMessage | null
   unreadCount: number
   updatedAt: Date

@@ -2,6 +2,7 @@ import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
 import { dpnsService } from './dpns-service'
+import { profileService } from './profile-service'
 import {
   DirectMessage,
   Conversation,
@@ -225,12 +226,19 @@ class DirectMessageService {
             m => m.$ownerId !== userId && m.$createdAt > lastReadAt
           ).length
 
-          // Get participant username
+          // Get participant username and display name
           let participantUsername: string | undefined
+          let participantDisplayName: string | undefined
           try {
             participantUsername = await dpnsService.resolveUsername(data.participantId) || undefined
           } catch {
             // Ignore DPNS errors
+          }
+          try {
+            const profile = await profileService.getProfile(data.participantId)
+            participantDisplayName = profile?.displayName
+          } catch {
+            // Ignore profile errors
           }
 
           // Decrypt latest message for preview
@@ -254,6 +262,7 @@ class DirectMessageService {
             id: convId,
             participantId: data.participantId,
             participantUsername,
+            participantDisplayName,
             lastMessage,
             unreadCount,
             updatedAt: latestDoc ? new Date(latestDoc.$createdAt) : new Date()

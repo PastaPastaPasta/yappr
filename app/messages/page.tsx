@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
-import { directMessageService, dpnsService, identityService } from '@/lib/services'
+import { directMessageService, dpnsService, identityService, profileService } from '@/lib/services'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -293,6 +293,15 @@ function MessagesPage() {
         return
       }
 
+      // Get participant's display name
+      let participantDisplayName: string | undefined
+      try {
+        const profile = await profileService.getProfile(participantId)
+        participantDisplayName = profile?.displayName
+      } catch {
+        // Ignore profile errors
+      }
+
       // Create new conversation entry
       const { conversationId } = await directMessageService.getOrCreateConversation(
         user.identityId,
@@ -303,6 +312,7 @@ function MessagesPage() {
         id: conversationId,
         participantId,
         participantUsername,
+        participantDisplayName,
         unreadCount: 0,
         updatedAt: new Date()
       }
@@ -378,9 +388,9 @@ function MessagesPage() {
                   </div>
 
                   <div className="flex-1 text-left min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
                       <span className="font-semibold truncate">
-                        {conversation.participantUsername || `${conversation.participantId.slice(0, 8)}...`}
+                        {conversation.participantDisplayName || conversation.participantUsername || `${conversation.participantId.slice(0, 8)}...`}
                       </span>
                       {conversation.lastMessage && (
                         <span className="text-xs text-gray-500 flex-shrink-0">
@@ -388,6 +398,9 @@ function MessagesPage() {
                         </span>
                       )}
                     </div>
+                    <p className="text-xs text-gray-500 truncate mb-1">
+                      {conversation.participantUsername || `${conversation.participantId.slice(0, 12)}...`}
+                    </p>
                     {conversation.lastMessage && (
                       <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
                         {conversation.lastMessage.senderId === user?.identityId && 'You: '}
@@ -427,9 +440,11 @@ function MessagesPage() {
                   </div>
                   <div className="min-w-0">
                     <p className="font-semibold truncate">
-                      {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
+                      {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
                     </p>
-                    <p className="text-xs text-gray-500 truncate">{selectedConversation.participantId.slice(0, 12)}...</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 12)}...`}
+                    </p>
                   </div>
                 </div>
                 
