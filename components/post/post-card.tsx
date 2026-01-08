@@ -260,7 +260,16 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleReply = () => {
-    setReplyingTo(post)
+    // Merge enriched author data into the post so compose modal shows correct username
+    const enrichedPost = {
+      ...post,
+      author: {
+        ...post.author,
+        username: usernameState || post.author.username,
+        displayName: displayName || post.author.displayName
+      }
+    }
+    setReplyingTo(enrichedPost)
     setComposeOpen(true)
   }
 

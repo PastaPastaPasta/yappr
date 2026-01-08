@@ -168,7 +168,11 @@ export function ComposeModal() {
                 <div className="p-4">
                   {replyingTo && (
                     <div className="mb-4 text-sm text-gray-500">
-                      Replying to <span className="text-yappr-500">@{replyingTo.author.username}</span>
+                      Replying to <span className="text-yappr-500">
+                        {replyingTo.author.username && !replyingTo.author.username.startsWith('user_')
+                          ? `@${replyingTo.author.username}`
+                          : replyingTo.author.displayName || `@${replyingTo.author.username}`}
+                      </span>
                     </div>
                   )}
                   
