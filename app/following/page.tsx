@@ -389,6 +389,7 @@ function FollowingPage() {
               displayName: profileData?.displayName || primaryUsername,
               bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
               hasProfile: !!profile,
+              hasDpnsName: true, // Search results are always from DPNS
               followersCount: followerCountMap.get(ownerId) || 0,
               followingCount: followingCountMap.get(ownerId) || 0,
               isFollowing: followingState.data?.some(u => u.id === ownerId) || false,
