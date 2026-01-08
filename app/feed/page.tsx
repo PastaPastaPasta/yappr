@@ -79,6 +79,8 @@ function FeedPage() {
             setLastPostId(cached[cached.length - 1].id)
             setHasMore(cached.length >= 20)
           }
+          // Enrich cached posts (needed after back navigation when enrichment state is reset)
+          enrichProgressively(cached)
           return
         }
       }
