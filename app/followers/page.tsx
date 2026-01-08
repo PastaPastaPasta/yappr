@@ -15,6 +15,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
 import { formatNumber } from '@/lib/utils'
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 
 interface Follower {
@@ -23,6 +24,7 @@ interface Follower {
   displayName: string
   bio?: string
   hasProfile?: boolean
+  hasDpnsName: boolean
   followersCount: number
   followingCount: number
   isFollowingBack: boolean
@@ -178,10 +180,11 @@ function FollowersPage() {
 
         return {
           id: followerId,
-          username: username || `user_${followerId.slice(-6)}`,
-          displayName: profileData?.displayName || username || `User ${followerId.slice(-6)}`,
+          username: username || followerId.slice(-8),
+          displayName: profileData?.displayName || username || `User ${followerId.slice(-8)}`,
           bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
           hasProfile: !!profile,
+          hasDpnsName: !!username,
           followersCount: followerCountMap.get(followerId) || 0,
           followingCount: followingCountMap.get(followerId) || 0,
           isFollowingBack: followingBackMap.get(followerId) || false,
@@ -354,12 +357,39 @@ function FollowersPage() {
                             >
                               {follower.displayName}
                             </h3>
-                            <p
-                              onClick={() => router.push(`/user?id=${follower.id}`)}
-                              className="text-sm text-gray-500 hover:underline cursor-pointer"
-                            >
-                              @{follower.username}
-                            </p>
+                            {follower.hasDpnsName ? (
+                              <p
+                                onClick={() => router.push(`/user?id=${follower.id}`)}
+                                className="text-sm text-gray-500 hover:underline cursor-pointer"
+                              >
+                                @{follower.username}
+                              </p>
+                            ) : (
+                              <Tooltip.Provider>
+                                <Tooltip.Root>
+                                  <Tooltip.Trigger asChild>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        navigator.clipboard.writeText(follower.id)
+                                        toast.success('Identity ID copied')
+                                      }}
+                                      className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"
+                                    >
+                                      {follower.id.slice(0, 8)}...{follower.id.slice(-6)}
+                                    </button>
+                                  </Tooltip.Trigger>
+                                  <Tooltip.Portal>
+                                    <Tooltip.Content
+                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                                      sideOffset={5}
+                                    >
+                                      Click to copy full identity ID
+                                    </Tooltip.Content>
+                                  </Tooltip.Portal>
+                                </Tooltip.Root>
+                              </Tooltip.Provider>
+                            )}
                             {follower.allUsernames && follower.allUsernames.length > 1 && (
                               <AlsoKnownAs 
                                 primaryUsername={follower.username} 

@@ -22,6 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { WasmSdk } from '@dashevo/wasm-sdk'
 
 // Helper wrapper for DPNS utility function with error handling
@@ -42,6 +43,7 @@ interface FollowingUser {
   displayName: string
   bio?: string
   hasProfile?: boolean
+  hasDpnsName: boolean
   followersCount: number
   followingCount: number
   isFollowing: boolean
@@ -189,10 +191,11 @@ function FollowingPage() {
 
         return {
           id: followingId,
-          username: username || `user_${followingId.slice(-6)}`,
-          displayName: profileData?.displayName || username || `User ${followingId.slice(-6)}`,
+          username: username || followingId.slice(-8),
+          displayName: profileData?.displayName || username || `User ${followingId.slice(-8)}`,
           bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
           hasProfile: !!profile,
+          hasDpnsName: !!username,
           followersCount: followerCountMap.get(followingId) || 0,
           followingCount: followingCountMap.get(followingId) || 0,
           isFollowing: true,
@@ -641,15 +644,42 @@ function FollowingPage() {
                             >
                               {followingUser.displayName}
                             </h3>
-                            <p
-                              onClick={() => router.push(`/user?id=${followingUser.id}`)}
-                              className="text-sm text-gray-500 hover:underline cursor-pointer"
-                            >
-                              @{followingUser.username}
-                            </p>
+                            {followingUser.hasDpnsName ? (
+                              <p
+                                onClick={() => router.push(`/user?id=${followingUser.id}`)}
+                                className="text-sm text-gray-500 hover:underline cursor-pointer"
+                              >
+                                @{followingUser.username}
+                              </p>
+                            ) : (
+                              <RadixTooltip.Provider>
+                                <RadixTooltip.Root>
+                                  <RadixTooltip.Trigger asChild>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        navigator.clipboard.writeText(followingUser.id)
+                                        toast.success('Identity ID copied')
+                                      }}
+                                      className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"
+                                    >
+                                      {followingUser.id.slice(0, 8)}...{followingUser.id.slice(-6)}
+                                    </button>
+                                  </RadixTooltip.Trigger>
+                                  <RadixTooltip.Portal>
+                                    <RadixTooltip.Content
+                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                                      sideOffset={5}
+                                    >
+                                      Click to copy full identity ID
+                                    </RadixTooltip.Content>
+                                  </RadixTooltip.Portal>
+                                </RadixTooltip.Root>
+                              </RadixTooltip.Provider>
+                            )}
                             {followingUser.allUsernames && followingUser.allUsernames.length > 1 && (
-                              <AlsoKnownAs 
-                                primaryUsername={followingUser.username} 
+                              <AlsoKnownAs
+                                primaryUsername={followingUser.username}
                                 allUsernames={followingUser.allUsernames}
                                 identityId={followingUser.id}
                               />
