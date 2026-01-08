@@ -9,18 +9,18 @@ interface PostContentProps {
 }
 
 /**
- * Renders post content with clickable hashtags and mentions
+ * Renders post content with clickable hashtags, mentions, and URLs
  */
 export function PostContent({ content, className = '' }: PostContentProps) {
   const parsedContent = useMemo(() => {
-    // Regex patterns for hashtags and mentions
-    const hashtagPattern = /#([a-zA-Z0-9_]{1,63})/g
-    const mentionPattern = /@([a-zA-Z0-9_]{1,100})/g
+    // Combined pattern to match URLs, hashtags, and mentions
+    // Order matters - URLs first to avoid partial matches
+    // URLs: http://, https://, or www. prefixed
+    // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
+    // Mentions: @ followed by alphanumeric/underscore (1-100 chars)
+    const combinedPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)|(#[a-zA-Z0-9_]{1,63})|(@[a-zA-Z0-9_]{1,100})/gi
 
-    // Combined pattern to match both
-    const combinedPattern = /(#[a-zA-Z0-9_]{1,63})|(@[a-zA-Z0-9_]{1,100})/g
-
-    const parts: Array<{ type: 'text' | 'hashtag' | 'mention'; value: string }> = []
+    const parts: Array<{ type: 'text' | 'hashtag' | 'mention' | 'url'; value: string }> = []
     let lastIndex = 0
     let match
 
@@ -33,11 +33,16 @@ export function PostContent({ content, className = '' }: PostContentProps) {
         })
       }
 
-      // Add the matched hashtag or mention
+      // Add the matched element
       const value = match[0]
-      if (value.startsWith('#')) {
+      if (match[1]) {
+        // URL match (first capture group)
+        parts.push({ type: 'url', value })
+      } else if (match[2]) {
+        // Hashtag match (second capture group)
         parts.push({ type: 'hashtag', value })
-      } else if (value.startsWith('@')) {
+      } else if (match[3]) {
+        // Mention match (third capture group)
         parts.push({ type: 'mention', value })
       }
 
@@ -58,6 +63,32 @@ export function PostContent({ content, className = '' }: PostContentProps) {
   return (
     <div className={`whitespace-pre-wrap break-words ${className}`}>
       {parsedContent.map((part, index) => {
+        if (part.type === 'url') {
+          // Ensure URL has protocol for href
+          const href = part.value.startsWith('www.')
+            ? `https://${part.value}`
+            : part.value
+          // Clean up trailing punctuation that might have been captured
+          const cleanHref = href.replace(/[.,;:!?)]+$/, '')
+          const cleanDisplay = part.value.replace(/[.,;:!?)]+$/, '')
+          const trailingPunctuation = part.value.slice(cleanDisplay.length)
+
+          return (
+            <Fragment key={index}>
+              <a
+                href={cleanHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-yappr-500 hover:underline break-all"
+              >
+                {cleanDisplay}
+              </a>
+              {trailingPunctuation}
+            </Fragment>
+          )
+        }
+
         if (part.type === 'hashtag') {
           const tag = part.value.slice(1).toLowerCase() // Remove # and lowercase
           return (
