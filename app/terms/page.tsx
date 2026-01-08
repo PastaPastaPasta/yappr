@@ -91,9 +91,9 @@ export default function TermsPage() {
               <h2 className="text-xl font-semibold mb-3">No Content Moderation</h2>
               <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
                 Because there is no central authority, there is no content moderation. No one can delete posts, ban users,
-                or remove content from the blockchain. Users have tools to manage their own experience (blocking and muting),
+                or remove content from the blockchain. Users have tools to manage their own experience (such as blocking),
                 but these only affect what you see, not what exists on the network. Other users and applications may still
-                display content you&apos;ve blocked or muted.
+                display content you&apos;ve blocked.
               </p>
             </section>
 
