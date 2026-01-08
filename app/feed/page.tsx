@@ -16,7 +16,7 @@ import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { cacheManager } from '@/lib/cache-manager'
-import { usePostEnrichment } from '@/hooks/use-post-enrichment'
+import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { identifierToBase58 } from '@/lib/services/sdk-helpers'
 import { getBlockedUserIds } from '@/hooks/use-block'
 
@@ -31,8 +31,10 @@ function FeedPage() {
   const [followingNextWindow, setFollowingNextWindow] = useState<{ start: Date; end: Date; windowHours: number } | null>(null)
   const [activeTab, setActiveTab] = useState<'forYou' | 'following'>('forYou')
 
-  // Hook for enriching posts with stats/interactions (handles deduplication internally)
-  const { enrich: enrichPosts, reset: resetEnrichment } = usePostEnrichment()
+  // Progressive enrichment - renders posts immediately, fills in data as it loads
+  const { enrichProgressively, enrichmentState, reset: resetEnrichment, getPostEnrichment } = useProgressiveEnrichment({
+    currentUserId: user?.identityId
+  })
 
   // Prevent hydration mismatches and restore tab from localStorage
   useEffect(() => {
@@ -211,15 +213,6 @@ function FeedPage() {
         return bTime - aTime
       })
 
-      // Filter out posts from blocked users
-      if (user?.identityId) {
-        const blockedIds = await getBlockedUserIds(user.identityId)
-        if (blockedIds.length > 0) {
-          const blockedSet = new Set(blockedIds)
-          sortedPosts = sortedPosts.filter((post: any) => !blockedSet.has(post.author.id))
-        }
-      }
-
       // Update pagination state based on feed type
       if (activeTab === 'following') {
         setFollowingNextWindow(followingCursor)
@@ -248,27 +241,41 @@ function FeedPage() {
         setHasMore(sortedPosts.length >= 20)
       }
 
-      // Enrich posts BEFORE rendering to seed caches and avoid N+1 queries
-      // This ensures block/follow/avatar data is cached before PostCard hooks mount
-      const enrichedPosts = await enrichPosts(sortedPosts)
-      const postsToShow = enrichedPosts !== sortedPosts ? enrichedPosts : sortedPosts
-
+      // PROGRESSIVE LOADING: Show posts IMMEDIATELY with skeleton placeholders
+      // Enrichment data (usernames, avatars, stats) will fill in progressively
       if (isPaginating) {
         setData((currentPosts: any[] | null) => {
           // Deduplicate - filter out posts that already exist
           const existingIds = new Set((currentPosts || []).map(p => p.id))
-          const newPosts = postsToShow.filter(p => !existingIds.has(p.id))
+          const newPosts = sortedPosts.filter(p => !existingIds.has(p.id))
           const allPosts = [...(currentPosts || []), ...newPosts]
-          console.log(`Feed: Appended ${newPosts.length} new posts (${postsToShow.length - newPosts.length} duplicates filtered)`)
+          console.log(`Feed: Appended ${newPosts.length} new posts (${sortedPosts.length - newPosts.length} duplicates filtered)`)
           return allPosts
         })
       } else {
-        setData(postsToShow)
+        setData(sortedPosts)
+      }
 
-        // Cache after enrichment
-        if (postsToShow.length > 0) {
-          cacheManager.set('feed', cacheKey, postsToShow)
-        }
+      // Start progressive enrichment (non-blocking)
+      // This will update enrichmentState as data loads, triggering re-renders
+      enrichProgressively(sortedPosts)
+
+      // Filter blocked users ASYNC - posts may briefly appear then disappear
+      // This prioritizes fastest time-to-first-content
+      if (user?.identityId) {
+        getBlockedUserIds(user.identityId).then(blockedIds => {
+          if (blockedIds.length > 0) {
+            const blockedSet = new Set(blockedIds)
+            setData((currentPosts: any[] | null) =>
+              (currentPosts || []).filter((post: any) => !blockedSet.has(post.author.id))
+            )
+          }
+        }).catch(err => console.error('Feed: Failed to filter blocked users:', err))
+      }
+
+      // Cache the raw posts (enrichment is progressive, not cached)
+      if (!isPaginating && sortedPosts.length > 0) {
+        cacheManager.set('feed', cacheKey, sortedPosts)
       }
 
     } catch (error) {
@@ -289,7 +296,7 @@ function FeedPage() {
     } finally {
       setLoading(false)
     }
-  }, [postsState.setLoading, postsState.setError, postsState.setData, enrichPosts, activeTab, user?.identityId])
+  }, [postsState.setLoading, postsState.setError, postsState.setData, enrichProgressively, activeTab, user?.identityId])
 
   // Load more posts (pagination)
   const loadMore = useCallback(async () => {
@@ -446,6 +453,7 @@ function FeedPage() {
                   <PostCard
                     post={post}
                     isOwnPost={user?.identityId === post.author.id}
+                    enrichment={getPostEnrichment(post)}
                   />
                 </ErrorBoundary>
               ))}

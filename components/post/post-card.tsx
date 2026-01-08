@@ -33,23 +33,64 @@ import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { tipService } from '@/lib/services/tip-service'
 
+// Enrichment data from progressive loading
+export interface ProgressiveEnrichment {
+  username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
+  displayName: string | undefined
+  avatarUrl: string | undefined
+  stats: { likes: number; reposts: number; replies: number; views: number } | undefined
+  interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
+  isBlocked: boolean | undefined
+  isFollowing: boolean | undefined
+}
+
 interface PostCardProps {
   post: Post
   hideAvatar?: boolean
   isOwnPost?: boolean
+  /** Progressive enrichment data - use this when available for faster rendering */
+  enrichment?: ProgressiveEnrichment
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
 
   // Compute isOwnPost from auth context if not explicitly provided
   const isOwnPost = isOwnPostProp ?? (user?.identityId === post.author.id)
-  const [liked, setLiked] = useState(post.liked || false)
-  const [likes, setLikes] = useState(post.likes)
-  const [reposted, setReposted] = useState(post.reposted || false)
-  const [reposts, setReposts] = useState(post.reposts)
-  const [bookmarked, setBookmarked] = useState(post.bookmarked || false)
+
+  // Use progressive enrichment data when available, fall back to post._enrichment (old path)
+  const legacyEnrichment = post._enrichment
+
+  // Resolve display values: progressive enrichment > post data > placeholder
+  const displayName = progressiveEnrichment?.displayName ?? post.author.displayName
+  const avatarUrl = progressiveEnrichment?.avatarUrl ?? legacyEnrichment?.authorAvatarUrl ?? post.author.avatar
+
+  // Username state: undefined = loading, null = no DPNS, string = has DPNS
+  // Check progressive enrichment first, then fall back to hasDpns on author
+  const usernameState = progressiveEnrichment?.username !== undefined
+    ? progressiveEnrichment.username
+    : (post.author as any).hasDpns === undefined
+      ? undefined  // Still loading
+      : (post.author as any).hasDpns
+        ? post.author.username  // Has DPNS
+        : null  // No DPNS
+
+  // Stats: use progressive enrichment > post data
+  const statsLikes = progressiveEnrichment?.stats?.likes ?? post.likes
+  const statsReposts = progressiveEnrichment?.stats?.reposts ?? post.reposts
+  const statsReplies = progressiveEnrichment?.stats?.replies ?? post.replies
+
+  // Interactions: use progressive enrichment > post data
+  const initialLiked = progressiveEnrichment?.interactions?.liked ?? post.liked ?? false
+  const initialReposted = progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false
+  const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
+
+  const [liked, setLiked] = useState(initialLiked)
+  const [likes, setLikes] = useState(statsLikes)
+  const [reposted, setReposted] = useState(initialReposted)
+  const [reposts, setReposts] = useState(statsReposts)
+  const [bookmarked, setBookmarked] = useState(initialBookmarked)
   const [showLikesModal, setShowLikesModal] = useState(false)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
@@ -58,22 +99,32 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
   const { open: openTipModal } = useTipModal()
 
   // Use pre-fetched enrichment data to avoid N+1 queries
-  const enrichment = post._enrichment
   const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id, {
-    initialValue: enrichment?.authorIsBlocked
+    initialValue: progressiveEnrichment?.isBlocked ?? legacyEnrichment?.authorIsBlocked
   })
   const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id, {
-    initialValue: enrichment?.authorIsFollowing
+    initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
   })
 
-  // Sync local state with prop changes (e.g., when parent enriches post data)
+  // Sync local state with prop changes (progressive enrichment or post data changes)
   useEffect(() => {
-    setLiked(post.liked || false)
-    setLikes(post.likes)
-    setReposted(post.reposted || false)
-    setReposts(post.reposts)
-    setBookmarked(post.bookmarked || false)
-  }, [post.liked, post.likes, post.reposted, post.reposts, post.bookmarked])
+    setLiked(progressiveEnrichment?.interactions?.liked ?? post.liked ?? false)
+    setLikes(progressiveEnrichment?.stats?.likes ?? post.likes)
+    setReposted(progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false)
+    setReposts(progressiveEnrichment?.stats?.reposts ?? post.reposts)
+    setBookmarked(progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false)
+  }, [
+    progressiveEnrichment?.interactions?.liked,
+    progressiveEnrichment?.interactions?.reposted,
+    progressiveEnrichment?.interactions?.bookmarked,
+    progressiveEnrichment?.stats?.likes,
+    progressiveEnrichment?.stats?.reposts,
+    post.liked,
+    post.likes,
+    post.reposted,
+    post.reposts,
+    post.bookmarked
+  ])
 
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
@@ -223,7 +274,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
             onClick={(e) => e.stopPropagation()}
             className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
           >
-            <UserAvatar userId={post.author.id} size="lg" alt={post.author.displayName} preloadedUrl={enrichment?.authorAvatarUrl} />
+            <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
           </Link>
         )}
 
@@ -232,7 +283,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
             <div className="flex items-center gap-1 text-sm min-w-0">
               {!hideAvatar && (
                 <>
-                  {(post.author as any).hasDpns === undefined ? (
+                  {usernameState === undefined ? (
                     // Still loading - show skeleton for display name
                     <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                   ) : (
@@ -241,7 +292,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
                       onClick={(e) => e.stopPropagation()}
                       className="font-semibold hover:underline truncate"
                     >
-                      {post.author.displayName}
+                      {displayName}
                     </Link>
                   )}
                   {post.author.verified && (
@@ -249,15 +300,16 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
                       <path d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484zm-6.616-3.334l-4.334 6.5c-.145.217-.382.334-.625.334-.143 0-.288-.04-.416-.126l-.115-.094-2.415-2.415c-.293-.293-.293-.768 0-1.06s.768-.294 1.06 0l1.77 1.767 3.825-5.74c.23-.345.696-.436 1.04-.207.346.23.44.696.21 1.04z" />
                     </svg>
                   )}
-                  {(post.author as any).hasDpns ? (
+                  {usernameState ? (
+                    // Has DPNS username
                     <Link
                       href={`/user?id=${post.author.id}`}
                       onClick={(e) => e.stopPropagation()}
                       className="text-gray-500 hover:underline truncate"
                     >
-                      @{post.author.username}
+                      @{usernameState}
                     </Link>
-                  ) : (post.author as any).hasDpns === false ? (
+                  ) : usernameState === null ? (
                     // Explicitly no DPNS - show identity ID
                     <Tooltip.Provider>
                       <Tooltip.Root>
@@ -310,20 +362,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
                     disabled={followLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
                   >
-                    {isFollowing ? 'Unfollow' : 'Follow'} {(post.author as any).hasDpns ? `@${post.author.username}` : post.author.displayName}
+                    {isFollowing ? 'Unfollow' : 'Follow'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none">
                     Add to Lists
                   </DropdownMenu.Item>
                   <DropdownMenu.Item className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none">
-                    Mute {(post.author as any).hasDpns ? `@${post.author.username}` : post.author.displayName}
+                    Mute {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleBlock(); }}
                     disabled={blockLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
                   >
-                    {isBlocked ? 'Unblock' : 'Block'} {(post.author as any).hasDpns ? `@${post.author.username}` : post.author.displayName}
+                    {isBlocked ? 'Unblock' : 'Block'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
@@ -452,7 +504,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp }:
                   >
                     <ChatBubbleOvalLeftIcon className="h-5 w-5 text-gray-500 group-hover:text-yappr-500 transition-colors" />
                     <span className="text-sm text-gray-500 group-hover:text-yappr-500 transition-colors">
-                      {post.replies > 0 && formatNumber(post.replies)}
+                      {statsReplies > 0 && formatNumber(statsReplies)}
                     </span>
                   </button>
                 </Tooltip.Trigger>
