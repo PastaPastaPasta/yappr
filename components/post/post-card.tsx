@@ -42,6 +42,7 @@ export interface ProgressiveEnrichment {
   interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
   isBlocked: boolean | undefined
   isFollowing: boolean | undefined
+  replyTo?: { id: string; authorId: string; authorUsername: string | null }
 }
 
 interface PostCardProps {
@@ -85,6 +86,27 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const initialLiked = progressiveEnrichment?.interactions?.liked ?? post.liked ?? false
   const initialReposted = progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false
   const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
+
+  // ReplyTo: use post.replyTo if available, otherwise build from progressive enrichment
+  const replyTo = post.replyTo ?? (progressiveEnrichment?.replyTo ? {
+    id: progressiveEnrichment.replyTo.id,
+    author: {
+      id: progressiveEnrichment.replyTo.authorId,
+      username: progressiveEnrichment.replyTo.authorUsername || `${progressiveEnrichment.replyTo.authorId.slice(0, 8)}...`,
+      displayName: progressiveEnrichment.replyTo.authorUsername || 'Unknown User',
+      avatar: '',
+      followers: 0,
+      following: 0,
+      verified: false,
+      joinedAt: new Date()
+    },
+    content: '',
+    createdAt: new Date(),
+    likes: 0,
+    reposts: 0,
+    replies: 0,
+    views: 0
+  } : undefined)
 
   const [liked, setLiked] = useState(initialLiked)
   const [likes, setLikes] = useState(statsLikes)
@@ -380,13 +402,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             </div>
           </div>
 
-          {post.replyTo && !isTipPost && (
+          {replyTo && !isTipPost && (
             <Link
-              href={`/post?id=${post.replyTo.id}`}
+              href={`/post?id=${replyTo.id}`}
               onClick={(e) => e.stopPropagation()}
               className="text-sm text-gray-500 hover:underline mt-1 block"
             >
-              Replying to <span className="text-yappr-500">@{post.replyTo.author.username}</span>
+              Replying to <span className="text-yappr-500">@{replyTo.author.username}</span>
             </Link>
           )}
 
@@ -401,13 +423,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       <CurrencyDollarIcon className="h-4 w-4" />
                       <span>
                         Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
-                        {post.replyTo && (
+                        {replyTo && (
                           <> to <Link
-                            href={`/user?id=${post.replyTo.author.id}`}
+                            href={`/user?id=${replyTo.author.id}`}
                             onClick={(e) => e.stopPropagation()}
                             className="font-semibold hover:underline"
                           >
-                            @{post.replyTo.author.username || post.replyTo.author.displayName}
+                            @{replyTo.author.username || replyTo.author.displayName}
                           </Link></>
                         )}
                       </span>

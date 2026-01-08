@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Post } from '@/lib/types'
+import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { profileService } from '@/lib/services/profile-service'
@@ -26,6 +26,12 @@ export interface ProfileData {
   bio?: string
 }
 
+export interface ReplyToData {
+  id: string
+  authorId: string
+  authorUsername: string | null  // null = no DPNS
+}
+
 export interface EnrichmentState {
   // Author data keyed by authorId
   usernames: Map<string, string | null>     // authorId → DPNS username (null = no DPNS)
@@ -36,6 +42,7 @@ export interface EnrichmentState {
   // Post data keyed by postId
   stats: Map<string, PostStats>             // postId → stats
   interactions: Map<string, UserInteractions> // postId → user interactions
+  replyTo: Map<string, ReplyToData>         // postId → parent post data (for replies)
   // Loading phase
   phase: 'idle' | 'loading' | 'complete'
 }
@@ -49,6 +56,7 @@ function createEmptyEnrichmentState(): EnrichmentState {
     followStatus: new Map(),
     stats: new Map(),
     interactions: new Map(),
+    replyTo: new Map(),
     phase: 'idle'
   }
 }
@@ -69,6 +77,7 @@ interface UseProgressiveEnrichmentResult {
     interactions: UserInteractions | undefined
     isBlocked: boolean | undefined
     isFollowing: boolean | undefined
+    replyTo: ReplyToData | undefined
   }
 }
 
@@ -117,6 +126,10 @@ export function useProgressiveEnrichment(
     // Extract IDs
     const postIds = posts.map(p => p.id)
     const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
+
+    // Collect parent post IDs for replies
+    const postsWithReplyTo = posts.filter(p => p.replyToId)
+    const parentPostIds = Array.from(new Set(postsWithReplyTo.map(p => p.replyToId).filter((id): id is string => !!id)))
 
     // Set loading phase
     setEnrichmentState(prev => ({ ...prev, phase: 'loading' }))
@@ -205,6 +218,40 @@ export function useProgressiveEnrichment(
       }).catch(err => console.error('Progressive enrichment: block/follow failed', err))
     }
 
+    // Priority 6: ReplyTo data (for replies and tips)
+    if (parentPostIds.length > 0) {
+      postService.getParentPostOwners(parentPostIds).then(async (parentOwnerMap) => {
+        if (!isValid()) return
+
+        // Get unique parent owner IDs and resolve their usernames
+        const parentOwnerIds = Array.from(new Set(parentOwnerMap.values()))
+        const parentUsernameMap = parentOwnerIds.length > 0
+          ? await dpnsService.resolveUsernamesBatch(parentOwnerIds)
+          : new Map<string, string | null>()
+
+        // Build replyTo map for each post
+        const replyToMap = new Map<string, ReplyToData>()
+        for (const post of postsWithReplyTo) {
+          if (post.replyToId) {
+            const parentOwnerId = parentOwnerMap.get(post.replyToId)
+            if (parentOwnerId) {
+              const parentUsername = parentUsernameMap.get(parentOwnerId) ?? null
+              replyToMap.set(post.id, {
+                id: post.replyToId,
+                authorId: parentOwnerId,
+                authorUsername: parentUsername
+              })
+            }
+          }
+        }
+
+        setEnrichmentState(prev => ({
+          ...prev,
+          replyTo: mergeMaps(prev.replyTo, replyToMap)
+        }))
+      }).catch(err => console.error('Progressive enrichment: replyTo failed', err))
+    }
+
     // Set complete phase after a reasonable time
     // This is a heuristic - in practice, all requests should complete within 2-3 seconds
     Promise.all([
@@ -241,7 +288,8 @@ export function useProgressiveEnrichment(
       stats: enrichmentState.stats.get(postId),
       interactions: enrichmentState.interactions.get(postId),
       isBlocked: enrichmentState.blockStatus.get(authorId),
-      isFollowing: enrichmentState.followStatus.get(authorId)
+      isFollowing: enrichmentState.followStatus.get(authorId),
+      replyTo: enrichmentState.replyTo.get(postId)
     }
   }, [enrichmentState])
 

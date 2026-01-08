@@ -176,7 +176,7 @@ class PostService extends BaseDocumentService<Post> {
    * Batch fetch parent posts to get their owner IDs.
    * Returns a Map of postId -> ownerId
    */
-  private async getParentPostOwners(parentPostIds: string[]): Promise<Map<string, string>> {
+  async getParentPostOwners(parentPostIds: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     if (parentPostIds.length === 0) return result;
 
