@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@libp2p/gossipsub": "^15.0.11",
+    "@libp2p/utils": "^6.7.2",
     "@chainsafe/libp2p-noise": "^16.1.0",
     "@chainsafe/libp2p-yamux": "^7.0.1",
     "@libp2p/circuit-relay-v2": "^4.1.2",
