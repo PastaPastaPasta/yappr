@@ -165,13 +165,21 @@ async function startRelay() {
   setInterval(() => {
     const connections = node.getConnections()
     const topics = node.services.pubsub.getTopics()
+    const pubsubPeers = node.services.pubsub.getPeers()
 
     let topicPeers = {}
     for (const topic of topics) {
-      topicPeers[topic] = node.services.pubsub.getSubscribers(topic).length
+      const subscribers = node.services.pubsub.getSubscribers(topic)
+      topicPeers[topic] = subscribers.length
+      if (subscribers.length > 0) {
+        console.log(`  Subscribers to ${topic}:`, subscribers.map(p => p.toString().slice(0, 20)))
+      }
     }
 
-    console.log(`[Stats] Connections: ${connections.length}, Topics: ${JSON.stringify(topicPeers)}`)
+    console.log(`[Stats] Connections: ${connections.length}, PubsubPeers: ${pubsubPeers.length}, Topics: ${JSON.stringify(topicPeers)}`)
+    if (pubsubPeers.length > 0) {
+      console.log('  Pubsub peers:', pubsubPeers.map(p => p.toString().slice(0, 20)))
+    }
   }, 30000)
 
   // Graceful shutdown
