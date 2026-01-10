@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { PostCard } from '@/components/post/post-card'
 import { formatNumber } from '@/lib/utils'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
+import { PresenceBadge } from '@/components/ui/presence-indicator'
 import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
@@ -330,6 +331,8 @@ function UserProfileContent() {
                       userId={userId || 'default'}
                       alt={displayName}
                       size="full"
+                      showPresence={!isOwnProfile}
+                      hideOfflinePresence={false}
                     />
                   </div>
                   {isOwnProfile && isEditingProfile && (
@@ -473,7 +476,10 @@ function UserProfileContent() {
               ) : (
                 <>
                   <div className="mb-3">
-                    <h2 className="text-xl font-bold">{displayName}</h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-bold">{displayName}</h2>
+                      {!isOwnProfile && userId && <PresenceBadge userId={userId} />}
+                    </div>
                     {hasDpns ? (
                       <p className="text-gray-500">@{username}</p>
                     ) : (

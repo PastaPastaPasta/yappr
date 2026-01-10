@@ -20,6 +20,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
+import { usePresenceContext } from '@/contexts/presence-context'
 import { useTheme } from 'next-themes'
 import * as Switch from '@radix-ui/react-switch'
 import * as RadioGroup from '@radix-ui/react-radio-group'
@@ -43,6 +44,7 @@ function SettingsPage() {
   const router = useRouter()
   const { user, logout } = useAuth()
   const { theme, setTheme } = useTheme()
+  const { settings: presenceSettings, updateSettings: updatePresenceSettings, connectionStatus, peerCount } = usePresenceContext()
   const [activeSection, setActiveSection] = useState<SettingsSection>('main')
   
   // Notification settings
@@ -213,16 +215,70 @@ function SettingsPage() {
               <p className="text-sm text-gray-500">Let others see when you&apos;re active</p>
             </div>
             <Switch.Root
-              checked={privacySettings.showActivity}
-              onCheckedChange={(checked) => 
-                setPrivacySettings(prev => ({ ...prev, showActivity: checked }))
-              }
+              checked={presenceSettings.enabled && presenceSettings.showOnlineStatus}
+              onCheckedChange={(checked) => {
+                updatePresenceSettings({ enabled: checked, showOnlineStatus: checked })
+              }}
               className={`w-11 h-6 rounded-full relative transition-colors ${
-                privacySettings.showActivity ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+                presenceSettings.enabled && presenceSettings.showOnlineStatus ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
               }`}
             >
               <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
             </Switch.Root>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Show Typing Indicators</p>
+              <p className="text-sm text-gray-500">Let others see when you&apos;re typing</p>
+            </div>
+            <Switch.Root
+              checked={presenceSettings.showTypingIndicators}
+              onCheckedChange={(checked) =>
+                updatePresenceSettings({ showTypingIndicators: checked })
+              }
+              className={`w-11 h-6 rounded-full relative transition-colors ${
+                presenceSettings.showTypingIndicators ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+              }`}
+            >
+              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
+            </Switch.Root>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Show Last Seen</p>
+              <p className="text-sm text-gray-500">Show others when you were last active</p>
+            </div>
+            <Switch.Root
+              checked={presenceSettings.showLastSeen}
+              onCheckedChange={(checked) =>
+                updatePresenceSettings({ showLastSeen: checked })
+              }
+              className={`w-11 h-6 rounded-full relative transition-colors ${
+                presenceSettings.showLastSeen ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+              }`}
+            >
+              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
+            </Switch.Root>
+          </div>
+
+          {/* Connection status info */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <span className={`h-2 w-2 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-green-500' :
+                connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                connectionStatus === 'error' ? 'bg-red-500' :
+                'bg-gray-400'
+              }`} />
+              <span>
+                {connectionStatus === 'connected' ? `Connected (${peerCount} peers)` :
+                 connectionStatus === 'connecting' ? 'Connecting...' :
+                 connectionStatus === 'error' ? 'Connection error' :
+                 'Presence disabled'}
+              </span>
+            </div>
           </div>
         </div>
       </div>

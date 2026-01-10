@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   MagnifyingGlassIcon,
@@ -17,6 +17,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { TypingIndicatorWithNames } from '@/components/ui/typing-indicator'
+import { PresenceBadge } from '@/components/ui/presence-indicator'
+import { useConversationTyping } from '@/hooks/use-typing'
 import { formatDistanceToNow } from 'date-fns'
 import { directMessageService, dpnsService, identityService, profileService } from '@/lib/services'
 import { DirectMessage, Conversation } from '@/lib/types'
@@ -45,6 +48,39 @@ function MessagesPage() {
   selectedConversationRef.current = selectedConversation
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+
+  // Typing indicators
+  const {
+    typingUsers,
+    isTyping: isAnyoneTyping,
+    sendTyping,
+    sendStoppedTyping,
+    joinConversation,
+    leaveConversation,
+  } = useConversationTyping(selectedConversation?.id)
+
+  // Join/leave conversation typing topic when conversation changes
+  useEffect(() => {
+    if (selectedConversation?.id) {
+      joinConversation()
+    }
+    return () => {
+      if (selectedConversation?.id) {
+        leaveConversation()
+      }
+    }
+  }, [selectedConversation?.id, joinConversation, leaveConversation])
+
+  // Handle message input change (for typing indicator)
+  const handleMessageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setNewMessage(value)
+    if (value.trim()) {
+      sendTyping()
+    } else {
+      sendStoppedTyping()
+    }
+  }, [sendTyping, sendStoppedTyping])
 
   // Load conversations on mount
   useEffect(() => {
@@ -192,6 +228,7 @@ function MessagesPage() {
 
     const messageContent = newMessage.trim()
     setNewMessage('') // Clear input immediately for better UX
+    sendStoppedTyping() // Stop typing indicator when sending
     setIsSending(true)
 
     try {
@@ -383,8 +420,8 @@ function MessagesPage() {
                     selectedConversation?.id === conversation.id ? 'bg-gray-50 dark:bg-gray-950' : ''
                   }`}
                 >
-                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
-                    <UserAvatar userId={conversation.participantId} size="lg" alt="User avatar" />
+                  <div className="h-10 w-10 sm:h-12 sm:w-12 flex-shrink-0">
+                    <UserAvatar userId={conversation.participantId} size="lg" alt="User avatar" showPresence />
                   </div>
 
                   <div className="flex-1 text-left min-w-0">
@@ -435,13 +472,16 @@ function MessagesPage() {
                   >
                     <ArrowLeftIcon className="h-5 w-5" />
                   </button>
-                  <div className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
-                    <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
+                  <div className="h-10 w-10 flex-shrink-0">
+                    <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" showPresence />
                   </div>
                   <div className="min-w-0">
-                    <p className="font-semibold truncate">
-                      {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold truncate">
+                        {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
+                      </p>
+                      <PresenceBadge userId={selectedConversation.participantId} showLastSeen={false} />
+                    </div>
                     <p className="text-xs text-gray-500 truncate">
                       {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 12)}...`}
                     </p>
@@ -513,6 +553,13 @@ function MessagesPage() {
             </div>
 
             <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-3 sm:p-4">
+              {/* Typing indicator */}
+              {isAnyoneTyping && selectedConversation && (
+                <div className="mb-2">
+                  <TypingIndicatorWithNames conversationId={selectedConversation.id} />
+                </div>
+              )}
+
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -531,7 +578,7 @@ function MessagesPage() {
                   type="text"
                   placeholder="Type a message..."
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
+                  onChange={handleMessageChange}
                   disabled={isSending}
                   className="flex-1 min-w-0"
                 />

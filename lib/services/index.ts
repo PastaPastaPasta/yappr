@@ -15,6 +15,11 @@ export { hashtagService } from './hashtag-service';
 export { avatarService } from './avatar-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
 
+// Presence/PubSub services
+export { pubsubService, PUBSUB_TOPICS } from './pubsub-service';
+export { presenceService } from './presence-service';
+export { typingService } from './typing-service';
+
 // Export types
 export type { EvoSdkConfig } from './evo-sdk-service';
 export type { IdentityInfo, IdentityBalance } from './identity-service';
@@ -35,3 +40,6 @@ export type {
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
 export type { AvatarDocument, AvatarSettings } from './avatar-service';
 export type { TipResult } from './tip-service';
+export type { PubSubMessage, PubSubConfig, MessageHandler } from './pubsub-service';
+export type { PresenceInfo, PresenceStatus, MyPresenceStatus, PresenceCallback } from './presence-service';
+export type { TypingCallback } from './typing-service';
