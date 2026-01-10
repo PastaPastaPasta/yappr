@@ -136,6 +136,7 @@ class PubSubService {
             emitSelf: false,
             allowPublishToZeroTopicPeers: true,
             runOnLimitedConnection: true,  // Allow gossipsub on relay/limited connections
+            doPX: true,  // Enable peer exchange - learn about other relays
           }),
         },
       } as any)

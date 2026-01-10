@@ -60,9 +60,39 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WS_PORT` | 8080 | WebSocket port (browsers connect here) |
-| `TCP_PORT` | 9000 | TCP port (server-to-server) |
+| `WS_PORT` | 8080 | WebSocket port (browsers + relays connect here) |
 | `KEY_PATH` | ./relay-key.bin | Path to persistent identity key |
+| `EXTERNAL_DOMAIN` | - | Your relay's public domain (for announce addresses) |
+| `BOOTSTRAP_RELAYS` | yappr-relay.thepasta.org | Comma-separated relay multiaddrs to bootstrap from |
+
+## DHT Relay Discovery
+
+Relays discover each other using DHT over WebSocket. This works through Cloudflare Tunnels.
+
+**How it works:**
+1. New relay connects to bootstrap relay(s) via WSS
+2. Joins the DHT network through that connection
+3. Advertises itself using a well-known CID
+4. Discovers other relays via `findProviders`
+5. Gossipsub syncs presence data across all relays
+
+**For the first/seed relay:**
+```bash
+# No bootstrap needed - you ARE the bootstrap
+BOOTSTRAP_RELAYS="" node relay.js
+```
+
+**For additional relays:**
+```bash
+# Bootstrap to existing relay (default behavior)
+node relay.js
+
+# Or specify custom bootstrap
+BOOTSTRAP_RELAYS="/dns4/relay1.example.com/tcp/443/wss/p2p/PEER_ID" node relay.js
+```
+
+**Adding your relay to the network:**
+Once your relay is running, others can bootstrap to it by adding your multiaddr to `BOOTSTRAP_RELAYS`.
 
 ## Deploy Behind Cloudflare
 

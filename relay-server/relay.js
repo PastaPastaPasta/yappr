@@ -18,18 +18,40 @@ import { yamux } from '@chainsafe/libp2p-yamux'
 import { gossipsub } from '@libp2p/gossipsub'
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
+import { ping } from '@libp2p/ping'
+import { kadDHT } from '@libp2p/kad-dht'
+import { bootstrap } from '@libp2p/bootstrap'
 import { generateKeyPair, privateKeyFromRaw } from '@libp2p/crypto/keys'
 import { peerIdFromPrivateKey } from '@libp2p/peer-id'
+import { CID } from 'multiformats/cid'
+import { sha256 } from 'multiformats/hashes/sha2'
 import fs from 'fs'
 import path from 'path'
 
+// Yappr relay bootstrap nodes (WSS - works through CF Tunnel)
+// New relays connect to these to join the DHT network
+// Override with BOOTSTRAP_RELAYS env var (comma-separated multiaddrs)
+// Set BOOTSTRAP_RELAYS="" for the first/seed relay
+const YAPPR_RELAY_BOOTSTRAP = process.env.BOOTSTRAP_RELAYS !== undefined
+  ? process.env.BOOTSTRAP_RELAYS.split(',').filter(s => s.trim())
+  : [
+    '/dns4/yappr-relay.thepasta.org/tcp/443/wss/p2p/12D3KooWNMPUNGUmb6gDW8TCs61kZjBBAt75CXc5UzdAEQ3yaowF',
+  ]
+
+/**
+ * Generate a deterministic CID for yappr relay network discovery
+ * All yappr relays provide this CID to advertise themselves in the DHT
+ */
+async function getRelayNetworkCID() {
+  const bytes = new TextEncoder().encode('yappr-relay-network-v1')
+  const hash = await sha256.digest(bytes)
+  return CID.createV1(0x55, hash) // 0x55 = raw codec
+}
+
 // Configuration
 const CONFIG = {
-  // Port for WebSocket connections (browsers connect here via CF proxy)
+  // Port for WebSocket connections (browsers + relays connect here via CF proxy)
   wsPort: process.env.WS_PORT || 8080,
-
-  // Optional TCP port for server-to-server connections
-  tcpPort: process.env.TCP_PORT || 9000,
 
   // External address to announce (behind Cloudflare)
   // Set EXTERNAL_DOMAIN to your Cloudflare domain
@@ -78,9 +100,10 @@ async function startRelay() {
   console.log('Peer ID:', peerId.toString())
   console.log('')
 
-  // Build announce addresses (external addresses browsers should connect to)
+  // Build announce addresses (external addresses for discovery)
   const announceAddrs = []
   if (CONFIG.externalDomain) {
+    // WSS for browsers and relay-to-relay (via Cloudflare Tunnel)
     announceAddrs.push(`/dns4/${CONFIG.externalDomain}/tcp/443/wss`)
   }
 
@@ -89,8 +112,7 @@ async function startRelay() {
     privateKey,
     addresses: {
       listen: [
-        `/ip4/0.0.0.0/tcp/${CONFIG.wsPort}/ws`,   // WebSocket for browsers
-        `/ip4/0.0.0.0/tcp/${CONFIG.tcpPort}`,     // TCP for other relays
+        `/ip4/0.0.0.0/tcp/${CONFIG.wsPort}/ws`,   // WebSocket for browsers + relay-to-relay
       ],
       announce: announceAddrs.length > 0 ? announceAddrs : undefined,
     },
@@ -100,13 +122,20 @@ async function startRelay() {
     ],
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
+    peerDiscovery: YAPPR_RELAY_BOOTSTRAP.length > 0 ? [
+      bootstrap({ list: YAPPR_RELAY_BOOTSTRAP }),
+    ] : [],
     services: {
       identify: identify(),
+      ping: ping(),
       relay: circuitRelayServer({
         reservations: {
           maxReservations: 1000,
           reservationTtl: 300000, // 5 minutes
         },
+      }),
+      dht: kadDHT({
+        clientMode: false,  // Server mode - full DHT participation
       }),
       pubsub: gossipsub({
         emitSelf: false,
@@ -154,6 +183,71 @@ async function startRelay() {
       console.log(`  ${sub.subscribe ? 'SUBSCRIBE' : 'UNSUBSCRIBE'}: ${sub.topic}`)
     })
   })
+
+  // ========== DHT Relay Discovery ==========
+  const relayNetworkCID = await getRelayNetworkCID()
+  console.log('\n--- DHT Relay Discovery ---')
+  console.log('Relay Network CID:', relayNetworkCID.toString())
+  console.log('Bootstrap relays:', YAPPR_RELAY_BOOTSTRAP.length)
+  console.log('DHT works over WebSocket - no public TCP port required')
+  console.log('---------------------------')
+
+  // Track discovered relays
+  const knownRelays = new Set()
+
+  // Provide our CID to advertise as a yappr relay
+  async function advertiseAsRelay() {
+    try {
+      console.log('DHT: Attempting to advertise...')
+      await node.contentRouting.provide(relayNetworkCID, { signal: AbortSignal.timeout(30000) })
+      console.log('DHT: Advertised as yappr relay')
+    } catch (err) {
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        console.log('DHT: Advertise timed out (normal if behind NAT)')
+      } else {
+        console.error('DHT: Failed to advertise:', err.message)
+      }
+    }
+  }
+
+  // Discover and connect to other yappr relays
+  async function discoverRelays() {
+    console.log('DHT: Searching for other yappr relays...')
+    try {
+      for await (const provider of node.contentRouting.findProviders(relayNetworkCID, { signal: AbortSignal.timeout(30000) })) {
+        const providerId = provider.id.toString()
+        if (providerId === peerId.toString()) continue // Skip self
+        if (knownRelays.has(providerId)) continue // Already known
+
+        knownRelays.add(providerId)
+        console.log('DHT: Discovered relay:', providerId.slice(0, 20) + '...')
+
+        // Try to connect
+        try {
+          await node.dial(provider.id)
+          console.log('DHT: Connected to relay:', providerId.slice(0, 20) + '...')
+        } catch (dialErr) {
+          console.log('DHT: Could not connect to relay:', providerId.slice(0, 20), '-', dialErr.message)
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('DHT: Discovery error:', err.message)
+      }
+    }
+    console.log('DHT: Discovery complete. Known relays:', knownRelays.size)
+  }
+
+  // Start DHT operations after a delay (let bootstrap connections establish)
+  setTimeout(async () => {
+    console.log('DHT: Starting DHT operations...')
+    await advertiseAsRelay()
+    await discoverRelays()
+
+    // Periodically refresh advertisement and discover new relays
+    setInterval(advertiseAsRelay, 4 * 60 * 60 * 1000) // Every 4 hours
+    setInterval(discoverRelays, 30 * 60 * 1000) // Every 30 minutes
+  }, 5000) // Wait 5s for bootstrap connections
 
   // Print listening addresses
   console.log('\nRelay listening on:')
