@@ -1,3 +1,4 @@
 node_modules/
 relay-key.bin
+data/
 .env
