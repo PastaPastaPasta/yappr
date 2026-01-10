@@ -47,16 +47,16 @@ const CONFIG = {
 }
 
 /**
- * Load or generate a persistent peer ID
+ * Load or generate a persistent private key
+ * In libp2p v3, we pass privateKey instead of peerId
  */
-async function loadOrCreatePeerId() {
+async function loadOrCreatePrivateKey() {
   const keyPath = path.resolve(CONFIG.keyPath)
 
   if (fs.existsSync(keyPath)) {
     console.log('Loading existing peer identity...')
     const keyData = fs.readFileSync(keyPath)
-    const privateKey = privateKeyFromRaw(keyData)
-    return peerIdFromPrivateKey(privateKey)
+    return privateKeyFromRaw(keyData)
   }
 
   console.log('Generating new peer identity...')
@@ -64,7 +64,7 @@ async function loadOrCreatePeerId() {
   fs.writeFileSync(keyPath, Buffer.from(privateKey.raw))
   fs.chmodSync(keyPath, 0o600) // Secure permissions
 
-  return peerIdFromPrivateKey(privateKey)
+  return privateKey
 }
 
 /**
@@ -73,8 +73,9 @@ async function loadOrCreatePeerId() {
 async function startRelay() {
   console.log('Starting Yappr Relay Server...\n')
 
-  // Load persistent identity
-  const peerId = await loadOrCreatePeerId()
+  // Load persistent identity (libp2p v3 uses privateKey instead of peerId)
+  const privateKey = await loadOrCreatePrivateKey()
+  const peerId = peerIdFromPrivateKey(privateKey)
   console.log('Peer ID:', peerId.toString())
   console.log('')
 
@@ -86,7 +87,7 @@ async function startRelay() {
 
   // Create libp2p node
   const node = await createLibp2p({
-    peerId,
+    privateKey,
     addresses: {
       listen: [
         `/ip4/0.0.0.0/tcp/${CONFIG.wsPort}/ws`,   // WebSocket for browsers
