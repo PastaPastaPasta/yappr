@@ -18,7 +18,7 @@ import { yamux } from '@chainsafe/libp2p-yamux'
 import { gossipsub } from '@chainsafe/libp2p-gossipsub'
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
-import { generateKeyPair, privateKeyFromRaw, privateKeyToRaw } from '@libp2p/crypto/keys'
+import { generateKeyPair, privateKeyFromRaw } from '@libp2p/crypto/keys'
 import { peerIdFromPrivateKey } from '@libp2p/peer-id'
 import fs from 'fs'
 import path from 'path'
@@ -57,8 +57,7 @@ async function loadOrCreatePeerId() {
 
   console.log('Generating new peer identity...')
   const privateKey = await generateKeyPair('Ed25519')
-  const keyData = privateKeyToRaw(privateKey)
-  fs.writeFileSync(keyPath, Buffer.from(keyData))
+  fs.writeFileSync(keyPath, Buffer.from(privateKey.raw))
   fs.chmodSync(keyPath, 0o600) // Secure permissions
 
   return peerIdFromPrivateKey(privateKey)
