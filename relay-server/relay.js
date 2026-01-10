@@ -112,6 +112,7 @@ async function startRelay() {
         emitSelf: false,
         allowPublishToZeroTopicPeers: true,
         floodPublish: true,  // Forward messages to ALL connected peers
+        runOnLimitedConnection: true,  // Allow on relay connections
         // More lenient settings for relay
         heartbeatInterval: 1000,
         doPX: true, // Enable peer exchange
