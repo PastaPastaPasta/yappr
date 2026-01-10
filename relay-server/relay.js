@@ -31,6 +31,10 @@ const CONFIG = {
   // Optional TCP port for server-to-server connections
   tcpPort: process.env.TCP_PORT || 9000,
 
+  // External address to announce (behind Cloudflare)
+  // Set EXTERNAL_DOMAIN to your Cloudflare domain
+  externalDomain: process.env.EXTERNAL_DOMAIN || null,
+
   // Path to store the persistent key
   keyPath: process.env.KEY_PATH || './relay-key.bin',
 
@@ -74,6 +78,12 @@ async function startRelay() {
   console.log('Peer ID:', peerId.toString())
   console.log('')
 
+  // Build announce addresses (external addresses browsers should connect to)
+  const announceAddrs = []
+  if (CONFIG.externalDomain) {
+    announceAddrs.push(`/dns4/${CONFIG.externalDomain}/tcp/443/wss`)
+  }
+
   // Create libp2p node
   const node = await createLibp2p({
     peerId,
@@ -81,7 +91,8 @@ async function startRelay() {
       listen: [
         `/ip4/0.0.0.0/tcp/${CONFIG.wsPort}/ws`,   // WebSocket for browsers
         `/ip4/0.0.0.0/tcp/${CONFIG.tcpPort}`,     // TCP for other relays
-      ]
+      ],
+      announce: announceAddrs.length > 0 ? announceAddrs : undefined,
     },
     transports: [
       tcp(),

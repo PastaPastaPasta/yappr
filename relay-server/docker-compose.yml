@@ -8,6 +8,7 @@ services:
     environment:
       - WS_PORT=8080
       - TCP_PORT=9000
+      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-yappr-relay.thepasta.org}
     networks:
       - relay-net
 
