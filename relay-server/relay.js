@@ -144,6 +144,15 @@ async function startRelay() {
     console.log(`Message on ${topic} from ${from}`)
   })
 
+  // Log subscription changes
+  node.services.pubsub.addEventListener('subscription-change', (event) => {
+    const { peerId, subscriptions } = event.detail
+    console.log(`Subscription change from ${peerId.toString().slice(0, 20)}:`)
+    subscriptions.forEach(sub => {
+      console.log(`  ${sub.subscribe ? 'SUBSCRIBE' : 'UNSUBSCRIBE'}: ${sub.topic}`)
+    })
+  })
+
   // Print listening addresses
   console.log('\nRelay listening on:')
   node.getMultiaddrs().forEach(ma => {
