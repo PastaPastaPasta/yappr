@@ -47,8 +47,7 @@ const CONFIG = {
 }
 
 /**
- * Load or generate a persistent private key
- * In libp2p v3, we pass privateKey instead of peerId
+ * Load or generate a persistent private key (libp2p v3 API)
  */
 async function loadOrCreatePrivateKey() {
   const keyPath = path.resolve(CONFIG.keyPath)
@@ -73,7 +72,7 @@ async function loadOrCreatePrivateKey() {
 async function startRelay() {
   console.log('Starting Yappr Relay Server...\n')
 
-  // Load persistent identity (libp2p v3 uses privateKey instead of peerId)
+  // Load persistent identity (libp2p v3 uses privateKey)
   const privateKey = await loadOrCreatePrivateKey()
   const peerId = peerIdFromPrivateKey(privateKey)
   console.log('Peer ID:', peerId.toString())
