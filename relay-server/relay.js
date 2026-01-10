@@ -15,7 +15,7 @@ import { tcp } from '@libp2p/tcp'
 import { webSockets } from '@libp2p/websockets'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
-import { gossipsub } from '@chainsafe/libp2p-gossipsub'
+import { gossipsub } from '@libp2p/gossipsub'
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
 import { generateKeyPair, privateKeyFromRaw } from '@libp2p/crypto/keys'
@@ -111,6 +111,7 @@ async function startRelay() {
       pubsub: gossipsub({
         emitSelf: false,
         allowPublishToZeroTopicPeers: true,
+        floodPublish: true,  // Forward messages to ALL connected peers
         // More lenient settings for relay
         heartbeatInterval: 1000,
         doPX: true, // Enable peer exchange
