@@ -12,6 +12,7 @@
  */
 
 import * as secp256k1 from '@noble/secp256k1'
+import { sha256 } from '@noble/hashes/sha2.js'
 import bs58 from 'bs58'
 
 export interface EncryptedMessage {
@@ -294,4 +295,64 @@ export function base64ToUint8Array(base64: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i)
   }
   return bytes
+}
+
+/**
+ * Convert Uint8Array to base64 string
+ */
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+/**
+ * Sign a message with a private key (ECDSA secp256k1)
+ * Returns the signature as a base64 string
+ *
+ * @param message - The message to sign (will be hashed with SHA-256)
+ * @param privateKeyWif - Private key in WIF format
+ * @returns Base64-encoded signature
+ */
+export async function signMessage(message: string, privateKeyWif: string): Promise<string> {
+  const privateKey = wifToPrivateKey(privateKeyWif)
+  const messageHash = sha256(new TextEncoder().encode(message))
+  // Use async version which uses WebCrypto internally
+  // prehash: false indicates we're passing an already-hashed message
+  const signature = await secp256k1.signAsync(messageHash, privateKey, { prehash: false })
+  return uint8ArrayToBase64(new Uint8Array(signature))
+}
+
+/**
+ * Verify a signature against a message and public key
+ *
+ * @param message - The original message that was signed
+ * @param signatureBase64 - Base64-encoded signature
+ * @param publicKey - Public key bytes (33 or 65 bytes)
+ * @returns True if signature is valid
+ */
+export async function verifySignature(
+  message: string,
+  signatureBase64: string,
+  publicKey: Uint8Array
+): Promise<boolean> {
+  try {
+    const messageHash = sha256(new TextEncoder().encode(message))
+    const signatureBytes = base64ToUint8Array(signatureBase64)
+    // Use async version which uses WebCrypto internally
+    // prehash: false indicates we're passing an already-hashed message
+    return await secp256k1.verifyAsync(signatureBytes, messageHash, publicKey, { prehash: false })
+  } catch (error) {
+    console.error('Signature verification error:', error)
+    return false
+  }
+}
+
+/**
+ * Convert WIF private key to raw bytes (exported for external use)
+ */
+export function wifToPrivateKeyBytes(wif: string): Uint8Array {
+  return wifToPrivateKey(wif)
 }

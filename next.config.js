@@ -6,7 +6,6 @@ const nextConfig = {
   assetPrefix: process.env.GITHUB_PAGES === 'true' ? '/yappr/' : '',
   images: {
     unoptimized: true,
-    domains: ['images.unsplash.com', 'api.dicebear.com'],
   },
   webpack: (config, { isServer }) => {
     // Optimize EvoSDK bundle size
@@ -25,6 +24,40 @@ const nextConfig = {
           },
         },
       }
+
+      // Browser fallbacks for Node.js built-in modules used by Helia/libp2p
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        stream: false,
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+        path: false,
+        os: false,
+        http: false,
+        https: false,
+        zlib: false,
+      }
+
+      // Alias node: prefixed imports to false (empty module)
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'node:stream': false,
+        'node:fs': false,
+        'node:net': false,
+        'node:tls': false,
+        'node:crypto': false,
+        'node:path': false,
+        'node:os': false,
+        'node:http': false,
+        'node:https': false,
+        'node:zlib': false,
+        'node:buffer': false,
+        'node:util': false,
+        'node:url': false,
+        'node:events': false,
+      }
     }
 
     // Handle WASM files (required for @dashevo/evo-sdk)
@@ -32,6 +65,28 @@ const nextConfig = {
       ...config.experiments,
       asyncWebAssembly: true,
     }
+
+    // Fix libp2p/helia compatibility issues with strict mode
+    // These packages use "static name = 'ErrorName'" which conflicts with
+    // the built-in read-only name property of classes
+    config.module.rules.push({
+      test: /[\\/]node_modules[\\/].*(@libp2p|@chainsafe|@helia|@multiformats|libp2p|helia|interface-store|abort-error|mortice|blockstore-|datastore-|it-queue|race-event|ipns)[\\/].*\.js$/,
+      loader: 'string-replace-loader',
+      options: {
+        multiple: [
+          {
+            // Remove "static name = 'ErrorName'" declarations inside classes
+            search: /static\s+name\s*=\s*['"][^'"]+['"];?/g,
+            replace: '/* static name removed */',
+          },
+          {
+            // Also handle the pattern: ClassName.name = 'ClassName'
+            search: /(\w+Error)\.name\s*=\s*['"][^'"]+['"];?/g,
+            replace: '/* $1.name removed */',
+          },
+        ],
+      },
+    })
 
     return config
   },
@@ -46,9 +101,9 @@ const nextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: https: blob:",
+              "img-src 'self' data: blob: https://api.dicebear.com",
               "font-src 'self'",
-              "connect-src 'self' https: wss: https://44.240.98.102:1443",
+              "connect-src 'self' https: wss:",
               "worker-src 'self' blob:",
               "child-src 'self' blob:"
             ].join('; ')

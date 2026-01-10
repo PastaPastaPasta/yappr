@@ -3,9 +3,20 @@
  *
  * Publishes periodic heartbeats to indicate online status and
  * tracks presence of other users in the network.
+ *
+ * Security: All presence messages are signed with the user's Dash identity key
+ * and verified on receipt to prevent spoofing.
  */
 
 import { pubsubService, PUBSUB_TOPICS, type PubSubMessage } from './pubsub-service'
+import {
+  signMessage,
+  verifySignature,
+  getPublicKeyFromPrivate,
+  uint8ArrayToBase64,
+  base64ToUint8Array,
+} from '../message-encryption'
+import { identityService } from './identity-service'
 
 // Timing constants
 const HEARTBEAT_INTERVAL = 30000 // 30 seconds
@@ -33,10 +44,21 @@ export interface PresenceInfo {
   isRecentlyActive: boolean
 }
 
-// Presence message format
+// Presence message format (signed)
 interface PresenceHeartbeat {
   type: 'presence'
-  version: 1
+  version: 2  // Version 2 = signed messages
+  userId: string
+  status: 'online' | 'away' | 'dnd'
+  timestamp: number
+  publicKey: string  // Base64 encoded sender's public key
+  signature: string  // Base64 encoded ECDSA signature
+}
+
+// Payload that gets signed (excludes the signature itself)
+interface PresencePayload {
+  type: 'presence'
+  version: 2
   userId: string
   status: 'online' | 'away' | 'dnd'
   timestamp: number
@@ -56,16 +78,28 @@ class PresenceService {
   private unsubscribe: (() => void) | null = null
 
   private currentUserId: string | null = null
+  private currentPrivateKey: string | null = null  // WIF format
+  private currentPublicKey: Uint8Array | null = null
   private currentStatus: MyPresenceStatus = 'online'
   private _isActive = false
+
+  // Cache of verified public keys for users (userId -> publicKey bytes)
+  private verifiedPublicKeys: Map<string, Uint8Array> = new Map()
 
   // Listeners for presence changes
   private listeners: Set<PresenceListener> = new Set()
 
   /**
    * Start publishing presence for the current user
+   * @param userId - The user's Dash identity ID
+   * @param privateKey - The user's private key in WIF format (for signing)
+   * @param status - Initial presence status
    */
-  async startPresence(userId: string, status: MyPresenceStatus = 'online'): Promise<void> {
+  async startPresence(
+    userId: string,
+    privateKey: string,
+    status: MyPresenceStatus = 'online'
+  ): Promise<void> {
     if (this._isActive && this.currentUserId === userId) {
       // Already active for this user, just update status
       this.currentStatus = status
@@ -78,6 +112,8 @@ class PresenceService {
     }
 
     this.currentUserId = userId
+    this.currentPrivateKey = privateKey
+    this.currentPublicKey = getPublicKeyFromPrivate(privateKey)
     this.currentStatus = status
 
     // Check if pubsub is ready before subscribing
@@ -136,6 +172,8 @@ class PresenceService {
 
     this._isActive = false
     this.currentUserId = null
+    this.currentPrivateKey = null
+    this.currentPublicKey = null
 
     console.log('PresenceService: Stopped')
   }
@@ -277,22 +315,34 @@ class PresenceService {
   }
 
   /**
-   * Publish a heartbeat message
+   * Publish a signed heartbeat message
    */
   private async _publishHeartbeat(): Promise<void> {
-    if (!this.currentUserId || this.currentStatus === 'invisible') {
+    if (!this.currentUserId || !this.currentPrivateKey || this.currentStatus === 'invisible') {
       return
     }
 
     // At this point, currentStatus is not 'invisible'
     const status = this.currentStatus as 'online' | 'away' | 'dnd'
 
-    const message: PresenceHeartbeat = {
+    // Create the payload to sign
+    const payload: PresencePayload = {
       type: 'presence',
-      version: 1,
+      version: 2,
       userId: this.currentUserId,
       status,
       timestamp: Date.now(),
+    }
+
+    // Sign the payload
+    const payloadString = JSON.stringify(payload)
+    const signature = await signMessage(payloadString, this.currentPrivateKey)
+
+    // Create the full message with signature and public key
+    const message: PresenceHeartbeat = {
+      ...payload,
+      publicKey: uint8ArrayToBase64(this.currentPublicKey!),
+      signature,
     }
 
     try {
@@ -303,13 +353,13 @@ class PresenceService {
   }
 
   /**
-   * Handle incoming presence message
+   * Handle incoming presence message with signature verification
    */
   private _handlePresenceMessage(message: PubSubMessage): void {
     const data = message.data as PresenceHeartbeat
 
-    // Validate message type
-    if (data.type !== 'presence' || data.version !== 1) {
+    // Validate message type and version (version 2 = signed)
+    if (data.type !== 'presence' || data.version !== 2) {
       return
     }
 
@@ -318,23 +368,57 @@ class PresenceService {
       return
     }
 
-    // Validate userId
+    // Validate required fields
     if (!data.userId || typeof data.userId !== 'string') {
       return
     }
-
-    // Validate status
     if (!['online', 'away', 'dnd'].includes(data.status)) {
       return
     }
+    if (!data.signature || !data.publicKey) {
+      console.warn('PresenceService: Rejecting unsigned message from', data.userId.slice(0, 16))
+      return
+    }
 
-    // Update presence map
+    // Verify signature and process message asynchronously
+    this._verifyAndProcessMessage(data, message.from)
+  }
+
+  /**
+   * Verify signature and process a presence message
+   */
+  private async _verifyAndProcessMessage(data: PresenceHeartbeat, fromPeerId?: string): Promise<void> {
+    const publicKeyBytes = base64ToUint8Array(data.publicKey)
+    const payload: PresencePayload = {
+      type: data.type,
+      version: data.version,
+      userId: data.userId,
+      status: data.status,
+      timestamp: data.timestamp,
+    }
+    const payloadString = JSON.stringify(payload)
+
+    // Verify the signature
+    const isSignatureValid = await verifySignature(payloadString, data.signature, publicKeyBytes)
+    if (!isSignatureValid) {
+      console.warn('PresenceService: Invalid signature for message from', data.userId.slice(0, 16))
+      return
+    }
+
+    // Verify the public key belongs to this userId
+    const isKeyValid = await this._verifyPublicKeyOwnership(data.userId, publicKeyBytes)
+    if (!isKeyValid) {
+      console.warn('PresenceService: Public key mismatch for', data.userId.slice(0, 16))
+      return
+    }
+
+    // Update presence map (signature and key ownership verified)
     const previousEntry = this.presenceMap.get(data.userId)
     const newEntry: PresenceEntry = {
       userId: data.userId,
       status: data.status,
       lastSeen: data.timestamp || Date.now(),
-      peerId: message.from,
+      peerId: fromPeerId,
     }
 
     this.presenceMap.set(data.userId, newEntry)
@@ -347,10 +431,82 @@ class PresenceService {
       }
     })
 
-    // Log if status changed
+    // Log status changes
     if (!previousEntry || previousEntry.status !== data.status) {
-      console.log('PresenceService: User', data.userId.slice(0, 16) + '...', 'is', data.status)
+      console.log('PresenceService:', data.userId.slice(0, 16) + '...', 'is', data.status)
     }
+  }
+
+  /**
+   * Verify that a public key belongs to a userId by checking against the identity
+   * Uses caching to avoid repeated identity lookups
+   */
+  private async _verifyPublicKeyOwnership(userId: string, publicKey: Uint8Array): Promise<boolean> {
+    // Check cache first
+    const cachedKey = this.verifiedPublicKeys.get(userId)
+    if (cachedKey) {
+      return this._publicKeysMatch(cachedKey, publicKey)
+    }
+
+    try {
+      // Fetch identity and check public keys
+      const identity = await identityService.getIdentity(userId)
+      if (!identity || !identity.publicKeys) {
+        return false
+      }
+
+      // Check if the provided public key matches any of the identity's ECDSA keys
+      for (const key of identity.publicKeys) {
+        // Only check ECDSA keys (type 0)
+        if (key.type !== 0) continue
+
+        const identityPubKey = this._extractPublicKeyBytes(key)
+        if (identityPubKey && this._publicKeysMatch(identityPubKey, publicKey)) {
+          // Cache the verified key
+          this.verifiedPublicKeys.set(userId, publicKey)
+          return true
+        }
+      }
+
+      return false
+    } catch (error) {
+      console.error('PresenceService: Error verifying public key ownership:', error)
+      return false
+    }
+  }
+
+  /**
+   * Extract public key bytes from an identity key object
+   */
+  private _extractPublicKeyBytes(key: any): Uint8Array | null {
+    if (!key.data) return null
+
+    // Handle different data formats
+    if (key.data instanceof Uint8Array) {
+      return key.data
+    }
+    if (Array.isArray(key.data)) {
+      return new Uint8Array(key.data)
+    }
+    if (typeof key.data === 'object' && key.data.type === 'Buffer') {
+      return new Uint8Array(key.data.data)
+    }
+    // Handle base64 string (common format from Dash Platform API)
+    if (typeof key.data === 'string') {
+      return base64ToUint8Array(key.data)
+    }
+    return null
+  }
+
+  /**
+   * Compare two public keys for equality
+   */
+  private _publicKeysMatch(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false
+    }
+    return true
   }
 
   /**
@@ -391,6 +547,7 @@ class PresenceService {
     this.stopPresence()
     this.presenceMap.clear()
     this.listeners.clear()
+    this.verifiedPublicKeys.clear()
   }
 }
 

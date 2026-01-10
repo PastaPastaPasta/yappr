@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { useAuth } from './auth-context'
+import { getPrivateKey } from '@/lib/secure-storage'
 import type { PresenceInfo, MyPresenceStatus } from '@/lib/services/presence-service'
 
 // Settings stored in localStorage
@@ -152,8 +153,16 @@ export function PresenceProvider({ children }: { children: React.ReactNode }) {
         // Initialize typing service
         typingService.initialize(user.identityId)
 
-        // Start presence (subscribes to topics)
-        await presenceService.startPresence(user.identityId, myPresenceStatus)
+        // Get private key for signing presence messages
+        const privateKey = getPrivateKey(user.identityId)
+        if (!privateKey) {
+          console.error('PresenceContext: No private key available for signing')
+          setConnectionStatus('error')
+          return
+        }
+
+        // Start presence (subscribes to topics, signs heartbeats)
+        await presenceService.startPresence(user.identityId, privateKey, myPresenceStatus)
 
         if (!mounted) {
           // Clean up everything if we're aborting after presence start

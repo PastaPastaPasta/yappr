@@ -118,14 +118,6 @@ class PubSubService {
         '/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt',
       ]
 
-      // Direct peers disabled - was causing issues with @libp2p/gossipsub
-      // const directPeers = [
-      //   {
-      //     id: peerIdFromString(YAPPR_RELAY_PEER_ID),
-      //     addrs: [multiaddr(YAPPR_RELAY_ADDR)],
-      //   },
-      // ]
-
       // Create minimal libp2p node with just what we need for pubsub
       this.helia = await createLibp2p({
         transports: [
