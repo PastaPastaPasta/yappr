@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
@@ -19,11 +19,7 @@ export function KeyBackupSettings() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [backupDate, setBackupDate] = useState<Date | null>(null)
 
-  useEffect(() => {
-    checkBackupStatus()
-  }, [user])
-
-  const checkBackupStatus = async () => {
+  const checkBackupStatus = useCallback(async () => {
     if (!user) {
       setIsLoading(false)
       return
@@ -45,7 +41,11 @@ export function KeyBackupSettings() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [user])
+
+  useEffect(() => {
+    checkBackupStatus()
+  }, [checkBackupStatus])
 
   const handleCreateBackup = async () => {
     if (!user) return
@@ -97,7 +97,7 @@ export function KeyBackupSettings() {
       }
     })
     return unsubscribe
-  }, [])
+  }, [checkBackupStatus])
 
   if (isLoading) {
     return (

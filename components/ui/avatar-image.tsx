@@ -2,6 +2,7 @@
 
 import { useState, useEffect, memo } from 'react'
 import { getDefaultAvatarUrl } from '@/lib/avatar-utils'
+import { PresenceIndicator } from './presence-indicator'
 
 // Module-level cache for avatar URLs to prevent redundant fetches
 const avatarCache = new Map<string, { url: string; timestamp: number }>()
@@ -53,6 +54,10 @@ interface AvatarImageProps {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'full'
   /** Pre-fetched avatar URL from batch enrichment (skips fetch if provided) */
   preloadedUrl?: string
+  /** Show presence indicator on avatar */
+  showPresence?: boolean
+  /** Only show presence for online/away users, hide for offline */
+  hideOfflinePresence?: boolean
 }
 
 const sizeClasses = {
@@ -70,12 +75,24 @@ const sizeClasses = {
  * Does not render until the correct avatar URL is known to avoid flashing
  * Pass preloadedUrl to skip fetch and use batch-prefetched URL
  */
+// Map avatar sizes to presence indicator sizes
+const presenceSizes: Record<string, 'sm' | 'md' | 'lg'> = {
+  xs: 'sm',
+  sm: 'sm',
+  md: 'sm',
+  lg: 'md',
+  xl: 'md',
+  full: 'lg',
+}
+
 export const UserAvatar = memo(function UserAvatar({
   userId,
   alt = 'User avatar',
   className = '',
   size = 'md',
   preloadedUrl,
+  showPresence = false,
+  hideOfflinePresence = true,
 }: AvatarImageProps) {
   // Start with preloaded URL, cached URL, or null (loading state)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => {
@@ -120,13 +137,32 @@ export const UserAvatar = memo(function UserAvatar({
     return <div className={`rounded-full ${sizeClass} ${className}`} />
   }
 
-  return (
+  const avatarElement = (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={avatarUrl}
       alt={alt}
-      className={`rounded-full object-cover ${sizeClass} ${className}`}
+      className={`rounded-full object-cover ${sizeClass} ${showPresence ? '' : className}`}
       crossOrigin="anonymous"
     />
+  )
+
+  // If not showing presence, just return the avatar
+  if (!showPresence) {
+    return avatarElement
+  }
+
+  // Wrap avatar with presence indicator
+  return (
+    <div className={`relative inline-block ${className}`}>
+      {avatarElement}
+      <PresenceIndicator
+        userId={userId}
+        size={presenceSizes[size] || 'sm'}
+        hideOffline={hideOfflinePresence}
+        className="absolute bottom-0 right-0 translate-x-0.5 translate-y-0.5"
+      />
+    </div>
   )
 })
 
