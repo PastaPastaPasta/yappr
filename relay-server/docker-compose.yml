@@ -1,0 +1,30 @@
+services:
+  relay:
+    build: .
+    container_name: yappr-relay
+    restart: unless-stopped
+    volumes:
+      - relay-data:/app/data
+    environment:
+      - WS_PORT=8080
+      - TCP_PORT=9000
+    networks:
+      - relay-net
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: yappr-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    networks:
+      - relay-net
+    depends_on:
+      - relay
+
+volumes:
+  relay-data:
+
+networks:
+  relay-net:
