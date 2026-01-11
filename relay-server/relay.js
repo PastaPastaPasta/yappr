@@ -167,8 +167,11 @@ async function startRelay() {
 
   // Register fetch handler for /presence/{id1},{id2},...
   node.services.fetch.registerLookupFunction('/presence/', async (key) => {
+    // key might be a string or Uint8Array depending on libp2p version
+    const keyStr = typeof key === 'string' ? key : new TextDecoder().decode(key)
+    console.log('Fetch: Received key:', keyStr, '(type:', typeof key, ')')
     // key = "/presence/ABC123" or "/presence/ABC123,DEF456,GHI789"
-    const idsStr = key.replace('/presence/', '')
+    const idsStr = keyStr.replace('/presence/', '')
     const userIds = idsStr.split(',').map(id => id.trim()).filter(id => id)
 
     if (userIds.length === 0) {
