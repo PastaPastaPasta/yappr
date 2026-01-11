@@ -78,6 +78,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             })
           }
+
+          // Check for Dash Pay contacts on session restore (delayed)
+          setTimeout(async () => {
+            try {
+              const { dashPayContactsService } = await import('@/lib/services/dashpay-contacts-service')
+              const result = await dashPayContactsService.getUnfollowedContacts(savedUser.identityId)
+
+              if (result.contacts.length > 0) {
+                const { useDashPayContactsModal } = await import('@/hooks/use-dashpay-contacts-modal')
+                useDashPayContactsModal.getState().open()
+              }
+            } catch (err) {
+              console.error('Auth: Failed to check Dash Pay contacts:', err)
+            }
+          }, 3000) // 3 second delay on session restore
         } catch (e) {
           console.error('Failed to restore session:', e)
           localStorage.removeItem('yappr_session')
@@ -176,6 +191,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (profile) {
         console.log('Profile found, redirecting to home...')
         router.push('/')
+
+        // Check for Dash Pay contacts after login (delayed to not block navigation)
+        setTimeout(async () => {
+          try {
+            const { dashPayContactsService } = await import('@/lib/services/dashpay-contacts-service')
+            const result = await dashPayContactsService.getUnfollowedContacts(authUser.identityId)
+
+            if (result.contacts.length > 0) {
+              const { useDashPayContactsModal } = await import('@/hooks/use-dashpay-contacts-modal')
+              useDashPayContactsModal.getState().open()
+            }
+          } catch (err) {
+            console.error('Auth: Failed to check Dash Pay contacts:', err)
+            // Silent failure - don't block user experience
+          }
+        }, 2000)
       } else {
         console.log('No profile found, redirecting to profile creation...')
         router.push('/profile/create')

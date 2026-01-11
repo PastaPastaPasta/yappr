@@ -80,16 +80,16 @@ class AvatarService extends BaseDocumentService<AvatarDocument> {
       const results = await this.fetchAvatarUrlsBatch(userIds);
 
       // Resolve all pending promises
-      for (const [userId, { resolvers }] of batch) {
+      Array.from(batch.entries()).forEach(([userId, { resolvers }]) => {
         const url = results.get(userId) || getDefaultAvatarUrl(userId);
         resolvers.forEach(resolve => resolve(url));
-      }
+      });
     } catch (error) {
       // On error, resolve with defaults
-      for (const [userId, { resolvers }] of batch) {
+      Array.from(batch.entries()).forEach(([userId, { resolvers }]) => {
         const url = getDefaultAvatarUrl(userId);
         resolvers.forEach(resolve => resolve(url));
-      }
+      });
     }
   }
 

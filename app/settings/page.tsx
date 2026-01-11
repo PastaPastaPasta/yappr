@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { 
+import {
   UserIcon,
   KeyIcon,
   BellIcon,
@@ -14,7 +14,8 @@ import {
   MoonIcon,
   SunIcon,
   ComputerDesktopIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  UserGroupIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -28,11 +29,13 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
+import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 
-type SettingsSection = 'main' | 'account' | 'notifications' | 'privacy' | 'appearance' | 'about'
+type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
+  { id: 'contacts', label: 'Contacts', icon: UserGroupIcon, description: 'Import contacts from Dash Pay' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, description: 'Control your notification preferences' },
   { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your privacy settings' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
@@ -141,6 +144,27 @@ function SettingsPage() {
             Delete Account
           </Button>
         </div>
+      </div>
+    </div>
+  )
+
+  const renderContactsSettings = () => (
+    <div className="p-6 space-y-6">
+      <div>
+        <h3 className="font-semibold mb-4">Dash Pay Contacts</h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Discover friends from Dash Pay who you haven&apos;t followed yet on Yappr.
+        </p>
+        <Button
+          variant="outline"
+          className="w-full justify-start"
+          onClick={() => {
+            useDashPayContactsModal.getState().open()
+          }}
+        >
+          <UserGroupIcon className="h-5 w-5 mr-2" />
+          Find Dash Pay Contacts
+        </Button>
       </div>
     </div>
   )
@@ -386,6 +410,8 @@ function SettingsPage() {
         return renderMainSettings()
       case 'account':
         return renderAccountSettings()
+      case 'contacts':
+        return renderContactsSettings()
       case 'notifications':
         return renderNotificationSettings()
       case 'privacy':
