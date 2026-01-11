@@ -32,6 +32,12 @@ export const PUBSUB_TOPICS = {
   NOTIFICATIONS_PREFIX: 'yappr/notifications/v1/',
 } as const
 
+// Presence entry returned from fetch
+export interface FetchedPresence {
+  status: string
+  lastSeen: number
+}
+
 class PubSubService {
   private helia: any = null
   private initPromise: Promise<void> | null = null
@@ -46,6 +52,9 @@ class PubSubService {
   // Rate limiting
   private messageTimestamps: Map<string, number[]> = new Map()
   private readonly MAX_MESSAGES_PER_MINUTE = 60
+
+  // Relay peer ID for fetch queries
+  private relayPeerId: any = null
 
   /**
    * Initialize the pubsub service with Helia
@@ -96,6 +105,7 @@ class PubSubService {
       const { webRTC } = await import('@libp2p/webrtc')
       const { circuitRelayTransport } = await import('@libp2p/circuit-relay-v2')
       const { identify } = await import('@libp2p/identify')
+      const { fetch } = await import('@libp2p/fetch')
       const { noise } = await import('@chainsafe/libp2p-noise')
       const { yamux } = await import('@chainsafe/libp2p-yamux')
       const { bootstrap } = await import('@libp2p/bootstrap')
@@ -106,6 +116,9 @@ class PubSubService {
 
       const YAPPR_RELAY_PEER_ID = '12D3KooWNMPUNGUmb6gDW8TCs61kZjBBAt75CXc5UzdAEQ3yaowF'
       const YAPPR_RELAY_ADDR = `/dns4/yappr-relay.thepasta.org/tcp/443/wss/p2p/${YAPPR_RELAY_PEER_ID}`
+
+      // Store relay peer ID for fetch queries
+      this.relayPeerId = peerIdFromString(YAPPR_RELAY_PEER_ID)
 
       // Bootstrap nodes - Yappr relay + public IPFS nodes
       const bootstrapNodes = [
@@ -132,6 +145,7 @@ class PubSubService {
         ],
         services: {
           identify: identify(),
+          fetch: fetch(),
           pubsub: gossipsub({
             emitSelf: false,
             allowPublishToZeroTopicPeers: true,
@@ -448,6 +462,39 @@ class PubSubService {
   }
 
   /**
+   * Fetch presence for specific users from the relay
+   * Returns a map of userId → presence info (or null if not found)
+   */
+  async fetchPresence(userIds: string[]): Promise<Map<string, FetchedPresence | null>> {
+    const result = new Map<string, FetchedPresence | null>()
+
+    if (!this._isInitialized || !this.helia || !this.relayPeerId) {
+      console.warn('PubSubService: Cannot fetch presence - not initialized')
+      return result
+    }
+
+    if (userIds.length === 0) {
+      return result
+    }
+
+    try {
+      const key = `/presence/${userIds.join(',')}`
+      const response = await this.helia.services.fetch.fetch(this.relayPeerId, key)
+
+      if (response) {
+        const data = JSON.parse(new TextDecoder().decode(response))
+        for (const [userId, entry] of Object.entries(data)) {
+          result.set(userId, entry as FetchedPresence | null)
+        }
+      }
+    } catch (error) {
+      console.error('PubSubService: Failed to fetch presence:', error)
+    }
+
+    return result
+  }
+
+  /**
    * Clean up resources
    */
   async cleanup(): Promise<void> {
@@ -477,6 +524,7 @@ class PubSubService {
     this._isInitialized = false
     this._isInitializing = false
     this.config = null
+    this.relayPeerId = null
     this.messageHandlers.clear()
     this.subscribedTopics.clear()
     this.messageTimestamps.clear()

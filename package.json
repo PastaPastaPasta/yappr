@@ -11,10 +11,11 @@
     "postinstall": "node scripts/fix-libp2p-errors.js || true"
   },
   "dependencies": {
-    "@libp2p/gossipsub": "^15.0.7",
     "@dashevo/evo-sdk": "^3.0.0-dev.9",
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.1.1",
+    "@libp2p/fetch": "^4.0.9",
+    "@libp2p/gossipsub": "^15.0.7",
     "@multiformats/multiaddr": "^13.0.1",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",

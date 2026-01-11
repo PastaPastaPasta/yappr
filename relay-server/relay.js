@@ -19,6 +19,7 @@ import { gossipsub } from '@libp2p/gossipsub'
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
 import { ping } from '@libp2p/ping'
+import { fetch } from '@libp2p/fetch'
 import { kadDHT } from '@libp2p/kad-dht'
 import { bootstrap } from '@libp2p/bootstrap'
 import { generateKeyPair, privateKeyFromRaw } from '@libp2p/crypto/keys'
@@ -128,6 +129,7 @@ async function startRelay() {
     services: {
       identify: identify(),
       ping: ping(),
+      fetch: fetch(),
       relay: circuitRelayServer({
         reservations: {
           maxReservations: 1000,
@@ -159,6 +161,41 @@ async function startRelay() {
     console.log('Subscribed to topic:', topic)
   }
 
+  // ========== Presence Cache for Fetch Queries ==========
+  const PRESENCE_CACHE_TTL = 5 * 60 * 1000  // 5 minutes
+  const presenceCache = new Map()  // userId → { status, lastSeen, publicKey }
+
+  // Register fetch handler for /presence/{id1},{id2},...
+  node.services.fetch.registerLookupFunction('/presence/', async (key) => {
+    // key = "/presence/ABC123" or "/presence/ABC123,DEF456,GHI789"
+    const idsStr = key.replace('/presence/', '')
+    const userIds = idsStr.split(',').map(id => id.trim()).filter(id => id)
+
+    if (userIds.length === 0) {
+      return null
+    }
+
+    const now = Date.now()
+    const result = {}
+
+    for (const userId of userIds) {
+      const entry = presenceCache.get(userId)
+      if (entry && (now - entry.lastSeen) < PRESENCE_CACHE_TTL) {
+        result[userId] = {
+          status: entry.status,
+          lastSeen: entry.lastSeen,
+        }
+      } else {
+        result[userId] = null
+      }
+    }
+
+    console.log(`Fetch: /presence/ query for ${userIds.length} users, found ${Object.values(result).filter(v => v !== null).length}`)
+    return new TextEncoder().encode(JSON.stringify(result))
+  })
+
+  console.log('Fetch: Registered /presence/ handler')
+
   // Log peer events
   node.addEventListener('peer:connect', (event) => {
     console.log('Peer connected:', event.detail.toString())
@@ -168,11 +205,27 @@ async function startRelay() {
     console.log('Peer disconnected:', event.detail.toString())
   })
 
-  // Log pubsub messages (for debugging)
+  // Handle pubsub messages - cache presence for fetch queries
   node.services.pubsub.addEventListener('message', (event) => {
     const topic = event.detail.topic
     const from = event.detail.from?.toString().slice(0, 16) + '...'
     console.log(`Message on ${topic} from ${from}`)
+
+    // Cache presence messages
+    if (topic === 'yappr/presence/v1/global') {
+      try {
+        const data = JSON.parse(new TextDecoder().decode(event.detail.data))
+        if (data.type === 'presence' && data.userId) {
+          presenceCache.set(data.userId, {
+            status: data.status || 'online',
+            lastSeen: data.timestamp || Date.now(),
+            publicKey: data.publicKey || null,
+          })
+        }
+      } catch (err) {
+        // Ignore parse errors
+      }
+    }
   })
 
   // Log subscription changes
@@ -281,7 +334,7 @@ async function startRelay() {
       }
     }
 
-    console.log(`[Stats] Connections: ${connections.length}, PubsubPeers: ${pubsubPeers.length}, Topics: ${JSON.stringify(topicPeers)}`)
+    console.log(`[Stats] Connections: ${connections.length}, PubsubPeers: ${pubsubPeers.length}, PresenceCache: ${presenceCache.size}, Topics: ${JSON.stringify(topicPeers)}`)
     if (pubsubPeers.length > 0) {
       console.log('  Pubsub peers:', pubsubPeers.map(p => p.toString().slice(0, 20)))
     }
