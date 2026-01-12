@@ -35,7 +35,6 @@ export function TipModal() {
   const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[]>([])
   const [loadingUris, setLoadingUris] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credits')
-  const [selectedUri, setSelectedUri] = useState<string | null>(null)
 
   // Fetch user balance when modal opens
   useEffect(() => {
@@ -69,7 +68,6 @@ export function TipModal() {
       setState('input')
       setError(null)
       setPaymentMethod('credits')
-      setSelectedUri(null)
       setPaymentUris([])
     }
   }, [isOpen])
@@ -288,10 +286,7 @@ export function TipModal() {
                         {/* Platform credits option */}
                         <button
                           type="button"
-                          onClick={() => {
-                            setPaymentMethod('credits')
-                            setSelectedUri(null)
-                          }}
+                          onClick={() => setPaymentMethod('credits')}
                           className={`w-full p-3 rounded-lg border text-left transition-colors ${
                             paymentMethod === 'credits'
                               ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
