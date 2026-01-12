@@ -13,9 +13,9 @@ import {
   PencilIcon,
   ArrowPathIcon,
   CurrencyDollarIcon,
-  PlusIcon,
-  TrashIcon,
 } from '@heroicons/react/24/outline'
+import { PaymentUriInput } from '@/components/profile/payment-uri-input'
+import { SocialLinksInput } from '@/components/profile/social-links-input'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
@@ -75,9 +75,6 @@ function UserProfileContent() {
   const [editNsfw, setEditNsfw] = useState(false)
   const [editPaymentUris, setEditPaymentUris] = useState<string[]>([])
   const [editSocialLinks, setEditSocialLinks] = useState<SocialLink[]>([])
-  const [newPaymentUri, setNewPaymentUri] = useState('')
-  const [newSocialPlatform, setNewSocialPlatform] = useState('')
-  const [newSocialHandle, setNewSocialHandle] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
   // Block state - only check if viewing another user's profile
@@ -274,32 +271,6 @@ function UserProfileContent() {
     setEditNsfw(false)
     setEditPaymentUris([])
     setEditSocialLinks([])
-    setNewPaymentUri('')
-    setNewSocialPlatform('')
-    setNewSocialHandle('')
-  }
-
-  const handleAddPaymentUri = () => {
-    if (newPaymentUri.trim() && !editPaymentUris.includes(newPaymentUri.trim())) {
-      setEditPaymentUris([...editPaymentUris, newPaymentUri.trim()])
-      setNewPaymentUri('')
-    }
-  }
-
-  const handleRemovePaymentUri = (index: number) => {
-    setEditPaymentUris(editPaymentUris.filter((_, i) => i !== index))
-  }
-
-  const handleAddSocialLink = () => {
-    if (newSocialPlatform.trim() && newSocialHandle.trim()) {
-      setEditSocialLinks([...editSocialLinks, { platform: newSocialPlatform.trim(), handle: newSocialHandle.trim() }])
-      setNewSocialPlatform('')
-      setNewSocialHandle('')
-    }
-  }
-
-  const handleRemoveSocialLink = (index: number) => {
-    setEditSocialLinks(editSocialLinks.filter((_, i) => i !== index))
   }
 
   const handleSaveProfile = async () => {
@@ -561,89 +532,20 @@ function UserProfileContent() {
 
                   {/* Payment Addresses */}
                   <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Payment Addresses</label>
-                    <p className="text-xs text-gray-500 mb-2">Add crypto addresses where others can tip you</p>
-
-                    {editPaymentUris.map((uri, index) => (
-                      <div key={index} className="flex gap-2 items-center mb-2">
-                        <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
-                          {uri}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePaymentUri(index)}
-                          className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={newPaymentUri}
-                        onChange={(e) => setNewPaymentUri(e.target.value)}
-                        placeholder="dash:XnNh3x8B7... or bitcoin:1A1z..."
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddPaymentUri())}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddPaymentUri}
-                        className="p-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        <PlusIcon className="h-5 w-5" />
-                      </button>
-                    </div>
+                    <PaymentUriInput
+                      uris={editPaymentUris}
+                      onChange={setEditPaymentUris}
+                      disabled={isSaving}
+                    />
                   </div>
 
                   {/* Social Links */}
                   <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Social Links</label>
-
-                    {editSocialLinks.map((link, index) => (
-                      <div key={index} className="flex gap-2 items-center mb-2 mt-2">
-                        <span className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium capitalize min-w-[80px]">
-                          {link.platform}
-                        </span>
-                        <span className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
-                          {link.handle}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveSocialLink(index)}
-                          className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-
-                    <div className="flex gap-2 mt-2">
-                      <input
-                        type="text"
-                        value={newSocialPlatform}
-                        onChange={(e) => setNewSocialPlatform(e.target.value)}
-                        placeholder="twitter"
-                        className="w-24 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      />
-                      <input
-                        type="text"
-                        value={newSocialHandle}
-                        onChange={(e) => setNewSocialHandle(e.target.value)}
-                        placeholder="@username"
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddSocialLink())}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddSocialLink}
-                        className="p-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        <PlusIcon className="h-5 w-5" />
-                      </button>
-                    </div>
+                    <SocialLinksInput
+                      links={editSocialLinks}
+                      onChange={setEditSocialLinks}
+                      disabled={isSaving}
+                    />
                   </div>
 
                   {/* Content Settings */}

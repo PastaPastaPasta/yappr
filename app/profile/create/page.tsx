@@ -9,8 +9,10 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { Loader2 } from 'lucide-react'
-import { ArrowPathIcon, PlusIcon, TrashIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import type { SocialLink } from '@/lib/types'
+import { PaymentUriInput } from '@/components/profile/payment-uri-input'
+import { SocialLinksInput } from '@/components/profile/social-links-input'
 import type { MigrationStatus, LegacyProfileData, LegacyAvatarData } from '@/lib/services/profile-migration-service'
 import {
   unifiedProfileService,
@@ -42,12 +44,9 @@ function CreateProfilePage() {
 
   // Payment URIs (array of strings)
   const [paymentUris, setPaymentUris] = useState<string[]>([])
-  const [newPaymentUri, setNewPaymentUri] = useState('')
 
   // Social links (array of {platform, handle})
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>([])
-  const [newSocialPlatform, setNewSocialPlatform] = useState('')
-  const [newSocialHandle, setNewSocialHandle] = useState('')
 
   // Check for existing profile and migration status on mount
   useEffect(() => {
@@ -100,29 +99,6 @@ function CreateProfilePage() {
 
     checkExistingProfile()
   }, [user, router])
-
-  const handleAddPaymentUri = () => {
-    if (newPaymentUri.trim() && !paymentUris.includes(newPaymentUri.trim())) {
-      setPaymentUris([...paymentUris, newPaymentUri.trim()])
-      setNewPaymentUri('')
-    }
-  }
-
-  const handleRemovePaymentUri = (index: number) => {
-    setPaymentUris(paymentUris.filter((_, i) => i !== index))
-  }
-
-  const handleAddSocialLink = () => {
-    if (newSocialPlatform.trim() && newSocialHandle.trim()) {
-      setSocialLinks([...socialLinks, { platform: newSocialPlatform.trim(), handle: newSocialHandle.trim() }])
-      setNewSocialPlatform('')
-      setNewSocialHandle('')
-    }
-  }
-
-  const handleRemoveSocialLink = (index: number) => {
-    setSocialLinks(socialLinks.filter((_, i) => i !== index))
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -409,80 +385,21 @@ function CreateProfilePage() {
             </div>
 
             {/* Payment Addresses Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Payment Addresses</h3>
-              <p className="text-xs text-gray-500">Add crypto addresses where others can tip you</p>
-
-              {paymentUris.map((uri, index) => (
-                <div key={index} className="flex gap-2 items-center">
-                  <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
-                    {uri}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => handleRemovePaymentUri(index)}
-                    className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-
-              <div className="flex gap-2">
-                <Input
-                  type="text"
-                  value={newPaymentUri}
-                  onChange={(e) => setNewPaymentUri(e.target.value)}
-                  placeholder="dash:XnNh3x8B7... or bitcoin:1A1z..."
-                  className="flex-1"
-                />
-                <Button type="button" variant="outline" onClick={handleAddPaymentUri}>
-                  <PlusIcon className="h-4 w-4" />
-                </Button>
-              </div>
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <PaymentUriInput
+                uris={paymentUris}
+                onChange={setPaymentUris}
+                disabled={isSubmitting}
+              />
             </div>
 
             {/* Social Links Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Social Links</h3>
-
-              {socialLinks.map((link, index) => (
-                <div key={index} className="flex gap-2 items-center">
-                  <span className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium capitalize min-w-[80px]">
-                    {link.platform}
-                  </span>
-                  <span className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
-                    {link.handle}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveSocialLink(index)}
-                    className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-
-              <div className="flex gap-2">
-                <Input
-                  type="text"
-                  value={newSocialPlatform}
-                  onChange={(e) => setNewSocialPlatform(e.target.value)}
-                  placeholder="twitter"
-                  className="w-24"
-                />
-                <Input
-                  type="text"
-                  value={newSocialHandle}
-                  onChange={(e) => setNewSocialHandle(e.target.value)}
-                  placeholder="@username"
-                  className="flex-1"
-                />
-                <Button type="button" variant="outline" onClick={handleAddSocialLink}>
-                  <PlusIcon className="h-4 w-4" />
-                </Button>
-              </div>
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <SocialLinksInput
+                links={socialLinks}
+                onChange={setSocialLinks}
+                disabled={isSubmitting}
+              />
             </div>
 
             {/* Content Settings */}
