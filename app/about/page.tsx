@@ -1,8 +1,9 @@
 'use client'
 
-import { ArrowLeftIcon, InformationCircleIcon, GlobeAltIcon, CodeBracketIcon, UserGroupIcon, ServerStackIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, InformationCircleIcon, GlobeAltIcon, CodeBracketIcon, UserGroupIcon, ServerStackIcon, CpuChipIcon } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
+import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 
 export default function AboutPage() {
   return (
@@ -121,26 +122,17 @@ export default function AboutPage() {
                 Yappr is open source software. Anyone can view the code, verify what it does, suggest improvements,
                 or create their own version. Transparency builds trust.
               </p>
-              <div className="flex flex-wrap gap-3">
-                <a
-                  href="https://github.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity text-sm font-medium"
-                >
-                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z" />
-                  </svg>
-                  View on GitHub
-                </a>
-                <Link
-                  href="/contract"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
-                >
-                  <CodeBracketIcon className="h-4 w-4" />
-                  View Data Contract
-                </Link>
-              </div>
+              <a
+                href="https://github.com/pastapastapasta/yappr"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity text-sm font-medium"
+              >
+                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z" />
+                </svg>
+                View on GitHub
+              </a>
             </section>
 
             {/* Community */}
@@ -154,6 +146,37 @@ export default function AboutPage() {
                 sell. It exists because people believe in the idea of social media that users actually own.
                 Contributions, feedback, and ideas are always welcome.
               </p>
+            </section>
+
+            {/* Technical Details */}
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <CpuChipIcon className="h-5 w-5 text-gray-500" />
+                <h2 className="text-xl font-semibold">Technical Details</h2>
+              </div>
+              <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4 space-y-3">
+                <div>
+                  <p className="text-sm text-gray-500">Contract ID</p>
+                  <p className="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{YAPPR_CONTRACT_ID}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Network</p>
+                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 capitalize">{process.env.NEXT_PUBLIC_NETWORK || 'testnet'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Document Types</p>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">13 types available (profile, post, like, follow, etc.)</p>
+                </div>
+                <div className="pt-2">
+                  <Link
+                    href="/contract"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
+                  >
+                    <CodeBracketIcon className="h-4 w-4" />
+                    View Full Data Contract
+                  </Link>
+                </div>
+              </div>
             </section>
 
             {/* Resources */}

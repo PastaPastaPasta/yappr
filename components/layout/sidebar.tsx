@@ -151,16 +151,6 @@ export function Sidebar() {
       </div>
 
       <div className="space-y-2 flex-shrink-0 pb-4">
-        <Link
-          href="/contract"
-          className="flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
-          <span>View Data Contract</span>
-        </Link>
-        
         {user && isHydrated && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>

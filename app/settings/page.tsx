@@ -444,11 +444,13 @@ function SettingsPage() {
     <div className="p-6 space-y-6">
       <div className="text-center py-8">
         <h1 className="text-4xl font-bold text-gradient mb-4">Yappr</h1>
-        <p className="text-gray-500 mb-8">Decentralized social media on Dash Platform</p>
+        <p className="text-gray-500 mb-4">Decentralized social media on Dash Platform</p>
 
-        <div className="space-y-1 text-sm text-gray-500">
-          <p>Built with Next.js, React, and Dash Platform</p>
-        </div>
+        <Button variant="outline" asChild>
+          <Link href="/about">
+            Learn More About Yappr
+          </Link>
+        </Button>
       </div>
 
       {/* Build Information */}
@@ -476,13 +478,8 @@ function SettingsPage() {
           )}
         </div>
       </div>
-      
+
       <div className="space-y-3">
-        <Button variant="outline" className="w-full" asChild>
-          <Link href="/contract">
-            View Data Contract
-          </Link>
-        </Button>
         <Button variant="outline" className="w-full" asChild>
           <a href="https://github.com/pastapastapasta/yappr" target="_blank" rel="noopener noreferrer">
             GitHub Repository
@@ -494,7 +491,7 @@ function SettingsPage() {
           </a>
         </Button>
       </div>
-      
+
       <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
         <p className="text-xs text-gray-500 text-center">
           © {new Date().getFullYear()} Yappr. All rights reserved.
