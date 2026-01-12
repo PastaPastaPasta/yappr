@@ -69,7 +69,7 @@ export function ComposeModal() {
 
         if (hashtags.length > 0 && postId) {
           // Create hashtag documents in background (don't block UI)
-          hashtagService.createPostHashtags(postId, user.identityId, hashtags)
+          hashtagService.createPostHashtags(postId, user!.identityId, hashtags)
             .then(results => {
               const successCount = results.filter(r => r).length
               console.log(`Created ${successCount}/${hashtags.length} hashtag documents`)
