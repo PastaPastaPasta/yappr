@@ -462,9 +462,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   >
                     {isFollowing ? 'Unfollow' : 'Follow'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none">
-                    Add to Lists
-                  </DropdownMenu.Item>
                   <DropdownMenu.Item
                     onClick={(e) => {
                       e.stopPropagation();
