@@ -30,6 +30,7 @@ import type { Post, ParsedPaymentUri, SocialLink } from '@/lib/types'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { useBlock } from '@/hooks/use-block'
+import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 
 interface ProfileData {
   displayName: string
@@ -79,6 +80,11 @@ function UserProfileContent() {
 
   // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
+
+  // Progressive enrichment for post metadata (likes, reposts, etc.)
+  const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
+    currentUserId: currentUser?.identityId
+  })
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
@@ -173,6 +179,8 @@ function UserProfileContent() {
             }
           })
           setPosts(transformedPosts)
+          // Start progressive enrichment for post metadata
+          enrichProgressively(transformedPosts)
         }
 
         // Try to resolve DPNS username
@@ -204,7 +212,7 @@ function UserProfileContent() {
     }
 
     loadProfileData()
-  }, [userId])
+  }, [userId, enrichProgressively])
 
   const handleFollow = async () => {
     if (!currentUser) {
@@ -759,7 +767,11 @@ function UserProfileContent() {
               ) : (
                 <div>
                   {posts.map((post) => (
-                    <PostCard key={post.id} post={post} />
+                    <PostCard
+                      key={post.id}
+                      post={post}
+                      enrichment={getPostEnrichment(post)}
+                    />
                   ))}
                 </div>
               )}
