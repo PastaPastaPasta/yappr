@@ -237,7 +237,7 @@ export function TipModal() {
                         value={amount}
                         onChange={(e) => handleAmountChange(e.target.value)}
                         placeholder="0.001"
-                        className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-lg font-mono focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-lg font-mono placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                       />
                     </div>
 

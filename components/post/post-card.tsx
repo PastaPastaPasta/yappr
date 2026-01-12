@@ -323,7 +323,16 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       toast.error('Please log in to send tips')
       return
     }
-    openTipModal(post)
+    // Merge enriched author data into the post so tip modal shows correct username
+    const enrichedPost = {
+      ...post,
+      author: {
+        ...post.author,
+        username: usernameState || post.author.username,
+        displayName: displayName || post.author.displayName
+      }
+    }
+    openTipModal(enrichedPost)
   }
 
   const handleFailedHashtagClick = (hashtag: string) => {
