@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
+import { identifierToBase58, stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
 
 export interface LikeDocument {
   $id: string;
@@ -10,8 +10,7 @@ export interface LikeDocument {
 }
 
 class LikeService extends BaseDocumentService<LikeDocument> {
-  // In-flight request deduplication
-  private inFlightCountUserLikes = new Map<string, Promise<number>>();
+  private countUserLikesDeduplicator = new RequestDeduplicator<string, number>();
 
   constructor() {
     super('like');
@@ -52,18 +51,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         return true;
       }
 
-      // Convert postId to byte array
-      // Use Array.from() because Uint8Array doesn't serialize properly through SDK
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-      const postIdBytes = Array.from(bs58.decode(postId));
-
       // Use state transition service for creation
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         ownerId,
-        { postId: postIdBytes }
+        { postId: stringToIdentifierBytes(postId) }
       );
 
       return result.success;
@@ -112,39 +105,19 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    */
   async getLike(postId: string, ownerId: string): Promise<LikeDocument | null> {
     try {
-      // Get SDK instance using EvoSDK
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Pass identifier as base58 string - the SDK handles conversion
-      const where = [
-        ['postId', '==', postId],
-        ['$ownerId', '==', ownerId]
-      ];
-
-      // Query using EvoSDK documents facade
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
-        where,
+        where: [
+          ['postId', '==', postId],
+          ['$ownerId', '==', ownerId]
+        ],
         limit: 1
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        documents = (response as any).toJSON();
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else {
-        documents = [];
-      }
-
+      const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
       console.error('Error getting like:', error);
@@ -157,45 +130,22 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    */
   async getPostLikes(postId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
     try {
-      // Get SDK instance using EvoSDK
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Pass identifier as base58 string - the SDK handles conversion
       // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const where = [
-        ['postId', '==', postId],
-        ['$createdAt', '>', 0]
-      ];
-      const orderBy = [['$createdAt', 'asc']];
-
-      // Query using EvoSDK documents facade
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
-        where,
-        orderBy,
+        where: [
+          ['postId', '==', postId],
+          ['$createdAt', '>', 0]
+        ],
+        orderBy: [['$createdAt', 'asc']],
         limit: options.limit || 50
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        documents = (response as any).toJSON();
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else {
-        documents = [];
-      }
-
-      // Transform documents
-      return documents.map((doc: any) => this.transformDocument(doc));
-
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting post likes:', error);
       return [];
@@ -230,59 +180,28 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Deduplicates in-flight requests.
    */
   async countUserLikes(userId: string): Promise<number> {
-    // Check for in-flight request
-    const inFlight = this.inFlightCountUserLikes.get(userId);
-    if (inFlight) {
-      return inFlight;
-    }
+    return this.countUserLikesDeduplicator.dedupe(userId, async () => {
+      try {
+        const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-    const promise = this.fetchCountUserLikes(userId);
-    this.inFlightCountUserLikes.set(userId, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightCountUserLikes.delete(userId), 100);
-    });
+        // Dash Platform requires a where clause on the orderBy field for ordering to work
+        const response = await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: 'like',
+          where: [
+            ['$ownerId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']],
+          limit: 100
+        } as any);
 
-    return promise;
-  }
-
-  private async fetchCountUserLikes(userId: string): Promise<number> {
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-      // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'like',
-        where: [
-          ['$ownerId', '==', userId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 100
-      } as any);
-
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
+        return normalizeSDKResponse(response).length;
+      } catch (error) {
+        console.error('Error counting user likes:', error);
+        return 0;
       }
-
-      return documents.length;
-    } catch (error) {
-      console.error('Error counting user likes:', error);
-      return 0;
-    }
+    });
   }
 
   /**
@@ -314,22 +233,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         limit: 100
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting likes batch:', error);
       return [];

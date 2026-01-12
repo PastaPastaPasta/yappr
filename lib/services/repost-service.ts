@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
+import { identifierToBase58, stringToIdentifierBytes, normalizeSDKResponse } from './sdk-helpers';
 
 export interface RepostDocument {
   $id: string;
@@ -49,18 +49,12 @@ class RepostService extends BaseDocumentService<RepostDocument> {
         return true;
       }
 
-      // Convert postId to byte array
-      // Use Array.from() because Uint8Array doesn't serialize properly through SDK
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-      const postIdBytes = Array.from(bs58.decode(postId));
-
       // Use state transition service for creation
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         ownerId,
-        { postId: postIdBytes }
+        { postId: stringToIdentifierBytes(postId) }
       );
 
       return result.success;
@@ -200,22 +194,8 @@ class RepostService extends BaseDocumentService<RepostDocument> {
         limit: 100
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting reposts batch:', error);
       return [];

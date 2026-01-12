@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { queryDocuments, identifierToBase58 } from './sdk-helpers';
+import { queryDocuments, identifierToBase58, stringToIdentifierBytes, RequestDeduplicator } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 
 export interface FollowDocument {
@@ -11,10 +11,10 @@ export interface FollowDocument {
 }
 
 class FollowService extends BaseDocumentService<FollowDocument> {
-  // In-flight request deduplication: multiple callers share the same promise
-  private inFlightFollowing = new Map<string, Promise<string[]>>();
-  private inFlightCountFollowers = new Map<string, Promise<number>>();
-  private inFlightCountFollowing = new Map<string, Promise<number>>();
+  // Request deduplicators for batch operations
+  private followingDeduplicator = new RequestDeduplicator<string, string[]>();
+  private countFollowersDeduplicator = new RequestDeduplicator<string, number>();
+  private countFollowingDeduplicator = new RequestDeduplicator<string, number>();
 
   constructor() {
     super('follow');
@@ -54,15 +54,11 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         return { success: true };
       }
 
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-      const followingIdBytes = Array.from(bs58.decode(targetUserId));
-
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         followerUserId,
-        { followingId: followingIdBytes }
+        { followingId: stringToIdentifierBytes(targetUserId) }
       );
 
       return result;
@@ -180,22 +176,10 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   async getFollowingIds(userId: string): Promise<string[]> {
     if (!userId) return [];
 
-    // Check for in-flight request
-    const inFlight = this.inFlightFollowing.get(userId);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    // Create new request and store the promise
-    const promise = this.getFollowing(userId, { limit: 100 })
-      .then(following => following.map(f => f.followingId))
-      .finally(() => {
-        // Clear in-flight after a short delay to allow rapid successive calls to share
-        setTimeout(() => this.inFlightFollowing.delete(userId), 100);
-      });
-
-    this.inFlightFollowing.set(userId, promise);
-    return promise;
+    return this.followingDeduplicator.dedupe(userId, async () => {
+      const following = await this.getFollowing(userId, { limit: 100 });
+      return following.map(f => f.followingId);
+    });
   }
 
   /**
@@ -236,42 +220,26 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Deduplicates in-flight requests.
    */
   async countFollowers(userId: string): Promise<number> {
-    // Check for in-flight request
-    const inFlight = this.inFlightCountFollowers.get(userId);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const promise = this.fetchCountFollowers(userId);
-    this.inFlightCountFollowers.set(userId, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightCountFollowers.delete(userId), 100);
+    return this.countFollowersDeduplicator.dedupe(userId, async () => {
+      try {
+        const sdk = await getEvoSdk();
+        const documents = await queryDocuments(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [
+            ['followingId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']],
+          limit: 100
+        });
+        return documents.length;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Error counting followers:', errorMessage, error);
+        return 0;
+      }
     });
-
-    return promise;
-  }
-
-  private async fetchCountFollowers(userId: string): Promise<number> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const documents = await queryDocuments(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: 'follow',
-        where: [
-          ['followingId', '==', userId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 100
-      });
-
-      return documents.length;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('Error counting followers:', errorMessage, error);
-      return 0;
-    }
   }
 
   /**
@@ -279,39 +247,23 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Deduplicates in-flight requests.
    */
   async countFollowing(userId: string): Promise<number> {
-    // Check for in-flight request
-    const inFlight = this.inFlightCountFollowing.get(userId);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const promise = this.fetchCountFollowing(userId);
-    this.inFlightCountFollowing.set(userId, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightCountFollowing.delete(userId), 100);
+    return this.countFollowingDeduplicator.dedupe(userId, async () => {
+      try {
+        const sdk = await getEvoSdk();
+        const documents = await queryDocuments(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [['$ownerId', '==', userId]],
+          orderBy: [['$createdAt', 'asc']],
+          limit: 100
+        });
+        return documents.length;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Error counting following:', errorMessage, error);
+        return 0;
+      }
     });
-
-    return promise;
-  }
-
-  private async fetchCountFollowing(userId: string): Promise<number> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const documents = await queryDocuments(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: 'follow',
-        where: [['$ownerId', '==', userId]],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 100
-      });
-
-      return documents.length;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('Error counting following:', errorMessage, error);
-      return 0;
-    }
   }
 
   /**

@@ -248,3 +248,105 @@ export function mapToDocumentArray(
 
   return documents;
 }
+
+/**
+ * Normalize SDK response to an array of document objects.
+ * Handles all SDK response formats: Map, Array, object with documents property, or toJSON().
+ *
+ * This consolidates the duplicated response handling code that was spread across services.
+ */
+export function normalizeSDKResponse(response: unknown): Record<string, unknown>[] {
+  if (!response) return [];
+
+  // Handle Map response (v3 SDK primary format)
+  if (response instanceof Map) {
+    return Array.from(response.values())
+      .filter(Boolean)
+      .map((doc: unknown) => {
+        const d = doc as { toJSON?: () => unknown };
+        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+      });
+  }
+
+  // Handle Array response
+  if (Array.isArray(response)) {
+    return response as Record<string, unknown>[];
+  }
+
+  // Handle object with documents property
+  const obj = response as { documents?: unknown[]; toJSON?: () => unknown };
+  if (obj.documents && Array.isArray(obj.documents)) {
+    return obj.documents as Record<string, unknown>[];
+  }
+
+  // Handle object with toJSON method
+  if (typeof obj.toJSON === 'function') {
+    const json = obj.toJSON();
+    if (Array.isArray(json)) {
+      return json as Record<string, unknown>[];
+    }
+    const jsonObj = json as { documents?: unknown[] };
+    if (jsonObj.documents && Array.isArray(jsonObj.documents)) {
+      return jsonObj.documents as Record<string, unknown>[];
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Convert a base58 string to a byte array for SDK document fields.
+ * Returns an Array<number> instead of Uint8Array because the SDK
+ * serializes Uint8Array incorrectly.
+ */
+export function stringToIdentifierBytes(value: string): number[] {
+  return Array.from(bs58.decode(value));
+}
+
+/**
+ * Generic in-flight request deduplicator.
+ * Prevents duplicate concurrent requests by sharing a single promise
+ * for the same key.
+ *
+ * Usage:
+ * ```
+ * const deduplicator = new RequestDeduplicator<string, UserData>();
+ * const data = await deduplicator.dedupe(userId, () => fetchUser(userId));
+ * ```
+ */
+export class RequestDeduplicator<K, V> {
+  private inFlight = new Map<K, Promise<V>>();
+  private cleanupDelayMs: number;
+
+  constructor(cleanupDelayMs = 100) {
+    this.cleanupDelayMs = cleanupDelayMs;
+  }
+
+  /**
+   * Execute the fetch function with deduplication.
+   * If a request with the same key is already in-flight, return that promise.
+   * Otherwise, execute the fetch and track it.
+   */
+  async dedupe(key: K, fetchFn: () => Promise<V>): Promise<V> {
+    const existing = this.inFlight.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const promise = fetchFn();
+    this.inFlight.set(key, promise);
+
+    promise.finally(() => {
+      setTimeout(() => this.inFlight.delete(key), this.cleanupDelayMs);
+    });
+
+    return promise;
+  }
+
+  /**
+   * Create a batch key from multiple IDs for batch operations.
+   */
+  static createBatchKey(ids: string[]): string {
+    return [...ids].sort().join(',');
+  }
+}

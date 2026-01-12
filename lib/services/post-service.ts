@@ -5,7 +5,7 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58 } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 
 export interface PostDocument {
@@ -34,22 +34,16 @@ export interface PostStats {
 class PostService extends BaseDocumentService<Post> {
   private statsCache: Map<string, { data: PostStats; timestamp: number }> = new Map();
 
-  // In-flight request deduplication for batch operations
-  private inFlightStats = new Map<string, Promise<Map<string, PostStats>>>();
-  private inFlightReplies = new Map<string, Promise<Map<string, number>>>();
-  private inFlightParentOwners = new Map<string, Promise<Map<string, string>>>();
-  private inFlightInteractions = new Map<string, Promise<Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>>>();
-  // In-flight request deduplication for count operations
-  private inFlightCountUserPosts = new Map<string, Promise<number>>();
-  private inFlightCountAllPosts: Promise<number> | null = null;
+  // Request deduplicators for batch/count operations
+  private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();
+  private repliesDeduplicator = new RequestDeduplicator<string, Map<string, number>>();
+  private parentOwnersDeduplicator = new RequestDeduplicator<string, Map<string, string>>();
+  private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>>();
+  private countUserPostsDeduplicator = new RequestDeduplicator<string, number>();
+  private countAllPostsDeduplicator = new RequestDeduplicator<string, number>();
 
   constructor() {
     super('post');
-  }
-
-  /** Create a cache key from an array of IDs */
-  private createBatchKey(ids: string[]): string {
-    return [...ids].sort().join(',');
   }
 
   /**
@@ -195,21 +189,8 @@ class PostService extends BaseDocumentService<Post> {
       return new Map<string, string>();
     }
 
-    const cacheKey = this.createBatchKey(parentPostIds);
-
-    // Check for in-flight request
-    const inFlight = this.inFlightParentOwners.get(cacheKey);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const promise = this.fetchParentPostOwners(parentPostIds);
-    this.inFlightParentOwners.set(cacheKey, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightParentOwners.delete(cacheKey), 100);
-    });
-
-    return promise;
+    const cacheKey = RequestDeduplicator.createBatchKey(parentPostIds);
+    return this.parentOwnersDeduplicator.dedupe(cacheKey, () => this.fetchParentPostOwners(parentPostIds));
   }
 
   /** Internal: Actually fetch parent post owners */
@@ -241,25 +222,12 @@ class PostService extends BaseDocumentService<Post> {
         limit: base58PostIds.length
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
+      const documents = normalizeSDKResponse(response);
 
       // Extract owner IDs (system fields are already base58 in v3)
       for (const doc of documents) {
-        const postId = doc.$id;
-        const ownerId = doc.$ownerId;
+        const postId = doc.$id as string;
+        const ownerId = doc.$ownerId as string;
         if (postId && ownerId) {
           result.set(postId, ownerId);
         }
@@ -520,24 +488,7 @@ class PostService extends BaseDocumentService<Post> {
         };
 
         const response = await sdk.documents.query(queryParams as any);
-
-        // Handle Map response (v3 SDK)
-        let documents: any[];
-        if (response instanceof Map) {
-          documents = Array.from(response.values())
-            .filter(Boolean)
-            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-        } else if (Array.isArray(response)) {
-          documents = response;
-        } else if (response && (response as any).documents) {
-          documents = (response as any).documents;
-        } else if (response && typeof (response as any).toJSON === 'function') {
-          const json = (response as any).toJSON();
-          documents = Array.isArray(json) ? json : json.documents || [];
-        } else {
-          documents = [];
-        }
-
+        const documents = normalizeSDKResponse(response);
         return documents.map(doc => this.transformDocument(doc));
       };
 
@@ -691,58 +642,25 @@ class PostService extends BaseDocumentService<Post> {
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
-    // Check for in-flight request
-    const inFlight = this.inFlightCountUserPosts.get(userId);
-    if (inFlight) {
-      return inFlight;
-    }
+    return this.countUserPostsDeduplicator.dedupe(userId, async () => {
+      try {
+        const { getEvoSdk } = await import('./evo-sdk-service');
+        const sdk = await getEvoSdk();
 
-    // Create and store the promise
-    const promise = this.fetchCountUserPosts(userId);
-    this.inFlightCountUserPosts.set(userId, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightCountUserPosts.delete(userId), 100);
-    });
+        const response = await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
+          where: [['$ownerId', '==', userId]],
+          orderBy: [['$createdAt', 'asc']],
+          limit: 100
+        } as any);
 
-    return promise;
-  }
-
-  private async fetchCountUserPosts(userId: string): Promise<number> {
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [['$ownerId', '==', userId]],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 100
-      } as any);
-
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
+        return normalizeSDKResponse(response).length;
+      } catch (error) {
+        console.error('Error counting user posts:', error);
+        return 0;
       }
-
-      return documents.length;
-    } catch (error) {
-      console.error('Error counting user posts:', error);
-      return 0;
-    }
+    });
   }
 
   /**
@@ -750,81 +668,51 @@ class PostService extends BaseDocumentService<Post> {
    * Deduplicates in-flight requests.
    */
   async countAllPosts(): Promise<number> {
-    // Check for in-flight request
-    if (this.inFlightCountAllPosts) {
-      return this.inFlightCountAllPosts;
-    }
+    // Use a constant key since this counts all posts
+    return this.countAllPostsDeduplicator.dedupe('all', async () => {
+      try {
+        const { getEvoSdk } = await import('./evo-sdk-service');
+        const sdk = await getEvoSdk();
+        let totalCount = 0;
+        let startAfter: string | undefined = undefined;
+        const PAGE_SIZE = 100;
 
-    // Create and store the promise
-    const promise = this.fetchCountAllPosts();
-    this.inFlightCountAllPosts = promise;
-    promise.finally(() => {
-      setTimeout(() => { this.inFlightCountAllPosts = null; }, 100);
-    });
+        while (true) {
+          const queryParams: any = {
+            dataContractId: this.contractId,
+            documentTypeName: 'post',
+            orderBy: [['$createdAt', 'asc']],
+            limit: PAGE_SIZE
+          };
 
-    return promise;
-  }
+          if (startAfter) {
+            queryParams.startAfter = startAfter;
+          }
 
-  private async fetchCountAllPosts(): Promise<number> {
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
+          const response = await sdk.documents.query(queryParams as any);
+          const documents = normalizeSDKResponse(response);
 
-      const sdk = await getEvoSdk();
-      let totalCount = 0;
-      let startAfter: string | undefined = undefined;
-      const PAGE_SIZE = 100;
+          totalCount += documents.length;
 
-      while (true) {
-        const queryParams: any = {
-          dataContractId: this.contractId,
-          documentTypeName: 'post',
-          orderBy: [['$createdAt', 'asc']],
-          limit: PAGE_SIZE
-        };
+          // If we got fewer than PAGE_SIZE, we've reached the end
+          if (documents.length < PAGE_SIZE) {
+            break;
+          }
 
-        if (startAfter) {
-          queryParams.startAfter = startAfter;
+          // Get the last document's ID for pagination
+          const lastDoc = documents[documents.length - 1];
+          if (!lastDoc.$id) {
+            break;
+          }
+          startAfter = lastDoc.$id as string;
         }
 
-        const response = await sdk.documents.query(queryParams as any);
-
-        // Handle Map response (v3 SDK)
-        let documents: any[];
-        if (response instanceof Map) {
-          documents = Array.from(response.values())
-            .filter(Boolean)
-            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-        } else if (Array.isArray(response)) {
-          documents = response;
-        } else if (response && (response as any).documents) {
-          documents = (response as any).documents;
-        } else if (response && typeof (response as any).toJSON === 'function') {
-          const json = (response as any).toJSON();
-          documents = Array.isArray(json) ? json : json.documents || [];
-        } else {
-          documents = [];
-        }
-
-        totalCount += documents.length;
-
-        // If we got fewer than PAGE_SIZE, we've reached the end
-        if (documents.length < PAGE_SIZE) {
-          break;
-        }
-
-        // Get the last document's ID for pagination
-        const lastDoc = documents[documents.length - 1];
-        if (!lastDoc.$id) {
-          break;
-        }
-        startAfter = lastDoc.$id;
+        return totalCount;
+      } catch (error) {
+        console.error('Error counting all posts:', error);
+        return 0;
       }
-
-      return totalCount;
-    } catch (error) {
-      console.error('Error counting all posts:', error);
-      return 0;
-    }
+    });
   }
 
   /**
@@ -885,20 +773,7 @@ class PostService extends BaseDocumentService<Post> {
         limit: 100
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
+      const documents = normalizeSDKResponse(response);
 
       // Initialize result map
       const result = new Map<string, Post[]>();
@@ -1127,21 +1002,8 @@ class PostService extends BaseDocumentService<Post> {
     }
 
     // Include userId in cache key since interactions are user-specific
-    const cacheKey = `${currentUserId}:${this.createBatchKey(postIds)}`;
-
-    // Check for in-flight request
-    const inFlight = this.inFlightInteractions.get(cacheKey);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const promise = this.fetchBatchUserInteractions(postIds, currentUserId);
-    this.inFlightInteractions.set(cacheKey, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightInteractions.delete(cacheKey), 100);
-    });
-
-    return promise;
+    const cacheKey = `${currentUserId}:${RequestDeduplicator.createBatchKey(postIds)}`;
+    return this.interactionsDeduplicator.dedupe(cacheKey, () => this.fetchBatchUserInteractions(postIds, currentUserId));
   }
 
   /** Internal: Actually fetch user interactions */
@@ -1196,21 +1058,8 @@ class PostService extends BaseDocumentService<Post> {
       return new Map<string, number>();
     }
 
-    const cacheKey = this.createBatchKey(postIds);
-
-    // Check for in-flight request
-    const inFlight = this.inFlightReplies.get(cacheKey);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const promise = this.fetchRepliesByPostIds(postIds);
-    this.inFlightReplies.set(cacheKey, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightReplies.delete(cacheKey), 100);
-    });
-
-    return promise;
+    const cacheKey = RequestDeduplicator.createBatchKey(postIds);
+    return this.repliesDeduplicator.dedupe(cacheKey, () => this.fetchRepliesByPostIds(postIds));
   }
 
   /** Internal: Actually fetch reply counts */
@@ -1232,25 +1081,12 @@ class PostService extends BaseDocumentService<Post> {
         limit: 100
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
+      const documents = normalizeSDKResponse(response);
 
       // Count replies per parent post
       for (const doc of documents) {
         // Handle different document structures from SDK
-        const data = doc.data || doc;
+        const data = (doc.data || doc) as Record<string, unknown>;
         const rawParentId = data.replyToPostId || doc.replyToPostId;
         const parentId = rawParentId ? identifierToBase58(rawParentId) : null;
 
@@ -1274,24 +1110,8 @@ class PostService extends BaseDocumentService<Post> {
       return new Map<string, PostStats>();
     }
 
-    const cacheKey = this.createBatchKey(postIds);
-
-    // Check for in-flight request with same posts
-    const inFlight = this.inFlightStats.get(cacheKey);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    // Create the actual request
-    const promise = this.fetchBatchPostStats(postIds);
-
-    // Store and clean up after completion
-    this.inFlightStats.set(cacheKey, promise);
-    promise.finally(() => {
-      setTimeout(() => this.inFlightStats.delete(cacheKey), 100);
-    });
-
-    return promise;
+    const cacheKey = RequestDeduplicator.createBatchKey(postIds);
+    return this.statsDeduplicator.dedupe(cacheKey, () => this.fetchBatchPostStats(postIds));
   }
 
   /** Internal: Actually fetch batch post stats */
@@ -1347,7 +1167,6 @@ class PostService extends BaseDocumentService<Post> {
   async countUniqueAuthors(): Promise<number> {
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
-
       const sdk = await getEvoSdk();
       const uniqueAuthors = new Set<string>();
       let startAfter: string | undefined = undefined;
@@ -1367,28 +1186,12 @@ class PostService extends BaseDocumentService<Post> {
         }
 
         const response = await sdk.documents.query(queryParams as any);
-
-        // Handle Map response (v3 SDK)
-        let documents: any[];
-        if (response instanceof Map) {
-          documents = Array.from(response.values())
-            .filter(Boolean)
-            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-        } else if (Array.isArray(response)) {
-          documents = response;
-        } else if (response && (response as any).documents) {
-          documents = (response as any).documents;
-        } else if (response && typeof (response as any).toJSON === 'function') {
-          const json = (response as any).toJSON();
-          documents = Array.isArray(json) ? json : json.documents || [];
-        } else {
-          documents = [];
-        }
+        const documents = normalizeSDKResponse(response);
 
         // Collect unique author IDs
         for (const doc of documents) {
           if (doc.$ownerId) {
-            uniqueAuthors.add(doc.$ownerId);
+            uniqueAuthors.add(doc.$ownerId as string);
           }
         }
 
@@ -1402,7 +1205,7 @@ class PostService extends BaseDocumentService<Post> {
         if (!lastDoc.$id) {
           break;
         }
-        startAfter = lastDoc.$id;
+        startAfter = lastDoc.$id as string;
       }
 
       return uniqueAuthors.size;
@@ -1456,7 +1259,6 @@ class PostService extends BaseDocumentService<Post> {
 
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
-
       const sdk = await getEvoSdk();
       let startAfter: string | undefined = undefined;
       const PAGE_SIZE = 100;
@@ -1477,28 +1279,13 @@ class PostService extends BaseDocumentService<Post> {
         }
 
         const response = await sdk.documents.query(queryParams as any);
-
-        // Handle Map response (v3 SDK)
-        let documents: any[];
-        if (response instanceof Map) {
-          documents = Array.from(response.values())
-            .filter(Boolean)
-            .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-        } else if (Array.isArray(response)) {
-          documents = response;
-        } else if (response && (response as any).documents) {
-          documents = (response as any).documents;
-        } else if (response && typeof (response as any).toJSON === 'function') {
-          const json = (response as any).toJSON();
-          documents = Array.isArray(json) ? json : json.documents || [];
-        } else {
-          documents = [];
-        }
+        const documents = normalizeSDKResponse(response);
 
         // Count posts per author
         for (const doc of documents) {
           if (doc.$ownerId) {
-            authorCounts.set(doc.$ownerId, (authorCounts.get(doc.$ownerId) || 0) + 1);
+            const ownerId = doc.$ownerId as string;
+            authorCounts.set(ownerId, (authorCounts.get(ownerId) || 0) + 1);
           }
         }
 
@@ -1514,7 +1301,7 @@ class PostService extends BaseDocumentService<Post> {
         if (!lastDoc.$id) {
           break;
         }
-        startAfter = lastDoc.$id;
+        startAfter = lastDoc.$id as string;
       }
 
       return authorCounts;
@@ -1546,20 +1333,7 @@ class PostService extends BaseDocumentService<Post> {
         limit: 100 // Scan recent posts
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
+      const documents = normalizeSDKResponse(response);
 
       // Filter for posts that quote the target post and transform
       const quotePosts = documents
