@@ -21,7 +21,7 @@ type PaymentMethod = 'credits' | 'external'
 
 export function TipModal() {
   const { isOpen, post, close } = useTipModal()
-  const { user } = useAuth()
+  const { user, refreshBalance } = useAuth()
 
   const [amount, setAmount] = useState('')
   const [tipMessage, setTipMessage] = useState('')
@@ -136,10 +136,12 @@ export function TipModal() {
 
     if (result.success) {
       setState('success')
-      // Refresh balance display
+      // Refresh balance display and persist to auth context
       identityService.getBalance(user.identityId)
         .then(b => setBalance(b.confirmed))
         .catch(() => {})
+      // Update global balance in auth context (persists to localStorage)
+      refreshBalance()
     } else {
       setState('error')
       setError(result.error || 'Transfer failed')
