@@ -7,7 +7,12 @@
     "build": "next build",
     "build:gh-pages": "GITHUB_PAGES=true next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report"
   },
   "dependencies": {
     "@dashevo/evo-sdk": "^3.0.0-dev.9",
@@ -40,6 +45,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
