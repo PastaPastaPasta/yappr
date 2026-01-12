@@ -185,10 +185,32 @@ function FeedPage() {
           liked: post.liked || false,
           reposted: post.reposted || false,
           bookmarked: post.bookmarked || false,
-          replyToId: post.replyToId || undefined
+          replyToId: post.replyToId || undefined,
+          quotedPostId: post.quotedPostId || undefined
         }))
+
+        // Fetch quoted posts for Following feed
+        try {
+          const { postService } = await import('@/lib/services')
+          const quotedPostIds = posts
+            .filter((p: any) => p.quotedPostId)
+            .map((p: any) => p.quotedPostId)
+
+          if (quotedPostIds.length > 0) {
+            const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+            const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
+
+            for (const post of posts) {
+              if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
+                post.quotedPost = quotedPostMap.get(post.quotedPostId)
+              }
+            }
+          }
+        } catch (quoteError) {
+          console.error('Feed: Error fetching quoted posts for following feed:', quoteError)
+        }
       } else {
-        // For You feed - get all posts
+        // For You feed - get all posts and reposts
         const dashClient = getDashPlatformClient()
         const queryOptions: any = {
           limit: 20,
@@ -209,6 +231,10 @@ function FeedPage() {
           // Convert to base58 for consistent handling
           const rawReplyToId = data.replyToPostId || doc.replyToPostId
           const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) : undefined
+
+          // quotedPostId also comes as base64 from SDK v3 toJSON()
+          const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
+          const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) : undefined
 
           return {
             id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
@@ -232,15 +258,102 @@ function FeedPage() {
             liked: false,
             reposted: false,
             bookmarked: false,
-            replyToId: replyToId || undefined
+            replyToId: replyToId || undefined,
+            quotedPostId: quotedPostId || undefined
           }
         })
+
+        // Fetch recent reposts and merge into timeline
+        try {
+          const { repostService } = await import('@/lib/services/repost-service')
+          const { unifiedProfileService } = await import('@/lib/services')
+
+          // Get recent reposts (we query all reposts without specific user filter for "For You")
+          // This is a simplified approach - ideally we'd have a global reposts index
+          // For now, we'll get reposts for the posts we already have
+          const postIds = posts.map((p: any) => p.id)
+          if (postIds.length > 0) {
+            const reposts = await repostService.getRepostsByPostIds(postIds)
+
+            // Group reposts by postId and get the most recent one for display
+            const repostMap = new Map<string, any>()
+            for (const repost of reposts) {
+              const existing = repostMap.get(repost.postId)
+              if (!existing || repost.$createdAt > existing.$createdAt) {
+                repostMap.set(repost.postId, repost)
+              }
+            }
+
+            // Get unique reposter IDs and fetch their profiles
+            const reposterIds = Array.from(new Set(Array.from(repostMap.values()).map(r => r.$ownerId)))
+            const reposterProfiles = new Map<string, any>()
+            await Promise.all(reposterIds.map(async (id) => {
+              try {
+                const profile = await unifiedProfileService.getProfileWithUsername(id)
+                if (profile) {
+                  reposterProfiles.set(id, profile)
+                }
+              } catch (e) {
+                // Ignore profile fetch errors
+              }
+            }))
+
+            // Update posts with repost info for display
+            for (const post of posts) {
+              const repost = repostMap.get(post.id)
+              if (repost && repost.$ownerId !== post.author.id) {
+                // Create a reposted version of this post
+                const repostTimestamp = new Date(repost.$createdAt)
+                // Only show as reposted if it's newer than the original
+                if (repostTimestamp > post.createdAt) {
+                  const reposterProfile = reposterProfiles.get(repost.$ownerId)
+                  post.repostedBy = {
+                    id: repost.$ownerId,
+                    displayName: reposterProfile?.displayName || `User ${repost.$ownerId.slice(-6)}`,
+                    username: reposterProfile?.username
+                  }
+                  post.repostTimestamp = repostTimestamp
+                }
+              }
+            }
+          }
+        } catch (repostError) {
+          console.error('Feed: Error fetching reposts:', repostError)
+          // Continue without reposts - non-critical
+        }
+
+        // Fetch quoted posts and attach them to posts
+        try {
+          const { postService } = await import('@/lib/services')
+          const quotedPostIds = posts
+            .filter((p: any) => p.quotedPostId)
+            .map((p: any) => p.quotedPostId)
+
+          if (quotedPostIds.length > 0) {
+            const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+            const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
+
+            // Attach quoted posts to their parent posts
+            for (const post of posts) {
+              if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
+                post.quotedPost = quotedPostMap.get(post.quotedPostId)
+              }
+            }
+          }
+        } catch (quoteError) {
+          console.error('Feed: Error fetching quoted posts:', quoteError)
+          // Continue without quoted posts - non-critical
+        }
       }
 
-      // Sort posts by createdAt to ensure newest first
+      // Sort posts by timestamp (use repostTimestamp if available, otherwise createdAt)
       let sortedPosts = posts.sort((a: any, b: any) => {
-        const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime()
-        const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime()
+        const aTime = a.repostTimestamp instanceof Date ? a.repostTimestamp.getTime()
+          : a.createdAt instanceof Date ? a.createdAt.getTime()
+          : new Date(a.createdAt).getTime()
+        const bTime = b.repostTimestamp instanceof Date ? b.repostTimestamp.getTime()
+          : b.createdAt instanceof Date ? b.createdAt.getTime()
+          : new Date(b.createdAt).getTime()
         return bTime - aTime
       })
 

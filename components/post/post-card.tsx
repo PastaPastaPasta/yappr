@@ -13,6 +13,7 @@ import {
   BookmarkIcon,
   EllipsisHorizontalIcon,
   CurrencyDollarIcon,
+  PencilSquareIcon,
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
@@ -119,7 +120,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
-  const { setReplyingTo, setComposeOpen } = useAppStore()
+  const { setReplyingTo, setComposeOpen, setQuotingPost } = useAppStore()
   const { open: openTipModal } = useTipModal()
   const { open: openHashtagRecoveryModal } = useHashtagRecoveryModal()
 
@@ -247,6 +248,24 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     }
   }
 
+  const handleQuote = () => {
+    if (!user) {
+      toast.error('Please log in to quote posts')
+      return
+    }
+    // Merge enriched author data into the post so compose modal shows correct username
+    const enrichedPost = {
+      ...post,
+      author: {
+        ...post.author,
+        username: usernameState || post.author.username,
+        displayName: displayName || post.author.displayName
+      }
+    }
+    setQuotingPost(enrichedPost)
+    setComposeOpen(true)
+  }
+
   const handleBookmark = async () => {
     if (!user) {
       toast.error('Please log in to bookmark posts')
@@ -322,6 +341,21 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       onClick={handleCardClick}
       className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
     >
+      {/* Reposted by header */}
+      {post.repostedBy && (
+        <Link
+          href={`/user?id=${post.repostedBy.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-8 hover:underline"
+        >
+          <ArrowPathIcon className="h-4 w-4" />
+          <span>
+            {post.repostedBy.username
+              ? `@${post.repostedBy.username}`
+              : post.repostedBy.displayName || 'Someone'} reposted
+          </span>
+        </Link>
+      )}
       <div className="flex gap-3">
         {!hideAvatar && (
           <Link
@@ -423,6 +457,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     Add to Lists
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/post/engagements?id=${post.id}`);
+                    }}
+                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none"
+                  >
+                    View post engagements
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleBlock(); }}
                     disabled={blockLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
@@ -492,36 +535,28 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           )}
 
           {post.quotedPost && (
-            <div className="mt-3 border border-gray-200 dark:border-gray-800 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors">
-              <div className="flex items-center gap-1 text-sm text-gray-500">
-                <Link
-                  href={`/user?id=${post.quotedPost.author.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Avatar className="h-5 w-5">
-                    <AvatarImage src={post.quotedPost.author.avatar} />
-                    <AvatarFallback>{getInitials(post.quotedPost.author.displayName)}</AvatarFallback>
-                  </Avatar>
-                </Link>
-                <Link
-                  href={`/user?id=${post.quotedPost.author.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="font-semibold text-gray-900 dark:text-gray-100 hover:underline"
-                >
+            <Link
+              href={`/post?id=${post.quotedPost.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
+            >
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <UserAvatar userId={post.quotedPost.author.id} size="sm" alt={post.quotedPost.author.displayName} />
+                <span className="font-semibold text-gray-900 dark:text-gray-100">
                   {post.quotedPost.author.displayName}
-                </Link>
-                <Link
-                  href={`/user?id=${post.quotedPost.author.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="hover:underline"
-                >
-                  @{post.quotedPost.author.username}
-                </Link>
+                </span>
+                {post.quotedPost.author.username && !post.quotedPost.author.username.startsWith('user_') ? (
+                  <span className="text-gray-500">@{post.quotedPost.author.username}</span>
+                ) : (
+                  <span className="text-gray-500 font-mono text-xs">
+                    {post.quotedPost.author.id.slice(0, 8)}...
+                  </span>
+                )}
                 <span>·</span>
                 <span>{formatTime(post.quotedPost.createdAt)}</span>
               </div>
               <PostContent content={post.quotedPost.content} className="mt-1 text-sm" />
-            </div>
+            </Link>
           )}
 
           {post.media && post.media.length > 0 && (
@@ -575,10 +610,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </Tooltip.Portal>
               </Tooltip.Root>
 
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleRepost(); }}
+                    onClick={(e) => e.stopPropagation()}
                     disabled={repostLoading}
                     className={cn(
                       'group flex items-center gap-1 p-2 rounded-full transition-colors',
@@ -600,16 +635,30 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       {reposts > 0 && formatNumber(reposts)}
                     </span>
                   </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    className="min-w-[160px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                     sideOffset={5}
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    Repost
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+                    <DropdownMenu.Item
+                      onClick={(e) => { e.stopPropagation(); handleRepost(); }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
+                    >
+                      <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
+                      {reposted ? 'Undo Repost' : 'Repost'}
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      onClick={(e) => { e.stopPropagation(); handleQuote(); }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
+                    >
+                      <PencilSquareIcon className="h-5 w-5" />
+                      Quote
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
 
               <Tooltip.Root>
                 <Tooltip.Trigger asChild>

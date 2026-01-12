@@ -12,9 +12,12 @@ import { useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractHashtags } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
+import { formatTime } from '@/lib/utils'
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
+import { getInitials } from '@/lib/utils'
 
 export function ComposeModal() {
-  const { isComposeOpen, setComposeOpen, replyingTo, setReplyingTo } = useAppStore()
+  const { isComposeOpen, setComposeOpen, replyingTo, setReplyingTo, quotingPost, setQuotingPost } = useAppStore()
   const { user } = useAuth()
   const [content, setContent] = useState('')
   const [isPosting, setIsPosting] = useState(false)
@@ -46,7 +49,8 @@ export function ComposeModal() {
       const result = await retryPostCreation(async () => {
         const dashClient = getDashPlatformClient()
         return await dashClient.createPost(postContent, {
-          replyToPostId: replyingTo?.id
+          replyToPostId: replyingTo?.id,
+          quotedPostId: quotingPost?.id
         })
       })
       
@@ -89,6 +93,7 @@ export function ComposeModal() {
         setContent('')
         setComposeOpen(false)
         setReplyingTo(null)
+        setQuotingPost(null)
 
         // Trigger feed refresh if possible
         window.dispatchEvent(new CustomEvent('post-created', {
@@ -122,6 +127,7 @@ export function ComposeModal() {
   const handleClose = () => {
     setComposeOpen(false)
     setReplyingTo(null)
+    setQuotingPost(null)
     setContent('')
   }
 
@@ -148,10 +154,10 @@ export function ComposeModal() {
                   >
                 {/* Add Dialog Title for accessibility */}
                 <Dialog.Title className="sr-only">
-                  {replyingTo ? 'Reply to post' : 'Create a new post'}
+                  {replyingTo ? 'Reply to post' : quotingPost ? 'Quote post' : 'Create a new post'}
                 </Dialog.Title>
                 <Dialog.Description className="sr-only">
-                  {replyingTo ? 'Write your reply to the post' : 'Share your thoughts with the community'}
+                  {replyingTo ? 'Write your reply to the post' : quotingPost ? 'Add your thoughts to this quote' : 'Share your thoughts with the community'}
                 </Dialog.Description>
                 
                 <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
@@ -167,10 +173,10 @@ export function ComposeModal() {
                     {isPosting ? (
                       <span className="flex items-center gap-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                        {replyingTo ? 'Replying...' : 'Posting...'}
+                        {replyingTo ? 'Replying...' : quotingPost ? 'Quoting...' : 'Posting...'}
                       </span>
                     ) : (
-                      replyingTo ? 'Reply' : 'Post'
+                      replyingTo ? 'Reply' : quotingPost ? 'Quote' : 'Post'
                     )}
                   </Button>
                 </div>
@@ -194,10 +200,33 @@ export function ComposeModal() {
                         ref={textareaRef}
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
-                        placeholder={replyingTo ? "Post your reply" : "What's happening?"}
+                        placeholder={replyingTo ? "Post your reply" : quotingPost ? "Add your comment" : "What's happening?"}
                         className="w-full min-h-[120px] text-lg resize-none outline-none bg-transparent placeholder:text-gray-500"
                       />
-                      
+
+                      {/* Quoted post preview */}
+                      {quotingPost && (
+                        <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3">
+                          <div className="flex items-center gap-2 text-sm">
+                            <Avatar className="h-5 w-5">
+                              <AvatarImage src={quotingPost.author.avatar} />
+                              <AvatarFallback>{getInitials(quotingPost.author.displayName)}</AvatarFallback>
+                            </Avatar>
+                            <span className="font-semibold text-gray-900 dark:text-gray-100">
+                              {quotingPost.author.displayName}
+                            </span>
+                            <span className="text-gray-500">
+                              @{quotingPost.author.username}
+                            </span>
+                            <span className="text-gray-500">·</span>
+                            <span className="text-gray-500">{formatTime(quotingPost.createdAt)}</span>
+                          </div>
+                          <p className="mt-2 text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
+                            {quotingPost.content}
+                          </p>
+                        </div>
+                      )}
+
                       <div className="mt-4 flex items-center justify-end">
                         <div className="flex items-center gap-3">
                           {content.length > 0 && (

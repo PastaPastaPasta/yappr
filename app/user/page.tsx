@@ -154,30 +154,80 @@ function UserProfileContent() {
 
         // Process posts
         const postDocs = postsResult.documents || []
-        if (postDocs.length > 0) {
-          const transformedPosts: Post[] = postDocs.map((doc: any) => {
-            const authorIdStr = doc.$ownerId || doc.ownerId || userId
-            return {
-              id: doc.$id || doc.id,
-              content: doc.content || '',
-              author: {
-                id: authorIdStr,
-                username: `user_${authorIdStr.slice(-6)}`,
-                displayName: profileDisplayName,
-                avatar: '', // Let UserAvatar fetch the actual avatar
-                verified: false,
-                followers: 0,
-                following: 0,
-                joinedAt: new Date(),
-                hasDpns: false, // Set to false initially, will update if DPNS found
-              } as any,
-              createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
-              likes: 0,
-              reposts: 0,
-              replies: 0,
-              views: 0,
+        let transformedPosts: Post[] = postDocs.map((doc: any) => {
+          const authorIdStr = doc.$ownerId || doc.ownerId || userId
+          return {
+            id: doc.$id || doc.id,
+            content: doc.content || '',
+            author: {
+              id: authorIdStr,
+              username: `user_${authorIdStr.slice(-6)}`,
+              displayName: profileDisplayName,
+              avatar: '', // Let UserAvatar fetch the actual avatar
+              verified: false,
+              followers: 0,
+              following: 0,
+              joinedAt: new Date(),
+              hasDpns: false, // Set to false initially, will update if DPNS found
+            } as any,
+            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
+            likes: 0,
+            reposts: 0,
+            replies: 0,
+            views: 0,
+          }
+        })
+
+        // Fetch user's reposts and merge with their posts
+        try {
+          const { repostService } = await import('@/lib/services/repost-service')
+          const userReposts = await repostService.getUserReposts(userId)
+
+          if (userReposts.length > 0) {
+            // Get unique post IDs that this user has reposted
+            const repostedPostIds = userReposts.map(r => r.postId).filter(id => id)
+            const repostedPosts = await postService.getPostsByIds(repostedPostIds)
+
+            // Try to resolve DPNS username for reposter display
+            let reposterUsername: string | undefined
+            try {
+              const { dpnsService } = await import('@/lib/services/dpns-service')
+              reposterUsername = await dpnsService.resolveUsername(userId) || undefined
+            } catch (e) {
+              // DPNS resolution is optional
             }
-          })
+
+            // Create repost entries with repostedBy info
+            for (const repost of userReposts) {
+              const originalPost = repostedPosts.find(p => p.id === repost.postId)
+              if (originalPost && originalPost.author.id !== userId) {
+                // Add as a reposted post
+                const repostEntry: Post = {
+                  ...originalPost,
+                  repostedBy: {
+                    id: userId,
+                    displayName: profileDisplayName,
+                    username: reposterUsername
+                  },
+                  repostTimestamp: new Date(repost.$createdAt)
+                }
+                transformedPosts.push(repostEntry)
+              }
+            }
+
+            // Sort by timestamp (repostTimestamp for reposts, createdAt for original posts)
+            transformedPosts.sort((a, b) => {
+              const aTime = a.repostTimestamp?.getTime() || a.createdAt.getTime()
+              const bTime = b.repostTimestamp?.getTime() || b.createdAt.getTime()
+              return bTime - aTime
+            })
+          }
+        } catch (repostError) {
+          console.error('Failed to fetch user reposts:', repostError)
+          // Continue without reposts - non-critical
+        }
+
+        if (transformedPosts.length > 0) {
           setPosts(transformedPosts)
           // Start progressive enrichment for post metadata
           enrichProgressively(transformedPosts)

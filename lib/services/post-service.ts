@@ -1448,6 +1448,83 @@ class PostService extends BaseDocumentService<Post> {
       return authorCounts;
     }
   }
+
+  /**
+   * Get posts that quote a specific post.
+   * NOTE: The contract lacks a quotedPostId index, so this uses client-side
+   * filtering of recent posts. For production, a contract migration adding
+   * the index would improve efficiency.
+   */
+  async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
+    const limit = options.limit || 50;
+
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+
+      // Scan recent posts - without an index we have to filter client-side
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [['$createdAt', '>', 0]],
+        orderBy: [['$createdAt', 'desc']],
+        limit: 100 // Scan recent posts
+      } as any);
+
+      // Handle Map response (v3 SDK)
+      let documents: any[] = [];
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      } else if (Array.isArray(response)) {
+        documents = response;
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
+        documents = Array.isArray(json) ? json : json.documents || [];
+      }
+
+      // Filter for posts that quote the target post and transform
+      const quotePosts = documents
+        .map(doc => this.transformDocument(doc))
+        .filter(post => post.quotedPostId === quotedPostId);
+
+      return quotePosts.slice(0, limit);
+    } catch (error) {
+      console.error('Error getting quote posts:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get multiple posts by their IDs.
+   * Useful for fetching original posts when displaying reposts or quotes.
+   * Author info is resolved for each post.
+   */
+  async getPostsByIds(postIds: string[]): Promise<Post[]> {
+    if (postIds.length === 0) return [];
+
+    try {
+      // Fetch posts in parallel with concurrency limit
+      const BATCH_SIZE = 5;
+      const posts: Post[] = [];
+
+      for (let i = 0; i < postIds.length; i += BATCH_SIZE) {
+        const batch = postIds.slice(i, i + BATCH_SIZE);
+        const batchPosts = await Promise.all(
+          batch.map(id => this.getPostById(id)) // Don't skip enrichment - resolve authors
+        );
+        posts.push(...batchPosts.filter((p): p is Post => p !== null));
+      }
+
+      return posts;
+    } catch (error) {
+      console.error('Error getting posts by IDs:', error);
+      return [];
+    }
+  }
 }
 
 // Singleton instance

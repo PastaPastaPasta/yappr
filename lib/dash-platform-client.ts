@@ -67,6 +67,7 @@ export class DashPlatformClient {
    */
   async createPost(content: string, options?: {
     replyToPostId?: string
+    quotedPostId?: string
     mediaUrl?: string
     primaryHashtag?: string
   }) {
@@ -125,6 +126,18 @@ export class DashPlatformClient {
         } catch (e) {
           console.error('Failed to decode replyToPostId:', e)
           throw new Error('Invalid reply post ID format')
+        }
+      }
+
+      // Convert quotedPostId if provided
+      if (options?.quotedPostId) {
+        try {
+          const bs58Module = await import('bs58')
+          const bs58 = bs58Module.default
+          postData.quotedPostId = Array.from(bs58.decode(options.quotedPostId))
+        } catch (e) {
+          console.error('Failed to decode quotedPostId:', e)
+          throw new Error('Invalid quoted post ID format')
         }
       }
       

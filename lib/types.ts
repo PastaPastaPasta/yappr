@@ -53,6 +53,8 @@ export interface Post {
   quotedPost?: Post
   tipInfo?: TipInfo     // Populated if this post is a tip (parsed from content)
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
+  repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it
+  repostTimestamp?: Date  // When the repost was created (for timeline sorting)
 }
 
 /** Pre-fetched enrichment data to avoid N+1 queries in feed */
