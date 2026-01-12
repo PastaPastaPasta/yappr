@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, CurrencyDollarIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -11,12 +11,13 @@ import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { identityService } from '@/lib/services/identity-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
+import { PaymentQRCode } from '@/components/ui/payment-qr-code'
 import type { ParsedPaymentUri } from '@/lib/types'
 
 // Preset tip amounts in DASH
 const PRESET_AMOUNTS = [0.001, 0.005, 0.01, 0.05]
 
-type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error'
+type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error' | 'qr-view'
 type PaymentMethod = 'credits' | 'external'
 
 export function TipModal() {
@@ -36,6 +37,7 @@ export function TipModal() {
   const [loadingUris, setLoadingUris] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credits')
   const [selectedUri, setSelectedUri] = useState<string | null>(null)
+  const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
 
   // Fetch user balance when modal opens
   useEffect(() => {
@@ -71,6 +73,7 @@ export function TipModal() {
       setPaymentMethod('credits')
       setSelectedUri(null)
       setPaymentUris([])
+      setSelectedQrPayment(null)
     }
   }, [isOpen])
 
@@ -160,12 +163,16 @@ export function TipModal() {
     setError(null)
   }
 
-  // Handle opening an external payment URI
-  const handleExternalPayment = (uri: string) => {
-    // Open the payment URI (e.g., dash:Xaddr...) in a new tab/wallet app
-    window.open(uri, '_blank')
-    // Close the modal immediately after opening
-    close()
+  // Handle showing QR code for an external payment URI
+  const handleShowQr = (paymentUri: ParsedPaymentUri) => {
+    setSelectedQrPayment(paymentUri)
+    setState('qr-view')
+  }
+
+  // Handle going back from QR view to input
+  const handleBackFromQr = () => {
+    setSelectedQrPayment(null)
+    setState('input')
   }
 
   if (!post) return null
@@ -194,8 +201,12 @@ export function TipModal() {
                     onClick={(e) => e.stopPropagation()}
                   >
                 <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
-                  <CurrencyDollarIcon className="h-6 w-6 text-amber-500" />
-                  {state === 'success' ? 'Tip Sent!' : state === 'error' ? 'Transfer Failed' : 'Send Tip'}
+                  {state === 'qr-view' ? (
+                    <QrCodeIcon className="h-6 w-6 text-amber-500" />
+                  ) : (
+                    <CurrencyDollarIcon className="h-6 w-6 text-amber-500" />
+                  )}
+                  {state === 'success' ? 'Tip Sent!' : state === 'error' ? 'Transfer Failed' : state === 'qr-view' ? 'Payment QR Code' : 'Send Tip'}
                 </Dialog.Title>
 
                 <Dialog.Description className="sr-only">
@@ -313,7 +324,7 @@ export function TipModal() {
                           <button
                             key={idx}
                             type="button"
-                            onClick={() => handleExternalPayment(paymentUri.uri)}
+                            onClick={() => handleShowQr(paymentUri)}
                             className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-left transition-colors"
                           >
                             <div className="flex items-center gap-3">
@@ -324,7 +335,7 @@ export function TipModal() {
                                   {truncateAddress(paymentUri.uri, 20)}
                                 </p>
                               </div>
-                              <ArrowTopRightOnSquareIcon className="w-4 h-4 text-gray-400" />
+                              <QrCodeIcon className="w-5 h-5 text-gray-400" />
                             </div>
                           </button>
                         ))}
@@ -365,6 +376,20 @@ export function TipModal() {
                         Continue
                       </Button>
                     )}
+                  </div>
+                )}
+
+                {/* QR Code View State */}
+                {state === 'qr-view' && selectedQrPayment && (
+                  <div className="space-y-4">
+                    <p className="text-gray-600 dark:text-gray-400">
+                      Send a tip to <span className="font-semibold text-gray-900 dark:text-white">{recipientName}</span>
+                    </p>
+                    <PaymentQRCode
+                      paymentUri={selectedQrPayment}
+                      onBack={handleBackFromQr}
+                      size={180}
+                    />
                   </div>
                 )}
 
