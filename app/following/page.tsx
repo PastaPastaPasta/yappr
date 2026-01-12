@@ -236,7 +236,7 @@ function FollowingPage() {
     try {
       console.log('Unfollowing user:', userId)
 
-      const result = await followService.unfollowUser(user.identityId, userId)
+      const result = await followService.unfollowUser(user!.identityId, userId)
 
       if (result.success) {
         // Update local state to remove from following list
@@ -248,7 +248,7 @@ function FollowingPage() {
           prev.map(u => u.id === userId ? { ...u, isFollowing: false } : u)
         )
         // Invalidate cache
-        cacheManager.delete('following', `following_${user.identityId}`)
+        cacheManager.delete('following', `following_${user!.identityId}`)
         toast.success('Unfollowed')
       } else {
         console.error('Failed to unfollow user:', result.error)
@@ -274,9 +274,9 @@ function FollowingPage() {
 
     try {
       console.log('Following user:', userId)
-      
+
       // Create follow document
-      const result = await followService.followUser(user.identityId, userId)
+      const result = await followService.followUser(user!.identityId, userId)
       
       if (result.success) {
         // Update the search results to reflect the new follow status

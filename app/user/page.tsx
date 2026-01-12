@@ -298,7 +298,7 @@ function UserProfileContent() {
 
       if (isFollowing) {
         // Unfollow
-        const result = await followService.unfollowUser(currentUser.identityId, userId)
+        const result = await followService.unfollowUser(currentUser!.identityId, userId)
         if (result.success) {
           setIsFollowing(false)
           // Update follower count in profile
@@ -309,7 +309,7 @@ function UserProfileContent() {
         }
       } else {
         // Follow
-        const result = await followService.followUser(currentUser.identityId, userId)
+        const result = await followService.followUser(currentUser!.identityId, userId)
         if (result.success) {
           setIsFollowing(true)
           // Update follower count in profile

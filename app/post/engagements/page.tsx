@@ -237,7 +237,7 @@ function EngagementsPageContent() {
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      const result = await followService.followUser(user.identityId, userId)
+      const result = await followService.followUser(user!.identityId, userId)
       if (result.success) {
         // Update local state in all tabs
         const updateUsers = (users: EngagementUser[] | null) =>
@@ -268,7 +268,7 @@ function EngagementsPageContent() {
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      const result = await followService.unfollowUser(user.identityId, userId)
+      const result = await followService.unfollowUser(user!.identityId, userId)
       if (result.success) {
         // Update local state in all tabs
         const updateUsers = (users: EngagementUser[] | null) =>

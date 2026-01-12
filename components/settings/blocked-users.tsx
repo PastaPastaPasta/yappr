@@ -101,7 +101,7 @@ export function BlockedUsersSettings() {
 
     try {
       const { blockService } = await import('@/lib/services/block-service')
-      const result = await blockService.unblockUser(user.identityId, blockedUserId)
+      const result = await blockService.unblockUser(user!.identityId, blockedUserId)
 
       if (result.success) {
         // Remove from local state

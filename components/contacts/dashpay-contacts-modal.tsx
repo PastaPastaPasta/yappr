@@ -57,7 +57,7 @@ export function DashPayContactsModal() {
     setFollowing(contact.identityId)
 
     try {
-      const result = await followService.followUser(user.identityId, contact.identityId)
+      const result = await followService.followUser(user!.identityId, contact.identityId)
       if (result.success) {
         setFollowComplete(contact.identityId)
         const displayName = contact.username || contact.displayName || 'user'
@@ -83,7 +83,7 @@ export function DashPayContactsModal() {
     for (const contact of contactsCopy) {
       try {
         setFollowing(contact.identityId)
-        const result = await followService.followUser(user.identityId, contact.identityId)
+        const result = await followService.followUser(user!.identityId, contact.identityId)
         if (result.success) {
           successCount++
           setFollowComplete(contact.identityId)
