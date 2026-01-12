@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CurrencyDollarIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -10,11 +10,14 @@ import { useTipModal } from '@/hooks/use-tip-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { identityService } from '@/lib/services/identity-service'
+import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
+import type { ParsedPaymentUri } from '@/lib/types'
 
 // Preset tip amounts in DASH
 const PRESET_AMOUNTS = [0.001, 0.005, 0.01, 0.05]
 
 type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error'
+type PaymentMethod = 'credits' | 'external'
 
 export function TipModal() {
   const { isOpen, post, close } = useTipModal()
@@ -28,6 +31,12 @@ export function TipModal() {
   const [balance, setBalance] = useState<number | null>(null)
   const [loadingBalance, setLoadingBalance] = useState(false)
 
+  // Payment URI support
+  const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[]>([])
+  const [loadingUris, setLoadingUris] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credits')
+  const [selectedUri, setSelectedUri] = useState<string | null>(null)
+
   // Fetch user balance when modal opens
   useEffect(() => {
     if (isOpen && user) {
@@ -39,6 +48,18 @@ export function TipModal() {
     }
   }, [isOpen, user])
 
+  // Fetch recipient's payment URIs when modal opens
+  useEffect(() => {
+    if (isOpen && post) {
+      setLoadingUris(true)
+      import('@/lib/services/unified-profile-service')
+        .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(post.author.id))
+        .then(uris => setPaymentUris(uris))
+        .catch(() => setPaymentUris([]))
+        .finally(() => setLoadingUris(false))
+    }
+  }, [isOpen, post])
+
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
@@ -47,6 +68,9 @@ export function TipModal() {
       setTransferKey('')
       setState('input')
       setError(null)
+      setPaymentMethod('credits')
+      setSelectedUri(null)
+      setPaymentUris([])
     }
   }, [isOpen])
 
@@ -132,6 +156,14 @@ export function TipModal() {
   const handleRetry = () => {
     setState('input')
     setError(null)
+  }
+
+  // Handle opening an external payment URI
+  const handleExternalPayment = (uri: string) => {
+    // Open the payment URI (e.g., dash:Xaddr...) in a new tab/wallet app
+    window.open(uri, '_blank')
+    // Close the modal immediately after opening
+    close()
   }
 
   if (!post) return null
@@ -244,7 +276,61 @@ export function TipModal() {
                       </p>
                     </div>
 
-                    {/* Transfer key input */}
+                    {/* Payment method selection */}
+                    {paymentUris.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Payment Method
+                        </label>
+
+                        {/* Platform credits option */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentMethod('credits')
+                            setSelectedUri(null)
+                          }}
+                          className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                            paymentMethod === 'credits'
+                              ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <CurrencyDollarIcon className="w-5 h-5 text-amber-500" />
+                            <div>
+                              <span className="font-medium">Platform Credits</span>
+                              <p className="text-xs text-gray-500">Direct transfer via Dash Platform</p>
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* External wallet options */}
+                        <p className="text-xs text-gray-500 pt-1">Or send directly to wallet:</p>
+                        {paymentUris.map((paymentUri, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleExternalPayment(paymentUri.uri)}
+                            className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-left transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <PaymentSchemeIcon scheme={paymentUri.scheme} />
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium">{getPaymentLabel(paymentUri.uri)}</span>
+                                <p className="text-xs text-gray-500 font-mono truncate">
+                                  {truncateAddress(paymentUri.uri, 20)}
+                                </p>
+                              </div>
+                              <ArrowTopRightOnSquareIcon className="w-4 h-4 text-gray-400" />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Transfer key input - only show for platform credits */}
+                    {paymentMethod === 'credits' && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         Transfer Private Key (WIF)
@@ -260,20 +346,23 @@ export function TipModal() {
                         Your key is never stored and is cleared after the transaction.
                       </p>
                     </div>
+                    )}
 
                     {/* Error message */}
                     {error && (
                       <p className="text-red-500 text-sm">{error}</p>
                     )}
 
-                    {/* Continue button */}
-                    <Button
-                      onClick={handleContinue}
-                      className="w-full bg-amber-500 hover:bg-amber-600 text-white"
-                      disabled={!amount || !transferKey}
-                    >
-                      Continue
-                    </Button>
+                    {/* Continue button - only for platform credits */}
+                    {paymentMethod === 'credits' && (
+                      <Button
+                        onClick={handleContinue}
+                        className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                        disabled={!amount || !transferKey}
+                      >
+                        Continue
+                      </Button>
+                    )}
                   </div>
                 )}
 

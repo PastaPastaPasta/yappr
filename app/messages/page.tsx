@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
-import { directMessageService, dpnsService, identityService, profileService } from '@/lib/services'
+import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -296,7 +296,7 @@ function MessagesPage() {
       // Get participant's display name
       let participantDisplayName: string | undefined
       try {
-        const profile = await profileService.getProfile(participantId)
+        const profile = await unifiedProfileService.getProfile(participantId)
         participantDisplayName = profile?.displayName
       } catch {
         // Ignore profile errors

@@ -2,8 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { profileService } from '@/lib/services/profile-service'
-import { avatarService } from '@/lib/services/avatar-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { blockService } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
 import { seedBlockStatusCache, seedFollowStatusCache } from '@/lib/caches/user-status-cache'
@@ -157,7 +156,7 @@ export function useProgressiveEnrichment(
     }).catch(err => console.error('Progressive enrichment: usernames failed', err))
 
     // Priority 1: Profiles (display names)
-    const profilePromise = profileService.getProfilesByIdentityIds(authorIds)
+    const profilePromise = unifiedProfileService.getProfilesByIdentityIds(authorIds)
     profilePromise.then(profiles => {
       if (!isValid()) return
       const profileMap = new Map<string, ProfileData>()
@@ -180,7 +179,7 @@ export function useProgressiveEnrichment(
     }).catch(err => console.error('Progressive enrichment: profiles failed', err))
 
     // Priority 2: Avatars
-    const avatarPromise = avatarService.getAvatarUrlsBatch(authorIds)
+    const avatarPromise = unifiedProfileService.getAvatarUrlsBatch(authorIds)
     avatarPromise.then(avatars => {
       if (!isValid()) return
       setEnrichmentState(prev => ({

@@ -4,7 +4,7 @@ export interface User {
   $revision?: number   // Document revision (for updates)
   username: string  // From DPNS - not stored in profile document
   displayName: string
-  avatar: string // URL for display (DiceBear generated from user ID)
+  avatar: string // URL for display (DiceBear generated from user ID or custom URI)
   bio?: string
   location?: string
   website?: string
@@ -12,6 +12,26 @@ export interface User {
   following: number
   verified?: boolean
   joinedAt: Date
+  // New unified profile fields
+  bannerUri?: string
+  paymentUris?: ParsedPaymentUri[]
+  pronouns?: string
+  nsfw?: boolean
+  socialLinks?: SocialLink[]
+  hasUnifiedProfile?: boolean  // true if migrated to new contract
+}
+
+// Payment URI parsed from profile
+export interface ParsedPaymentUri {
+  scheme: string  // e.g., 'dash:', 'bitcoin:'
+  uri: string     // Full URI e.g., 'dash:XnNh3...'
+  label?: string  // Optional display label
+}
+
+// Social link from profile
+export interface SocialLink {
+  platform: string  // e.g., 'twitter', 'github'
+  handle: string    // e.g., '@username' or 'username'
 }
 
 export interface Post {

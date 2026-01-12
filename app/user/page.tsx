@@ -11,6 +11,10 @@ import {
   NoSymbolIcon,
   Cog6ToothIcon,
   PencilIcon,
+  ArrowPathIcon,
+  CurrencyDollarIcon,
+  PlusIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -22,7 +26,9 @@ import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import type { Post } from '@/lib/types'
+import type { Post, ParsedPaymentUri, SocialLink } from '@/lib/types'
+import type { MigrationStatus } from '@/lib/services/profile-migration-service'
+import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { useBlock } from '@/hooks/use-block'
 
 interface ProfileData {
@@ -32,6 +38,11 @@ interface ProfileData {
   website?: string
   followersCount: number
   followingCount: number
+  pronouns?: string
+  paymentUris?: ParsedPaymentUri[]
+  socialLinks?: SocialLink[]
+  nsfw?: boolean
+  hasUnifiedProfile?: boolean
 }
 
 function UserProfileContent() {
@@ -50,6 +61,7 @@ function UserProfileContent() {
   const [isFollowing, setIsFollowing] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
+  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
 
   // Edit profile state
   const [isEditingProfile, setIsEditingProfile] = useState(false)
@@ -59,6 +71,13 @@ function UserProfileContent() {
   const [editBio, setEditBio] = useState('')
   const [editLocation, setEditLocation] = useState('')
   const [editWebsite, setEditWebsite] = useState('')
+  const [editPronouns, setEditPronouns] = useState('')
+  const [editNsfw, setEditNsfw] = useState(false)
+  const [editPaymentUris, setEditPaymentUris] = useState<string[]>([])
+  const [editSocialLinks, setEditSocialLinks] = useState<SocialLink[]>([])
+  const [newPaymentUri, setNewPaymentUri] = useState('')
+  const [newSocialPlatform, setNewSocialPlatform] = useState('')
+  const [newSocialHandle, setNewSocialHandle] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
   // Block state - only check if viewing another user's profile
@@ -73,11 +92,18 @@ function UserProfileContent() {
       try {
         setIsLoading(true)
 
-        const { profileService, postService, followService } = await import('@/lib/services')
+        const { unifiedProfileService, postService, followService } = await import('@/lib/services')
+        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
 
-        // Fetch profile, posts, and post count in parallel
+        // Check migration status for own profile
+        if (isOwnProfile) {
+          const status = await profileMigrationService.getMigrationStatus(userId)
+          setMigrationStatus(status)
+        }
+
+        // Fetch profile from unified service, posts, and post count in parallel
         const [profileResult, postsResult, totalPostCount] = await Promise.all([
-          profileService.getProfile(userId).catch(() => null),
+          unifiedProfileService.getProfile(userId).catch(() => null),
           postService.getUserPosts(userId, { limit: 50 }).catch(() => ({ documents: [], hasMore: false })),
           postService.countUserPosts(userId).catch(() => 0)
         ])
@@ -102,6 +128,11 @@ function UserProfileContent() {
             website: profileResult.website,
             followersCount,
             followingCount,
+            pronouns: profileResult.pronouns,
+            paymentUris: profileResult.paymentUris,
+            socialLinks: profileResult.socialLinks,
+            nsfw: profileResult.nsfw,
+            hasUnifiedProfile: profileResult.hasUnifiedProfile,
           })
         } else {
           // Even without a Yappr profile, show follow counts
@@ -226,6 +257,10 @@ function UserProfileContent() {
     setEditBio(profile?.bio || '')
     setEditLocation(profile?.location || '')
     setEditWebsite(profile?.website || '')
+    setEditPronouns(profile?.pronouns || '')
+    setEditNsfw(profile?.nsfw || false)
+    setEditPaymentUris(profile?.paymentUris?.map(p => p.uri) || [])
+    setEditSocialLinks(profile?.socialLinks || [])
     setIsEditingProfile(true)
   }
 
@@ -235,6 +270,36 @@ function UserProfileContent() {
     setEditBio('')
     setEditLocation('')
     setEditWebsite('')
+    setEditPronouns('')
+    setEditNsfw(false)
+    setEditPaymentUris([])
+    setEditSocialLinks([])
+    setNewPaymentUri('')
+    setNewSocialPlatform('')
+    setNewSocialHandle('')
+  }
+
+  const handleAddPaymentUri = () => {
+    if (newPaymentUri.trim() && !editPaymentUris.includes(newPaymentUri.trim())) {
+      setEditPaymentUris([...editPaymentUris, newPaymentUri.trim()])
+      setNewPaymentUri('')
+    }
+  }
+
+  const handleRemovePaymentUri = (index: number) => {
+    setEditPaymentUris(editPaymentUris.filter((_, i) => i !== index))
+  }
+
+  const handleAddSocialLink = () => {
+    if (newSocialPlatform.trim() && newSocialHandle.trim()) {
+      setEditSocialLinks([...editSocialLinks, { platform: newSocialPlatform.trim(), handle: newSocialHandle.trim() }])
+      setNewSocialPlatform('')
+      setNewSocialHandle('')
+    }
+  }
+
+  const handleRemoveSocialLink = (index: number) => {
+    setEditSocialLinks(editSocialLinks.filter((_, i) => i !== index))
   }
 
   const handleSaveProfile = async () => {
@@ -242,12 +307,16 @@ function UserProfileContent() {
 
     setIsSaving(true)
     try {
-      const { profileService } = await import('@/lib/services')
-      await profileService.updateProfile(currentUser.identityId, {
+      const { unifiedProfileService } = await import('@/lib/services')
+      await unifiedProfileService.updateProfile(currentUser.identityId, {
         displayName: editDisplayName,
         bio: editBio,
         location: editLocation,
         website: editWebsite,
+        pronouns: editPronouns,
+        nsfw: editNsfw,
+        paymentUris: editPaymentUris,
+        socialLinks: editSocialLinks,
       })
 
       // Update local profile state
@@ -257,6 +326,13 @@ function UserProfileContent() {
         bio: editBio,
         location: editLocation,
         website: editWebsite,
+        pronouns: editPronouns,
+        nsfw: editNsfw,
+        paymentUris: editPaymentUris.map(uri => ({
+          scheme: uri.split(':')[0] + ':',
+          uri,
+        })),
+        socialLinks: editSocialLinks,
       } : null)
 
       setIsEditingProfile(false)
@@ -424,6 +500,7 @@ function UserProfileContent() {
 
               {isOwnProfile && isEditingProfile ? (
                 <div className="space-y-4">
+                  {/* Basic Info */}
                   <div>
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input
@@ -432,6 +509,18 @@ function UserProfileContent() {
                       onChange={(e) => setEditDisplayName(e.target.value)}
                       className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       maxLength={50}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Pronouns</label>
+                    <input
+                      type="text"
+                      value={editPronouns}
+                      onChange={(e) => setEditPronouns(e.target.value)}
+                      placeholder="they/them, she/her, he/him, etc."
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      maxLength={30}
                     />
                   </div>
 
@@ -469,6 +558,109 @@ function UserProfileContent() {
                       maxLength={100}
                     />
                   </div>
+
+                  {/* Payment Addresses */}
+                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Payment Addresses</label>
+                    <p className="text-xs text-gray-500 mb-2">Add crypto addresses where others can tip you</p>
+
+                    {editPaymentUris.map((uri, index) => (
+                      <div key={index} className="flex gap-2 items-center mb-2">
+                        <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
+                          {uri}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePaymentUri(index)}
+                          className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newPaymentUri}
+                        onChange={(e) => setNewPaymentUri(e.target.value)}
+                        placeholder="dash:XnNh3x8B7... or bitcoin:1A1z..."
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddPaymentUri())}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddPaymentUri}
+                        className="p-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        <PlusIcon className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Social Links */}
+                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Social Links</label>
+
+                    {editSocialLinks.map((link, index) => (
+                      <div key={index} className="flex gap-2 items-center mb-2 mt-2">
+                        <span className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium capitalize min-w-[80px]">
+                          {link.platform}
+                        </span>
+                        <span className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
+                          {link.handle}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSocialLink(index)}
+                          className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+
+                    <div className="flex gap-2 mt-2">
+                      <input
+                        type="text"
+                        value={newSocialPlatform}
+                        onChange={(e) => setNewSocialPlatform(e.target.value)}
+                        placeholder="twitter"
+                        className="w-24 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      />
+                      <input
+                        type="text"
+                        value={newSocialHandle}
+                        onChange={(e) => setNewSocialHandle(e.target.value)}
+                        placeholder="@username"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddSocialLink())}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddSocialLink}
+                        className="p-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        <PlusIcon className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Content Settings */}
+                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editNsfw}
+                        onChange={(e) => setEditNsfw(e.target.checked)}
+                        className="w-4 h-4 text-yappr-500 rounded focus:ring-yappr-500"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">NSFW Content</span>
+                        <p className="text-xs text-gray-500">Mark your profile as containing adult content</p>
+                      </div>
+                    </label>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -504,6 +696,11 @@ function UserProfileContent() {
                       </Tooltip.Provider>
                     )}
                   </div>
+
+                  {/* Pronouns */}
+                  {profile?.pronouns && (
+                    <p className="text-gray-500 text-sm mb-2">{profile.pronouns}</p>
+                  )}
 
                   {profile?.bio && <p className="mb-3">{profile.bio}</p>}
 
@@ -547,9 +744,81 @@ function UserProfileContent() {
                       <span className="text-gray-500"> Followers</span>
                     </button>
                   </div>
+
+                  {/* Social Links */}
+                  {profile?.socialLinks && profile.socialLinks.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Social</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {profile.socialLinks.map((link, index) => (
+                          <span
+                            key={index}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm"
+                          >
+                            <span className="font-medium capitalize">{link.platform}:</span>
+                            <span className="text-gray-600 dark:text-gray-400">{link.handle}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Payment Addresses */}
+                  {profile?.paymentUris && profile.paymentUris.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                        <CurrencyDollarIcon className="h-3 w-3 inline mr-1" />
+                        Tip Addresses
+                      </h4>
+                      <div className="space-y-2">
+                        {profile.paymentUris.map((payment, index) => (
+                          <button
+                            key={index}
+                            onClick={() => {
+                              navigator.clipboard.writeText(payment.uri)
+                              toast.success('Address copied!')
+                            }}
+                            className="w-full flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                          >
+                            <PaymentSchemeIcon scheme={payment.scheme} />
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm font-medium">{getPaymentLabel(payment.uri)}</span>
+                              <p className="text-xs text-gray-500 font-mono truncate">
+                                {truncateAddress(payment.uri, 24)}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
+
+            {/* Migration Prompt Banner */}
+            {isOwnProfile && migrationStatus === 'needs_migration' && (
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-y border-blue-200 dark:border-blue-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
+                      <ArrowPathIcon className="h-6 w-6 text-blue-500" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-blue-800 dark:text-blue-200">Migrate Your Profile</p>
+                      <p className="text-sm text-blue-700 dark:text-blue-300">Your profile is not visible to others until you migrate.</p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => router.push('/profile/create')}
+                    className="bg-blue-500 hover:bg-blue-600"
+                  >
+                    Migrate Now
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Blocked User Notice */}
             {isBlockedByMe && !isOwnProfile && (

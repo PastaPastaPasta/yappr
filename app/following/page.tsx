@@ -9,7 +9,7 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
-import { followService, dpnsService, profileService } from '@/lib/services'
+import { followService, dpnsService, unifiedProfileService } from '@/lib/services'
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
@@ -138,7 +138,7 @@ function FollowingPage() {
           }
         })),
         // Fetch Yappr profiles
-        profileService.getProfilesByIdentityIds(identityIds),
+        unifiedProfileService.getProfilesByIdentityIds(identityIds),
         // Fetch follower counts for all users
         Promise.all(identityIds.map(async (id) => {
           try {
@@ -330,10 +330,10 @@ function FollowingPage() {
         let followingCounts: { id: string; count: number }[] = []
         if (uniqueIdentityIds.length > 0) {
           try {
-            const { profileService } = await import('@/lib/services')
+            const { unifiedProfileService } = await import('@/lib/services')
             // Query profiles and counts in parallel
             const [profilesResult, followerCountsResult, followingCountsResult] = await Promise.all([
-              profileService.getProfilesByIdentityIds(uniqueIdentityIds),
+              unifiedProfileService.getProfilesByIdentityIds(uniqueIdentityIds),
               Promise.all(uniqueIdentityIds.map(async (id) => {
                 try {
                   const count = await followService.countFollowers(id)

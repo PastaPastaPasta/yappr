@@ -1,12 +1,17 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { getDefaultAvatarUrl, DiceBearStyle } from '@/lib/avatar-utils'
-import type { AvatarSettings } from '@/lib/services/avatar-service'
+import type { DiceBearStyle } from '@/lib/services/unified-profile-service'
 
 // Module-level cache for avatar URLs
 const avatarCache = new Map<string, { url: string; timestamp: number }>()
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+export interface AvatarSettings {
+  style: DiceBearStyle
+  seed: string
+  avatarUrl: string
+}
 
 export interface UseAvatarResult {
   avatarUrl: string
@@ -25,18 +30,18 @@ export interface UseAvatarSettingsResult {
 
 /**
  * Hook to get avatar URL for a user
- * Fetches custom avatar settings if available, falls back to default
+ * Fetches from unified profile service, falls back to default
  */
 export function useAvatar(userId: string): UseAvatarResult {
   const [avatarUrl, setAvatarUrl] = useState(() => {
-    // Guard against empty userId to prevent seed= URLs
     if (!userId) return ''
     // Check cache first
     const cached = avatarCache.get(userId)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return cached.url
     }
-    return getDefaultAvatarUrl(userId)
+    // Return empty initially, will be populated after load
+    return ''
   })
   const [loading, setLoading] = useState(true)
 
@@ -59,16 +64,17 @@ export function useAvatar(userId: string): UseAvatarResult {
     setLoading(true)
 
     try {
-      const { avatarService } = await import('@/lib/services/avatar-service')
-      const url = await avatarService.getAvatarUrl(userId)
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      const url = await unifiedProfileService.getAvatarUrl(userId)
 
       // Cache the result
       avatarCache.set(userId, { url, timestamp: Date.now() })
       setAvatarUrl(url)
     } catch (error) {
       console.error('useAvatar: Error loading avatar:', error)
-      // Keep using default on error
-      const defaultUrl = getDefaultAvatarUrl(userId)
+      // Use default on error
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      const defaultUrl = unifiedProfileService.getDefaultAvatarUrl(userId)
       setAvatarUrl(defaultUrl)
     } finally {
       setLoading(false)
@@ -89,6 +95,8 @@ export function useAvatar(userId: string): UseAvatarResult {
 
 /**
  * Hook to manage avatar settings (for customization UI)
+ * Note: In the unified profile, avatar is stored in the profile document itself.
+ * This hook provides settings management for the avatar customization UI.
  */
 export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   const [settings, setSettings] = useState<AvatarSettings | null>(null)
@@ -106,9 +114,51 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
     setError(null)
 
     try {
-      const { avatarService } = await import('@/lib/services/avatar-service')
-      const avatarSettings = await avatarService.getAvatarSettings(userId)
-      setSettings(avatarSettings)
+      const { unifiedProfileService, DEFAULT_AVATAR_STYLE } = await import('@/lib/services/unified-profile-service')
+
+      // Get profile to extract avatar settings
+      const profile = await unifiedProfileService.getProfile(userId)
+
+      if (profile && profile.avatar) {
+        // Parse the avatar field to extract settings
+        // Could be JSON {"style":"bottts","seed":"xyz"} or a URI
+        try {
+          if (profile.avatar.startsWith('{')) {
+            const parsed = JSON.parse(profile.avatar)
+            setSettings({
+              style: parsed.style || DEFAULT_AVATAR_STYLE,
+              seed: parsed.seed || userId,
+              avatarUrl: unifiedProfileService.getAvatarUrlFromConfig({
+                style: parsed.style || DEFAULT_AVATAR_STYLE,
+                seed: parsed.seed || userId,
+              }),
+            })
+          } else {
+            // Direct URI - extract seed from DiceBear URL if possible
+            const seedMatch = profile.avatar.match(/seed=([^&]+)/)
+            const styleMatch = profile.avatar.match(/\/7\.x\/([^/]+)\//)
+            setSettings({
+              style: (styleMatch?.[1] as DiceBearStyle) || DEFAULT_AVATAR_STYLE,
+              seed: seedMatch ? decodeURIComponent(seedMatch[1]) : userId,
+              avatarUrl: profile.avatar,
+            })
+          }
+        } catch {
+          // Fallback to default settings
+          setSettings({
+            style: DEFAULT_AVATAR_STYLE,
+            seed: userId,
+            avatarUrl: unifiedProfileService.getDefaultAvatarUrl(userId),
+          })
+        }
+      } else {
+        // No avatar set, use defaults
+        setSettings({
+          style: DEFAULT_AVATAR_STYLE,
+          seed: userId,
+          avatarUrl: unifiedProfileService.getDefaultAvatarUrl(userId),
+        })
+      }
     } catch (err) {
       console.error('useAvatarSettings: Error loading settings:', err)
       setError('Failed to load avatar settings')
@@ -128,16 +178,23 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
     setError(null)
 
     try {
-      const { avatarService } = await import('@/lib/services/avatar-service')
-      const result = await avatarService.saveAvatarSettings(userId, style, seed)
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
-      if (result.success) {
+      // Encode avatar as JSON string
+      const avatarData = unifiedProfileService.encodeAvatarData(seed, style)
+
+      // Update the profile with new avatar
+      const result = await unifiedProfileService.updateProfile(userId, {
+        avatar: avatarData,
+      })
+
+      if (result) {
         // Clear cache and reload
         avatarCache.delete(userId)
         await loadSettings(true)
         return true
       } else {
-        setError(result.error || 'Failed to save avatar')
+        setError('Failed to save avatar')
         return false
       }
     } catch (err) {

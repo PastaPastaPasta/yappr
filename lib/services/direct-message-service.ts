@@ -2,7 +2,7 @@ import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
 import { dpnsService } from './dpns-service'
-import { profileService } from './profile-service'
+import { unifiedProfileService } from './unified-profile-service'
 import {
   DirectMessage,
   Conversation,
@@ -21,15 +21,17 @@ import { YAPPR_DM_CONTRACT_ID } from '../constants'
 import bs58 from 'bs58'
 
 /**
- * Direct Message Service for v2.1 contract
+ * Direct Message Service for v3 contract
  *
  * Document types:
  * - conversationInvite: Inbox notification, one per conversation per direction
- * - directMessage: Lean message (10-byte conversationId, binary encryptedContent)
- * - readReceipt: User-owned read tracking
+ * - directMessage: Lean message (10-byte conversationId, binary encryptedContent, max 5KB)
+ * - readReceipt: User-owned read tracking (uses $updatedAt as last-read timestamp)
  *
- * v2.1 changes: conversationId is now 10 bytes (was 8) to work around
- * platform bug where byteArrays < 10 bytes fail JSON deserialization.
+ * v3 changes:
+ * - readReceipt no longer has lastReadAt field - use $updatedAt instead
+ * - readReceipt has single index (userConversation) - query other party directly
+ * - encryptedContent max reduced to 5000 bytes
  */
 class DirectMessageService {
   private contractId = YAPPR_DM_CONTRACT_ID
@@ -220,8 +222,8 @@ class DirectMessageService {
           // Get my read receipt
           const myReceipt = await this.getMyReadReceipt(userId, convId)
 
-          // Count unread messages
-          const lastReadAt = myReceipt?.lastReadAt || 0
+          // Count unread messages (v3: use $updatedAt as last-read timestamp)
+          const lastReadAt = myReceipt?.$updatedAt || 0
           const unreadCount = allMessages.filter(
             m => m.$ownerId !== userId && m.$createdAt > lastReadAt
           ).length
@@ -235,7 +237,7 @@ class DirectMessageService {
             // Ignore DPNS errors
           }
           try {
-            const profile = await profileService.getProfile(data.participantId)
+            const profile = await unifiedProfileService.getProfile(data.participantId)
             participantDisplayName = profile?.displayName
           } catch {
             // Ignore profile errors
@@ -397,39 +399,31 @@ class DirectMessageService {
 
   /**
    * Mark conversation as read
+   * v3: No lastReadAt field - platform sets $updatedAt automatically on update
    */
   async markAsRead(conversationId: string, userId: string): Promise<void> {
     try {
-      const now = Date.now()
       const existingReceipt = await this.getMyReadReceipt(userId, conversationId)
+      const convIdBytes = bs58.decode(conversationId)
+      const conversationIdArray = Array.from(convIdBytes)
 
       if (existingReceipt) {
-        // Update existing receipt - must include all required fields
-        const convIdBytes = bs58.decode(conversationId)
-        const conversationIdArray = Array.from(convIdBytes)
-
+        // Update existing receipt - platform will set $updatedAt
         await stateTransitionService.updateDocument(
           this.contractId,
           'readReceipt',
           existingReceipt.$id,
           userId,
-          { conversationId: conversationIdArray, lastReadAt: now },
+          { conversationId: conversationIdArray },
           existingReceipt.$revision || 0
         )
       } else {
-        // Create new receipt
-        const convIdBytes = bs58.decode(conversationId)
-        // byteArray fields need plain JS arrays for JSON.stringify
-        const conversationIdArray = Array.from(convIdBytes)
-
+        // Create new receipt - platform will set $createdAt and $updatedAt
         await stateTransitionService.createDocument(
           this.contractId,
           'readReceipt',
           userId,
-          {
-            conversationId: conversationIdArray,
-            lastReadAt: now
-          }
+          { conversationId: conversationIdArray }
         )
       }
     } catch (error) {
@@ -635,6 +629,7 @@ class DirectMessageService {
 
   /**
    * Get a user's read receipt for a conversation
+   * v3: returns $updatedAt as the last-read timestamp
    */
   private async getReadReceiptForUser(
     userId: string,
@@ -660,8 +655,9 @@ class DirectMessageService {
       if (docs.length === 0) return null
 
       const doc = docs[0]
+      // v3: use $updatedAt as last-read timestamp
       return {
-        lastReadAt: doc.lastReadAt || doc.data?.lastReadAt || 0
+        lastReadAt: doc.$updatedAt || 0
       }
     } catch {
       return null
@@ -670,6 +666,7 @@ class DirectMessageService {
 
   /**
    * Get my read receipt for a conversation (includes full doc for updates)
+   * v3: No lastReadAt field - use $updatedAt as last-read timestamp
    */
   private async getMyReadReceipt(
     userId: string,
@@ -700,8 +697,7 @@ class DirectMessageService {
         $createdAt: doc.$createdAt,
         $updatedAt: doc.$updatedAt,
         $revision: doc.$revision,
-        conversationId,
-        lastReadAt: doc.lastReadAt || doc.data?.lastReadAt || 0
+        conversationId
       }
     } catch {
       return null

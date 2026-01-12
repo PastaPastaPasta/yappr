@@ -36,7 +36,7 @@ export function BlockListSettings() {
       const { followService } = await import('@/lib/services/follow-service')
       const { blockService } = await import('@/lib/services/block-service')
       const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { profileService } = await import('@/lib/services/profile-service')
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
       // Load following list and block follows in parallel
       const [follows, blockFollows] = await Promise.all([
@@ -65,7 +65,7 @@ export function BlockListSettings() {
             return { id, username: null }
           }
         })),
-        profileService.getProfilesByIdentityIds(identityIds)
+        unifiedProfileService.getProfilesByIdentityIds(identityIds)
       ])
 
       // Create lookup maps

@@ -12,8 +12,17 @@ export { blockService } from './block-service';
 export { stateTransitionService } from './state-transition-service';
 export { directMessageService } from './direct-message-service';
 export { hashtagService } from './hashtag-service';
-export { avatarService } from './avatar-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
+
+// New unified profile services
+export {
+  unifiedProfileService,
+  APPROVED_PAYMENT_SCHEMES,
+  DICEBEAR_STYLES,
+  DICEBEAR_STYLE_LABELS,
+  DEFAULT_AVATAR_STYLE,
+} from './unified-profile-service';
+export { profileMigrationService } from './profile-migration-service';
 
 // Export types
 export type { EvoSdkConfig } from './evo-sdk-service';
@@ -30,8 +39,17 @@ export type { QueryOptions, DocumentResult } from './document-service';
 export type {
   DirectMessageDocument,
   ConversationInviteDocument,
-  ReadReceiptDocument
+  ReadReceiptDocument,
+  ParsedPaymentUri,
+  SocialLink,
 } from '../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
-export type { AvatarDocument, AvatarSettings } from './avatar-service';
 export type { TipResult } from './tip-service';
+export type {
+  UnifiedProfileDocument,
+  CreateUnifiedProfileData,
+  UpdateUnifiedProfileData,
+  AvatarConfig,
+  DiceBearStyle,
+} from './unified-profile-service';
+export type { LegacyProfileData, LegacyAvatarData, MigrationStatus } from './profile-migration-service';

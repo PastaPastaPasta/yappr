@@ -31,7 +31,7 @@ export function BlockedUsersSettings() {
       setIsLoading(true)
       const { blockService } = await import('@/lib/services/block-service')
       const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { profileService } = await import('@/lib/services/profile-service')
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
       // Get all blocks
       const blocks = await blockService.getUserBlocks(user.identityId)
@@ -62,7 +62,7 @@ export function BlockedUsersSettings() {
 
           // Try to get profile display name
           try {
-            const profile = await profileService.getProfile(blockedId)
+            const profile = await unifiedProfileService.getProfile(blockedId)
             if (profile?.displayName) {
               displayName = profile.displayName
             }

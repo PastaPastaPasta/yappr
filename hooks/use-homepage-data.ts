@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
-import { profileService } from '@/lib/services/profile-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { useSdk } from '@/contexts/sdk-context'
 
@@ -180,7 +180,7 @@ export function useHomepageData(): HomepageData {
 
       // Fetch profiles and usernames in parallel
       const [profiles, usernameMap] = await Promise.all([
-        profileService.getProfilesByIdentityIds(authorIds),
+        unifiedProfileService.getProfilesByIdentityIds(authorIds),
         dpnsService.resolveUsernamesBatch(authorIds)
       ])
 

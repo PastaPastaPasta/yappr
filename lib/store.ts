@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import { User, Post, Comment } from './types'
-import { getDefaultAvatarUrl } from './avatar-utils'
+
+// Default avatar URL generator (DiceBear)
+function getDefaultAvatarUrl(userId: string): string {
+  if (!userId) return ''
+  return `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(userId)}`
+}
 
 interface AppState {
   currentUser: User | null

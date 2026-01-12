@@ -9,6 +9,16 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { Loader2 } from 'lucide-react'
+import { ArrowPathIcon, PlusIcon, TrashIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import type { SocialLink } from '@/lib/types'
+import type { MigrationStatus, LegacyProfileData, LegacyAvatarData } from '@/lib/services/profile-migration-service'
+import {
+  unifiedProfileService,
+  DICEBEAR_STYLES,
+  DICEBEAR_STYLE_LABELS,
+  DEFAULT_AVATAR_STYLE,
+  type DiceBearStyle,
+} from '@/lib/services/unified-profile-service'
 
 function CreateProfilePage() {
   const router = useRouter()
@@ -17,45 +27,111 @@ function CreateProfilePage() {
   const [showPrivateKeyInput, setShowPrivateKeyInput] = useState(false)
   const [privateKey, setPrivateKey] = useState('')
   const [isCheckingProfile, setIsCheckingProfile] = useState(true)
-  
+  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
+  const [avatarStyle, setAvatarStyle] = useState<DiceBearStyle>(DEFAULT_AVATAR_STYLE)
+  const [avatarSeed, setAvatarSeed] = useState<string>('')
+
   const [formData, setFormData] = useState({
     displayName: '',
     bio: '',
     location: '',
-    website: ''
+    website: '',
+    pronouns: '',
+    nsfw: false,
   })
 
-  // Check for existing profile on component mount
+  // Payment URIs (array of strings)
+  const [paymentUris, setPaymentUris] = useState<string[]>([])
+  const [newPaymentUri, setNewPaymentUri] = useState('')
+
+  // Social links (array of {platform, handle})
+  const [socialLinks, setSocialLinks] = useState<SocialLink[]>([])
+  const [newSocialPlatform, setNewSocialPlatform] = useState('')
+  const [newSocialHandle, setNewSocialHandle] = useState('')
+
+  // Check for existing profile and migration status on mount
   useEffect(() => {
     const checkExistingProfile = async () => {
       if (!user) return
-      
+
       try {
-        const { profileService } = await import('@/lib/services/profile-service')
-        const existingProfile = await profileService.getProfile(user.identityId)
-        
-        if (existingProfile) {
+        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
+        const status = await profileMigrationService.getMigrationStatus(user.identityId)
+        setMigrationStatus(status)
+
+        if (status === 'migrated') {
           toast.success('You already have a profile!')
           router.push(`/user?id=${user.identityId}`)
+          return
+        }
+
+        if (status === 'needs_migration') {
+          // Pre-fill form with old profile data
+          const { profile, avatar } = await profileMigrationService.getOldDataForMigration(user.identityId)
+
+          if (profile) {
+            setFormData({
+              displayName: profile.displayName || '',
+              bio: profile.bio || '',
+              location: profile.location || '',
+              website: profile.website || '',
+              pronouns: '',
+              nsfw: false,
+            })
+          }
+
+          if (avatar) {
+            setAvatarStyle(avatar.style as DiceBearStyle)
+            setAvatarSeed(avatar.seed)
+          } else {
+            // Default seed to user ID if no avatar
+            setAvatarSeed(user.identityId)
+          }
+        } else {
+          // New profile - default seed to user ID
+          setAvatarSeed(user.identityId)
         }
       } catch (error) {
-        console.error('Error checking for existing profile:', error)
+        console.error('Error checking profile status:', error)
       } finally {
         setIsCheckingProfile(false)
       }
     }
-    
+
     checkExistingProfile()
   }, [user, router])
 
+  const handleAddPaymentUri = () => {
+    if (newPaymentUri.trim() && !paymentUris.includes(newPaymentUri.trim())) {
+      setPaymentUris([...paymentUris, newPaymentUri.trim()])
+      setNewPaymentUri('')
+    }
+  }
+
+  const handleRemovePaymentUri = (index: number) => {
+    setPaymentUris(paymentUris.filter((_, i) => i !== index))
+  }
+
+  const handleAddSocialLink = () => {
+    if (newSocialPlatform.trim() && newSocialHandle.trim()) {
+      setSocialLinks([...socialLinks, { platform: newSocialPlatform.trim(), handle: newSocialHandle.trim() }])
+      setNewSocialPlatform('')
+      setNewSocialHandle('')
+    }
+  }
+
+  const handleRemoveSocialLink = (index: number) => {
+    setSocialLinks(socialLinks.filter((_, i) => i !== index))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!formData.displayName.trim()) {
       toast.error('Display name is required')
       return
     }
-    
+
     // Check if private key is in secure storage
     const storedPrivateKey = user ? getPrivateKey(user.identityId) : null
     if (!storedPrivateKey && !privateKey) {
@@ -68,33 +144,47 @@ function CreateProfilePage() {
     if (privateKey && !storedPrivateKey && user) {
       storePrivateKey(user.identityId, privateKey)
     }
-    
+
     setIsSubmitting(true)
-    
+
     try {
-      // Create profile using the profile service
-      const { profileService } = await import('@/lib/services/profile-service')
-      
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+
       if (!user) {
         throw new Error('User not authenticated')
       }
-      
+
       console.log('Creating profile with data:', formData)
-      
-      // Create the profile
-      await profileService.createProfile(
-        user.identityId,
-        formData.displayName,
-        formData.bio
-      )
-      
-      toast.success('Profile created successfully!')
-      
+
+      // Build avatar data from current settings
+      const avatarData = avatarSeed
+        ? unifiedProfileService.encodeAvatarData(avatarSeed, avatarStyle)
+        : undefined
+
+      // Create the profile on the new unified profile contract
+      await unifiedProfileService.createProfile(user.identityId, {
+        displayName: formData.displayName,
+        bio: formData.bio || undefined,
+        location: formData.location || undefined,
+        website: formData.website || undefined,
+        pronouns: formData.pronouns || undefined,
+        nsfw: formData.nsfw || undefined,
+        avatar: avatarData,
+        paymentUris: paymentUris.length > 0 ? paymentUris : undefined,
+        socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
+      })
+
+      if (migrationStatus === 'needs_migration') {
+        toast.success('Profile migrated successfully!')
+      } else {
+        toast.success('Profile created successfully!')
+      }
+
       // Redirect to home
       router.push('/')
     } catch (error: any) {
       console.error('Failed to create profile:', error)
-      
+
       // Check if it's a duplicate profile error
       if (error.message?.includes('duplicate unique properties') ||
           error.message?.includes('already exists')) {
@@ -116,19 +206,21 @@ function CreateProfilePage() {
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="h-12 w-12 animate-spin text-yappr-500 mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Checking for existing profile...</p>
+          <p className="text-gray-600 dark:text-gray-400">Checking profile status...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
+    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center px-4 py-8">
+      <div className="max-w-lg w-full">
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold">Create Your Profile</h1>
+            <h1 className="text-3xl font-bold">
+              {migrationStatus === 'needs_migration' ? 'Migrate Your Profile' : 'Create Your Profile'}
+            </h1>
             <button
               onClick={logout}
               className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
@@ -136,10 +228,29 @@ function CreateProfilePage() {
               Logout
             </button>
           </div>
+
+          {migrationStatus === 'needs_migration' && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <ArrowPathIcon className="h-5 w-5 text-blue-500 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                    Profile Migration
+                  </p>
+                  <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                    We found your existing profile! Review and update your info, then save to migrate to the new profile system.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <p className="text-gray-600 dark:text-gray-400 text-center mb-8">
-            Set up your Yappr profile to start connecting
+            {migrationStatus === 'needs_migration'
+              ? 'Your existing data has been pre-filled below'
+              : 'Set up your Yappr profile to start connecting'}
           </p>
-          
+
           {/* Display username if available */}
           {(user?.dpnsUsername || sessionStorage.getItem('yappr_dpns_username')) && (
             <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 mb-6">
@@ -148,7 +259,7 @@ function CreateProfilePage() {
               </p>
             </div>
           )}
-          
+
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Private key input if needed */}
             {showPrivateKeyInput && (
@@ -168,76 +279,242 @@ function CreateProfilePage() {
                 </p>
               </div>
             )}
-            
-            <div>
-              <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Display Name *
-              </label>
-              <Input
-                id="displayName"
-                type="text"
-                value={formData.displayName}
-                onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-                placeholder="John Doe"
-                required
-                maxLength={50}
-              />
+
+            {/* Avatar Section */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avatar</h3>
+
+              <div className="flex items-start gap-6">
+                {/* Avatar Preview */}
+                <div className="flex-shrink-0">
+                  <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
+                    {avatarSeed && (
+                      <img
+                        src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
+                        alt="Avatar preview"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* Avatar Controls */}
+                <div className="flex-1 space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Style
+                    </label>
+                    <select
+                      value={avatarStyle}
+                      onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    >
+                      {DICEBEAR_STYLES.map((style) => (
+                        <option key={style} value={style}>
+                          {DICEBEAR_STYLE_LABELS[style]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setAvatarSeed(unifiedProfileService.generateRandomSeed())}
+                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400 dark:hover:text-yappr-300 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 rounded-lg transition-colors"
+                  >
+                    <SparklesIcon className="h-4 w-4" />
+                    Randomize
+                  </button>
+                </div>
+              </div>
             </div>
-            
-            <div>
-              <label htmlFor="bio" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Bio
-              </label>
-              <Textarea
-                id="bio"
-                value={formData.bio}
-                onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                placeholder="Tell us about yourself..."
-                rows={4}
-                maxLength={200}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {formData.bio.length}/200 characters
-              </p>
+
+            {/* Basic Info Section */}
+            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Basic Info</h3>
+
+              <div>
+                <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Display Name *
+                </label>
+                <Input
+                  id="displayName"
+                  type="text"
+                  value={formData.displayName}
+                  onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+                  placeholder="John Doe"
+                  required
+                  maxLength={50}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="pronouns" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Pronouns
+                </label>
+                <Input
+                  id="pronouns"
+                  type="text"
+                  value={formData.pronouns}
+                  onChange={(e) => setFormData({ ...formData, pronouns: e.target.value })}
+                  placeholder="they/them, she/her, he/him, etc."
+                  maxLength={30}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="bio" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Bio
+                </label>
+                <Textarea
+                  id="bio"
+                  value={formData.bio}
+                  onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                  placeholder="Tell us about yourself..."
+                  rows={3}
+                  maxLength={200}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {formData.bio.length}/200 characters
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="location" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Location
+                </label>
+                <Input
+                  id="location"
+                  type="text"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                  placeholder="San Francisco, CA"
+                  maxLength={50}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="website" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Website
+                </label>
+                <Input
+                  id="website"
+                  type="url"
+                  value={formData.website}
+                  onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                  placeholder="https://example.com"
+                  maxLength={100}
+                />
+              </div>
             </div>
-            
-            <div>
-              <label htmlFor="location" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Location
-              </label>
-              <Input
-                id="location"
-                type="text"
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                placeholder="San Francisco, CA"
-                maxLength={50}
-              />
+
+            {/* Payment Addresses Section */}
+            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Payment Addresses</h3>
+              <p className="text-xs text-gray-500">Add crypto addresses where others can tip you</p>
+
+              {paymentUris.map((uri, index) => (
+                <div key={index} className="flex gap-2 items-center">
+                  <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
+                    {uri}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePaymentUri(index)}
+                    className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={newPaymentUri}
+                  onChange={(e) => setNewPaymentUri(e.target.value)}
+                  placeholder="dash:XnNh3x8B7... or bitcoin:1A1z..."
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" onClick={handleAddPaymentUri}>
+                  <PlusIcon className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            
-            <div>
-              <label htmlFor="website" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Website
-              </label>
-              <Input
-                id="website"
-                type="url"
-                value={formData.website}
-                onChange={(e) => setFormData({ ...formData, website: e.target.value })}
-                placeholder="https://example.com"
-                maxLength={100}
-              />
+
+            {/* Social Links Section */}
+            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Social Links</h3>
+
+              {socialLinks.map((link, index) => (
+                <div key={index} className="flex gap-2 items-center">
+                  <span className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium capitalize min-w-[80px]">
+                    {link.platform}
+                  </span>
+                  <span className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm truncate">
+                    {link.handle}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSocialLink(index)}
+                    className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={newSocialPlatform}
+                  onChange={(e) => setNewSocialPlatform(e.target.value)}
+                  placeholder="twitter"
+                  className="w-24"
+                />
+                <Input
+                  type="text"
+                  value={newSocialHandle}
+                  onChange={(e) => setNewSocialHandle(e.target.value)}
+                  placeholder="@username"
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" onClick={handleAddSocialLink}>
+                  <PlusIcon className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            
-            <Button 
-              type="submit" 
-              className="w-full" 
+
+            {/* Content Settings */}
+            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Content Settings</h3>
+
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.nsfw}
+                  onChange={(e) => setFormData({ ...formData, nsfw: e.target.checked })}
+                  className="w-4 h-4 text-yappr-500 rounded focus:ring-yappr-500"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">NSFW Content</span>
+                  <p className="text-xs text-gray-500">Mark your profile as containing adult content</p>
+                </div>
+              </label>
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full"
               disabled={isSubmitting || !formData.displayName.trim()}
             >
-              {isSubmitting ? 'Creating Profile...' : 'Create Profile'}
+              {isSubmitting
+                ? (migrationStatus === 'needs_migration' ? 'Migrating Profile...' : 'Creating Profile...')
+                : (migrationStatus === 'needs_migration' ? 'Migrate Profile' : 'Create Profile')
+              }
             </Button>
           </form>
-          
+
           <div className="mt-6 text-center space-y-2">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Identity: {user?.identityId.slice(0, 8)}...

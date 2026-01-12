@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, memo } from 'react'
-import { getDefaultAvatarUrl } from '@/lib/avatar-utils'
 import { PresenceIndicator } from './presence-indicator'
 
 // Module-level cache for avatar URLs to prevent redundant fetches
@@ -31,13 +30,14 @@ async function fetchAvatarUrl(userId: string): Promise<string> {
   // Create new request
   const request = (async () => {
     try {
-      const { avatarService } = await import('@/lib/services/avatar-service')
-      const url = await avatarService.getAvatarUrl(userId)
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      const url = await unifiedProfileService.getAvatarUrl(userId)
       avatarCache.set(userId, { url, timestamp: Date.now() })
       return url
     } catch (error) {
       console.error('AvatarImage: Error fetching avatar:', error)
-      return getDefaultAvatarUrl(userId)
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      return unifiedProfileService.getDefaultAvatarUrl(userId)
     } finally {
       pendingRequests.delete(userId)
     }

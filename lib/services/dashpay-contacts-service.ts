@@ -10,8 +10,7 @@ import { getEvoSdk } from './evo-sdk-service';
 import { queryDocuments, identifierToBase58 } from './sdk-helpers';
 import { followService } from './follow-service';
 import { dpnsService } from './dpns-service';
-import { profileService, ProfileDocument } from './profile-service';
-import { getDefaultAvatarUrl } from '../avatar-utils';
+import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
 import { DASHPAY_CONTRACT_ID } from '../constants';
 import bs58 from 'bs58';
 
@@ -210,7 +209,7 @@ class DashPayContactsService {
   ): Promise<DashPayContact> {
     const contact: DashPayContact = {
       identityId,
-      avatarUrl: getDefaultAvatarUrl(identityId),
+      avatarUrl: unifiedProfileService.getDefaultAvatarUrl(identityId),
       isFollowedOnYappr: isFollowed,
       contactRequestDate: contactDate
     };
@@ -268,11 +267,11 @@ class DashPayContactsService {
       // Batch resolve usernames and profiles in parallel
       const [usernameMap, profiles] = await Promise.all([
         dpnsService.resolveUsernamesBatch(unfollowedIds),
-        profileService.getProfilesByIdentityIds(unfollowedIds)
+        unifiedProfileService.getProfilesByIdentityIds(unfollowedIds)
       ]);
 
       // Create profile lookup map
-      const profileMap = new Map<string, ProfileDocument>();
+      const profileMap = new Map<string, UnifiedProfileDocument>();
       for (const profile of profiles) {
         const ownerId = (profile as any).$ownerId || (profile as any).ownerId;
         if (ownerId) {
@@ -291,7 +290,7 @@ class DashPayContactsService {
           identityId: id,
           username,
           displayName,
-          avatarUrl: getDefaultAvatarUrl(id),
+          avatarUrl: unifiedProfileService.getDefaultAvatarUrl(id),
           isFollowedOnYappr: false,
           contactRequestDate: contactDate
         };

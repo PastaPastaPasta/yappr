@@ -1,11 +1,10 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, User, PostQueryOptions } from '../types';
 import { identityService } from './identity-service';
-import { profileService } from './profile-service';
 import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
-import { avatarService } from './avatar-service';
+import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58 } from './sdk-helpers';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 
@@ -124,7 +123,7 @@ class PostService extends BaseDocumentService<Post> {
     try {
       // Get author information
       if (ownerId) {
-        const author = await profileService.getProfile(ownerId);
+        const author = await unifiedProfileService.getProfile(ownerId);
         if (author) {
           post.author = author;
         }
@@ -159,7 +158,7 @@ class PostService extends BaseDocumentService<Post> {
       const [stats, interactions, author] = await Promise.all([
         this.getPostStats(post.id),
         this.getUserInteractions(post.id),
-        profileService.getProfileWithUsername(post.author.id)
+        unifiedProfileService.getProfileWithUsername(post.author.id)
       ]);
 
       // Determine if author has DPNS username (not a truncated ID)
@@ -305,7 +304,7 @@ class PostService extends BaseDocumentService<Post> {
         this.getBatchPostStats(postIds),
         this.getBatchUserInteractions(postIds),
         dpnsService.resolveUsernamesBatch(authorIds),
-        profileService.getProfilesByIdentityIds(authorIds),
+        unifiedProfileService.getProfilesByIdentityIds(authorIds),
         this.getParentPostOwners(parentPostIds),
         // Batch block/follow status (only if user is logged in)
         currentUserId
@@ -315,7 +314,7 @@ class PostService extends BaseDocumentService<Post> {
           ? followService.getFollowStatusBatch(authorIds, currentUserId)
           : Promise.resolve(new Map<string, boolean>()),
         // Batch avatar URLs
-        avatarService.getAvatarUrlsBatch(authorIds)
+        unifiedProfileService.getAvatarUrlsBatch(authorIds)
       ]);
 
       // Seed shared caches so PostCard hooks don't fire individual queries
@@ -678,7 +677,7 @@ class PostService extends BaseDocumentService<Post> {
     if (!post.author?.id || post.author.id === 'unknown') return;
 
     try {
-      const author = await profileService.getProfileWithUsername(post.author.id);
+      const author = await unifiedProfileService.getProfileWithUsername(post.author.id);
       if (author) {
         post.author = author;
       }

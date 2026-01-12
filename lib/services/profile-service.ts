@@ -2,7 +2,12 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { User } from '../types';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
-import { getDefaultAvatarUrl } from '../avatar-utils';
+
+// Default avatar URL helper
+function getDefaultAvatarUrl(userId: string): string {
+  if (!userId) return ''
+  return `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(userId)}`
+}
 
 export interface ProfileDocument {
   $id: string;

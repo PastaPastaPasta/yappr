@@ -273,10 +273,14 @@ export function UsernameModal({ isOpen, onClose, customIdentityId: initialIdenti
         
         onClose()
         
-        // Redirect to home or profile creation
+        // Redirect to home or profile creation (check new unified profile first, then old)
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
         const { profileService } = await import('@/lib/services/profile-service')
-        const profile = await profileService.getProfile(currentIdentityId, existingUsername)
-        
+        let profile = await unifiedProfileService.getProfile(currentIdentityId, existingUsername)
+        if (!profile) {
+          profile = await profileService.getProfile(currentIdentityId, existingUsername)
+        }
+
         if (profile) {
           router.push('/')
         } else {

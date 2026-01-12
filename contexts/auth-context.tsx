@@ -193,10 +193,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
       
-      // Then check if user has a profile
+      // Then check if user has a profile (check new unified profile first, then old)
       console.log('Checking for user profile...')
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
       const { profileService } = await import('@/lib/services/profile-service')
-      const profile = await profileService.getProfile(identityId, authUser.dpnsUsername)
+      let profile = await unifiedProfileService.getProfile(identityId, authUser.dpnsUsername)
+      if (!profile) {
+        // Fall back to old profile service
+        profile = await profileService.getProfile(identityId, authUser.dpnsUsername)
+      }
       
       if (profile) {
         console.log('Profile found, redirecting to home...')

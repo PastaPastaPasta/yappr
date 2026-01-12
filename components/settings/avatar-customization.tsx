@@ -4,13 +4,12 @@ import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useAvatarSettings, invalidateAvatarCache } from '@/hooks/use-avatar'
 import {
+  unifiedProfileService,
   DICEBEAR_STYLES,
   DICEBEAR_STYLE_LABELS,
-  DiceBearStyle,
-  DEFAULT_STYLE,
-  getAvatarUrl,
-  generateRandomSeed,
-} from '@/lib/avatar-utils'
+  DEFAULT_AVATAR_STYLE,
+  type DiceBearStyle,
+} from '@/lib/services/unified-profile-service'
 import { Button } from '@/components/ui/button'
 import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
@@ -25,7 +24,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
   const { user } = useAuth()
   const { settings, loading: loadingSettings, saving, save } = useAvatarSettings(user?.identityId || '')
 
-  const [style, setStyle] = useState<DiceBearStyle>(DEFAULT_STYLE)
+  const [style, setStyle] = useState<DiceBearStyle>(DEFAULT_AVATAR_STYLE)
   const [seed, setSeed] = useState('')
   const [hasChanges, setHasChanges] = useState(false)
   const [avatarsReady, setAvatarsReady] = useState(false)
@@ -53,7 +52,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
   useEffect(() => {
     if (!settings) {
       // No saved settings, user ID is default
-      const isChanged = style !== DEFAULT_STYLE || seed !== (user?.identityId || '')
+      const isChanged = style !== DEFAULT_AVATAR_STYLE || seed !== (user?.identityId || '')
       setHasChanges(isChanged)
     } else {
       const isChanged = style !== settings.style || seed !== settings.seed
@@ -64,11 +63,11 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
   // Preview URL
   const previewUrl = useMemo(() => {
     if (!seed) return ''
-    return getAvatarUrl({ style, seed })
+    return unifiedProfileService.getAvatarUrlFromConfig({ style, seed })
   }, [style, seed])
 
   const handleRandomize = () => {
-    setSeed(generateRandomSeed())
+    setSeed(unifiedProfileService.generateRandomSeed())
   }
 
   const handleSave = async () => {
@@ -90,7 +89,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
       setStyle(settings.style)
       setSeed(settings.seed)
     } else if (user?.identityId) {
-      setStyle(DEFAULT_STYLE)
+      setStyle(DEFAULT_AVATAR_STYLE)
       setSeed(user.identityId)
     }
   }
@@ -140,7 +139,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
         <div className={`grid ${compact ? 'grid-cols-7 gap-1' : 'grid-cols-4 sm:grid-cols-5 gap-2'}`}>
           {DICEBEAR_STYLES.map((s) => {
             const isSelected = style === s
-            const stylePreviewUrl = getAvatarUrl({ style: s, seed: seed || 'preview' })
+            const stylePreviewUrl = unifiedProfileService.getAvatarUrlFromConfig({ style: s, seed: seed || 'preview' })
 
             return (
               <button

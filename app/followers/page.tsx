@@ -9,7 +9,7 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
-import { followService, dpnsService, profileService } from '@/lib/services'
+import { followService, dpnsService, unifiedProfileService } from '@/lib/services'
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
@@ -125,7 +125,7 @@ function FollowersPage() {
           }
         })),
         // Fetch Yappr profiles
-        profileService.getProfilesByIdentityIds(identityIds),
+        unifiedProfileService.getProfilesByIdentityIds(identityIds),
         // Fetch follower counts for all users
         Promise.all(identityIds.map(async (id) => {
           try {
