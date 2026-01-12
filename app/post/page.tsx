@@ -146,11 +146,11 @@ function PostDetailContent() {
                     value={replyContent}
                     onChange={(e) => setReplyContent(e.target.value)}
                     className="w-full"
-                    maxLength={280}
+                    maxLength={500}
                   />
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-500">
-                      {replyContent.length}/280
+                      {replyContent.length}/500
                     </span>
                     <Button
                       type="submit"
