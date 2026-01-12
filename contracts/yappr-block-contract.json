@@ -1,0 +1,102 @@
+{
+  "block": {
+    "type": "object",
+    "description": "A block relationship with optional public message/reason",
+    "indices": [
+      {
+        "name": "ownerAndBlocked",
+        "unique": true,
+        "properties": [
+          { "$ownerId": "asc" },
+          { "blockedId": "asc" }
+        ]
+      }
+    ],
+    "mutable": false,
+    "required": ["$createdAt", "blockedId"],
+    "additionalProperties": false,
+    "properties": {
+      "blockedId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "description": "Identity ID of the blocked user",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "message": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 280,
+        "position": 1,
+        "description": "Optional public reason/message for blocking"
+      }
+    }
+  },
+
+  "blockFilter": {
+    "type": "object",
+    "description": "Bloom filter of blocked users for efficient probabilistic matching. One per user.",
+    "indices": [
+      {
+        "name": "owner",
+        "unique": true,
+        "properties": [
+          { "$ownerId": "asc" }
+        ]
+      }
+    ],
+    "required": ["$createdAt", "$updatedAt", "filterData"],
+    "additionalProperties": false,
+    "properties": {
+      "filterData": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 5000,
+        "position": 0,
+        "description": "Serialized bloom filter data (up to 5KB)"
+      },
+      "itemCount": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 1,
+        "description": "Number of items added to the filter"
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 255,
+        "position": 2,
+        "description": "Bloom filter parameters version for forward compatibility"
+      }
+    }
+  },
+
+  "blockFollow": {
+    "type": "object",
+    "description": "Tracks which users' block lists this user inherits (hard blocks). One per user.",
+    "indices": [
+      {
+        "name": "owner",
+        "unique": true,
+        "properties": [
+          { "$ownerId": "asc" }
+        ]
+      }
+    ],
+    "required": ["$createdAt", "$updatedAt", "followedBlockers"],
+    "additionalProperties": false,
+    "properties": {
+      "followedBlockers": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 3200,
+        "position": 0,
+        "description": "Encoded array of user IDs whose blocks are inherited (max 100 users * 32 bytes)"
+      }
+    }
+  }
+}

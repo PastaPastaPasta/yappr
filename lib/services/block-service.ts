@@ -1,204 +1,150 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
-import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
-import { getEvoSdk } from './evo-sdk-service';
+import { BaseDocumentService, QueryOptions } from './document-service'
+import { stateTransitionService } from './state-transition-service'
+import { identifierToBase58 } from './sdk-helpers'
+import { getEvoSdk } from './evo-sdk-service'
+import { YAPPR_BLOCK_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
+import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
+import {
+  BlockDocument,
+  BlockFilterDocument,
+  BlockFollowDocument,
+  BlockFollowData
+} from '../types'
+import {
+  loadBlockCache,
+  initializeBlockCache,
+  addOwnBlock,
+  removeOwnBlock,
+  isInOwnBlocks,
+  getConfirmedBlock,
+  addConfirmedBlock,
+  addConfirmedBlocksBatch,
+  getMergedBloomFilter,
+  setMergedBloomFilter,
+  getBlockFollowsFromCache,
+  setBlockFollows,
+  invalidateBlockCache
+} from '../caches/block-cache'
+import bs58 from 'bs58'
 
-export interface BlockDocument {
-  $id: string;
-  $ownerId: string;
-  $createdAt: number;
-  blockedId: string;
-}
+// Max users whose blocks can be followed (100 * 32 bytes = 3200 bytes)
+const MAX_BLOCK_FOLLOWS = 100
 
+/**
+ * Block Service - Manages enhanced blocking with bloom filters and block following.
+ *
+ * Features:
+ * - Block users with optional public message/reason
+ * - Bloom filter for efficient probabilistic block checking
+ * - Follow other users' block lists (hard blocks)
+ * - SessionStorage caching for page load optimization
+ */
 class BlockService extends BaseDocumentService<BlockDocument> {
-  // Granular cache: blockerId -> (targetId -> isBlocked)
-  // Caches both positive (blocked) and negative (not blocked) results
-  private blockCache = new Map<string, Map<string, boolean>>();
+  // In-memory cache for quick lookups (supplements sessionStorage)
+  private blockCache = new Map<string, Map<string, boolean>>()
 
   constructor() {
-    super('block');
+    super(DOCUMENT_TYPES.BLOCK, YAPPR_BLOCK_CONTRACT_ID)
   }
 
   /**
-   * Transform document
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields (blockedId) are base64
+   * Transform raw block document to typed object.
+   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields are base64.
    */
   protected transformDocument(doc: Record<string, unknown>): BlockDocument {
-    const data = (doc.data || doc) as Record<string, unknown>;
-    const rawBlockedId = data.blockedId;
+    const data = (doc.data || doc) as Record<string, unknown>
+    const rawBlockedId = data.blockedId
 
-    // Convert blockedId from base64 to base58 (byte array field)
-    const blockedId = rawBlockedId ? identifierToBase58(rawBlockedId) : '';
+    const blockedId = rawBlockedId ? identifierToBase58(rawBlockedId) : ''
     if (rawBlockedId && !blockedId) {
-      console.error('BlockService: Invalid blockedId format:', rawBlockedId);
+      console.error('BlockService: Invalid blockedId format:', rawBlockedId)
     }
 
-    // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
     return {
       $id: (doc.$id || doc.id) as string,
       $ownerId: (doc.$ownerId || doc.ownerId) as string,
       $createdAt: (doc.$createdAt || doc.createdAt) as number,
-      blockedId: blockedId || ''
-    };
+      blockedId: blockedId || '',
+      message: data.message as string | undefined
+    }
   }
 
+  // ============================================================
+  // BLOCK MANAGEMENT
+  // ============================================================
+
   /**
-   * Batch check if any of the target users are blocked by the blocker.
-   * Uses 'in' query with granular caching - only queries uncached IDs.
-   * Caches both positive (blocked) and negative (not blocked) results.
-   * @returns Map of targetUserId -> isBlocked
+   * Block a user with optional message.
    */
-  async checkBlockedBatch(blockerId: string, targetIds: string[]): Promise<Map<string, boolean>> {
-    const result = new Map<string, boolean>();
-
-    if (!blockerId || targetIds.length === 0) {
-      return result;
-    }
-
-    // Deduplicate target IDs
-    const uniqueTargetIds = Array.from(new Set(targetIds));
-    const uncachedIds: string[] = [];
-
-    // Get or create cache for this blocker
-    let blockerCache = this.blockCache.get(blockerId);
-    if (!blockerCache) {
-      blockerCache = new Map();
-      this.blockCache.set(blockerId, blockerCache);
-    }
-
-    // Check cache first
-    for (const targetId of uniqueTargetIds) {
-      const cached = blockerCache.get(targetId);
-      if (cached !== undefined) {
-        result.set(targetId, cached);
-      } else {
-        uncachedIds.push(targetId);
-      }
-    }
-
-    // All cached - no query needed
-    if (uncachedIds.length === 0) {
-      return result;
-    }
-
-    // Query platform with 'in' for uncached IDs only
+  async blockUser(
+    blockerId: string,
+    targetUserId: string,
+    message?: string
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      const blocks = await this.queryBlockedIn(blockerId, uncachedIds);
-      const blockedSet = new Set(blocks.map(b => b.blockedId));
-
-      // Cache results (both positive and negative)
-      for (const targetId of uncachedIds) {
-        const isBlocked = blockedSet.has(targetId);
-        blockerCache.set(targetId, isBlocked);
-        result.set(targetId, isBlocked);
-      }
-    } catch (error) {
-      console.error('Error checking blocked batch:', error);
-      // On error, return what we have cached, uncached IDs default to false
-      for (const targetId of uncachedIds) {
-        result.set(targetId, false);
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Query blocked users using 'in' operator for efficient batch lookup.
-   * Uses ownerAndBlocked index: ($ownerId asc, blockedId asc)
-   */
-  private async queryBlockedIn(blockerId: string, targetIds: string[]): Promise<BlockDocument[]> {
-    if (targetIds.length === 0) return [];
-
-    const sdk = await getEvoSdk();
-
-    // Use 'in' operator - pass string IDs directly (SDK handles conversion)
-    // Max 100 items per platform limit
-    const response = await sdk.documents.query({
-      dataContractId: this.contractId,
-      documentTypeName: this.documentType,
-      where: [
-        ['$ownerId', '==', blockerId],
-        ['blockedId', 'in', targetIds]
-      ],
-      orderBy: [['blockedId', 'asc']],
-      limit: Math.min(targetIds.length, 100)
-    } as any);
-
-    // Handle Map response (v3 SDK)
-    let documents: any[] = [];
-    if (response instanceof Map) {
-      documents = Array.from(response.values())
-        .filter(Boolean)
-        .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-    } else if (Array.isArray(response)) {
-      documents = response;
-    } else if (response && (response as any).documents) {
-      documents = (response as any).documents;
-    }
-
-    return documents.map((doc: any) => this.transformDocument(doc));
-  }
-
-  /**
-   * Block a user
-   */
-  async blockUser(blockerId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      // Prevent self-blocking
       if (blockerId === targetUserId) {
-        return { success: false, error: 'Cannot block yourself' };
+        return { success: false, error: 'Cannot block yourself' }
       }
 
-      const existing = await this.getBlock(targetUserId, blockerId);
+      const existing = await this.getBlock(targetUserId, blockerId)
       if (existing) {
-        console.log('Already blocked user');
-        return { success: true };
+        return { success: true }
       }
 
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-      const blockedIdBytes = Array.from(bs58.decode(targetUserId));
+      const blockedIdBytes = Array.from(bs58.decode(targetUserId))
+      const documentData: Record<string, unknown> = { blockedId: blockedIdBytes }
+      if (message && message.trim()) {
+        documentData.message = message.trim().slice(0, 280)
+      }
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         blockerId,
-        { blockedId: blockedIdBytes }
-      );
+        documentData
+      )
 
-      // Update cache on success
       if (result.success) {
-        const blockerCache = this.blockCache.get(blockerId);
-        if (blockerCache) {
-          blockerCache.set(targetUserId, true);
+        // Update in-memory cache
+        let blockerCache = this.blockCache.get(blockerId)
+        if (!blockerCache) {
+          blockerCache = new Map()
+          this.blockCache.set(blockerId, blockerCache)
         }
+        blockerCache.set(targetUserId, true)
+
+        // Update sessionStorage cache
+        addOwnBlock(blockerId, targetUserId)
+
+        // Update bloom filter (add-only)
+        await this.addToBloomFilter(blockerId, targetUserId)
       }
 
-      return result;
+      return result
     } catch (error) {
-      console.error('Error blocking user:', error);
+      console.error('Error blocking user:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to block user'
-      };
+      }
     }
   }
 
   /**
-   * Unblock a user
+   * Unblock a user.
    */
-  async unblockUser(blockerId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
+  async unblockUser(
+    blockerId: string,
+    targetUserId: string
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      const block = await this.getBlock(targetUserId, blockerId);
+      const block = await this.getBlock(targetUserId, blockerId)
       if (!block) {
-        console.log('Not blocking user');
-        // Update cache - not blocked
-        const blockerCache = this.blockCache.get(blockerId);
-        if (blockerCache) {
-          blockerCache.set(targetUserId, false);
-        }
-        return { success: true };
+        // Update caches
+        const blockerCache = this.blockCache.get(blockerId)
+        if (blockerCache) blockerCache.set(targetUserId, false)
+        removeOwnBlock(blockerId, targetUserId)
+        return { success: true }
       }
 
       const result = await stateTransitionService.deleteDocument(
@@ -206,38 +152,31 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         this.documentType,
         block.$id,
         blockerId
-      );
+      )
 
-      // Update cache on success
       if (result.success) {
-        const blockerCache = this.blockCache.get(blockerId);
-        if (blockerCache) {
-          blockerCache.set(targetUserId, false);
-        }
+        // Update caches
+        const blockerCache = this.blockCache.get(blockerId)
+        if (blockerCache) blockerCache.set(targetUserId, false)
+        removeOwnBlock(blockerId, targetUserId)
+
+        // TODO: Rebuild bloom filter on unblock
+        // For now, bloom filter is add-only - false positives may occur
+        // until filter is rebuilt
       }
 
-      return result;
+      return result
     } catch (error) {
-      console.error('Error unblocking user:', error);
+      console.error('Error unblocking user:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to unblock user'
-      };
+      }
     }
   }
 
   /**
-   * Check if blocker has blocked target.
-   * Uses checkBlockedBatch with granular caching.
-   */
-  async isBlocked(targetUserId: string, blockerId: string): Promise<boolean> {
-    if (!blockerId || !targetUserId) return false;
-    const result = await this.checkBlockedBatch(blockerId, [targetUserId]);
-    return result.get(targetUserId) ?? false;
-  }
-
-  /**
-   * Get block relationship
+   * Get a specific block document.
    */
   async getBlock(targetUserId: string, blockerId: string): Promise<BlockDocument | null> {
     try {
@@ -247,42 +186,816 @@ class BlockService extends BaseDocumentService<BlockDocument> {
           ['blockedId', '==', targetUserId]
         ],
         limit: 1
-      });
-
-      return result.documents.length > 0 ? result.documents[0] : null;
+      })
+      return result.documents[0] || null
     } catch (error) {
-      console.error('Error getting block:', error);
-      return null;
+      console.error('Error getting block:', error)
+      return null
     }
   }
 
   /**
-   * Get all users blocked by a user
+   * Get all blocks by a user.
    */
   async getUserBlocks(userId: string, options: QueryOptions = {}): Promise<BlockDocument[]> {
     try {
       const result = await this.query({
         where: [['$ownerId', '==', userId]],
-        orderBy: [['$createdAt', 'asc']],
         limit: 100,
         ...options
-      });
-
-      return result.documents;
+      })
+      return result.documents
     } catch (error) {
-      console.error('Error getting user blocks:', error);
-      return [];
+      console.error('Error getting user blocks:', error)
+      return []
+    }
+  }
+
+  // ============================================================
+  // BLOOM FILTER MANAGEMENT
+  // ============================================================
+
+  /**
+   * Get the bloom filter for a user.
+   */
+  async getBloomFilter(userId: string): Promise<{ filter: BloomFilter; documentId: string; revision: number } | null> {
+    try {
+      const sdk = await getEvoSdk()
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: DOCUMENT_TYPES.BLOCK_FILTER,
+        where: [['$ownerId', '==', userId]],
+        limit: 1
+      } as any)
+
+      let documents: any[] = []
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
+      } else if (Array.isArray(response)) {
+        documents = response
+      }
+
+      if (documents.length === 0) return null
+
+      const doc = documents[0]
+      const data = doc.data || doc
+      const filterData = data.filterData
+
+      // Convert filterData to Uint8Array
+      let bytes: Uint8Array
+      if (filterData instanceof Uint8Array) {
+        bytes = filterData
+      } else if (Array.isArray(filterData)) {
+        bytes = new Uint8Array(filterData)
+      } else if (typeof filterData === 'string') {
+        // Base64 encoded
+        const binary = atob(filterData)
+        bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i)
+        }
+      } else {
+        console.error('Unknown filterData format:', typeof filterData)
+        return null
+      }
+
+      return {
+        filter: new BloomFilter(bytes, data.itemCount || 0),
+        documentId: (doc.$id || doc.id) as string,
+        revision: (doc.$revision || doc.revision || 0) as number
+      }
+    } catch (error) {
+      console.error('Error getting bloom filter:', error)
+      return null
     }
   }
 
   /**
-   * Count blocked users
+   * Get bloom filters for multiple users in batch.
+   */
+  async getBloomFiltersBatch(userIds: string[]): Promise<Map<string, BloomFilter>> {
+    const result = new Map<string, BloomFilter>()
+    if (userIds.length === 0) return result
+
+    try {
+      const sdk = await getEvoSdk()
+      // Query with 'in' operator
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: DOCUMENT_TYPES.BLOCK_FILTER,
+        where: [['$ownerId', 'in', userIds]],
+        orderBy: [['$ownerId', 'asc']],
+        limit: Math.min(userIds.length, 100)
+      } as any)
+
+      let documents: any[] = []
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
+      } else if (Array.isArray(response)) {
+        documents = response
+      }
+
+      for (const doc of documents) {
+        const data = doc.data || doc
+        const ownerId = (doc.$ownerId || doc.ownerId) as string
+        const filterData = data.filterData
+
+        let bytes: Uint8Array
+        if (filterData instanceof Uint8Array) {
+          bytes = filterData
+        } else if (Array.isArray(filterData)) {
+          bytes = new Uint8Array(filterData)
+        } else if (typeof filterData === 'string') {
+          const binary = atob(filterData)
+          bytes = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i)
+          }
+        } else {
+          continue
+        }
+
+        result.set(ownerId, new BloomFilter(bytes, data.itemCount || 0))
+      }
+    } catch (error) {
+      console.error('Error getting bloom filters batch:', error)
+    }
+
+    return result
+  }
+
+  /**
+   * Add a blocked user ID to the bloom filter.
+   * Creates the filter document if it doesn't exist.
+   */
+  async addToBloomFilter(userId: string, blockedId: string): Promise<void> {
+    try {
+      const existing = await this.getBloomFilter(userId)
+
+      if (existing) {
+        // Add to existing filter
+        existing.filter.add(blockedId)
+
+        await stateTransitionService.updateDocument(
+          this.contractId,
+          DOCUMENT_TYPES.BLOCK_FILTER,
+          existing.documentId,
+          userId,
+          {
+            filterData: Array.from(existing.filter.serialize()),
+            itemCount: existing.filter.itemCount,
+            version: BLOOM_FILTER_VERSION
+          },
+          existing.revision
+        )
+      } else {
+        // Create new filter
+        const filter = new BloomFilter()
+        filter.add(blockedId)
+
+        await stateTransitionService.createDocument(
+          this.contractId,
+          DOCUMENT_TYPES.BLOCK_FILTER,
+          userId,
+          {
+            filterData: Array.from(filter.serialize()),
+            itemCount: filter.itemCount,
+            version: BLOOM_FILTER_VERSION
+          }
+        )
+      }
+    } catch (error) {
+      console.error('Error adding to bloom filter:', error)
+      // Non-fatal - block still succeeded
+    }
+  }
+
+  // ============================================================
+  // BLOCK FOLLOW MANAGEMENT
+  // ============================================================
+
+  /**
+   * Get the block follow document for a user.
+   */
+  async getBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    try {
+      const sdk = await getEvoSdk()
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: DOCUMENT_TYPES.BLOCK_FOLLOW,
+        where: [['$ownerId', '==', userId]],
+        limit: 1
+      } as any)
+
+      let documents: any[] = []
+      if (response instanceof Map) {
+        documents = Array.from(response.values())
+          .filter(Boolean)
+          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
+      } else if (Array.isArray(response)) {
+        documents = response
+      }
+
+      if (documents.length === 0) return null
+
+      const doc = documents[0]
+      const data = doc.data || doc
+      const followedBlockers = data.followedBlockers
+
+      // Decode the array of user IDs (each is 32 bytes)
+      const followedUserIds = this.decodeUserIdArray(followedBlockers)
+
+      return {
+        $id: (doc.$id || doc.id) as string,
+        $ownerId: (doc.$ownerId || doc.ownerId) as string,
+        $revision: (doc.$revision || doc.revision) as number | undefined,
+        followedUserIds
+      }
+    } catch (error) {
+      console.error('Error getting block follow:', error)
+      return null
+    }
+  }
+
+  /**
+   * Decode a byte array into an array of base58 user IDs.
+   * Each user ID is 32 bytes.
+   */
+  private decodeUserIdArray(data: unknown): string[] {
+    let bytes: Uint8Array
+    if (data instanceof Uint8Array) {
+      bytes = data
+    } else if (Array.isArray(data)) {
+      bytes = new Uint8Array(data)
+    } else if (typeof data === 'string') {
+      const binary = atob(data)
+      bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+    } else {
+      return []
+    }
+
+    const userIds: string[] = []
+    for (let i = 0; i + 32 <= bytes.length; i += 32) {
+      const idBytes = bytes.slice(i, i + 32)
+      userIds.push(bs58.encode(idBytes))
+    }
+    return userIds
+  }
+
+  /**
+   * Encode an array of base58 user IDs into a byte array.
+   */
+  private encodeUserIdArray(userIds: string[]): number[] {
+    const result: number[] = []
+    for (const userId of userIds) {
+      const bytes = bs58.decode(userId)
+      result.push(...Array.from(bytes))
+    }
+    return result
+  }
+
+  /**
+   * Follow another user's block list.
+   */
+  async followUserBlocks(
+    userId: string,
+    targetUserId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (userId === targetUserId) {
+        return { success: false, error: 'Cannot follow your own blocks' }
+      }
+
+      const existing = await this.getBlockFollow(userId)
+
+      if (existing) {
+        // Check if already following
+        if (existing.followedUserIds.includes(targetUserId)) {
+          return { success: true }
+        }
+
+        // Check capacity
+        if (existing.followedUserIds.length >= MAX_BLOCK_FOLLOWS) {
+          return { success: false, error: `Maximum ${MAX_BLOCK_FOLLOWS} block follows reached` }
+        }
+
+        // Add to existing list
+        const newList = [...existing.followedUserIds, targetUserId]
+        const result = await stateTransitionService.updateDocument(
+          this.contractId,
+          DOCUMENT_TYPES.BLOCK_FOLLOW,
+          existing.$id,
+          userId,
+          { followedBlockers: this.encodeUserIdArray(newList) },
+          existing.$revision || 0
+        )
+
+        if (result.success) {
+          setBlockFollows(userId, newList)
+          // Invalidate merged filter cache
+          invalidateBlockCache(userId)
+        }
+
+        return result
+      } else {
+        // Create new block follow document
+        const result = await stateTransitionService.createDocument(
+          this.contractId,
+          DOCUMENT_TYPES.BLOCK_FOLLOW,
+          userId,
+          { followedBlockers: this.encodeUserIdArray([targetUserId]) }
+        )
+
+        if (result.success) {
+          setBlockFollows(userId, [targetUserId])
+          invalidateBlockCache(userId)
+        }
+
+        return result
+      }
+    } catch (error) {
+      console.error('Error following user blocks:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to follow blocks'
+      }
+    }
+  }
+
+  /**
+   * Unfollow a user's block list.
+   */
+  async unfollowUserBlocks(
+    userId: string,
+    targetUserId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const existing = await this.getBlockFollow(userId)
+      if (!existing) {
+        return { success: true }
+      }
+
+      const newList = existing.followedUserIds.filter(id => id !== targetUserId)
+
+      if (newList.length === existing.followedUserIds.length) {
+        // Not following this user
+        return { success: true }
+      }
+
+      if (newList.length === 0) {
+        // Delete the document if empty
+        const result = await stateTransitionService.deleteDocument(
+          this.contractId,
+          DOCUMENT_TYPES.BLOCK_FOLLOW,
+          existing.$id,
+          userId
+        )
+
+        if (result.success) {
+          setBlockFollows(userId, [])
+          invalidateBlockCache(userId)
+        }
+
+        return result
+      } else {
+        // Update with reduced list
+        const result = await stateTransitionService.updateDocument(
+          this.contractId,
+          DOCUMENT_TYPES.BLOCK_FOLLOW,
+          existing.$id,
+          userId,
+          { followedBlockers: this.encodeUserIdArray(newList) },
+          existing.$revision || 0
+        )
+
+        if (result.success) {
+          setBlockFollows(userId, newList)
+          invalidateBlockCache(userId)
+        }
+
+        return result
+      }
+    } catch (error) {
+      console.error('Error unfollowing user blocks:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to unfollow blocks'
+      }
+    }
+  }
+
+  /**
+   * Get list of users whose blocks are being followed.
+   */
+  async getBlockFollows(userId: string): Promise<string[]> {
+    // Check cache first
+    const cached = getBlockFollowsFromCache(userId)
+    if (cached.length > 0) {
+      return cached
+    }
+
+    const data = await this.getBlockFollow(userId)
+    if (data) {
+      setBlockFollows(userId, data.followedUserIds)
+      return data.followedUserIds
+    }
+    return []
+  }
+
+  // ============================================================
+  // UNIFIED BLOCK CHECKING
+  // ============================================================
+
+  /**
+   * Check if a target user is blocked by the viewer (own blocks + inherited blocks).
+   */
+  async isBlocked(targetUserId: string, viewerId: string): Promise<boolean> {
+    if (!viewerId || !targetUserId) return false
+
+    // Check own blocks first (fast path)
+    if (isInOwnBlocks(viewerId, targetUserId)) {
+      return true
+    }
+
+    // Check confirmed blocks cache
+    const confirmed = getConfirmedBlock(viewerId, targetUserId)
+    if (confirmed !== undefined) {
+      return confirmed.isBlocked
+    }
+
+    // Check in-memory cache
+    const blockerCache = this.blockCache.get(viewerId)
+    if (blockerCache?.has(targetUserId)) {
+      return blockerCache.get(targetUserId)!
+    }
+
+    // Check merged bloom filter
+    const mergedFilter = getMergedBloomFilter(viewerId)
+    if (mergedFilter && !mergedFilter.mightContain(targetUserId)) {
+      // Definitely not blocked
+      return false
+    }
+
+    // Bloom filter positive or no filter - need to verify
+    // Check own blocks on platform
+    const ownBlock = await this.getBlock(targetUserId, viewerId)
+    if (ownBlock) {
+      addConfirmedBlock(viewerId, targetUserId, viewerId, true, ownBlock.message)
+      return true
+    }
+
+    // Check inherited blocks from followed users
+    const followedBlockers = await this.getBlockFollows(viewerId)
+    if (followedBlockers.length > 0) {
+      const inheritedBlock = await this.checkInheritedBlocks(targetUserId, followedBlockers)
+      if (inheritedBlock) {
+        addConfirmedBlock(viewerId, targetUserId, inheritedBlock.blockedBy, true, inheritedBlock.message)
+        return true
+      }
+    }
+
+    // Not blocked
+    addConfirmedBlock(viewerId, targetUserId, '', false)
+    return false
+  }
+
+  /**
+   * Check if target is blocked by any of the followed blockers.
+   * Note: Must query each blocker individually since the index only supports
+   * queries on ($ownerId, blockedId) with equality on both.
+   */
+  private async checkInheritedBlocks(
+    targetUserId: string,
+    followedBlockers: string[]
+  ): Promise<{ blockedBy: string; message?: string } | null> {
+    if (followedBlockers.length === 0) return null
+
+    try {
+      // Query each blocker individually in parallel
+      const queries = followedBlockers.map(async (blockerId) => {
+        try {
+          const block = await this.getBlock(targetUserId, blockerId)
+          if (block) {
+            return {
+              blockedBy: blockerId,
+              message: block.message
+            }
+          }
+        } catch (err) {
+          console.error(`Error checking block from ${blockerId}:`, err)
+        }
+        return null
+      })
+
+      const results = await Promise.all(queries)
+
+      // Return first found block
+      for (const result of results) {
+        if (result) return result
+      }
+    } catch (error) {
+      console.error('Error checking inherited blocks:', error)
+    }
+
+    return null
+  }
+
+  /**
+   * Batch check if any targets are blocked (own + inherited).
+   */
+  async checkBlockedBatch(
+    viewerId: string,
+    targetIds: string[]
+  ): Promise<Map<string, boolean>> {
+    const result = new Map<string, boolean>()
+
+    if (!viewerId || targetIds.length === 0) {
+      return result
+    }
+
+    const uniqueTargetIds = Array.from(new Set(targetIds))
+    const unchecked: string[] = []
+
+    // Phase 1: Check caches
+    for (const targetId of uniqueTargetIds) {
+      // Check own blocks
+      if (isInOwnBlocks(viewerId, targetId)) {
+        result.set(targetId, true)
+        continue
+      }
+
+      // Check confirmed blocks cache
+      const confirmed = getConfirmedBlock(viewerId, targetId)
+      if (confirmed !== undefined) {
+        result.set(targetId, confirmed.isBlocked)
+        continue
+      }
+
+      // Check in-memory cache
+      const blockerCache = this.blockCache.get(viewerId)
+      if (blockerCache?.has(targetId)) {
+        result.set(targetId, blockerCache.get(targetId)!)
+        continue
+      }
+
+      unchecked.push(targetId)
+    }
+
+    if (unchecked.length === 0) {
+      return result
+    }
+
+    // Phase 2: Check bloom filter for remaining
+    const mergedFilter = getMergedBloomFilter(viewerId)
+    const possiblePositives: string[] = []
+    const definiteNegatives: string[] = []
+
+    for (const targetId of unchecked) {
+      if (mergedFilter && !mergedFilter.mightContain(targetId)) {
+        definiteNegatives.push(targetId)
+        result.set(targetId, false)
+      } else {
+        possiblePositives.push(targetId)
+      }
+    }
+
+    // Cache definite negatives
+    if (definiteNegatives.length > 0) {
+      const batchResults = new Map<string, { blockedBy: string; isBlocked: boolean }>()
+      for (const targetId of definiteNegatives) {
+        batchResults.set(targetId, { blockedBy: '', isBlocked: false })
+      }
+      addConfirmedBlocksBatch(viewerId, batchResults)
+    }
+
+    if (possiblePositives.length === 0) {
+      return result
+    }
+
+    // Phase 3: Verify possible positives
+    try {
+      // Query own blocks
+      const ownBlocks = await this.queryBlockedIn(viewerId, possiblePositives)
+      const ownBlockedSet = new Set(ownBlocks.map(b => b.blockedId))
+
+      const batchResults = new Map<string, { blockedBy: string; isBlocked: boolean; message?: string }>()
+
+      for (const targetId of possiblePositives) {
+        if (ownBlockedSet.has(targetId)) {
+          result.set(targetId, true)
+          const block = ownBlocks.find(b => b.blockedId === targetId)
+          batchResults.set(targetId, { blockedBy: viewerId, isBlocked: true, message: block?.message })
+        }
+      }
+
+      // Check inherited blocks for remaining
+      const stillUnchecked = possiblePositives.filter(id => !ownBlockedSet.has(id))
+
+      if (stillUnchecked.length > 0) {
+        const followedBlockers = await this.getBlockFollows(viewerId)
+
+        if (followedBlockers.length > 0) {
+          const inheritedBlocks = await this.queryInheritedBlocksBatch(stillUnchecked, followedBlockers)
+
+          for (const targetId of stillUnchecked) {
+            const inherited = inheritedBlocks.get(targetId)
+            if (inherited) {
+              result.set(targetId, true)
+              batchResults.set(targetId, { blockedBy: inherited.blockedBy, isBlocked: true, message: inherited.message })
+            } else {
+              result.set(targetId, false)
+              batchResults.set(targetId, { blockedBy: '', isBlocked: false })
+            }
+          }
+        } else {
+          // No inherited blocks possible
+          for (const targetId of stillUnchecked) {
+            result.set(targetId, false)
+            batchResults.set(targetId, { blockedBy: '', isBlocked: false })
+          }
+        }
+      }
+
+      addConfirmedBlocksBatch(viewerId, batchResults)
+    } catch (error) {
+      console.error('Error in batch block check:', error)
+      // On error, assume not blocked for unchecked
+      for (const targetId of possiblePositives) {
+        if (!result.has(targetId)) {
+          result.set(targetId, false)
+        }
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Query blocks using 'in' operator for efficient batch lookup.
+   */
+  private async queryBlockedIn(blockerId: string, targetIds: string[]): Promise<BlockDocument[]> {
+    if (targetIds.length === 0) return []
+
+    const sdk = await getEvoSdk()
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
+      where: [
+        ['$ownerId', '==', blockerId],
+        ['blockedId', 'in', targetIds]
+      ],
+      orderBy: [['blockedId', 'asc']],
+      limit: Math.min(targetIds.length, 100)
+    } as any)
+
+    let documents: any[] = []
+    if (response instanceof Map) {
+      documents = Array.from(response.values())
+        .filter(Boolean)
+        .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
+    } else if (Array.isArray(response)) {
+      documents = response
+    }
+
+    return documents.map((doc: any) => this.transformDocument(doc))
+  }
+
+  /**
+   * Query inherited blocks for multiple targets from multiple blockers.
+   * Note: Dash Platform only supports one 'in' clause per query, so we
+   * loop through blockers and query each with targetIds 'in' clause.
+   */
+  private async queryInheritedBlocksBatch(
+    targetIds: string[],
+    followedBlockers: string[]
+  ): Promise<Map<string, { blockedBy: string; message?: string }>> {
+    const result = new Map<string, { blockedBy: string; message?: string }>()
+
+    if (targetIds.length === 0 || followedBlockers.length === 0) {
+      return result
+    }
+
+    try {
+      const sdk = await getEvoSdk()
+
+      // Query each blocker individually (Platform only supports one 'in' clause)
+      // Run in parallel for efficiency
+      const queries = followedBlockers.map(async (blockerId) => {
+        try {
+          const response = await sdk.documents.query({
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [
+              ['$ownerId', '==', blockerId],
+              ['blockedId', 'in', targetIds]
+            ],
+            orderBy: [['blockedId', 'asc']],
+            limit: Math.min(targetIds.length, 100)
+          } as any)
+
+          let documents: any[] = []
+          if (response instanceof Map) {
+            documents = Array.from(response.values())
+              .filter(Boolean)
+              .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
+          } else if (Array.isArray(response)) {
+            documents = response
+          }
+
+          return documents
+        } catch (err) {
+          console.error(`Error querying blocks for blocker ${blockerId}:`, err)
+          return []
+        }
+      })
+
+      const allResults = await Promise.all(queries)
+
+      // Merge all results
+      for (const documents of allResults) {
+        for (const doc of documents) {
+          const transformed = this.transformDocument(doc)
+          // Only set if not already found (first match wins)
+          if (!result.has(transformed.blockedId)) {
+            result.set(transformed.blockedId, {
+              blockedBy: transformed.$ownerId,
+              message: transformed.message
+            })
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error querying inherited blocks batch:', error)
+    }
+
+    return result
+  }
+
+  // ============================================================
+  // INITIALIZATION
+  // ============================================================
+
+  /**
+   * Initialize block data on page load.
+   * Queries all necessary data and populates sessionStorage cache.
+   */
+  async initializeBlockData(userId: string): Promise<void> {
+    // Check if cache already exists and is fresh
+    const existingCache = loadBlockCache(userId)
+    if (existingCache) {
+      return // Cache is fresh, skip initialization
+    }
+
+    try {
+      // Query all data in parallel
+      const [blockFollowData, ownBlocks] = await Promise.all([
+        this.getBlockFollow(userId),
+        this.getUserBlocks(userId)
+      ])
+
+      const followedUserIds = blockFollowData?.followedUserIds ?? []
+      const ownBlockedIds = ownBlocks.map(b => b.blockedId)
+
+      // Get bloom filters for self and followed users
+      const filterUserIds = [userId, ...followedUserIds]
+      const filters = await this.getBloomFiltersBatch(filterUserIds)
+
+      // Merge all bloom filters
+      const mergedFilter = filters.size > 0 ? BloomFilter.merge(Array.from(filters.values())) : null
+
+      // Initialize cache with all data
+      initializeBlockCache(
+        userId,
+        ownBlockedIds,
+        followedUserIds,
+        mergedFilter,
+        filterUserIds
+      )
+
+      // Store merged filter in sessionStorage
+      if (mergedFilter) {
+        setMergedBloomFilter(userId, mergedFilter, filterUserIds)
+      }
+    } catch (error) {
+      console.error('Error initializing block data:', error)
+    }
+  }
+
+  /**
+   * Count blocked users.
    */
   async countUserBlocks(userId: string): Promise<number> {
-    const blocks = await this.getUserBlocks(userId);
-    return blocks.length;
+    const blocks = await this.getUserBlocks(userId)
+    return blocks.length
   }
 }
 
 // Singleton instance
-export const blockService = new BlockService();
+export const blockService = new BlockService()

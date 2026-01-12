@@ -24,7 +24,7 @@ export type { LikeDocument } from './like-service';
 export type { FollowDocument } from './follow-service';
 export type { RepostDocument } from './repost-service';
 export type { BookmarkDocument } from './bookmark-service';
-export type { BlockDocument } from './block-service';
+export type { BlockDocument, BlockFilterDocument, BlockFollowDocument, BlockFollowData } from '../types';
 export type { StateTransitionResult } from './state-transition-service';
 export type { QueryOptions, DocumentResult } from './document-service';
 export type {

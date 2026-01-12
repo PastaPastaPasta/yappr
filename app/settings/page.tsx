@@ -29,6 +29,7 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
+import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
@@ -299,6 +300,11 @@ function SettingsPage() {
             </label>
           </div>
         </RadioGroup.Root>
+      </div>
+
+      {/* Block Lists Section */}
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <BlockListSettings />
       </div>
 
       {/* Blocked Users Section */}

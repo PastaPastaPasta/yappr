@@ -4,7 +4,8 @@
 
 // Contract IDs
 export const YAPPR_CONTRACT_ID = 'AyWK6nDVfb8d1ZmkM5MmZZrThbUyWyso1aMeGuuVSfxf' // Testnet
-export const YAPPR_DM_CONTRACT_ID = '3PWMM9NbSf84QcPy1N69Jyz7xtBFUEHNNTLcGrf6sq7M' // Testnet - DM contract v2.1 (10-byte conversationId)
+export const YAPPR_DM_CONTRACT_ID = 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
+export const YAPPR_BLOCK_CONTRACT_ID = 'DCLfH2tgyQhyaFeQigFk8ptC1MjQgsDghkYDvDrLMF3m' // Enhanced blocking contract with bloom filters
 export const DPNS_CONTRACT_ID = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec' // Testnet
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const HASHTAG_CONTRACT_ID = '82kvJWPsaMouoQjKYeqmkm6eYu5UEJquWrGzJFuiSErs' // Testnet - Hashtag tracking contract (v2 with byTime index)
@@ -25,6 +26,8 @@ export const DOCUMENT_TYPES = {
   LIST: 'list',
   LIST_MEMBER: 'listMember',
   BLOCK: 'block',
+  BLOCK_FILTER: 'blockFilter',
+  BLOCK_FOLLOW: 'blockFollow',
   MUTE: 'mute',
   DIRECT_MESSAGE: 'directMessage',
   NOTIFICATION: 'notification',

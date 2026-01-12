@@ -14,7 +14,7 @@ import {
 export interface UseBlockResult {
   isBlocked: boolean
   isLoading: boolean
-  toggleBlock: () => Promise<void>
+  toggleBlock: (message?: string) => Promise<void>
   refresh: () => void
 }
 
@@ -78,7 +78,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     checkBlockStatus()
   }, [checkBlockStatus])
 
-  const toggleBlock = useCallback(async () => {
+  const toggleBlock = useCallback(async (message?: string) => {
     if (!user?.identityId || !targetUserId || isLoading) return
 
     if (user.identityId === targetUserId) {
@@ -102,7 +102,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
 
       const result = wasBlocked
         ? await blockService.unblockUser(user.identityId, targetUserId)
-        : await blockService.blockUser(user.identityId, targetUserId)
+        : await blockService.blockUser(user.identityId, targetUserId, message)
 
       if (!result.success) {
         throw new Error(result.error || 'Block operation failed')

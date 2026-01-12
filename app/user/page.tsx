@@ -567,7 +567,7 @@ function UserProfileContent() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={toggleBlock}
+                    onClick={() => toggleBlock()}
                     disabled={blockLoading}
                   >
                     Unblock

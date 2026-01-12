@@ -79,6 +79,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             })
           }
 
+          // Initialize block data on session restore (background)
+          import('@/lib/services/block-service').then(async ({ blockService }) => {
+            try {
+              await blockService.initializeBlockData(savedUser.identityId)
+              console.log('Auth: Block data initialized from session restore')
+            } catch (err) {
+              console.error('Auth: Failed to initialize block data:', err)
+            }
+          })
+
           // Check for Dash Pay contacts on session restore (delayed)
           setTimeout(async () => {
             try {
@@ -192,6 +202,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('Profile found, redirecting to home...')
         router.push('/')
 
+        // Initialize block data after login (background, don't block navigation)
+        import('@/lib/services/block-service').then(async ({ blockService }) => {
+          try {
+            await blockService.initializeBlockData(authUser.identityId)
+            console.log('Auth: Block data initialized after login')
+          } catch (err) {
+            console.error('Auth: Failed to initialize block data:', err)
+          }
+        })
+
         // Check for Dash Pay contacts after login (delayed to not block navigation)
         setTimeout(async () => {
           try {
@@ -230,6 +250,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user?.identityId) {
       const { clearPrivateKey } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
+
+      // Clear block cache
+      const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
+      invalidateBlockCache(user.identityId)
     }
 
     setUser(null)

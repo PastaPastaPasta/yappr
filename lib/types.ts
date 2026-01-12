@@ -87,13 +87,13 @@ export interface Trend {
   category?: string
 }
 
-// V2 DM contract document types (raw from platform)
+// V3 DM contract document types (raw from platform)
 export interface ConversationInviteDocument {
   $id: string
   $ownerId: string  // sender
   $createdAt: number
   recipientId: Uint8Array  // 32 bytes
-  conversationId: Uint8Array  // 8 bytes
+  conversationId: Uint8Array  // 10 bytes
   senderPubKey?: Uint8Array  // 33 bytes, optional (for hash160 identities)
 }
 
@@ -101,18 +101,17 @@ export interface DirectMessageDocument {
   $id: string
   $ownerId: string  // sender
   $createdAt: number
-  conversationId: Uint8Array  // 8 bytes
-  encryptedContent: Uint8Array  // binary: [12 bytes IV | ciphertext]
+  conversationId: Uint8Array  // 10 bytes
+  encryptedContent: Uint8Array  // binary: [12 bytes IV | ciphertext], max 5KB
 }
 
 export interface ReadReceiptDocument {
   $id: string
   $ownerId: string  // reader (who owns this receipt)
   $createdAt: number
-  $updatedAt: number
+  $updatedAt: number  // v3: use this as "last read" timestamp
   $revision?: number
-  conversationId: Uint8Array  // 8 bytes
-  lastReadAt: number  // timestamp
+  conversationId: Uint8Array  // 10 bytes
 }
 
 // Decrypted message for UI display
@@ -139,4 +138,41 @@ export interface Conversation {
 export interface PostQueryOptions {
   /** Skip automatic enrichment - caller will handle enrichment manually */
   skipEnrichment?: boolean
+}
+
+// Block contract document types (enhanced blocking with bloom filters)
+export interface BlockDocument {
+  $id: string
+  $ownerId: string // Who is doing the blocking
+  $createdAt: number
+  blockedId: string // Who is blocked (base58 format after transformation)
+  message?: string // Optional public reason for blocking
+}
+
+export interface BlockFilterDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  $updatedAt: number
+  $revision?: number
+  filterData: Uint8Array // Serialized bloom filter (up to 5KB)
+  itemCount: number // Number of items in the filter
+  version: number // Bloom filter version for forward compatibility
+}
+
+export interface BlockFollowDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  $updatedAt: number
+  $revision?: number
+  followedBlockers: Uint8Array // Encoded array of user IDs (max 100 * 32 bytes)
+}
+
+// Parsed block follow data (after decoding followedBlockers)
+export interface BlockFollowData {
+  $id: string
+  $ownerId: string
+  $revision?: number
+  followedUserIds: string[] // Decoded list of user IDs being followed
 }
