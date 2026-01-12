@@ -179,9 +179,10 @@ class TipService {
         transactionHash: 'confirmed'
       };
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Tip transfer error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
+      const errorMessage = error?.message || (typeof error === 'string' ? error : 'Unknown error');
 
       // Handle known DAPI timeout issue (like in state-transition-service)
       if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
@@ -197,18 +198,29 @@ class TipService {
         };
       }
 
-      // Check for invalid key errors
-      if (errorMessage.includes('private') || errorMessage.includes('key') || errorMessage.includes('signature')) {
+      // Check for invalid key errors - match various SDK error patterns
+      const lowerError = errorMessage.toLowerCase();
+      if (
+        lowerError.includes('private') ||
+        lowerError.includes('key') ||
+        lowerError.includes('signature') ||
+        lowerError.includes('wif') ||
+        lowerError.includes('invalid') ||
+        lowerError.includes('mismatch') ||
+        lowerError.includes('security') ||
+        lowerError.includes('authentication') ||
+        lowerError.includes('verify')
+      ) {
         return {
           success: false,
-          error: 'Invalid transfer key. Please check your key and try again.',
+          error: 'Invalid transfer key. The key you provided does not match this identity.',
           errorCode: 'INVALID_KEY'
         };
       }
 
       return {
         success: false,
-        error: errorMessage,
+        error: `Transfer failed: ${errorMessage}`,
         errorCode: 'NETWORK_ERROR'
       };
     }
