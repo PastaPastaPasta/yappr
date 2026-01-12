@@ -68,6 +68,17 @@ export function ComposeModal() {
             .then(results => {
               const successCount = results.filter(r => r).length
               console.log(`Created ${successCount}/${hashtags.length} hashtag documents`)
+
+              // Dispatch events for each successfully created hashtag so post cards revalidate
+              results.forEach((success, index) => {
+                if (success) {
+                  window.dispatchEvent(
+                    new CustomEvent('hashtag-registered', {
+                      detail: { postId, hashtag: hashtags[index] }
+                    })
+                  )
+                }
+              })
             })
             .catch(err => {
               console.error('Failed to create hashtag documents:', err)
