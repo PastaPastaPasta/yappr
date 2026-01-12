@@ -5,7 +5,7 @@ A decentralized social media platform built on Dash Platform. All data—posts, 
 ## Features
 
 ### Core Social
-- **Posts**: 500-character posts with optional media
+- **Posts**: 500-character posts
 - **Replies & Threads**: Nested conversation threads
 - **Likes & Reposts**: Engage with posts
 - **Follows**: Follow users to see their posts in your feed
