@@ -25,7 +25,7 @@ import { useTheme } from 'next-themes'
 import * as Switch from '@radix-ui/react-switch'
 import * as RadioGroup from '@radix-ui/react-radio-group'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
@@ -33,6 +33,7 @@ import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
+const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'appearance', 'about']
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
@@ -45,9 +46,24 @@ const settingsSections = [
 
 function SettingsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const { theme, setTheme } = useTheme()
-  const [activeSection, setActiveSection] = useState<SettingsSection>('main')
+
+  // Derive active section from URL search params
+  const sectionParam = searchParams.get('section')
+  const activeSection: SettingsSection = sectionParam && VALID_SECTIONS.includes(sectionParam as SettingsSection)
+    ? (sectionParam as SettingsSection)
+    : 'main'
+
+  // Navigate to a section by updating URL
+  const setActiveSection = (section: SettingsSection) => {
+    if (section === 'main') {
+      router.push('/settings')
+    } else {
+      router.push(`/settings?section=${section}`)
+    }
+  }
   
   // Notification settings
   const [notificationSettings, setNotificationSettings] = useState({
@@ -96,7 +112,8 @@ function SettingsPage() {
     if (activeSection === 'main') {
       router.back()
     } else {
-      setActiveSection('main')
+      // Navigate to main settings (removes query param)
+      router.push('/settings')
     }
   }
 
