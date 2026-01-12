@@ -480,7 +480,7 @@ function UserProfileContent() {
                             navigator.clipboard.writeText(profileUrl)
                             toast.success('Profile link copied!')
                           }}
-                          className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                          className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-center"
                         >
                           <ShareIcon className="h-4 w-4" />
                         </button>
@@ -501,7 +501,7 @@ function UserProfileContent() {
                         <Tooltip.Trigger asChild>
                           <button
                             onClick={() => router.push('/settings')}
-                            className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                            className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-center"
                           >
                             <Cog6ToothIcon className="h-4 w-4" />
                           </button>
