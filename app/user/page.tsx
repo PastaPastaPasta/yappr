@@ -497,9 +497,9 @@ function UserProfileContent() {
                       type="text"
                       value={editPronouns}
                       onChange={(e) => setEditPronouns(e.target.value)}
-                      placeholder="they/them, she/her, he/him, etc."
+                      placeholder="e.g. she/her"
                       className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      maxLength={30}
+                      maxLength={20}
                     />
                   </div>
 
@@ -534,7 +534,7 @@ function UserProfileContent() {
                       onChange={(e) => setEditWebsite(e.target.value)}
                       placeholder="https://example.com"
                       className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      maxLength={100}
+                      maxLength={200}
                     />
                   </div>
 

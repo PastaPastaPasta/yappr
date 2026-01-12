@@ -333,8 +333,8 @@ function CreateProfilePage() {
                   type="text"
                   value={formData.pronouns}
                   onChange={(e) => setFormData({ ...formData, pronouns: e.target.value })}
-                  placeholder="they/them, she/her, he/him, etc."
-                  maxLength={30}
+                  placeholder="e.g. she/her"
+                  maxLength={20}
                 />
               </div>
 
@@ -348,10 +348,10 @@ function CreateProfilePage() {
                   onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
                   placeholder="Tell us about yourself..."
                   rows={3}
-                  maxLength={200}
+                  maxLength={160}
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  {formData.bio.length}/200 characters
+                  {formData.bio.length}/160 characters
                 </p>
               </div>
 
@@ -379,7 +379,7 @@ function CreateProfilePage() {
                   value={formData.website}
                   onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                   placeholder="https://example.com"
-                  maxLength={100}
+                  maxLength={200}
                 />
               </div>
             </div>
