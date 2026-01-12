@@ -77,7 +77,7 @@ function NestedReply({ reply, parentPost }: NestedReplyProps) {
             className="text-yappr-500 hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
-            @{parentPost.author.username || parentPost.author.id.slice(0, 8) + '...'}
+            @{parentPost.author.username && !parentPost.author.username.startsWith('user_') ? parentPost.author.username : parentPost.author.displayName}
           </Link>
         </span>
       </div>
