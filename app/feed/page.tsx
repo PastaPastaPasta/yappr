@@ -209,6 +209,72 @@ function FeedPage() {
         } catch (quoteError) {
           console.error('Feed: Error fetching quoted posts for following feed:', quoteError)
         }
+
+        // Fetch reposts from followed users and add to feed
+        try {
+          const { followService } = await import('@/lib/services')
+          const { repostService } = await import('@/lib/services/repost-service')
+          const { postService, unifiedProfileService } = await import('@/lib/services')
+
+          // Get list of followed user IDs
+          const followedUsers = await followService.getFollowing(user.identityId)
+          const followedIds = followedUsers.map((f: any) => f.followedId || f.$id)
+
+          if (followedIds.length > 0) {
+            // Fetch recent reposts from each followed user
+            const allReposts: any[] = []
+            await Promise.all(followedIds.slice(0, 20).map(async (followedId: string) => {
+              try {
+                const userReposts = await repostService.getUserReposts(followedId, { limit: 10 })
+                allReposts.push(...userReposts.map(r => ({ ...r, reposterId: followedId })))
+              } catch (e) {
+                // Ignore individual failures
+              }
+            }))
+
+            if (allReposts.length > 0) {
+              // Get unique post IDs and fetch original posts
+              const existingPostIds = new Set(posts.map((p: any) => p.id))
+              const repostPostIds = Array.from(new Set(allReposts.map(r => r.postId)))
+                .filter(id => !existingPostIds.has(id)) // Don't duplicate posts already in feed
+
+              if (repostPostIds.length > 0) {
+                const repostedPosts = await postService.getPostsByIds(repostPostIds)
+                const repostedPostMap = new Map(repostedPosts.map(p => [p.id, p]))
+
+                // Fetch reposter profiles
+                const reposterIds = Array.from(new Set(allReposts.map(r => r.reposterId)))
+                const reposterProfiles = new Map<string, any>()
+                await Promise.all(reposterIds.map(async (id) => {
+                  try {
+                    const profile = await unifiedProfileService.getProfileWithUsername(id)
+                    if (profile) reposterProfiles.set(id, profile)
+                  } catch (e) {}
+                }))
+
+                // Add reposted posts to feed
+                for (const repost of allReposts) {
+                  const originalPost = repostedPostMap.get(repost.postId)
+                  if (originalPost && !existingPostIds.has(repost.postId)) {
+                    existingPostIds.add(repost.postId) // Prevent duplicates from multiple reposters
+                    const reposterProfile = reposterProfiles.get(repost.reposterId)
+                    posts.push({
+                      ...originalPost,
+                      repostedBy: {
+                        id: repost.reposterId,
+                        displayName: reposterProfile?.displayName || `User ${repost.reposterId.slice(-6)}`,
+                        username: reposterProfile?.username
+                      },
+                      repostTimestamp: new Date(repost.$createdAt)
+                    })
+                  }
+                }
+              }
+            }
+          }
+        } catch (repostError) {
+          console.error('Feed: Error fetching reposts for following feed:', repostError)
+        }
       } else {
         // For You feed - get all posts and reposts
         const dashClient = getDashPlatformClient()
