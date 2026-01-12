@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback } from 'react'
-import { useAuth } from '@/contexts/auth-context'
+import { useAuth, AuthUser } from '@/contexts/auth-context'
 import { useLoginPromptModal, LoginPromptAction } from '@/hooks/use-login-prompt-modal'
 
 /**
@@ -9,11 +9,12 @@ import { useLoginPromptModal, LoginPromptAction } from '@/hooks/use-login-prompt
  *
  * Usage:
  * ```tsx
- * const { requireAuth, isAuthenticated } = useRequireAuth()
+ * const { requireAuth } = useRequireAuth()
  *
  * const handleLike = () => {
- *   if (!requireAuth('like')) return
- *   // ... proceed with like action
+ *   const authedUser = requireAuth('like')
+ *   if (!authedUser) return
+ *   // authedUser.identityId is now type-safe
  * }
  * ```
  */
@@ -26,37 +27,17 @@ export function useRequireAuth() {
   /**
    * Check if user is authenticated. If not, opens the login prompt modal.
    * @param action - The type of action being attempted (for display purposes)
-   * @returns true if authenticated, false if login prompt was shown
+   * @returns The authenticated user if logged in, null if login prompt was shown
    */
   const requireAuth = useCallback(
-    (action: LoginPromptAction = 'generic'): boolean => {
+    (action: LoginPromptAction = 'generic'): AuthUser | null => {
       if (user) {
-        return true
+        return user
       }
       openLoginPrompt(action)
-      return false
+      return null
     },
     [user, openLoginPrompt]
-  )
-
-  /**
-   * Wrap an async function to require auth before executing.
-   * Returns a function that will check auth and either execute
-   * the original function or show the login prompt.
-   */
-  const withAuth = useCallback(
-    <T extends (...args: any[]) => Promise<any>>(
-      fn: T,
-      action: LoginPromptAction = 'generic'
-    ): ((...args: Parameters<T>) => Promise<ReturnType<T> | undefined>) => {
-      return async (...args: Parameters<T>) => {
-        if (!requireAuth(action)) {
-          return undefined
-        }
-        return fn(...args)
-      }
-    },
-    [requireAuth]
   )
 
   return {
@@ -64,10 +45,8 @@ export function useRequireAuth() {
     isAuthenticated,
     /** The current user object (null if not authenticated) */
     user,
-    /** Check auth and show login prompt if needed. Returns true if authenticated. */
+    /** Check auth and show login prompt if needed. Returns the user if authenticated, null otherwise. */
     requireAuth,
-    /** Wrap an async function to require auth before executing */
-    withAuth,
     /** Directly open the login prompt modal */
     openLoginPrompt,
   }

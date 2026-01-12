@@ -182,7 +182,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       return
     }
 
-    if (!requireAuth('like')) return
+    const authedUser = requireAuth('like')
+    if (!authedUser) return
 
     if (likeLoading) return
 
@@ -197,8 +198,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     try {
       const { likeService } = await import('@/lib/services/like-service')
       const success = wasLiked
-        ? await likeService.unlikePost(post.id, user!.identityId)
-        : await likeService.likePost(post.id, user!.identityId)
+        ? await likeService.unlikePost(post.id, authedUser.identityId)
+        : await likeService.likePost(post.id, authedUser.identityId)
 
       if (!success) throw new Error('Like operation failed')
     } catch (error) {
@@ -213,7 +214,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleRepost = async () => {
-    if (!requireAuth('repost')) return
+    const authedUser = requireAuth('repost')
+    if (!authedUser) return
 
     if (repostLoading) return
 
@@ -228,8 +230,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     try {
       const { repostService } = await import('@/lib/services/repost-service')
       const success = wasReposted
-        ? await repostService.removeRepost(post.id, user!.identityId)
-        : await repostService.repostPost(post.id, user!.identityId)
+        ? await repostService.removeRepost(post.id, authedUser.identityId)
+        : await repostService.repostPost(post.id, authedUser.identityId)
 
       if (!success) throw new Error('Repost operation failed')
       toast.success(wasReposted ? 'Removed repost' : 'Reposted!')
@@ -260,7 +262,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleBookmark = async () => {
-    if (!requireAuth('bookmark')) return
+    const authedUser = requireAuth('bookmark')
+    if (!authedUser) return
 
     if (bookmarkLoading) return
 
@@ -273,8 +276,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     try {
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
       const success = wasBookmarked
-        ? await bookmarkService.removeBookmark(post.id, user!.identityId)
-        : await bookmarkService.bookmarkPost(post.id, user!.identityId)
+        ? await bookmarkService.removeBookmark(post.id, authedUser.identityId)
+        : await bookmarkService.bookmarkPost(post.id, authedUser.identityId)
 
       if (!success) throw new Error('Bookmark operation failed')
       toast.success(wasBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks')

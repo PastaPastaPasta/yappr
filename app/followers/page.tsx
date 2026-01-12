@@ -217,13 +217,14 @@ function FollowersPage() {
   }, [loadFollowers, user, targetUserId])
 
   const handleFollow = async (userId: string) => {
-    if (!requireAuth('follow')) return
+    const authedUser = requireAuth('follow')
+    if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
       console.log('Following user:', userId)
-      const result = await followService.followUser(user!.identityId, userId)
+      const result = await followService.followUser(authedUser.identityId, userId)
 
       if (result.success) {
         // Update local state - mark as following back
@@ -231,7 +232,7 @@ function FollowersPage() {
           (prev || []).map(f => f.id === userId ? { ...f, isFollowingBack: true } : f)
         )
         // Invalidate following cache since we added a new follow
-        cacheManager.delete('following', `following_${user!.identityId}`)
+        cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Following!')
       } else {
         console.error('Failed to follow user:', result.error)
@@ -250,13 +251,14 @@ function FollowersPage() {
   }
 
   const handleUnfollow = async (userId: string) => {
-    if (!requireAuth('follow')) return
+    const authedUser = requireAuth('follow')
+    if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
       console.log('Unfollowing user:', userId)
-      const result = await followService.unfollowUser(user!.identityId, userId)
+      const result = await followService.unfollowUser(authedUser.identityId, userId)
 
       if (result.success) {
         // Update local state - mark as not following back
@@ -264,7 +266,7 @@ function FollowersPage() {
           (prev || []).map(f => f.id === userId ? { ...f, isFollowingBack: false } : f)
         )
         // Invalidate following cache
-        cacheManager.delete('following', `following_${user!.identityId}`)
+        cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Unfollowed')
       } else {
         console.error('Failed to unfollow user:', result.error)

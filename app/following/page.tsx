@@ -228,7 +228,8 @@ function FollowingPage() {
   }, [loadFollowing, user, targetUserId])
 
   const handleUnfollow = async (userId: string) => {
-    if (!requireAuth('follow')) return
+    const authedUser = requireAuth('follow')
+    if (!authedUser) return
 
     // Add to in-progress set for UI feedback
     setFollowingInProgress(prev => new Set(prev).add(userId))
@@ -236,7 +237,7 @@ function FollowingPage() {
     try {
       console.log('Unfollowing user:', userId)
 
-      const result = await followService.unfollowUser(user!.identityId, userId)
+      const result = await followService.unfollowUser(authedUser.identityId, userId)
 
       if (result.success) {
         // Update local state to remove from following list
@@ -248,7 +249,7 @@ function FollowingPage() {
           prev.map(u => u.id === userId ? { ...u, isFollowing: false } : u)
         )
         // Invalidate cache
-        cacheManager.delete('following', `following_${user!.identityId}`)
+        cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Unfollowed')
       } else {
         console.error('Failed to unfollow user:', result.error)
@@ -267,7 +268,8 @@ function FollowingPage() {
   }
 
   const handleFollow = async (userId: string) => {
-    if (!requireAuth('follow')) return
+    const authedUser = requireAuth('follow')
+    if (!authedUser) return
 
     // Add to in-progress set
     setFollowingInProgress(prev => new Set(prev).add(userId))
@@ -276,7 +278,7 @@ function FollowingPage() {
       console.log('Following user:', userId)
 
       // Create follow document
-      const result = await followService.followUser(user!.identityId, userId)
+      const result = await followService.followUser(authedUser.identityId, userId)
       
       if (result.success) {
         // Update the search results to reflect the new follow status

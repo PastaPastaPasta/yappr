@@ -95,13 +95,14 @@ export function BlockedUsersSettings() {
   }, [loadBlockedUsers])
 
   const handleUnblock = async (blockedUserId: string) => {
-    if (!requireAuth('block') || unblockingId) return
+    const authedUser = requireAuth('block')
+    if (!authedUser || unblockingId) return
 
     setUnblockingId(blockedUserId)
 
     try {
       const { blockService } = await import('@/lib/services/block-service')
-      const result = await blockService.unblockUser(user!.identityId, blockedUserId)
+      const result = await blockService.unblockUser(authedUser.identityId, blockedUserId)
 
       if (result.success) {
         // Remove from local state

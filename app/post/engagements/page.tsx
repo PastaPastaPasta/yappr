@@ -232,12 +232,13 @@ function EngagementsPageContent() {
   }, [activeTab, postId])
 
   const handleFollow = async (userId: string) => {
-    if (!requireAuth('follow')) return
+    const authedUser = requireAuth('follow')
+    if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      const result = await followService.followUser(user!.identityId, userId)
+      const result = await followService.followUser(authedUser.identityId, userId)
       if (result.success) {
         // Update local state in all tabs
         const updateUsers = (users: EngagementUser[] | null) =>
@@ -263,12 +264,13 @@ function EngagementsPageContent() {
   }
 
   const handleUnfollow = async (userId: string) => {
-    if (!requireAuth('follow')) return
+    const authedUser = requireAuth('follow')
+    if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      const result = await followService.unfollowUser(user!.identityId, userId)
+      const result = await followService.unfollowUser(authedUser.identityId, userId)
       if (result.success) {
         // Update local state in all tabs
         const updateUsers = (users: EngagementUser[] | null) =>

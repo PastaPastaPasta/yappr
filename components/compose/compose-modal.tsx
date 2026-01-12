@@ -37,17 +37,18 @@ export function ComposeModal() {
 
   const handlePost = async () => {
     if (!content.trim() || content.length > characterLimit) return
-    if (!requireAuth('post')) return
-    
+    const authedUser = requireAuth('post')
+    if (!authedUser) return
+
     setIsPosting(true)
     const postContent = content.trim()
-    
+
     try {
       const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
       const { retryPostCreation, isNetworkError } = await import('@/lib/retry-utils')
-      
+
       console.log('Creating post with Dash SDK...')
-      
+
       // Use retry logic for post creation
       const result = await retryPostCreation(async () => {
         const dashClient = getDashPlatformClient()
@@ -56,7 +57,7 @@ export function ComposeModal() {
           quotedPostId: quotingPost?.id
         })
       })
-      
+
       if (result.success) {
         toast.success('Post created successfully!')
 
@@ -69,7 +70,7 @@ export function ComposeModal() {
 
         if (hashtags.length > 0 && postId) {
           // Create hashtag documents in background (don't block UI)
-          hashtagService.createPostHashtags(postId, user!.identityId, hashtags)
+          hashtagService.createPostHashtags(postId, authedUser.identityId, hashtags)
             .then(results => {
               const successCount = results.filter(r => r).length
               console.log(`Created ${successCount}/${hashtags.length} hashtag documents`)
