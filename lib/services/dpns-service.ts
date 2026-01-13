@@ -13,13 +13,37 @@ interface DpnsDocument {
   normalizedParentDomainName: string;
   preorderSalt: string;
   records: {
-    identity?: string;  // This is the actual field name used in DPNS
+    identity?: string;
     dashUniqueIdentityId?: string;
     dashAliasIdentityId?: string;
   };
   subdomainRules?: {
     allowSubdomains: boolean;
   };
+}
+
+/**
+ * Extract documents array from SDK response (handles Map, Array, and object formats)
+ */
+function extractDocuments(response: unknown): any[] {
+  if (response instanceof Map) {
+    return Array.from(response.values())
+      .filter(Boolean)
+      .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+  }
+  if (Array.isArray(response)) {
+    return response.map((doc: any) =>
+      typeof doc.toJSON === 'function' ? doc.toJSON() : doc
+    );
+  }
+  if ((response as any)?.documents) {
+    return (response as any).documents;
+  }
+  if ((response as any)?.toJSON) {
+    const json = (response as any).toJSON();
+    return Array.isArray(json) ? json : json.documents || [];
+  }
+  return [];
 }
 
 class DpnsService {
@@ -61,22 +85,11 @@ class DpnsService {
         limit: 20
       } as any);
 
-      // Handle Map response (v3 SDK)
-      if (response instanceof Map) {
-        const docs = Array.from(response.values()).filter(Boolean);
-        if (docs.length > 0) {
-          return docs.map((doc: any) => {
-            const docData = typeof doc.toJSON === 'function' ? doc.toJSON() : doc;
-            return `${docData.label}.${docData.normalizedParentDomainName}`;
-          });
-        }
-      } else if (response && (response as any).documents && (response as any).documents.length > 0) {
-        return (response as any).documents.map((doc: DpnsDocument) =>
-          `${doc.label}.${doc.normalizedParentDomainName}`
-        );
-      }
-
-      return [];
+      const documents = extractDocuments(response);
+      return documents.map((doc: any) => {
+        const data = doc.data || doc;
+        return `${data.label}.${data.normalizedParentDomainName}`;
+      });
     } catch (error) {
       console.error('DPNS: Error fetching all usernames:', error);
       return [];
@@ -137,10 +150,7 @@ class DpnsService {
     try {
       const sdk = await getEvoSdk();
 
-      // Note: records.identity stores identity IDs as JSON strings (not bytes)
-      // So we pass them as-is without byte conversion
       // Batch query using 'in' operator (max 100 per query)
-      // Must include orderBy to satisfy Dash Platform query requirements
       const response = await sdk.documents.query({
         dataContractId: DPNS_CONTRACT_ID,
         documentTypeName: DPNS_DOCUMENT_TYPE,
@@ -149,21 +159,7 @@ class DpnsService {
         limit: 100
       } as any);
 
-      // Process results - handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if ((response as any)?.documents) {
-        documents = (response as any).documents;
-      } else if ((response as any)?.toJSON) {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
+      const documents = extractDocuments(response);
       for (const doc of documents) {
         const data = doc.data || doc;
         const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
@@ -261,21 +257,7 @@ class DpnsService {
         limit: 1
       } as any);
 
-      // Handle response formats - v3 SDK returns Map
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if ((response as any)?.documents) {
-        documents = (response as any).documents;
-      } else if ((response as any)?.toJSON) {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
+      const documents = extractDocuments(response);
       if (documents.length > 0) {
         const doc = documents[0];
         const data = doc.data || doc;
@@ -344,16 +326,7 @@ class DpnsService {
         limit
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      }
-
+      const documents = extractDocuments(response);
       return documents.map((doc: any) => {
         const data = doc.data || doc;
         const label = data.label || data.normalizedLabel || 'unknown';

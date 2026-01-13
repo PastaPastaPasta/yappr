@@ -10,6 +10,17 @@ class SecureStorage {
   private prefix = 'yappr_secure_'
   private rememberKey = 'yappr_remember_me'
 
+  private getKeysWithPrefix(storage: Storage): string[] {
+    const keys: string[] = []
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i)
+      if (key?.startsWith(this.prefix)) {
+        keys.push(key)
+      }
+    }
+    return keys
+  }
+
   private getStorage(): Storage | null {
     if (typeof window === 'undefined') return null
     // Check if "remember me" was selected
@@ -114,27 +125,9 @@ class SecureStorage {
    */
   clear(): void {
     if (!this.isAvailable()) return
-    // Clear from localStorage
-    const localKeys: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
-      if (key?.startsWith(this.prefix)) {
-        localKeys.push(key)
-      }
-    }
-    localKeys.forEach(key => localStorage.removeItem(key))
 
-    // Clear from sessionStorage
-    const sessionKeys: string[] = []
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i)
-      if (key?.startsWith(this.prefix)) {
-        sessionKeys.push(key)
-      }
-    }
-    sessionKeys.forEach(key => sessionStorage.removeItem(key))
-
-    // Also clear the remember me preference
+    this.getKeysWithPrefix(localStorage).forEach(key => localStorage.removeItem(key))
+    this.getKeysWithPrefix(sessionStorage).forEach(key => sessionStorage.removeItem(key))
     localStorage.removeItem(this.rememberKey)
   }
 
@@ -143,21 +136,13 @@ class SecureStorage {
    */
   keys(): string[] {
     if (!this.isAvailable()) return []
-    const keys = new Set<string>()
-    // Check both storages
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
-      if (key?.startsWith(this.prefix)) {
-        keys.add(key.slice(this.prefix.length))
-      }
-    }
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i)
-      if (key?.startsWith(this.prefix)) {
-        keys.add(key.slice(this.prefix.length))
-      }
-    }
-    return Array.from(keys)
+
+    const allKeys = [
+      ...this.getKeysWithPrefix(localStorage),
+      ...this.getKeysWithPrefix(sessionStorage)
+    ]
+    const uniqueKeys = new Set(allKeys.map(k => k.slice(this.prefix.length)))
+    return Array.from(uniqueKeys)
   }
 
   /**

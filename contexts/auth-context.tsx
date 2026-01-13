@@ -30,6 +30,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+// Helper to update a field in the saved session
+function updateSavedSession(updater: (sessionData: any) => void): void {
+  const savedSession = localStorage.getItem('yappr_session')
+  if (!savedSession) return
+
+  try {
+    const sessionData = JSON.parse(savedSession)
+    updater(sessionData)
+    localStorage.setItem('yappr_session', JSON.stringify(sessionData))
+  } catch (e) {
+    console.error('Failed to update session:', e)
+  }
+}
+
+// Loading spinner shown during auth state transitions
+function AuthLoadingSpinner(): JSX.Element {
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+    </div>
+  )
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -62,17 +85,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // If user doesn't have DPNS username, fetch it in background
           if (savedUser && !savedUser.dpnsUsername) {
             console.log('Auth: Fetching DPNS username in background...')
-            // Don't await - let it happen in background
             import('@/lib/services/dpns-service').then(async ({ dpnsService }) => {
               try {
                 const dpnsUsername = await dpnsService.resolveUsername(savedUser.identityId)
                 if (dpnsUsername) {
                   console.log('Auth: Found DPNS username:', dpnsUsername)
-                  // Update user state
                   setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
-                  // Update saved session
-                  const updatedSession = { ...sessionData, user: { ...savedUser, dpnsUsername } }
-                  localStorage.setItem('yappr_session', JSON.stringify(updatedSession))
+                  updateSavedSession(data => { data.user.dpnsUsername = dpnsUsername })
                 }
               } catch (e) {
                 console.error('Auth: Background DPNS fetch failed:', e)
@@ -300,22 +319,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [login])
 
   const updateDPNSUsername = useCallback((username: string) => {
-    if (user) {
-      const updatedUser = { ...user, dpnsUsername: username }
-      setUser(updatedUser)
+    if (!user) return
 
-      // Update session storage
-      const savedSession = localStorage.getItem('yappr_session')
-      if (savedSession) {
-        try {
-          const sessionData = JSON.parse(savedSession)
-          sessionData.user.dpnsUsername = username
-          localStorage.setItem('yappr_session', JSON.stringify(sessionData))
-        } catch (e) {
-          console.error('Failed to update session:', e)
-        }
-      }
-    }
+    setUser({ ...user, dpnsUsername: username })
+    updateSavedSession(data => { data.user.dpnsUsername = username })
   }, [user])
 
   // Refresh balance from the network (clears cache first)
@@ -325,23 +332,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const { identityService } = await import('@/lib/services/identity-service')
-      // Clear cache to ensure fresh fetch
       identityService.clearCache(identityId)
       const balance = await identityService.getBalance(identityId)
 
       setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
-
-      // Persist to localStorage
-      const savedSession = localStorage.getItem('yappr_session')
-      if (savedSession) {
-        try {
-          const sessionData = JSON.parse(savedSession)
-          sessionData.user.balance = balance.confirmed
-          localStorage.setItem('yappr_session', JSON.stringify(sessionData))
-        } catch (e) {
-          console.error('Failed to persist balance:', e)
-        }
-      }
+      updateSavedSession(data => { data.user.balance = balance.confirmed })
     } catch (error) {
       console.error('Failed to refresh balance:', error)
     }
@@ -352,29 +347,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const identityId = user?.identityId
     if (!identityId) return
 
-    // Periodic refresh every 5 minutes
     const interval = setInterval(async () => {
       try {
         const { identityService } = await import('@/lib/services/identity-service')
         identityService.clearCache(identityId)
         const balance = await identityService.getBalance(identityId)
         setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
-
-        // Persist to localStorage
-        const savedSession = localStorage.getItem('yappr_session')
-        if (savedSession) {
-          try {
-            const sessionData = JSON.parse(savedSession)
-            sessionData.user.balance = balance.confirmed
-            localStorage.setItem('yappr_session', JSON.stringify(sessionData))
-          } catch (e) {
-            // Silent fail for periodic updates
-          }
-        }
+        updateSavedSession(data => { data.user.balance = balance.confirmed })
       } catch (error) {
         console.error('Failed to refresh balance:', error)
       }
-    }, 300000) // 5 minutes
+    }, 300000)
 
     return () => clearInterval(interval)
   }, [user?.identityId])
@@ -441,37 +424,22 @@ export function withAuth<P extends object>(
       }
     }, [user, isAuthRestoring, router])
 
-    // Show loading while restoring auth state
     if (isAuthRestoring) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-        </div>
-      )
+      return <AuthLoadingSpinner />
     }
 
-    // If auth is optional, render component even without user
     if (options?.optional) {
       return <Component {...props} />
     }
 
-    // If auth is required and no user, show loading (redirect will happen from useEffect)
     if (!user) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-        </div>
-      )
+      return <AuthLoadingSpinner />
     }
 
-    // If DPNS is required but not present, show loading (redirect will happen)
     const skipDPNS = sessionStorage.getItem('yappr_skip_dpns') === 'true'
-    if (!options?.allowWithoutDPNS && !user.dpnsUsername && !skipDPNS) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-        </div>
-      )
+    const needsDPNS = !options?.allowWithoutDPNS && !user.dpnsUsername && !skipDPNS
+    if (needsDPNS) {
+      return <AuthLoadingSpinner />
     }
 
     return <Component {...props} />
