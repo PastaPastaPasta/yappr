@@ -11,7 +11,7 @@ import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { extractHashtags } from '@/lib/post-helpers'
+import { extractAllTags } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { formatTime } from '@/lib/utils'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
@@ -65,8 +65,8 @@ export function ComposeModal() {
       if (result.success) {
         toast.success('Post created successfully!')
 
-        // Create hashtag documents for the post
-        const hashtags = extractHashtags(postContent)
+        // Create hashtag documents for the post (includes both #hashtags and $cashtags)
+        const hashtags = extractAllTags(postContent)
         // Post ID can be in different fields depending on SDK response format
         // Dash Platform uses $id (with $ prefix) for document IDs
         const postId = result.data?.documentId || result.data?.document?.$id || result.data?.document?.id || result.data?.$id || result.data?.id

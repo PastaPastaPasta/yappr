@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ArrowLeftIcon, HashtagIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
@@ -13,6 +13,7 @@ import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 
 function HashtagPageContent() {
   const router = useRouter()
@@ -23,6 +24,12 @@ function HashtagPageContent() {
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [postCount, setPostCount] = useState(0)
+
+  // Determine if this is a cashtag and get display values
+  const isCashtag = isCashtagStorage(tag)
+  const displayTag = isCashtag ? cashtagStorageToDisplay(tag) : tag
+  const tagSymbol = isCashtag ? '$' : '#'
+  const TagIcon = isCashtag ? CurrencyDollarIcon : HashtagIcon
 
   useEffect(() => {
     const loadHashtagPosts = async () => {
@@ -137,8 +144,8 @@ function HashtagPageContent() {
               </button>
               <div>
                 <h1 className="text-xl font-bold flex items-center gap-1">
-                  <HashtagIcon className="h-5 w-5 text-yappr-500" />
-                  {tag}
+                  <TagIcon className="h-5 w-5 text-yappr-500" />
+                  {displayTag}
                 </h1>
                 <p className="text-sm text-gray-500">
                   {formatNumber(postCount)} {postCount === 1 ? 'post' : 'posts'}
@@ -152,14 +159,14 @@ function HashtagPageContent() {
             {isLoading ? (
               <div className="p-8 text-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
-                <p className="text-gray-500">Loading posts with #{tag}...</p>
+                <p className="text-gray-500">Loading posts with {tagSymbol}{displayTag}...</p>
               </div>
             ) : posts.length === 0 ? (
               <div className="p-12 text-center">
-                <HashtagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+                <TagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <h2 className="text-xl font-semibold mb-2">No posts yet</h2>
                 <p className="text-gray-500 mb-4">
-                  Be the first to post with #{tag}
+                  Be the first to post with {tagSymbol}{displayTag}
                 </p>
                 {!HASHTAG_CONTRACT_ID && (
                   <p className="text-sm text-amber-600 dark:text-amber-400">

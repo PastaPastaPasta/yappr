@@ -7,13 +7,14 @@ import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
 import { LinkPreview, LinkPreviewSkeleton } from './link-preview'
 import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
 import { useSettingsStore } from '@/lib/store'
+import { cashtagDisplayToStorage } from '@/lib/post-helpers'
 
 interface PostContentProps {
   content: string
   className?: string
-  /** Optional: validation status per hashtag (normalized, no #) */
+  /** Optional: validation status per tag (normalized storage format, no # or $) */
   hashtagValidations?: Map<string, HashtagValidationStatus>
-  /** Optional: callback when failed hashtag warning is clicked */
+  /** Optional: callback when failed hashtag/cashtag warning is clicked */
   onFailedHashtagClick?: (hashtag: string) => void
   /** Optional: disable link preview */
   disableLinkPreview?: boolean
@@ -38,14 +39,15 @@ export function PostContent({
     { disabled: disableLinkPreview, richPreview: richLinkPreviews }
   )
   const parsedContent = useMemo(() => {
-    // Combined pattern to match URLs, hashtags, and mentions
+    // Combined pattern to match URLs, hashtags, cashtags, and mentions
     // Order matters - URLs first to avoid partial matches
     // URLs: http://, https://, or www. prefixed
     // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
+    // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
     // Mentions: @ followed by alphanumeric/underscore (1-100 chars)
-    const combinedPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)|(#[a-zA-Z0-9_]{1,63})|(@[a-zA-Z0-9_]{1,100})/gi
+    const combinedPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)|(#[a-zA-Z0-9_]{1,63})|(\$[a-zA-Z][a-zA-Z0-9_]{0,62})|(@[a-zA-Z0-9_]{1,100})/gi
 
-    const parts: Array<{ type: 'text' | 'hashtag' | 'mention' | 'url'; value: string }> = []
+    const parts: Array<{ type: 'text' | 'hashtag' | 'cashtag' | 'mention' | 'url'; value: string }> = []
     let lastIndex = 0
     let match
 
@@ -67,7 +69,10 @@ export function PostContent({
         // Hashtag match (second capture group)
         parts.push({ type: 'hashtag', value })
       } else if (match[3]) {
-        // Mention match (third capture group)
+        // Cashtag match (third capture group)
+        parts.push({ type: 'cashtag', value })
+      } else if (match[4]) {
+        // Mention match (fourth capture group)
         parts.push({ type: 'mention', value })
       }
 
@@ -138,6 +143,40 @@ export function PostContent({
                     }}
                     className="ml-0.5 text-amber-500 hover:text-amber-600 transition-colors"
                     title="Hashtag not registered - click to fix"
+                  >
+                    <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </span>
+            )
+          }
+
+          if (part.type === 'cashtag') {
+            // Cashtags are stored with _cashtag suffix (e.g., $DASH -> dash_cashtag)
+            const storageTag = cashtagDisplayToStorage(part.value) // e.g., "dash_cashtag"
+            const validationStatus = hashtagValidations?.get(storageTag)
+            const isFailed = validationStatus === 'invalid'
+            // Display cashtags in uppercase
+            const displayValue = '$' + part.value.slice(1).toUpperCase()
+
+            return (
+              <span key={index} className="inline-flex items-center">
+                <Link
+                  href={`/hashtag?tag=${encodeURIComponent(storageTag)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className={`text-yappr-500 hover:underline ${isFailed ? 'opacity-70' : ''}`}
+                >
+                  {displayValue}
+                </Link>
+                {isFailed && onFailedHashtagClick && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onFailedHashtagClick(storageTag)
+                    }}
+                    className="ml-0.5 text-amber-500 hover:text-amber-600 transition-colors"
+                    title="Cashtag not registered - click to fix"
                   >
                     <ExclamationTriangleIcon className="h-3.5 w-3.5" />
                   </button>
