@@ -31,7 +31,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // Helper to update a field in the saved session
-function updateSavedSession(updater: (sessionData: any) => void): void {
+function updateSavedSession(updater: (sessionData: Record<string, unknown>) => void): void {
   const savedSession = localStorage.getItem('yappr_session')
   if (!savedSession) return
 
@@ -42,6 +42,45 @@ function updateSavedSession(updater: (sessionData: any) => void): void {
   } catch (e) {
     console.error('Failed to update session:', e)
   }
+}
+
+// Helper to set DashPlatformClient identity
+async function setDashPlatformClientIdentity(identityId: string): Promise<void> {
+  try {
+    const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
+    const dashClient = getDashPlatformClient()
+    dashClient.setIdentity(identityId)
+  } catch (err) {
+    console.error('Failed to set DashPlatformClient identity:', err)
+  }
+}
+
+// Helper to initialize post-login background tasks (block data + DashPay contacts check)
+function initializePostLoginTasks(identityId: string, delayMs: number): void {
+  // Initialize block data immediately (background)
+  import('@/lib/services/block-service').then(async ({ blockService }) => {
+    try {
+      await blockService.initializeBlockData(identityId)
+      console.log('Auth: Block data initialized')
+    } catch (err) {
+      console.error('Auth: Failed to initialize block data:', err)
+    }
+  })
+
+  // Check for DashPay contacts after delay
+  setTimeout(async () => {
+    try {
+      const { dashPayContactsService } = await import('@/lib/services/dashpay-contacts-service')
+      const result = await dashPayContactsService.getUnfollowedContacts(identityId)
+
+      if (result.contacts.length > 0) {
+        const { useDashPayContactsModal } = await import('@/hooks/use-dashpay-contacts-modal')
+        useDashPayContactsModal.getState().open()
+      }
+    } catch (err) {
+      console.error('Auth: Failed to check Dash Pay contacts:', err)
+    }
+  }, delayMs)
 }
 
 // Loading spinner shown during auth state transitions
@@ -62,71 +101,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Check for saved session on mount
   useEffect(() => {
-    const restoreSession = async () => {
+    async function restoreSession(): Promise<void> {
       const savedSession = localStorage.getItem('yappr_session')
-      if (savedSession) {
-        try {
-          const sessionData = JSON.parse(savedSession)
-          const savedUser = sessionData.user
-          
-          // Set user immediately with cached data
-          setUser(savedUser)
-          
-          // Set identity in DashPlatformClient for document operations
-          try {
-            const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
-            const dashClient = getDashPlatformClient()
-            dashClient.setIdentity(savedUser.identityId)
-            console.log('Auth: DashPlatformClient identity restored from session')
-          } catch (err) {
-            console.error('Auth: Failed to set DashPlatformClient identity:', err)
-          }
-          
-          // If user doesn't have DPNS username, fetch it in background
-          if (savedUser && !savedUser.dpnsUsername) {
-            console.log('Auth: Fetching DPNS username in background...')
-            import('@/lib/services/dpns-service').then(async ({ dpnsService }) => {
-              try {
-                const dpnsUsername = await dpnsService.resolveUsername(savedUser.identityId)
-                if (dpnsUsername) {
-                  console.log('Auth: Found DPNS username:', dpnsUsername)
-                  setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
-                  updateSavedSession(data => { data.user.dpnsUsername = dpnsUsername })
-                }
-              } catch (e) {
-                console.error('Auth: Background DPNS fetch failed:', e)
-              }
-            })
-          }
+      if (!savedSession) return
 
-          // Initialize block data on session restore (background)
-          import('@/lib/services/block-service').then(async ({ blockService }) => {
+      try {
+        const sessionData = JSON.parse(savedSession)
+        const savedUser = sessionData.user
+
+        // Set user immediately with cached data
+        setUser(savedUser)
+
+        // Set identity in DashPlatformClient for document operations
+        await setDashPlatformClientIdentity(savedUser.identityId)
+        console.log('Auth: DashPlatformClient identity restored from session')
+
+        // If user doesn't have DPNS username, fetch it in background
+        if (savedUser && !savedUser.dpnsUsername) {
+          console.log('Auth: Fetching DPNS username in background...')
+          import('@/lib/services/dpns-service').then(async ({ dpnsService }) => {
             try {
-              await blockService.initializeBlockData(savedUser.identityId)
-              console.log('Auth: Block data initialized from session restore')
-            } catch (err) {
-              console.error('Auth: Failed to initialize block data:', err)
+              const dpnsUsername = await dpnsService.resolveUsername(savedUser.identityId)
+              if (dpnsUsername) {
+                console.log('Auth: Found DPNS username:', dpnsUsername)
+                setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
+                updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = dpnsUsername })
+              }
+            } catch (e) {
+              console.error('Auth: Background DPNS fetch failed:', e)
             }
           })
-
-          // Check for Dash Pay contacts on session restore (delayed)
-          setTimeout(async () => {
-            try {
-              const { dashPayContactsService } = await import('@/lib/services/dashpay-contacts-service')
-              const result = await dashPayContactsService.getUnfollowedContacts(savedUser.identityId)
-
-              if (result.contacts.length > 0) {
-                const { useDashPayContactsModal } = await import('@/hooks/use-dashpay-contacts-modal')
-                useDashPayContactsModal.getState().open()
-              }
-            } catch (err) {
-              console.error('Auth: Failed to check Dash Pay contacts:', err)
-            }
-          }, 3000) // 3 second delay on session restore
-        } catch (e) {
-          console.error('Failed to restore session:', e)
-          localStorage.removeItem('yappr_session')
         }
+
+        // Initialize background tasks (block data + DashPay contacts)
+        initializePostLoginTasks(savedUser.identityId, 3000)
+      } catch (e) {
+        console.error('Failed to restore session:', e)
+        localStorage.removeItem('yappr_session')
       }
     }
 
@@ -193,16 +204,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       storePrivateKey(identityId, privateKey)
 
       setUser(authUser)
-      
+
       // Set identity in DashPlatformClient for document operations
-      try {
-        const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
-        const dashClient = getDashPlatformClient()
-        dashClient.setIdentity(identityId)
-      } catch (err) {
-        console.error('Failed to set DashPlatformClient identity:', err)
-      }
-      
+      await setDashPlatformClientIdentity(identityId)
+
       // First check if user has DPNS username (unless skipped)
       console.log('Checking for DPNS username...')
       if (!authUser.dpnsUsername && !skipUsernameCheck) {
@@ -227,31 +232,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('Profile found, redirecting to home...')
         router.push('/')
 
-        // Initialize block data after login (background, don't block navigation)
-        import('@/lib/services/block-service').then(async ({ blockService }) => {
-          try {
-            await blockService.initializeBlockData(authUser.identityId)
-            console.log('Auth: Block data initialized after login')
-          } catch (err) {
-            console.error('Auth: Failed to initialize block data:', err)
-          }
-        })
-
-        // Check for Dash Pay contacts after login (delayed to not block navigation)
-        setTimeout(async () => {
-          try {
-            const { dashPayContactsService } = await import('@/lib/services/dashpay-contacts-service')
-            const result = await dashPayContactsService.getUnfollowedContacts(authUser.identityId)
-
-            if (result.contacts.length > 0) {
-              const { useDashPayContactsModal } = await import('@/hooks/use-dashpay-contacts-modal')
-              useDashPayContactsModal.getState().open()
-            }
-          } catch (err) {
-            console.error('Auth: Failed to check Dash Pay contacts:', err)
-            // Silent failure - don't block user experience
-          }
-        }, 2000)
+        // Initialize background tasks (block data + DashPay contacts)
+        initializePostLoginTasks(authUser.identityId, 2000)
       } else {
         console.log('No profile found, redirecting to profile creation...')
         router.push('/profile/create')
@@ -271,12 +253,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem('yappr_skip_dpns')
     sessionStorage.removeItem('yappr_backup_prompt_shown')
 
-    // Clear private key from secure storage
+    // Clear private key and block cache
     if (user?.identityId) {
       const { clearPrivateKey } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
 
-      // Clear block cache
       const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
       invalidateBlockCache(user.identityId)
     }
@@ -284,13 +265,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
 
     // Clear DashPlatformClient identity
-    import('@/lib/dash-platform-client').then(({ getDashPlatformClient }) => {
-      const dashClient = getDashPlatformClient()
-      dashClient.setIdentity('')
-    })
+    setDashPlatformClientIdentity('')
 
     router.push('/login')
-  }, [router])
+  }, [router, user?.identityId])
 
   const loginWithPassword = useCallback(async (username: string, password: string, rememberMe = false) => {
     setIsLoading(true)
@@ -322,7 +300,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return
 
     setUser({ ...user, dpnsUsername: username })
-    updateSavedSession(data => { data.user.dpnsUsername = username })
+    updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = username })
   }, [user])
 
   // Refresh balance from the network (clears cache first)
@@ -336,7 +314,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const balance = await identityService.getBalance(identityId)
 
       setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
-      updateSavedSession(data => { data.user.balance = balance.confirmed })
+      updateSavedSession(data => { (data.user as Record<string, unknown>).balance = balance.confirmed })
     } catch (error) {
       console.error('Failed to refresh balance:', error)
     }
@@ -347,17 +325,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const identityId = user?.identityId
     if (!identityId) return
 
+    const FIVE_MINUTES = 300000
+
     const interval = setInterval(async () => {
       try {
         const { identityService } = await import('@/lib/services/identity-service')
         identityService.clearCache(identityId)
         const balance = await identityService.getBalance(identityId)
         setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
-        updateSavedSession(data => { data.user.balance = balance.confirmed })
+        updateSavedSession(data => { (data.user as Record<string, unknown>).balance = balance.confirmed })
       } catch (error) {
         console.error('Failed to refresh balance:', error)
       }
-    }, 300000)
+    }, FIVE_MINUTES)
 
     return () => clearInterval(interval)
   }, [user?.identityId])
@@ -389,22 +369,28 @@ export function useAuth() {
 
 // HOC for protecting routes
 export function withAuth<P extends object>(
-  Component: React.ComponentType<P>, 
-  options?: { 
+  Component: React.ComponentType<P>,
+  options?: {
     allowWithoutProfile?: boolean
     allowWithoutDPNS?: boolean
     optional?: boolean  // Allow access without authentication
   }
-) {
-  return function AuthenticatedComponent(props: P) {
+): React.ComponentType<P> {
+  function AuthenticatedComponent(props: P): JSX.Element {
     const { user, isAuthRestoring } = useAuth()
     const router = useRouter()
+
+    const skipDPNS = typeof window !== 'undefined'
+      && sessionStorage.getItem('yappr_skip_dpns') === 'true'
+    const needsDPNS = !options?.allowWithoutDPNS && user && !user.dpnsUsername && !skipDPNS
 
     useEffect(() => {
       // Wait for session restoration to complete before checking auth
       if (isAuthRestoring) return
 
       console.log('withAuth check - user:', user)
+
+      // Handle missing user
       if (!user) {
         if (options?.optional) {
           console.log('No user found, but auth is optional - continuing...')
@@ -415,33 +401,30 @@ export function withAuth<P extends object>(
         return
       }
 
-      // Check if user has DPNS username (unless explicitly allowed without)
-      const skipDPNS = sessionStorage.getItem('yappr_skip_dpns') === 'true'
-      if (!options?.allowWithoutDPNS && !user.dpnsUsername && !skipDPNS) {
+      // Handle missing DPNS username
+      if (needsDPNS) {
         console.log('No DPNS username found, redirecting to DPNS registration...')
         router.push('/dpns/register')
-        return
       }
-    }, [user, isAuthRestoring, router])
+    }, [user, isAuthRestoring, router, needsDPNS])
 
+    // Show loading while restoring auth
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />
     }
 
+    // Optional auth: render regardless of user state
     if (options?.optional) {
       return <Component {...props} />
     }
 
-    if (!user) {
-      return <AuthLoadingSpinner />
-    }
-
-    const skipDPNS = sessionStorage.getItem('yappr_skip_dpns') === 'true'
-    const needsDPNS = !options?.allowWithoutDPNS && !user.dpnsUsername && !skipDPNS
-    if (needsDPNS) {
+    // Required auth: show loading while redirecting
+    if (!user || needsDPNS) {
       return <AuthLoadingSpinner />
     }
 
     return <Component {...props} />
   }
+
+  return AuthenticatedComponent
 }
