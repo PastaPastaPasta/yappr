@@ -35,7 +35,6 @@ import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
-import { usePostInteraction } from '@/hooks/use-post-interaction'
 import { tipService } from '@/lib/services/tip-service'
 
 // Enrichment data from progressive loading

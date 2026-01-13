@@ -75,7 +75,7 @@ export function transformSdkDocumentToPost(doc: RawSdkDocument) {
   const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
 
   return {
-    id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
+    id: doc.$id || doc.id || Math.random().toString(36).slice(2, 11),
     content: data.content || 'No content',
     author: createDefaultAuthor(authorId),
     createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
