@@ -42,14 +42,6 @@ const response = await get_documents(
 );
 ```
 
-## Testing:
-
-Visit http://localhost:3001/test-dpns to try:
-- Identity → Username resolution
-- Username → Identity resolution
-- Username search
-- Availability checking
-
 ## What This Means:
 
 The yappr social media platform now has **FULL USERNAME SUPPORT**:

@@ -38,13 +38,6 @@ const available = await dpnsService.isUsernameAvailableNative(label);
 const identityId = await dpnsService.resolveNameNative(name);
 ```
 
-### 3. **Test Page**
-A comprehensive test page is available at `/test-dpns-register` that allows:
-- Real-time username validation
-- Availability checking
-- Username resolution
-- Full registration with progress tracking
-
 ## Key Features
 
 ### Username Validation
@@ -107,6 +100,3 @@ if (validation.isValid) {
    - Contested username voting
    - Username changes/transfers
 
-## Testing
-
-Visit http://localhost:3001/test-dpns-register to try out all the DPNS functionality!
