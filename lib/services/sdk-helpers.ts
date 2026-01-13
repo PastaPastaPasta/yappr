@@ -186,7 +186,7 @@ export function base64ToBytes(base64: string): Uint8Array {
 /**
  * Convert various byte formats to Uint8Array.
  * Handles Uint8Array (passthrough), number[] (from JSON), and base64 strings.
- * Returns null if format is unrecognized.
+ * Returns null if format is unrecognized or invalid.
  */
 export function toUint8Array(data: unknown): Uint8Array | null {
   if (data instanceof Uint8Array) {
@@ -196,7 +196,11 @@ export function toUint8Array(data: unknown): Uint8Array | null {
     return new Uint8Array(data);
   }
   if (typeof data === 'string') {
-    return base64ToBytes(data);
+    try {
+      return base64ToBytes(data);
+    } catch {
+      return null;
+    }
   }
   return null;
 }
