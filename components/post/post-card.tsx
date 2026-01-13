@@ -403,7 +403,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <div className="flex items-center gap-1 text-sm min-w-0">
               {!hideAvatar && (
                 <>
-                  {usernameState === undefined ? (
+                  {usernameState === undefined || (displayName === 'Unknown User' || displayName?.startsWith('User ')) ? (
                     // Still loading - show skeleton for display name
                     <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                   ) : (
@@ -429,8 +429,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     >
                       @{usernameState}
                     </Link>
-                  ) : usernameState === null && !hasProfile ? (
-                    // No DPNS and no profile - show identity ID
+                  ) : usernameState === undefined || (displayName === 'Unknown User' || displayName?.startsWith('User ')) ? (
+                    // Still loading DPNS OR profile data - show skeleton
+                    <span className="inline-block w-20 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                  ) : !hasProfile ? (
+                    // No DPNS and no profile after enrichment - show identity ID
                     <Tooltip.Provider>
                       <Tooltip.Root>
                         <Tooltip.Trigger asChild>
@@ -455,9 +458,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                         </Tooltip.Portal>
                       </Tooltip.Root>
                     </Tooltip.Provider>
-                  ) : usernameState === undefined ? (
-                    // Still loading - show skeleton
-                    <span className="inline-block w-20 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                   ) : null /* Has profile but no DPNS - display name is sufficient */}
                 </>
               )}
