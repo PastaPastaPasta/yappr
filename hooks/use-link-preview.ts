@@ -133,14 +133,28 @@ function parseHtmlForPreview(html: string, url: string): LinkPreviewData {
     /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:site_name["']/i,
   ])
 
+  // Extract image dimensions from OG meta tags
+  const imageWidthRaw = extractMetaContent(html, [
+    /<meta[^>]*property=["']og:image:width["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image:width["']/i,
+  ])
+  const imageHeightRaw = extractMetaContent(html, [
+    /<meta[^>]*property=["']og:image:height["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image:height["']/i,
+  ])
+
   const image = makeAbsoluteUrl(imageRaw, url)
   const favicon = extractFavicon(html, url)
+  const imageWidth = imageWidthRaw ? parseInt(imageWidthRaw, 10) : undefined
+  const imageHeight = imageHeightRaw ? parseInt(imageHeightRaw, 10) : undefined
 
   return {
     url,
     title,
     description,
     image,
+    imageWidth: imageWidth && !isNaN(imageWidth) ? imageWidth : undefined,
+    imageHeight: imageHeight && !isNaN(imageHeight) ? imageHeight : undefined,
     siteName,
     favicon,
   }

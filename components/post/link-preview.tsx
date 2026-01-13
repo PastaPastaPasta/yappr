@@ -4,11 +4,16 @@ import { useState } from 'react'
 import Image from 'next/image'
 import { LinkIcon } from '@heroicons/react/24/outline'
 
+// Note: We use next/image for favicon (small, fixed size) but regular img
+// for preview images so we can check naturalWidth/Height on load
+
 export interface LinkPreviewData {
   url: string
   title?: string
   description?: string
   image?: string
+  imageWidth?: number
+  imageHeight?: number
   siteName?: string
   favicon?: string
 }
@@ -32,8 +37,18 @@ function sanitizeUrl(url: string): string | null {
   }
 }
 
+// Minimum dimensions for a "useful" preview image
+const MIN_IMAGE_SIZE = 200
+
 export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   const [imageError, setImageError] = useState(false)
+  const [imageTooSmall, setImageTooSmall] = useState(() => {
+    // Check OG metadata dimensions if available
+    if (data.imageWidth && data.imageHeight) {
+      return data.imageWidth < MIN_IMAGE_SIZE || data.imageHeight < MIN_IMAGE_SIZE
+    }
+    return false
+  })
   const [faviconError, setFaviconError] = useState(false)
 
   const safeUrl = sanitizeUrl(data.url)
@@ -51,8 +66,17 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     }
   })()
 
-  const imageUrl = data.image && !imageError ? data.image : null
+  // Hide image if error, too small, or dimensions indicate it's not useful
+  const showImage = data.image && !imageError && !imageTooSmall
   const hasRichContent = data.title || data.description || data.image
+
+  // Handler to check actual image dimensions after load
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    if (img.naturalWidth < MIN_IMAGE_SIZE || img.naturalHeight < MIN_IMAGE_SIZE) {
+      setImageTooSmall(true)
+    }
+  }
 
   // Compact horizontal layout with small thumbnail
   return (
@@ -96,16 +120,16 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           </p>
         )}
       </div>
-      {/* Small thumbnail on the right */}
-      {imageUrl && (
-        <div className="relative w-24 h-24 flex-shrink-0 bg-neutral-100 dark:bg-neutral-800">
-          <Image
-            src={imageUrl}
+      {/* Small thumbnail on the right - use img tag to check naturalWidth/Height */}
+      {showImage && (
+        <div className="relative w-24 h-24 flex-shrink-0 bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={data.image}
             alt={data.title || 'Link preview'}
-            fill
-            className="object-cover"
+            className="w-full h-full object-cover"
             onError={() => setImageError(true)}
-            unoptimized
+            onLoad={handleImageLoad}
           />
         </div>
       )}
