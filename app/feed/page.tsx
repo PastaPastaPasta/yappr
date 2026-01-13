@@ -119,6 +119,8 @@ function FeedPage() {
       let posts: any[]
 
       let followingCursor: { start: Date; end: Date; windowHours: number } | null = null
+      let forYouNextCursor: string | null = null // Track pagination cursor for For You feed
+      let forYouHasMore = true // Track if there are more posts to fetch
 
       if (activeTab === 'following' && user?.identityId) {
         // Following feed - get posts from followed users using time-window pagination
@@ -287,19 +289,18 @@ function FeedPage() {
         }
       } else {
         // For You feed - get all posts and reposts
+        // Auto-paginate to ensure we have enough non-reply posts after filtering
+        const MIN_NON_REPLY_POSTS = 5 // Minimum posts to show before requiring "Load More"
+        const MAX_FETCH_ITERATIONS = 5 // Safety limit to prevent infinite loops
         const dashClient = getDashPlatformClient()
-        const queryOptions: any = {
-          limit: 20,
-          forceRefresh: forceRefresh,
-          startAfter: pagination?.startAfter
-        }
 
-        console.log('Feed: Loading all posts', pagination?.startAfter ? `starting after ${pagination.startAfter}` : '')
-        const rawPosts = await dashClient.queryPosts(queryOptions)
+        let allRawPosts: any[] = []
+        let currentStartAfter = pagination?.startAfter
+        let fetchIteration = 0
+        let nonReplyCount = 0
 
-        // Transform posts to match our UI format
-        // SDK v3 toJSON() returns system fields with $ prefix ($id, $ownerId, etc.)
-        posts = rawPosts.map((doc: any) => {
+        // Helper to transform a raw document to our post format
+        const transformRawPost = (doc: any) => {
           const data = doc.data || doc
           const authorIdStr = doc.$ownerId || doc.ownerId || 'unknown'
 
@@ -341,7 +342,58 @@ function FeedPage() {
             replyToId: replyToId || undefined,
             quotedPostId: quotedPostId || undefined
           }
-        })
+        }
+
+        // Auto-paginate until we have enough non-reply posts or exhaust data
+        let lastBatchSize = 0
+        let exhaustedPosts = false
+
+        do {
+          const queryOptions: any = {
+            limit: 20,
+            forceRefresh: forceRefresh && fetchIteration === 0, // Only force refresh on first fetch
+            startAfter: currentStartAfter
+          }
+
+          console.log('Feed: Loading posts', currentStartAfter ? `starting after ${currentStartAfter}` : '', `(iteration ${fetchIteration + 1})`)
+          const rawPosts = await dashClient.queryPosts(queryOptions)
+          lastBatchSize = rawPosts.length
+
+          if (rawPosts.length === 0) {
+            console.log('Feed: No more posts available')
+            exhaustedPosts = true
+            break
+          }
+
+          allRawPosts = [...allRawPosts, ...rawPosts]
+
+          // Count non-reply posts so far
+          nonReplyCount = allRawPosts.filter((doc: any) => {
+            const data = doc.data || doc
+            return !(data.replyToPostId || doc.replyToPostId)
+          }).length
+
+          // Update pagination cursor for next iteration
+          const lastPost = rawPosts[rawPosts.length - 1]
+          currentStartAfter = lastPost.$id || lastPost.id
+
+          fetchIteration++
+
+          // Continue if we don't have enough non-reply posts and haven't hit safety limit
+          if (nonReplyCount < MIN_NON_REPLY_POSTS && fetchIteration < MAX_FETCH_ITERATIONS) {
+            console.log(`Feed: Only ${nonReplyCount} non-reply posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
+          }
+        } while (nonReplyCount < MIN_NON_REPLY_POSTS && fetchIteration < MAX_FETCH_ITERATIONS)
+
+        console.log(`Feed: Fetched ${allRawPosts.length} total posts (${nonReplyCount} non-replies) in ${fetchIteration} iteration(s)`)
+
+        // Store pagination state for For You feed
+        forYouNextCursor = currentStartAfter || null
+        // Has more if we didn't exhaust posts and the last batch was full
+        forYouHasMore = !exhaustedPosts && lastBatchSize === 20
+
+        // Transform all posts
+        posts = allRawPosts.map(transformRawPost)
 
         // Fetch recent reposts and merge into timeline
         try {
@@ -508,20 +560,25 @@ function FeedPage() {
         }
       } else {
         // For You feed: empty means done
-        if (sortedFeedItems.length === 0) {
-          console.log('Feed: No posts found on platform')
+        // Filter to non-reply posts for determining if feed is empty
+        const nonReplyFeedItems = sortedFeedItems.filter(item =>
+          isFeedReplyContext(item) ? false : !(item as any).replyToId
+        )
+        if (nonReplyFeedItems.length === 0) {
+          console.log('Feed: No non-reply posts found on platform')
           if (!isPaginating) {
             setData([])
           }
           setHasMore(false)
           return
         }
-        // For pagination, get last item's ID (only for regular posts)
-        const lastItem = sortedFeedItems[sortedFeedItems.length - 1]
-        if (!isFeedReplyContext(lastItem)) {
-          setLastPostId(lastItem.id)
+        // For pagination, use the cursor from the fetch loop (not the last sorted item)
+        // This ensures we continue from the correct chronological position
+        if (forYouNextCursor) {
+          setLastPostId(forYouNextCursor)
         }
-        setHasMore(sortedFeedItems.length >= 20)
+        // Has more based on whether the fetch loop found more data
+        setHasMore(forYouHasMore)
       }
 
       // PROGRESSIVE LOADING: Show posts IMMEDIATELY with skeleton placeholders
