@@ -22,11 +22,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   const [imageError, setImageError] = useState(false)
   const [faviconError, setFaviconError] = useState(false)
 
-  // Don't render if no meaningful data
-  if (!data.title && !data.description && !data.image) {
-    return null
-  }
-
   const hostname = (() => {
     try {
       return new URL(data.url).hostname.replace(/^www\./, '')
@@ -36,6 +31,7 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   })()
 
   const imageUrl = data.image && !imageError ? data.image : null
+  const hasRichContent = data.title || data.description || data.image
 
   // Compact horizontal layout with small thumbnail
   return (
@@ -64,10 +60,14 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           )}
           <span className="truncate">{data.siteName || hostname}</span>
         </div>
-        {data.title && (
+        {data.title ? (
           <h4 className="font-medium text-sm text-neutral-900 dark:text-neutral-100 line-clamp-2 mb-0.5">
             {data.title}
           </h4>
+        ) : !hasRichContent && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400 truncate">
+            {data.url}
+          </p>
         )}
         {data.description && (
           <p className="text-xs text-neutral-600 dark:text-neutral-400 line-clamp-2">
