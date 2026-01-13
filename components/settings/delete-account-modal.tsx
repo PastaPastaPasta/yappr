@@ -20,7 +20,7 @@ import { accountDeletionService, DeletionProgress } from '@/lib/services/account
  */
 export function DeleteAccountModal() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const {
     isOpen,
     step,
@@ -113,9 +113,16 @@ export function DeleteAccountModal() {
     }
   }
 
-  const handleCompleteLogout = () => {
-    handleClose()
-    router.push('/login')
+  const handleCompleteLogout = async () => {
+    try {
+      await logout()
+    } catch (error) {
+      console.error('Failed to logout after account deletion:', error)
+      // Navigate to login even if logout fails
+      router.push('/login')
+    } finally {
+      handleClose()
+    }
   }
 
   const getTotalDocuments = () => {

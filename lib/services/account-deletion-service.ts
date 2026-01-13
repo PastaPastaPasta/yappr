@@ -1,4 +1,5 @@
 import { getEvoSdk } from './evo-sdk-service'
+import { queryDocuments, identifierToBase58 } from './sdk-helpers'
 import { stateTransitionService } from './state-transition-service'
 import {
   YAPPR_CONTRACT_ID,
@@ -191,26 +192,14 @@ class AccountDeletionService {
     // Paginate through all documents
     while (true) {
       try {
-        const queryOptions = {
+        const documents = await queryDocuments(sdk, {
           dataContractId: contractId,
           documentTypeName: documentType,
           where: [['$ownerId', '==', userId]],
           orderBy: [['$createdAt', 'asc']],
           limit: this.QUERY_LIMIT,
-          ...(startAfter && { startAfter })
-        }
-
-        const response = await sdk.documents.query(queryOptions as any)
-
-        // Handle both array and Map responses
-        let documents: any[] = []
-        if (response instanceof Map) {
-          documents = Array.from(response.values())
-        } else if (Array.isArray(response)) {
-          documents = response
-        } else if (response && typeof response === 'object') {
-          documents = Object.values(response)
-        }
+          startAfter
+        })
 
         if (documents.length === 0) {
           break
@@ -218,9 +207,12 @@ class AccountDeletionService {
 
         // Add documents with metadata
         for (const doc of documents) {
+          const docId = identifierToBase58(doc.$id) || (doc.$id as string) || (doc.id as string)
+          const ownerId = identifierToBase58(doc.$ownerId) || (doc.$ownerId as string) || (doc.ownerId as string) || userId
+
           allDocuments.push({
-            $id: doc.$id || doc.id,
-            $ownerId: doc.$ownerId || doc.ownerId || userId,
+            $id: docId,
+            $ownerId: ownerId,
             documentType,
             contractId
           })
@@ -233,7 +225,7 @@ class AccountDeletionService {
 
         // Use last document ID for pagination
         const lastDoc = documents[documents.length - 1]
-        startAfter = lastDoc.$id || lastDoc.id
+        startAfter = identifierToBase58(lastDoc.$id) || (lastDoc.$id as string) || (lastDoc.id as string)
       } catch (error) {
         // Some document types may fail to query (e.g., not registered)
         console.warn(`Query failed for ${documentType} in contract ${contractId}:`, error)
@@ -385,6 +377,10 @@ class AccountDeletionService {
       // Clear private key from secure storage
       const { clearPrivateKey } = await import('../secure-storage')
       clearPrivateKey(userId)
+
+      // Clear password-encrypted credentials for this user
+      const { removeStoredCredential } = await import('../password-encrypted-storage')
+      removeStoredCredential(userId)
 
       // Clear block cache
       const { invalidateBlockCache } = await import('../caches/block-cache')
