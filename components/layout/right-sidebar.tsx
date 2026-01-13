@@ -106,7 +106,7 @@ export function RightSidebar() {
           </p>
           <ul className="space-y-2">
             <li>
-              <Link href="/settings?section=account" className="text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-400 hover:underline">
+              <Link href={user?.identityId ? `/user?id=${user.identityId}&edit=true` : '/settings?section=account'} className="text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-400 hover:underline">
                 • Create your profile
               </Link>
             </li>

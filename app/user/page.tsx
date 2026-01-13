@@ -320,6 +320,20 @@ function UserProfileContent() {
     loadProfileData()
   }, [userId, enrichProgressively])
 
+  // Handle edit URL parameter for deep linking to edit mode
+  useEffect(() => {
+    if (!isOwnProfile || isLoading) return
+
+    const editParam = searchParams.get('edit')
+    if (editParam === 'true' && !isEditingProfile) {
+      handleStartEdit()
+      // Remove edit param from URL after triggering edit mode
+      const url = new URL(window.location.href)
+      url.searchParams.delete('edit')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [isOwnProfile, isLoading, searchParams, isEditingProfile])
+
   // Handle tip URL parameter for deep linking
   useEffect(() => {
     if (!profile?.paymentUris || profile.paymentUris.length === 0) return
