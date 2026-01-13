@@ -1,6 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
-import bs58 from 'bs58';
+import { identifierToBase58 } from './sdk-helpers';
 
 interface DpnsDocument {
   $id: string;
@@ -28,61 +28,6 @@ class DpnsService {
   private readonly CACHE_TTL = 3600000; // 1 hour cache for DPNS
 
   /**
-   * Convert a value to base58 string.
-   * Handles base64 strings (from SDK v3 toJSON), Uint8Array, and number arrays.
-   */
-  private toBase58String(value: unknown): string | null {
-    if (typeof value === 'string') {
-      // First check if it's already valid base58
-      try {
-        const decoded = bs58.decode(value);
-        if (decoded.length === 32) {
-          return value; // Already base58
-        }
-      } catch {
-        // Not base58, try base64
-      }
-
-      // Try base64 (SDK v3 returns base64 for records.identity)
-      if (value.includes('+') || value.includes('/') || value.endsWith('=')) {
-        try {
-          const bytes = this.base64ToBytes(value);
-          if (bytes.length === 32) {
-            return bs58.encode(bytes);
-          }
-        } catch {
-          // Not valid base64
-        }
-      }
-
-      return null;
-    }
-    if (value instanceof Uint8Array) {
-      return bs58.encode(value);
-    }
-    if (Array.isArray(value)) {
-      return bs58.encode(new Uint8Array(value));
-    }
-    return null;
-  }
-
-  /**
-   * Convert base64 string to bytes
-   */
-  private base64ToBytes(base64: string): Uint8Array {
-    if (typeof atob === 'function') {
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return bytes;
-    } else {
-      return new Uint8Array(Buffer.from(base64, 'base64'));
-    }
-  }
-
-  /**
    * Helper method to cache entries in both directions
    */
   private _cacheEntry(username: string, identityId: string): void {
@@ -96,21 +41,16 @@ class DpnsService {
    */
   async getAllUsernames(identityId: string): Promise<string[]> {
     try {
-      console.log(`DPNS: Fetching all usernames for identity: ${identityId}`);
-      
       const sdk = await getEvoSdk();
 
       // Try the dedicated DPNS usernames function first (v3 SDK returns string[] directly)
       try {
         const usernames = await sdk.dpns.usernames({ identityId, limit: 20 });
-        console.log('DPNS: Usernames response:', usernames);
-
         if (usernames && usernames.length > 0) {
-          console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId}`);
           return usernames;
         }
-      } catch (error) {
-        console.warn('DPNS: sdk.dpns.usernames failed, trying document query:', error);
+      } catch {
+        // Fallback to document query
       }
 
       // Fallback: Query DPNS documents by identity ID
@@ -125,22 +65,17 @@ class DpnsService {
       if (response instanceof Map) {
         const docs = Array.from(response.values()).filter(Boolean);
         if (docs.length > 0) {
-          const usernames = docs.map((doc: any) => {
+          return docs.map((doc: any) => {
             const docData = typeof doc.toJSON === 'function' ? doc.toJSON() : doc;
             return `${docData.label}.${docData.normalizedParentDomainName}`;
           });
-          console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId} via document query`);
-          return usernames;
         }
       } else if (response && (response as any).documents && (response as any).documents.length > 0) {
-        const usernames = (response as any).documents.map((doc: DpnsDocument) =>
+        return (response as any).documents.map((doc: DpnsDocument) =>
           `${doc.label}.${doc.normalizedParentDomainName}`
         );
-        console.log(`DPNS: Found ${usernames.length} usernames for identity ${identityId} via document query`);
-        return usernames;
       }
-      
-      console.log(`DPNS: No usernames found for identity ${identityId}`);
+
       return [];
     } catch (error) {
       console.error('DPNS: Error fetching all usernames:', error);
@@ -233,7 +168,7 @@ class DpnsService {
         const data = doc.data || doc;
         const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
         // Convert base64 identity to base58 for consistent map keys
-        const identityId = this.toBase58String(rawId);
+        const identityId = identifierToBase58(rawId);
         const label = data.label || data.normalizedLabel;
         const parentDomain = data.normalizedParentDomainName || 'dash';
         const username = `${label}.${parentDomain}`;
@@ -259,25 +194,20 @@ class DpnsService {
       // Check cache
       const cached = this.reverseCache.get(identityId);
       if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        console.log(`DPNS: Returning cached username for ${identityId}: ${cached.value}`);
         return cached.value;
       }
 
-      console.log(`DPNS: Fetching username for identity: ${identityId}`);
-      
       // Get all usernames for this identity
       const allUsernames = await this.getAllUsernames(identityId);
-      
+
       if (allUsernames.length === 0) {
-        console.log(`DPNS: No username found for identity ${identityId}`);
         return null;
       }
-      
+
       // Sort usernames with contested ones first
       const sortedUsernames = await this.sortUsernamesByContested(allUsernames);
       const bestUsername = sortedUsernames[0];
-      
-      console.log(`DPNS: Found best username ${bestUsername} for identity ${identityId} (from ${allUsernames.length} total)`);
+
       this._cacheEntry(bestUsername, identityId);
       return bestUsername;
     } catch (error) {
@@ -350,15 +280,14 @@ class DpnsService {
         const doc = documents[0];
         const data = doc.data || doc;
         const rawId = data.records?.identity || data.records?.dashUniqueIdentityId || data.records?.dashAliasIdentityId;
-        const identityId = this.toBase58String(rawId);
+        const identityId = identifierToBase58(rawId);
 
         if (identityId) {
           this._cacheEntry(normalizedUsername, identityId);
           return identityId;
         }
       }
-      
-      console.log(`DPNS: No identity found for username ${normalizedUsername}`);
+
       return null;
     } catch (error) {
       console.error('DPNS: Error resolving identity:', error);
@@ -372,22 +301,18 @@ class DpnsService {
   async isUsernameAvailable(username: string): Promise<boolean> {
     try {
       const normalizedUsername = username.toLowerCase().replace('.dash', '');
-      
+
       // Try native availability check first (more efficient)
       try {
         const sdk = await getEvoSdk();
-        const isAvailable = await sdk.dpns.isNameAvailable(normalizedUsername);
-        console.log(`DPNS: Username ${normalizedUsername} availability (native): ${isAvailable}`);
-        return isAvailable;
-      } catch (error) {
-        console.warn('DPNS: Native availability check failed, trying identity resolution:', error);
+        return await sdk.dpns.isNameAvailable(normalizedUsername);
+      } catch {
+        // Fallback to identity resolution
       }
-      
+
       // Fallback: Check by trying to resolve identity
       const identity = await this.resolveIdentity(normalizedUsername);
-      const isAvailable = identity === null;
-      console.log(`DPNS: Username ${normalizedUsername} availability (fallback): ${isAvailable}`);
-      return isAvailable;
+      return identity === null;
     } catch (error) {
       console.error('DPNS: Error checking username availability:', error);
       // If error, assume not available to be safe
@@ -405,25 +330,17 @@ class DpnsService {
       // Remove .dash suffix if present for search
       const cleanPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
 
-      // IMPORTANT: Normalize the search prefix to match how DPNS stores normalizedLabel
-      // Characters like 'l' -> '1', 'i' -> '1', 'o' -> '0' etc are converted during registration
+      // Normalize the search prefix to match how DPNS stores normalizedLabel
       const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
-
-      // Search DPNS names by prefix
-      console.log(`DPNS: Searching usernames with prefix: ${cleanPrefix} (normalized: ${searchPrefix})`);
-      
-      // Build where clause for starts-with query on normalizedLabel
-      const where = [
-        ['normalizedLabel', 'startsWith', searchPrefix],
-        ['normalizedParentDomainName', '==', 'dash']
-      ];
-      const orderBy = [['normalizedLabel', 'asc']];
 
       const response = await sdk.documents.query({
         dataContractId: DPNS_CONTRACT_ID,
         documentTypeName: DPNS_DOCUMENT_TYPE,
-        where,
-        orderBy,
+        where: [
+          ['normalizedLabel', 'startsWith', searchPrefix],
+          ['normalizedParentDomainName', '==', 'dash']
+        ],
+        orderBy: [['normalizedLabel', 'asc']],
         limit
       } as any);
 
@@ -437,27 +354,17 @@ class DpnsService {
         documents = response;
       }
 
-      if (documents.length > 0) {
-        console.log(`DPNS: Found ${documents.length} documents`);
+      return documents.map((doc: any) => {
+        const data = doc.data || doc;
+        const label = data.label || data.normalizedLabel || 'unknown';
+        const parentDomain = data.normalizedParentDomainName || 'dash';
+        const ownerId = doc.ownerId || doc.$ownerId || '';
 
-        // Map documents to results with owner IDs
-        const results = documents.map((doc: any) => {
-          // Access the data field which contains the DPNS document fields
-          const data = doc.data || doc;
-          const label = data.label || data.normalizedLabel || 'unknown';
-          const parentDomain = data.normalizedParentDomainName || 'dash';
-          const ownerId = doc.ownerId || doc.$ownerId || '';
-
-          return {
-            username: `${label}.${parentDomain}`,
-            ownerId: ownerId
-          };
-        });
-
-        return results;
-      }
-
-      return [];
+        return {
+          username: `${label}.${parentDomain}`,
+          ownerId: ownerId
+        };
+      });
     } catch (error) {
       console.error('DPNS: Error searching usernames with details:', error);
       return [];
@@ -468,83 +375,8 @@ class DpnsService {
    * Search for usernames by prefix
    */
   async searchUsernames(prefix: string, limit: number = 10): Promise<string[]> {
-    try {
-      const sdk = await getEvoSdk();
-
-      // Remove .dash suffix if present for search
-      const cleanPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
-
-      // IMPORTANT: Normalize the search prefix to match how DPNS stores normalizedLabel
-      // Characters like 'l' -> '1', 'i' -> '1', 'o' -> '0' etc are converted during registration
-      const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
-
-      // Search DPNS names by prefix
-      console.log(`DPNS: Searching usernames with prefix: ${cleanPrefix} (normalized: ${searchPrefix})`);
-      console.log(`DPNS: Using contract ID: ${DPNS_CONTRACT_ID}`);
-      console.log(`DPNS: Document type: ${DPNS_DOCUMENT_TYPE}`);
-
-      // Build where clause for starts-with query on normalizedLabel
-      const where = [
-        ['normalizedLabel', 'startsWith', searchPrefix],
-        ['normalizedParentDomainName', '==', 'dash']
-      ];
-      const orderBy = [['normalizedLabel', 'asc']];
-
-      console.log('DPNS: Query where clause:', JSON.stringify(where));
-      console.log('DPNS: Query orderBy:', JSON.stringify(orderBy));
-
-      const response = await sdk.documents.query({
-        dataContractId: DPNS_CONTRACT_ID,
-        documentTypeName: DPNS_DOCUMENT_TYPE,
-        where,
-        orderBy,
-        limit
-      } as any);
-
-      console.log('DPNS: Search response:', response);
-      console.log('DPNS: Response type:', typeof response);
-
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      }
-
-      if (documents.length > 0) {
-        console.log(`DPNS: Found ${documents.length} documents`);
-
-        // Map documents to usernames
-        const usernames = documents.map((doc: any) => {
-          console.log('DPNS: Processing document:', doc);
-
-          // Access the data field which contains the DPNS document fields
-          const data = doc.data || doc;
-          const label = data.label || data.normalizedLabel || 'unknown';
-          const parentDomain = data.normalizedParentDomainName || 'dash';
-
-          console.log('DPNS: Document fields:', {
-            label: data.label,
-            normalizedLabel: data.normalizedLabel,
-            parentDomain: data.normalizedParentDomainName,
-            ownerId: doc.ownerId || doc.$ownerId
-          });
-
-          return `${label}.${parentDomain}`;
-        });
-
-        return usernames;
-      }
-
-      console.log('DPNS: No documents found in response');
-      return [];
-    } catch (error) {
-      console.error('DPNS: Error searching usernames:', error);
-      return [];
-    }
+    const results = await this.searchUsernamesWithDetails(prefix, limit);
+    return results.map(r => r.username);
   }
 
   /**

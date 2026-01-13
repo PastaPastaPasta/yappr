@@ -147,16 +147,9 @@ class EvoSdkService {
   }
 
   /**
-   * Check if SDK is initialized
+   * Check if SDK is initialized and ready for use
    */
   isReady(): boolean {
-    return this._isInitialized && this.sdk !== null;
-  }
-
-  /**
-   * Check if SDK is initialized
-   */
-  isInitialized(): boolean {
     return this._isInitialized && this.sdk !== null;
   }
 
