@@ -31,6 +31,8 @@ import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
+import { useSettingsStore } from '@/lib/store'
+import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'appearance', 'about']
@@ -49,6 +51,8 @@ function SettingsPage() {
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const { theme, setTheme } = useTheme()
+  const richLinkPreviews = useSettingsStore((s) => s.richLinkPreviews)
+  const setRichLinkPreviews = useSettingsStore((s) => s.setRichLinkPreviews)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -286,7 +290,7 @@ function SettingsPage() {
             </div>
             <Switch.Root
               checked={privacySettings.showActivity}
-              onCheckedChange={(checked) => 
+              onCheckedChange={(checked) =>
                 setPrivacySettings(prev => ({ ...prev, showActivity: checked }))
               }
               className={`w-11 h-6 rounded-full relative transition-colors ${
@@ -296,6 +300,45 @@ function SettingsPage() {
               <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
             </Switch.Root>
           </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Rich Link Previews</p>
+              <p className="text-sm text-gray-500">Fetch page titles, descriptions, and images for links</p>
+            </div>
+            <Switch.Root
+              checked={richLinkPreviews}
+              onCheckedChange={setRichLinkPreviews}
+              className={`w-11 h-6 rounded-full relative transition-colors ${
+                richLinkPreviews ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+              }`}
+            >
+              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
+            </Switch.Root>
+          </div>
+          {richLinkPreviews && (
+            <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                <strong>Privacy note:</strong> {CORS_PROXY_INFO.warning}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
+                Third-party services used:{' '}
+                {CORS_PROXY_INFO.proxies.map((p, i) => (
+                  <span key={p.name}>
+                    {i > 0 && ', '}
+                    <a
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-amber-900 dark:hover:text-amber-100"
+                    >
+                      {p.name}
+                    </a>
+                  </span>
+                ))}
+              </p>
+            </div>
+          )}
         </div>
       </div>
       

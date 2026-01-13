@@ -10,14 +10,22 @@ const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
 /**
  * CORS Proxy Configuration
  *
- * PRIVACY/SECURITY NOTE: These are third-party CORS proxies that will see
- * the URLs being fetched. For production use with sensitive data, consider:
- * - Self-hosting a CORS proxy
- * - Moving URL fetching to a backend API endpoint
- * - Using a serverless function to proxy requests
+ * PRIVACY WARNING: These third-party proxies will see all URLs being fetched.
+ * Rich link previews are disabled by default for privacy. Users can opt-in
+ * via settings, with clear disclosure about third-party data sharing.
  *
- * The proxies are tried in order; if one fails, the next is attempted.
+ * Proxy Privacy Policies:
+ * - allorigins.win: https://allorigins.win/ (no formal policy)
+ * - corsproxy.io: https://corsproxy.io/ (no formal policy)
  */
+export const CORS_PROXY_INFO = {
+  warning: 'Rich previews send URLs to third-party proxy servers to fetch metadata. These services may log the URLs you view.',
+  proxies: [
+    { name: 'allorigins.win', url: 'https://allorigins.win/' },
+    { name: 'corsproxy.io', url: 'https://corsproxy.io/' },
+  ],
+}
+
 const CORS_PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
@@ -194,7 +202,7 @@ async function fetchViaProxy(url: string): Promise<string> {
   throw lastError || new Error('All proxies failed')
 }
 
-async function fetchPreview(url: string): Promise<LinkPreviewData> {
+async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Check cache first
   const cached = previewCache.get(url)
   if (cached) {
@@ -216,7 +224,7 @@ async function fetchPreview(url: string): Promise<LinkPreviewData> {
       return data
     } catch {
       // Return minimal data on error
-      const fallback: LinkPreviewData = { url }
+      const fallback = createBasicPreview(url)
       previewCache.set(url, fallback)
       return fallback
     } finally {
@@ -228,48 +236,73 @@ async function fetchPreview(url: string): Promise<LinkPreviewData> {
   return request
 }
 
+/**
+ * Create basic preview data from URL without any network requests
+ * This is the privacy-preserving default
+ */
+function createBasicPreview(url: string): LinkPreviewData {
+  try {
+    const parsed = new URL(url)
+    return {
+      url,
+      siteName: parsed.hostname.replace(/^www\./, ''),
+      favicon: `${parsed.origin}/favicon.ico`,
+    }
+  } catch {
+    return { url }
+  }
+}
+
 interface UseLinkPreviewOptions {
-  /** Disable fetching */
+  /** Disable preview entirely */
   disabled?: boolean
+  /** Enable rich preview (uses third-party proxy) */
+  richPreview?: boolean
 }
 
 interface UseLinkPreviewResult {
   data: LinkPreviewData | null
   loading: boolean
   error: boolean
+  /** Whether this is a basic (privacy-preserving) or rich preview */
+  isRichPreview: boolean
 }
 
 /**
- * Hook to fetch link preview data for a URL
- * Uses CORS proxies to fetch page metadata client-side
+ * Hook to get link preview data for a URL
  *
- * Note: This sends URLs to third-party CORS proxy services.
- * For privacy-sensitive applications, consider implementing
- * a server-side proxy endpoint instead.
+ * By default, returns basic preview (domain + favicon) without network requests.
+ * When richPreview is enabled, fetches full metadata via third-party CORS proxy.
  */
 export function useLinkPreview(
   url: string | null,
   options: UseLinkPreviewOptions = {}
 ): UseLinkPreviewResult {
-  const { disabled = false } = options
+  const { disabled = false, richPreview = false } = options
 
-  // Initialize data from cache if available
-  const [data, setData] = useState<LinkPreviewData | null>(() => {
-    if (!url || disabled) return null
+  // For basic preview, we can compute immediately without state
+  const basicData = url && !disabled && !shouldSkipUrl(url)
+    ? createBasicPreview(url)
+    : null
+
+  // Initialize data from cache if available (for rich preview)
+  const [richData, setRichData] = useState<LinkPreviewData | null>(() => {
+    if (!url || disabled || !richPreview) return null
     return previewCache.get(url) || null
   })
 
-  // Initialize loading to true if we need to fetch (URL exists, not disabled, not cached)
+  // Initialize loading state for rich preview
   const [loading, setLoading] = useState(() => {
-    if (!url || disabled || shouldSkipUrl(url)) return false
+    if (!url || disabled || !richPreview || shouldSkipUrl(url)) return false
     return !previewCache.has(url)
   })
 
   const [error, setError] = useState(false)
 
   useEffect(() => {
-    if (!url || disabled || shouldSkipUrl(url)) {
-      setData(null)
+    // Only fetch if rich preview is enabled
+    if (!url || disabled || !richPreview || shouldSkipUrl(url)) {
+      setRichData(null)
       setLoading(false)
       setError(false)
       return
@@ -278,7 +311,7 @@ export function useLinkPreview(
     // Check cache first
     const cached = previewCache.get(url)
     if (cached) {
-      setData(cached)
+      setRichData(cached)
       setLoading(false)
       setError(false)
       return
@@ -288,10 +321,10 @@ export function useLinkPreview(
     setLoading(true)
     setError(false)
 
-    fetchPreview(url)
+    fetchRichPreview(url)
       .then((result) => {
         if (!cancelled) {
-          setData(result)
+          setRichData(result)
           setLoading(false)
         }
       })
@@ -305,9 +338,17 @@ export function useLinkPreview(
     return () => {
       cancelled = true
     }
-  }, [url, disabled])
+  }, [url, disabled, richPreview])
 
-  return { data, loading, error }
+  // Return rich data if available, otherwise basic data
+  const data = richPreview ? (richData || basicData) : basicData
+
+  return {
+    data,
+    loading: richPreview ? loading : false,
+    error,
+    isRichPreview: richPreview && !!richData && !loading,
+  }
 }
 
 /**
@@ -379,11 +420,12 @@ export function extractAllUrls(content: string): string[] {
 
 /**
  * Prefetch link previews for multiple URLs (useful for feed)
+ * Only works when rich previews are enabled
  */
 export function prefetchLinkPreviews(urls: string[]): void {
   urls.forEach(url => {
     if (!shouldSkipUrl(url) && !previewCache.has(url)) {
-      fetchPreview(url).catch(() => {
+      fetchRichPreview(url).catch(() => {
         // Ignore errors during prefetch
       })
     }

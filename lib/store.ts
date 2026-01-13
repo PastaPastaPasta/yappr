@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
 
@@ -25,3 +26,22 @@ export const useAppStore = create<AppState>((set) => ({
   setReplyingTo: (post) => set({ replyingTo: post }),
   setQuotingPost: (post) => set({ quotingPost: post }),
 }))
+
+// Settings store with localStorage persistence
+interface SettingsState {
+  /** Enable rich link previews (fetches metadata via third-party proxy) */
+  richLinkPreviews: boolean
+  setRichLinkPreviews: (enabled: boolean) => void
+}
+
+export const useSettingsStore = create<SettingsState>()(
+  persist(
+    (set) => ({
+      richLinkPreviews: false, // Disabled by default for privacy
+      setRichLinkPreviews: (enabled) => set({ richLinkPreviews: enabled }),
+    }),
+    {
+      name: 'yappr-settings',
+    }
+  )
+)

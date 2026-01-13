@@ -6,6 +6,7 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
 import { LinkPreview, LinkPreviewSkeleton } from './link-preview'
 import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
+import { useSettingsStore } from '@/lib/store'
 
 interface PostContentProps {
   content: string
@@ -28,11 +29,13 @@ export function PostContent({
   onFailedHashtagClick,
   disableLinkPreview = false
 }: PostContentProps) {
+  const richLinkPreviews = useSettingsStore((s) => s.richLinkPreviews)
+
   // Extract first URL for preview
   const firstUrl = useMemo(() => extractFirstUrl(content), [content])
   const { data: previewData, loading: previewLoading } = useLinkPreview(
     firstUrl,
-    { disabled: disableLinkPreview }
+    { disabled: disableLinkPreview, richPreview: richLinkPreviews }
   )
   const parsedContent = useMemo(() => {
     // Combined pattern to match URLs, hashtags, and mentions
