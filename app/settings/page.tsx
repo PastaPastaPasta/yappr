@@ -26,11 +26,12 @@ import * as Switch from '@radix-ui/react-switch'
 import * as RadioGroup from '@radix-ui/react-radio-group'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
+import { useDeleteAccountModal } from '@/hooks/use-delete-account-modal'
+import { DeleteAccountModal } from '@/components/settings/delete-account-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'appearance', 'about']
@@ -117,11 +118,10 @@ function SettingsPage() {
     }
   }
 
-  // TODO: Implement account deletion
+  // Delete account modal
+  const { open: openDeleteAccountModal } = useDeleteAccountModal()
   const handleDeleteAccount = () => {
-    if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      toast.error('Account deletion is not yet implemented')
-    }
+    openDeleteAccountModal()
   }
 
   const renderMainSettings = () => (
@@ -529,6 +529,7 @@ function SettingsPage() {
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
+      <DeleteAccountModal />
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">

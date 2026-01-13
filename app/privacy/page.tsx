@@ -132,14 +132,28 @@ export default function PrivacyPage() {
               </p>
             </section>
 
-            {/* No Deletion */}
+            {/* Data Deletion */}
             <section>
-              <h2 className="text-xl font-semibold mb-3">Data Cannot Be Deleted</h2>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-                Because data is stored on a blockchain, it cannot be deleted. There is no &quot;delete my account&quot;
-                button because no one has the power to remove data from the blockchain. Once you post something,
-                it exists permanently. This is a fundamental property of blockchain technology, not a choice we made.
-              </p>
+              <h2 className="text-xl font-semibold mb-3">Data Deletion</h2>
+              <div className="text-gray-600 dark:text-gray-400 leading-relaxed space-y-3">
+                <p>
+                  <strong>You can delete your account</strong> and all associated data from Dash Platform. Unlike traditional
+                  blockchains, Dash Platform documents can be deleted by their owners. When you delete your account:
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>All your posts, likes, reposts, and replies are permanently removed</li>
+                  <li>Your profile and avatar are deleted</li>
+                  <li>Your follow lists, bookmarks, and blocks are removed</li>
+                  <li>Your direct messages are deleted</li>
+                </ul>
+                <div className="bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mt-4">
+                  <p className="text-amber-800 dark:text-amber-200 text-sm">
+                    <strong>Important:</strong> While data is deleted from Dash Platform itself, third-party services such as
+                    blockchain explorers, indexing platforms, or archive services may have copied your data before deletion.
+                    We have no control over these external services, and they may retain historical copies of your content.
+                  </p>
+                </div>
+              </div>
             </section>
 
             {/* Third Parties */}
