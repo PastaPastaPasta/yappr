@@ -13,6 +13,7 @@ export type LoginPromptAction =
   | 'follow'
   | 'block'
   | 'message'
+  | 'view_following'
   | 'generic'
 
 interface LoginPromptModalStore {
@@ -59,6 +60,8 @@ export function getActionDescription(action: LoginPromptAction): string {
       return 'block users'
     case 'message':
       return 'send messages'
+    case 'view_following':
+      return 'see posts from people you follow'
     case 'generic':
     default:
       return 'perform this action'
