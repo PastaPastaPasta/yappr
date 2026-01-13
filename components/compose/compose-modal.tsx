@@ -18,7 +18,8 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials } from '@/lib/utils'
 
 export function ComposeModal() {
-  const { isComposeOpen, setComposeOpen, replyingTo, setReplyingTo, quotingPost, setQuotingPost } = useAppStore()
+  const { isComposeOpen, setComposeOpen, replyingTo, setReplyingTo, quotingPost, setQuotingPost, editingPost, setEditingPost } = useAppStore()
+  const isEditMode = !!editingPost
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const [content, setContent] = useState('')
@@ -31,13 +32,17 @@ export function ComposeModal() {
 
   useEffect(() => {
     if (isComposeOpen) {
+      // Pre-populate content when editing
+      if (editingPost) {
+        setContent(editingPost.content)
+      }
       // Small delay to ensure the modal animation has mounted the textarea
       const timeoutId = setTimeout(() => {
         textareaRef.current?.focus()
       }, 50)
       return () => clearTimeout(timeoutId)
     }
-  }, [isComposeOpen])
+  }, [isComposeOpen, editingPost])
 
   const handlePost = async () => {
     if (!content.trim() || content.length > characterLimit) return
@@ -48,6 +53,33 @@ export function ComposeModal() {
     const postContent = content.trim()
 
     try {
+      // Handle edit mode
+      if (isEditMode && editingPost) {
+        const { postService } = await import('@/lib/services/post-service')
+
+        console.log('Updating post with Dash SDK...')
+
+        await postService.updatePost(
+          editingPost.id,
+          authedUser.identityId,
+          postContent
+        )
+
+        toast.success('Post updated successfully!')
+
+        // Clear the form and close modal
+        setContent('')
+        setComposeOpen(false)
+        setEditingPost(null)
+
+        // Trigger post update event for UI refresh
+        window.dispatchEvent(new CustomEvent('post-updated', {
+          detail: { postId: editingPost.id, content: postContent }
+        }))
+
+        return
+      }
+
       const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
       const { retryPostCreation, isNetworkError } = await import('@/lib/retry-utils')
 
@@ -134,6 +166,7 @@ export function ComposeModal() {
     setComposeOpen(false)
     setReplyingTo(null)
     setQuotingPost(null)
+    setEditingPost(null)
     setContent('')
   }
 
@@ -160,10 +193,10 @@ export function ComposeModal() {
                   >
                 {/* Add Dialog Title for accessibility */}
                 <Dialog.Title className="sr-only">
-                  {replyingTo ? 'Reply to post' : quotingPost ? 'Quote post' : 'Create a new post'}
+                  {isEditMode ? 'Edit post' : replyingTo ? 'Reply to post' : quotingPost ? 'Quote post' : 'Create a new post'}
                 </Dialog.Title>
                 <Dialog.Description className="sr-only">
-                  {replyingTo ? 'Write your reply to the post' : quotingPost ? 'Add your thoughts to this quote' : 'Share your thoughts with the community'}
+                  {isEditMode ? 'Edit your post content' : replyingTo ? 'Write your reply to the post' : quotingPost ? 'Add your thoughts to this quote' : 'Share your thoughts with the community'}
                 </Dialog.Description>
                 
                 <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
@@ -179,16 +212,21 @@ export function ComposeModal() {
                     {isPosting ? (
                       <span className="flex items-center gap-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                        {replyingTo ? 'Replying...' : quotingPost ? 'Quoting...' : 'Posting...'}
+                        {isEditMode ? 'Saving...' : replyingTo ? 'Replying...' : quotingPost ? 'Quoting...' : 'Posting...'}
                       </span>
                     ) : (
-                      replyingTo ? 'Reply' : quotingPost ? 'Quote' : 'Post'
+                      isEditMode ? 'Save' : replyingTo ? 'Reply' : quotingPost ? 'Quote' : 'Post'
                     )}
                   </Button>
                 </div>
 
                 <div className="p-4">
-                  {replyingTo && (
+                  {isEditMode && (
+                    <div className="mb-4 text-sm text-gray-500">
+                      Editing your post
+                    </div>
+                  )}
+                  {replyingTo && !isEditMode && (
                     <div className="mb-4 text-sm text-gray-500">
                       Replying to <span className="text-yappr-500">
                         {/* Priority: DPNS username > Profile display name > Truncated identity ID */}
@@ -215,7 +253,7 @@ export function ComposeModal() {
                             handlePost()
                           }
                         }}
-                        placeholder={replyingTo ? "Post your reply" : quotingPost ? "Add your comment" : "What's happening?"}
+                        placeholder={isEditMode ? "Edit your post" : replyingTo ? "Post your reply" : quotingPost ? "Add your comment" : "What's happening?"}
                         className="w-full min-h-[120px] text-lg resize-none outline-none bg-transparent placeholder:text-gray-500"
                       />
 

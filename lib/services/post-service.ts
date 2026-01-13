@@ -64,6 +64,8 @@ class PostService extends BaseDocumentService<Post> {
     const id = doc.$id || doc.id;
     const ownerId = doc.$ownerId || doc.ownerId;
     const createdAt = doc.$createdAt || doc.createdAt;
+    const updatedAt = doc.$updatedAt || doc.updatedAt;
+    const revision = doc.$revision || doc.revision || 1;
 
     // Content and other fields may be in data or at root level
     const content = data.content || doc.content || '';
@@ -83,6 +85,8 @@ class PostService extends BaseDocumentService<Post> {
       author: this.getDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
+      updatedAt: updatedAt ? new Date(updatedAt) : undefined,
+      isEdited: revision > 1,  // Base revision is 1 on Dash Platform, so >1 means edited
       likes: 0,
       reposts: 0,
       replies: 0,
@@ -418,6 +422,42 @@ class PostService extends BaseDocumentService<Post> {
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     return this.create(ownerId, data);
+  }
+
+  /**
+   * Update an existing post's content
+   * Only the content field can be edited - replyToId, quotedPostId, and mediaUrl are immutable
+   */
+  async updatePost(
+    postId: string,
+    ownerId: string,
+    content: string
+  ): Promise<Post> {
+    // Validate content
+    if (!content || content.trim().length === 0) {
+      throw new Error('Post content cannot be empty');
+    }
+    if (content.length > 500) {
+      throw new Error('Post content exceeds 500 character limit');
+    }
+
+    // Clear cache for this post to ensure fresh revision
+    this.clearCache(postId);
+
+    const data: Record<string, unknown> = {
+      content: content.trim()
+    };
+
+    // BaseDocumentService.update() handles:
+    // 1. Fetching current document for revision
+    // 2. Calling stateTransitionService.updateDocument()
+    // 3. Cache invalidation
+    const updatedPost = await this.update(postId, ownerId, data);
+
+    // Also clear the statsCache for this post since we touched it
+    this.statsCache.delete(postId);
+
+    return updatedPost;
   }
 
   /**
