@@ -465,19 +465,23 @@ function UserProfileContent() {
         enrichProgressively(newPosts)
       }
 
-      // Update pagination state for posts
-      if (newPostDocs.length > 0) {
-        const lastPost = newPostDocs[newPostDocs.length - 1] as any
-        setLastPostId(lastPost.$id || lastPost.id)
+      // Update pagination state for posts (only if posts were fetched)
+      if (canLoadMorePosts) {
+        if (newPostDocs.length > 0) {
+          const lastPost = newPostDocs[newPostDocs.length - 1] as any
+          setLastPostId(lastPost.$id || lastPost.id)
+        }
+        setHasMore(newPostDocs.length >= 50)
       }
-      setHasMore(newPostDocs.length >= 50)
 
-      // Update pagination state for reposts
-      if (newRepostDocs.length > 0) {
-        const lastRepost = newRepostDocs[newRepostDocs.length - 1] as any
-        setLastRepostId(lastRepost.$id)
+      // Update pagination state for reposts (only if reposts were fetched)
+      if (canLoadMoreReposts) {
+        if (newRepostDocs.length > 0) {
+          const lastRepost = newRepostDocs[newRepostDocs.length - 1] as any
+          setLastRepostId(lastRepost.$id)
+        }
+        setHasMoreReposts(newRepostDocs.length >= 50)
       }
-      setHasMoreReposts(newRepostDocs.length >= 50)
     } catch (error) {
       console.error('Failed to load more posts:', error)
     } finally {
