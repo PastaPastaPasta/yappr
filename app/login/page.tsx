@@ -1,14 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { useRouter } from 'next/navigation'
-import { PasswordUnlockModal } from '@/components/auth/password-unlock-modal'
-import {
-  hasStoredCredential,
-  getLastUsedIdentityId
-} from '@/lib/password-encrypted-storage'
 import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
@@ -53,28 +48,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [rememberMe, setRememberMe] = useState(true)
 
-  // Stored credential states
-  const [storedIdentityId, setStoredIdentityId] = useState<string | null>(null)
-  const [hasStoredCred, setHasStoredCred] = useState(false)
-  const [showUnlockModal, setShowUnlockModal] = useState(false)
-
   const { login, loginWithPassword } = useAuth()
   const router = useRouter()
   const openBackupModal = useKeyBackupModal((state) => state.open)
-
-  // Check for stored credentials on mount
-  useEffect(() => {
-    const lastId = getLastUsedIdentityId()
-    if (lastId) {
-      setStoredIdentityId(lastId)
-      setIdentityInput(lastId)
-      const hasStored = hasStoredCredential(lastId)
-      setHasStoredCred(hasStored)
-      if (hasStored) {
-        setShowUnlockModal(true)
-      }
-    }
-  }, [])
 
   // Debounced identity lookup
   useEffect(() => {
@@ -233,31 +209,6 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const handleUnlockSuccess = async (decryptedPrivateKey: string) => {
-    setShowUnlockModal(false)
-    setError(null)
-    setIsLoading(true)
-
-    try {
-      // User stored credentials locally, so they want to be remembered
-      await login(storedIdentityId!, decryptedPrivateKey, { rememberMe: true })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to login')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleUseDifferent = () => {
-    setShowUnlockModal(false)
-    setHasStoredCred(false)
-    setIdentityInput('')
-    setCredential('')
-    setStoredIdentityId(null)
-    setResolvedIdentity(null)
-    setDetectedCredentialType(null)
   }
 
   // Submit button enabled based on credential type
@@ -505,15 +456,6 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
-
-      {/* Password Unlock Modal for returning users */}
-      <PasswordUnlockModal
-        isOpen={showUnlockModal}
-        identityId={storedIdentityId || ''}
-        onSuccess={handleUnlockSuccess}
-        onCancel={() => setShowUnlockModal(false)}
-        onUseDifferent={handleUseDifferent}
-      />
     </div>
   )
 }
