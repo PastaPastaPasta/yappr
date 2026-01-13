@@ -146,6 +146,12 @@ function PostDetailContent() {
                     placeholder="Post your reply"
                     value={replyContent}
                     onChange={(e) => setReplyContent(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                        e.preventDefault()
+                        handleReply()
+                      }
+                    }}
                     className="w-full"
                     maxLength={500}
                   />

@@ -205,6 +205,12 @@ export function ComposeModal() {
                         ref={textareaRef}
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
+                        onKeyDown={(e) => {
+                          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                            e.preventDefault()
+                            handlePost()
+                          }
+                        }}
                         placeholder={replyingTo ? "Post your reply" : quotingPost ? "Add your comment" : "What's happening?"}
                         className="w-full min-h-[120px] text-lg resize-none outline-none bg-transparent placeholder:text-gray-500"
                       />
