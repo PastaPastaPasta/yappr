@@ -371,10 +371,12 @@ function ThreadPostEditor({
             />
           )}
 
-          {/* Footer with character count */}
+          {/* Footer with formatting hints and character count */}
           <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
-            <div className="text-xs text-gray-400">
-              {index === 0 ? 'Thread start' : `Post ${index + 1}`}
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
+              <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
+              <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
             </div>
             <CharacterCounter current={post.content.length} limit={CHARACTER_LIMIT} />
           </div>
@@ -712,13 +714,7 @@ export function ComposeModal() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        {/* Ready indicator */}
-                        {canPost && !isPosting && (
-                          <span className="text-xs text-yappr-500 font-medium hidden sm:block">
-                            Ready to post
-                          </span>
-                        )}
+                      <div className="flex items-center gap-2">
                         {/* Post button - prominent primary action */}
                         <Button
                           onClick={handlePost}
@@ -851,30 +847,14 @@ export function ComposeModal() {
                       </div>
                     </div>
 
-                    {/* Footer */}
-                    <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="text-xs text-gray-500">
-                            <span className="font-medium">Tip:</span> Use{' '}
-                            <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs">
-                              **bold**
-                            </code>{' '}
-                            <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs">
-                              *italic*
-                            </code>{' '}
-                            <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs">
-                              `code`
-                            </code>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-400">
-                            {threadPosts.length > 1
-                              ? `${totalCharacters} total chars`
-                              : `Press ⌘+Enter to post`}
-                          </span>
-                        </div>
+                    {/* Footer - minimal with keyboard hint */}
+                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                      <div className="flex items-center justify-end">
+                        <span className="text-xs text-gray-400">
+                          {threadPosts.length > 1
+                            ? `${totalCharacters} total chars · ⌘+Enter to post`
+                            : `⌘+Enter to post`}
+                        </span>
                       </div>
                     </div>
                   </motion.div>
