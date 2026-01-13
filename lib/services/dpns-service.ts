@@ -300,7 +300,7 @@ class DpnsService {
    */
   async isUsernameAvailable(username: string): Promise<boolean> {
     try {
-      const normalizedUsername = username.toLowerCase().replace('.dash', '');
+      const normalizedUsername = username.toLowerCase().replace(/\.dash$/, '');
 
       // Try native availability check first (more efficient)
       try {
