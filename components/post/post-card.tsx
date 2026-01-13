@@ -531,7 +531,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               onClick={(e) => e.stopPropagation()}
               className="text-sm text-gray-500 hover:underline mt-1 block"
             >
-              Replying to <span className={replyToDisplay.showAt ? "text-yappr-500" : "text-yappr-500"}>
+              Replying to <span className="text-yappr-500">
                 {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
               </span>
             </Link>
