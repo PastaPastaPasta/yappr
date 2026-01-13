@@ -165,15 +165,79 @@ function ThreadPostEditor({
 
     const start = textarea.selectionStart
     const end = textarea.selectionEnd
-    const selectedText = post.content.substring(start, end)
-    const insertText = prefix + selectedText + suffix
+    const content = post.content
+    const selectedText = content.substring(start, end)
 
     // Focus the textarea first
     textarea.focus()
 
-    // Use setRangeText to insert text in a way that preserves undo history
-    // This is the modern approach that works with Ctrl+Z
-    textarea.setRangeText(insertText, start, end, 'end')
+    // Check if we should toggle OFF the formatting
+    let shouldRemove = false
+    let removeStart = start
+    let removeEnd = end
+
+    if (selectedText) {
+      // Case 1: Selected text is already wrapped with the formatting
+      // e.g., selecting "**bold**" and clicking bold
+      if (selectedText.startsWith(prefix) && selectedText.endsWith(suffix)) {
+        shouldRemove = true
+        removeStart = start
+        removeEnd = end
+      }
+      // Case 2: Selection is inside formatted text
+      // e.g., selecting "bold" within "**bold**"
+      else if (
+        start >= prefix.length &&
+        content.substring(start - prefix.length, start) === prefix &&
+        content.substring(end, end + suffix.length) === suffix
+      ) {
+        shouldRemove = true
+        removeStart = start - prefix.length
+        removeEnd = end + suffix.length
+      }
+    } else {
+      // No selection - check if cursor is inside formatted text
+      // Look for matching prefix before and suffix after cursor
+      const beforeCursor = content.substring(0, start)
+      const afterCursor = content.substring(start)
+
+      // Find the nearest prefix before cursor
+      const prefixIndex = beforeCursor.lastIndexOf(prefix)
+      if (prefixIndex !== -1) {
+        // Check if there's a matching suffix after cursor
+        const suffixIndex = afterCursor.indexOf(suffix)
+        if (suffixIndex !== -1) {
+          // Make sure there's no unmatched prefix/suffix between
+          const textBetweenPrefixAndCursor = beforeCursor.substring(prefixIndex + prefix.length)
+          const textBetweenCursorAndSuffix = afterCursor.substring(0, suffixIndex)
+
+          // Only toggle if we're inside a single formatted region
+          if (!textBetweenPrefixAndCursor.includes(suffix) && !textBetweenCursorAndSuffix.includes(prefix)) {
+            shouldRemove = true
+            removeStart = prefixIndex
+            removeEnd = start + suffixIndex + suffix.length
+          }
+        }
+      }
+    }
+
+    let insertText: string
+    let newCursorPos: number
+
+    if (shouldRemove) {
+      // Remove the formatting
+      const innerText = content.substring(removeStart + prefix.length, removeEnd - suffix.length)
+      textarea.setRangeText(innerText, removeStart, removeEnd, 'end')
+      newCursorPos = removeStart + innerText.length
+      insertText = innerText
+    } else {
+      // Add the formatting
+      insertText = prefix + selectedText + suffix
+      textarea.setRangeText(insertText, start, end, 'end')
+      newCursorPos = selectedText
+        ? start + insertText.length // After the inserted text if there was a selection
+        : start + prefix.length // Between prefix and suffix if no selection
+    }
 
     // Dispatch input event so React can sync the state
     const inputEvent = new InputEvent('input', {
@@ -187,10 +251,7 @@ function ThreadPostEditor({
     // Update React state to match
     onContentChange(textarea.value)
 
-    // Position cursor appropriately
-    const newCursorPos = selectedText
-      ? start + insertText.length // After the inserted text if there was a selection
-      : start + prefix.length // Between prefix and suffix if no selection
+    // Position cursor
     textarea.setSelectionRange(newCursorPos, newCursorPos)
   }
 
