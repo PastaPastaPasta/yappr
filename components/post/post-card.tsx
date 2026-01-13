@@ -153,7 +153,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
-  const { setReplyingTo, setComposeOpen, setQuotingPost } = useAppStore()
+  const { setReplyingTo, setComposeOpen, setQuotingPost, setEditingPost } = useAppStore()
   const { open: openTipModal } = useTipModal()
   const { open: openHashtagRecoveryModal } = useHashtagRecoveryModal()
 
@@ -361,6 +361,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     openHashtagRecoveryModal(post, hashtag)
   }
 
+  const handleEdit = () => {
+    // Merge enriched author data into the post for consistency
+    const enrichedPost = {
+      ...post,
+      author: {
+        ...post.author,
+        username: usernameState || post.author.username,
+        displayName: displayName || post.author.displayName
+      }
+    }
+    setEditingPost(enrichedPost)
+    setComposeOpen(true)
+  }
+
   const handleCardClick = () => {
     router.push(`/post?id=${post.id}`)
   }
@@ -465,6 +479,23 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
             <div className="flex items-center gap-1 flex-shrink-0">
               <span className="text-gray-500 text-sm">{formatTime(post.createdAt)}</span>
+              {post.isEdited && (
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <span className="text-gray-400 text-sm ml-1">(edited)</span>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                        sideOffset={5}
+                      >
+                        {post.updatedAt ? `Edited ${formatTime(post.updatedAt)}` : 'This post was edited'}
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+              )}
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton onClick={(e: React.MouseEvent) => e.stopPropagation()}>
@@ -477,6 +508,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                   sideOffset={5}
                 >
+                  {isOwnPost && (
+                    <DropdownMenu.Item
+                      onClick={(e) => { e.stopPropagation(); handleEdit(); }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none"
+                    >
+                      <PencilSquareIcon className="h-4 w-4" />
+                      Edit
+                    </DropdownMenu.Item>
+                  )}
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleFollow(); }}
                     disabled={followLoading}

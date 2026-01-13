@@ -39,6 +39,8 @@ export interface Post {
   author: User
   content: string
   createdAt: Date
+  updatedAt?: Date      // When post was last edited ($updatedAt from platform)
+  isEdited?: boolean    // True if $revision > 0 (convenience for UI)
   likes: number
   reposts: number
   replies: number
