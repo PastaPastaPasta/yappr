@@ -6,6 +6,7 @@ import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon } from '@hero
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
+import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
@@ -242,6 +243,7 @@ export default function ExplorePage() {
       </div>
 
       <RightSidebar />
+      <ComposeModal />
     </div>
   )
 }

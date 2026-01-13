@@ -7,6 +7,7 @@ import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
+import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
@@ -191,6 +192,7 @@ function HashtagPageContent() {
       </div>
 
       <RightSidebar />
+      <ComposeModal />
     </div>
   )
 }

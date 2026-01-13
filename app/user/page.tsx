@@ -21,6 +21,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { PostCard } from '@/components/post/post-card'
+import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
 import { AvatarCustomization } from '@/components/settings/avatar-customization'
@@ -1085,6 +1086,7 @@ function UserProfileContent() {
       </div>
 
       <RightSidebar />
+      <ComposeModal />
 
       {/* Avatar Customization Modal */}
       {isEditingAvatar && (
