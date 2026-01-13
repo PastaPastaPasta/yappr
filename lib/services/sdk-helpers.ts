@@ -168,7 +168,7 @@ function hexToBytes(hex: string): Uint8Array {
 /**
  * Convert base64 string to bytes
  */
-function base64ToBytes(base64: string): Uint8Array {
+export function base64ToBytes(base64: string): Uint8Array {
   // Handle both browser and Node.js environments
   if (typeof atob === 'function') {
     const binary = atob(base64);
@@ -181,6 +181,28 @@ function base64ToBytes(base64: string): Uint8Array {
     // Node.js fallback
     return new Uint8Array(Buffer.from(base64, 'base64'));
   }
+}
+
+/**
+ * Convert various byte formats to Uint8Array.
+ * Handles Uint8Array (passthrough), number[] (from JSON), and base64 strings.
+ * Returns null if format is unrecognized or invalid.
+ */
+export function toUint8Array(data: unknown): Uint8Array | null {
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (Array.isArray(data) && data.every(n => typeof n === 'number')) {
+    return new Uint8Array(data);
+  }
+  if (typeof data === 'string') {
+    try {
+      return base64ToBytes(data);
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export interface QueryDocumentsOptions {

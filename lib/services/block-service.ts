@@ -1,15 +1,10 @@
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
-import { identifierToBase58 } from './sdk-helpers'
+import { identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { YAPPR_BLOCK_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
-import {
-  BlockDocument,
-  BlockFilterDocument,
-  BlockFollowDocument,
-  BlockFollowData
-} from '../types'
+import { BlockDocument, BlockFollowData } from '../types'
 import {
   loadBlockCache,
   initializeBlockCache,
@@ -40,9 +35,6 @@ const MAX_BLOCK_FOLLOWS = 100
  * - SessionStorage caching for page load optimization
  */
 class BlockService extends BaseDocumentService<BlockDocument> {
-  // In-memory cache for quick lookups (supplements sessionStorage)
-  private blockCache = new Map<string, Map<string, boolean>>()
-
   constructor() {
     super(DOCUMENT_TYPES.BLOCK, YAPPR_BLOCK_CONTRACT_ID)
   }
@@ -105,18 +97,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       )
 
       if (result.success) {
-        // Update in-memory cache
-        let blockerCache = this.blockCache.get(blockerId)
-        if (!blockerCache) {
-          blockerCache = new Map()
-          this.blockCache.set(blockerId, blockerCache)
-        }
-        blockerCache.set(targetUserId, true)
-
-        // Update sessionStorage cache
         addOwnBlock(blockerId, targetUserId)
-
-        // Update bloom filter (add-only)
         await this.addToBloomFilter(blockerId, targetUserId)
       }
 
@@ -140,9 +121,6 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     try {
       const block = await this.getBlock(targetUserId, blockerId)
       if (!block) {
-        // Update caches
-        const blockerCache = this.blockCache.get(blockerId)
-        if (blockerCache) blockerCache.set(targetUserId, false)
         removeOwnBlock(blockerId, targetUserId)
         return { success: true }
       }
@@ -155,14 +133,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       )
 
       if (result.success) {
-        // Update caches
-        const blockerCache = this.blockCache.get(blockerId)
-        if (blockerCache) blockerCache.set(targetUserId, false)
         removeOwnBlock(blockerId, targetUserId)
-
-        // TODO: Rebuild bloom filter on unblock
-        // For now, bloom filter is add-only - false positives may occur
-        // until filter is rebuilt
+        // Note: Bloom filter is add-only. False positives may occur until rebuilt.
       }
 
       return result
@@ -228,43 +200,21 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         limit: 1
       } as any)
 
-      let documents: any[] = []
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
-      } else if (Array.isArray(response)) {
-        documents = response
-      }
-
+      const documents = normalizeSDKResponse(response)
       if (documents.length === 0) return null
 
       const doc = documents[0]
-      const data = doc.data || doc
-      const filterData = data.filterData
-
-      // Convert filterData to Uint8Array
-      let bytes: Uint8Array
-      if (filterData instanceof Uint8Array) {
-        bytes = filterData
-      } else if (Array.isArray(filterData)) {
-        bytes = new Uint8Array(filterData)
-      } else if (typeof filterData === 'string') {
-        // Base64 encoded
-        const binary = atob(filterData)
-        bytes = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i)
-        }
-      } else {
-        console.error('Unknown filterData format:', typeof filterData)
+      const data = (doc.data || doc) as Record<string, unknown>
+      const bytes = toUint8Array(data.filterData)
+      if (!bytes) {
+        console.error('Unknown filterData format:', typeof data.filterData)
         return null
       }
 
       return {
-        filter: new BloomFilter(bytes, data.itemCount || 0),
+        filter: new BloomFilter(bytes, (data.itemCount as number) || 0),
         documentId: (doc.$id || doc.id) as string,
-        revision: (doc.$revision || doc.revision || 0) as number
+        revision: ((doc.$revision || doc.revision || 0) as number)
       }
     } catch (error) {
       console.error('Error getting bloom filter:', error)
@@ -281,7 +231,6 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
     try {
       const sdk = await getEvoSdk()
-      // Query with 'in' operator
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: DOCUMENT_TYPES.BLOCK_FILTER,
@@ -290,36 +239,15 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         limit: Math.min(userIds.length, 100)
       } as any)
 
-      let documents: any[] = []
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
-      } else if (Array.isArray(response)) {
-        documents = response
-      }
+      const documents = normalizeSDKResponse(response)
 
       for (const doc of documents) {
-        const data = doc.data || doc
+        const data = (doc.data || doc) as Record<string, unknown>
         const ownerId = (doc.$ownerId || doc.ownerId) as string
-        const filterData = data.filterData
+        const bytes = toUint8Array(data.filterData)
+        if (!bytes) continue
 
-        let bytes: Uint8Array
-        if (filterData instanceof Uint8Array) {
-          bytes = filterData
-        } else if (Array.isArray(filterData)) {
-          bytes = new Uint8Array(filterData)
-        } else if (typeof filterData === 'string') {
-          const binary = atob(filterData)
-          bytes = new Uint8Array(binary.length)
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i)
-          }
-        } else {
-          continue
-        }
-
-        result.set(ownerId, new BloomFilter(bytes, data.itemCount || 0))
+        result.set(ownerId, new BloomFilter(bytes, (data.itemCount as number) || 0))
       }
     } catch (error) {
       console.error('Error getting bloom filters batch:', error)
@@ -391,23 +319,12 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         limit: 1
       } as any)
 
-      let documents: any[] = []
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
-      } else if (Array.isArray(response)) {
-        documents = response
-      }
-
+      const documents = normalizeSDKResponse(response)
       if (documents.length === 0) return null
 
       const doc = documents[0]
-      const data = doc.data || doc
-      const followedBlockers = data.followedBlockers
-
-      // Decode the array of user IDs (each is 32 bytes)
-      const followedUserIds = this.decodeUserIdArray(followedBlockers)
+      const data = (doc.data || doc) as Record<string, unknown>
+      const followedUserIds = this.decodeUserIdArray(data.followedBlockers)
 
       return {
         $id: (doc.$id || doc.id) as string,
@@ -426,25 +343,12 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Each user ID is 32 bytes.
    */
   private decodeUserIdArray(data: unknown): string[] {
-    let bytes: Uint8Array
-    if (data instanceof Uint8Array) {
-      bytes = data
-    } else if (Array.isArray(data)) {
-      bytes = new Uint8Array(data)
-    } else if (typeof data === 'string') {
-      const binary = atob(data)
-      bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
-    } else {
-      return []
-    }
+    const bytes = toUint8Array(data)
+    if (!bytes) return []
 
     const userIds: string[] = []
     for (let i = 0; i + 32 <= bytes.length; i += 32) {
-      const idBytes = bytes.slice(i, i + 32)
-      userIds.push(bs58.encode(idBytes))
+      userIds.push(bs58.encode(bytes.slice(i, i + 32)))
     }
     return userIds
   }
@@ -619,32 +523,23 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   async isBlocked(targetUserId: string, viewerId: string): Promise<boolean> {
     if (!viewerId || !targetUserId) return false
 
-    // Check own blocks first (fast path)
+    // Fast path: check sessionStorage caches first
     if (isInOwnBlocks(viewerId, targetUserId)) {
       return true
     }
 
-    // Check confirmed blocks cache
     const confirmed = getConfirmedBlock(viewerId, targetUserId)
     if (confirmed !== undefined) {
       return confirmed.isBlocked
     }
 
-    // Check in-memory cache
-    const blockerCache = this.blockCache.get(viewerId)
-    if (blockerCache?.has(targetUserId)) {
-      return blockerCache.get(targetUserId)!
-    }
-
-    // Check merged bloom filter
+    // Check merged bloom filter for quick negative
     const mergedFilter = getMergedBloomFilter(viewerId)
     if (mergedFilter && !mergedFilter.mightContain(targetUserId)) {
-      // Definitely not blocked
       return false
     }
 
-    // Bloom filter positive or no filter - need to verify
-    // Check own blocks on platform
+    // Bloom filter positive or no filter - verify against platform
     const ownBlock = await this.getBlock(targetUserId, viewerId)
     if (ownBlock) {
       addConfirmedBlock(viewerId, targetUserId, viewerId, true, ownBlock.message)
@@ -661,7 +556,6 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       }
     }
 
-    // Not blocked
     addConfirmedBlock(viewerId, targetUserId, '', false)
     return false
   }
@@ -723,25 +617,16 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     const uniqueTargetIds = Array.from(new Set(targetIds))
     const unchecked: string[] = []
 
-    // Phase 1: Check caches
+    // Phase 1: Check sessionStorage caches
     for (const targetId of uniqueTargetIds) {
-      // Check own blocks
       if (isInOwnBlocks(viewerId, targetId)) {
         result.set(targetId, true)
         continue
       }
 
-      // Check confirmed blocks cache
       const confirmed = getConfirmedBlock(viewerId, targetId)
       if (confirmed !== undefined) {
         result.set(targetId, confirmed.isBlocked)
-        continue
-      }
-
-      // Check in-memory cache
-      const blockerCache = this.blockCache.get(viewerId)
-      if (blockerCache?.has(targetId)) {
-        result.set(targetId, blockerCache.get(targetId)!)
         continue
       }
 
@@ -855,38 +740,23 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       limit: Math.min(targetIds.length, 100)
     } as any)
 
-    let documents: any[] = []
-    if (response instanceof Map) {
-      documents = Array.from(response.values())
-        .filter(Boolean)
-        .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
-    } else if (Array.isArray(response)) {
-      documents = response
-    }
-
-    return documents.map((doc: any) => this.transformDocument(doc))
+    return normalizeSDKResponse(response).map(doc => this.transformDocument(doc))
   }
 
   /**
    * Query inherited blocks for multiple targets from multiple blockers.
-   * Note: Dash Platform only supports one 'in' clause per query, so we
-   * loop through blockers and query each with targetIds 'in' clause.
+   * Queries each blocker in parallel since Platform only supports one 'in' clause per query.
    */
   private async queryInheritedBlocksBatch(
     targetIds: string[],
     followedBlockers: string[]
   ): Promise<Map<string, { blockedBy: string; message?: string }>> {
     const result = new Map<string, { blockedBy: string; message?: string }>()
-
-    if (targetIds.length === 0 || followedBlockers.length === 0) {
-      return result
-    }
+    if (targetIds.length === 0 || followedBlockers.length === 0) return result
 
     try {
       const sdk = await getEvoSdk()
 
-      // Query each blocker individually (Platform only supports one 'in' clause)
-      // Run in parallel for efficiency
       const queries = followedBlockers.map(async (blockerId) => {
         try {
           const response = await sdk.documents.query({
@@ -899,17 +769,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
             orderBy: [['blockedId', 'asc']],
             limit: Math.min(targetIds.length, 100)
           } as any)
-
-          let documents: any[] = []
-          if (response instanceof Map) {
-            documents = Array.from(response.values())
-              .filter(Boolean)
-              .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc)
-          } else if (Array.isArray(response)) {
-            documents = response
-          }
-
-          return documents
+          return normalizeSDKResponse(response)
         } catch (err) {
           console.error(`Error querying blocks for blocker ${blockerId}:`, err)
           return []
@@ -918,11 +778,9 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       const allResults = await Promise.all(queries)
 
-      // Merge all results
       for (const documents of allResults) {
         for (const doc of documents) {
           const transformed = this.transformDocument(doc)
-          // Only set if not already found (first match wins)
           if (!result.has(transformed.blockedId)) {
             result.set(transformed.blockedId, {
               blockedBy: transformed.$ownerId,
