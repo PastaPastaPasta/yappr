@@ -32,7 +32,9 @@ function extractDocuments(response: unknown): any[] {
       .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
   }
   if (Array.isArray(response)) {
-    return response;
+    return response.map((doc: any) =>
+      typeof doc.toJSON === 'function' ? doc.toJSON() : doc
+    );
   }
   if ((response as any)?.documents) {
     return (response as any).documents;
