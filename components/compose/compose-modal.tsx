@@ -166,24 +166,32 @@ function ThreadPostEditor({
     const start = textarea.selectionStart
     const end = textarea.selectionEnd
     const selectedText = post.content.substring(start, end)
-    const newText =
-      post.content.substring(0, start) +
-      prefix +
-      selectedText +
-      suffix +
-      post.content.substring(end)
+    const insertText = prefix + selectedText + suffix
 
-    onContentChange(newText)
+    // Focus the textarea first
+    textarea.focus()
 
-    // Set cursor position after update
-    setTimeout(() => {
-      textarea.focus()
-      const newCursorPos = start + prefix.length + (selectedText ? selectedText.length + suffix.length : 0)
-      textarea.setSelectionRange(
-        selectedText ? newCursorPos : start + prefix.length,
-        selectedText ? newCursorPos : start + prefix.length
-      )
-    }, 0)
+    // Use setRangeText to insert text in a way that preserves undo history
+    // This is the modern approach that works with Ctrl+Z
+    textarea.setRangeText(insertText, start, end, 'end')
+
+    // Dispatch input event so React can sync the state
+    const inputEvent = new InputEvent('input', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: insertText,
+    })
+    textarea.dispatchEvent(inputEvent)
+
+    // Update React state to match
+    onContentChange(textarea.value)
+
+    // Position cursor appropriately
+    const newCursorPos = selectedText
+      ? start + insertText.length // After the inserted text if there was a selection
+      : start + prefix.length // Between prefix and suffix if no selection
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
   }
 
   return (
