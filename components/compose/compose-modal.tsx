@@ -406,6 +406,11 @@ export function ComposeModal() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const [isPosting, setIsPosting] = useState(false)
+  const [postingProgress, setPostingProgress] = useState<{
+    current: number
+    total: number
+    status: string
+  } | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -426,11 +431,46 @@ export function ComposeModal() {
   const canPost = hasValidContent && !hasOverLimit && !isPosting
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost
 
+  // Helper to extract error message from various error formats
+  const extractErrorMessage = (error: unknown): string => {
+    if (!error) return 'Unknown error'
+    if (typeof error === 'string') return error
+    if (error instanceof Error) return error.message
+
+    // Handle nested error objects
+    const err = error as Record<string, unknown>
+    if (err.message && typeof err.message === 'string') return err.message
+    if (err.error) return extractErrorMessage(err.error)
+    if (err.cause) return extractErrorMessage(err.cause)
+
+    // Try to stringify, but avoid [object Object]
+    try {
+      const str = JSON.stringify(error)
+      if (str && str !== '{}') return str.slice(0, 200)
+    } catch {
+      // Ignore stringify errors
+    }
+
+    return 'Unknown error'
+  }
+
+  // Check if error is a timeout that might mean success
+  const isTimeoutError = (error: unknown): boolean => {
+    const msg = extractErrorMessage(error).toLowerCase()
+    return (
+      msg.includes('timeout') ||
+      msg.includes('deadline') ||
+      msg.includes('expired') ||
+      msg.includes('timed out')
+    )
+  }
+
   const handlePost = async () => {
     const authedUser = requireAuth('post')
     if (!authedUser || !canPost) return
 
     setIsPosting(true)
+    setPostingProgress(null)
 
     // Track successful posts for partial success reporting
     interface SuccessfulPost {
@@ -440,6 +480,7 @@ export function ComposeModal() {
       threadPostId: string // The original threadPost.id from the store
     }
     const successfulPosts: SuccessfulPost[] = []
+    const timeoutPosts: { index: number; threadPostId: string }[] = [] // Posts that timed out (may have succeeded)
     let failedAtIndex: number | null = null
     let failureError: Error | null = null
 
@@ -452,10 +493,18 @@ export function ComposeModal() {
         .filter((p) => p.content.trim().length > 0)
         .map((p) => ({ threadPostId: p.id, content: p.content.trim() }))
 
+      setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
+
       let previousPostId: string | null = replyingTo?.id || null
 
       for (let i = 0; i < postsToCreate.length; i++) {
         const { threadPostId, content: postContent } = postsToCreate[i]
+
+        setPostingProgress({
+          current: i + 1,
+          total: postsToCreate.length,
+          status: `Creating post ${i + 1} of ${postsToCreate.length}...`
+        })
 
         console.log(`Creating post ${i + 1}/${postsToCreate.length}...`)
 
@@ -482,6 +531,12 @@ export function ComposeModal() {
 
             // Update previousPostId for thread chaining
             previousPostId = postId
+
+            setPostingProgress({
+              current: i + 1,
+              total: postsToCreate.length,
+              status: `Post ${i + 1} created, processing hashtags...`
+            })
 
             // Create hashtag documents for this successful post
             const hashtags = extractAllTags(postContent)
@@ -521,19 +576,31 @@ export function ComposeModal() {
             break
           }
         } else {
+          // Check if this is a timeout error - might have actually succeeded
+          if (isTimeoutError(result.error)) {
+            console.warn(`Post ${i + 1} timed out - may have succeeded. Continuing...`)
+            timeoutPosts.push({ index: i, threadPostId })
+            // Don't break - continue to next post, but we can't chain since we don't have the ID
+            // For timeouts, we'll treat them as needing retry but won't stop the whole process
+            continue
+          }
+
           // Post creation failed
           failedAtIndex = i
-          const err = result.error as Error | { message?: string } | undefined
-          failureError = err instanceof Error
-            ? err
-            : new Error((err as { message?: string })?.message || `Post ${i + 1} creation failed`)
+          failureError = new Error(extractErrorMessage(result.error))
           break
         }
       }
 
-      // Handle results based on success/failure state
-      if (failedAtIndex === null) {
-        // Complete success
+      // Handle results based on success/failure/timeout state
+      const allSuccessful = failedAtIndex === null && timeoutPosts.length === 0
+      const hasTimeouts = timeoutPosts.length > 0
+      const successfulThreadPostIds = new Set(successfulPosts.map(p => p.threadPostId))
+
+      if (allSuccessful) {
+        // Complete success - all posts created without issues
+        setPostingProgress({ current: postsToCreate.length, total: postsToCreate.length, status: 'Complete!' })
+
         if (postsToCreate.length > 1) {
           toast.success(`Thread with ${postsToCreate.length} posts created!`)
         } else {
@@ -553,56 +620,96 @@ export function ComposeModal() {
         }
 
         handleClose()
-      } else {
-        // Partial failure - some posts may have succeeded
-        if (successfulPosts.length > 0) {
-          // Partial success - dispatch event with details
-          window.dispatchEvent(
-            new CustomEvent('thread-partial-success', {
-              detail: {
-                successfulPosts,
-                failedAtIndex,
-                totalAttempted: postsToCreate.length,
-                error: failureError?.message,
-              },
-            })
+      } else if (hasTimeouts && failedAtIndex === null) {
+        // Some posts timed out but no hard failures - show warning and close
+        // Timeouts often mean the post was created but confirmation failed
+        const timeoutCount = timeoutPosts.length
+        const confirmedCount = successfulPosts.length
+
+        if (confirmedCount > 0) {
+          toast.success(
+            `${confirmedCount} post${confirmedCount > 1 ? 's' : ''} confirmed. ` +
+            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out (may have been created).`,
+            { duration: 5000 }
           )
-
-          // Show partial success toast
-          const errorMsg = failureError?.message || 'Unknown error'
-          toast.error(
-            `Thread partially created: ${successfulPosts.length} of ${postsToCreate.length} posts succeeded. ` +
-            `Post ${failedAtIndex + 1} failed: ${errorMsg}`,
-            { duration: 6000 }
-          )
-
-          // Keep modal open so user can retry failed posts
-          // Remove successful posts from the thread by their unique IDs
-          const successfulThreadPostIds = new Set(successfulPosts.map(p => p.threadPostId))
-
-          // Remove each successful post from the store
-          successfulThreadPostIds.forEach(threadPostId => {
-            removeThreadPost(threadPostId)
-          })
-
-          // Get the updated remaining posts and set the first one as active
-          // Note: After removing posts, threadPosts will be updated by the store
-          // We need to find remaining posts that weren't successfully created
-          const remainingPosts = threadPosts.filter(p => !successfulThreadPostIds.has(p.id))
-
-          if (remainingPosts.length > 0) {
-            // Set the first remaining post as active for retry
-            setActiveThreadPost(remainingPosts[0].id)
-          }
         } else {
-          // Complete failure on first post
-          throw failureError || new Error('Post creation failed')
+          toast(
+            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out. ` +
+            `They may have been created - check your profile.`,
+            { duration: 5000, icon: '⚠️' }
+          )
         }
+
+        // Remove confirmed successful posts
+        successfulThreadPostIds.forEach(threadPostId => {
+          removeThreadPost(threadPostId)
+        })
+
+        // Also remove timed-out posts (they likely succeeded)
+        timeoutPosts.forEach(({ threadPostId }) => {
+          removeThreadPost(threadPostId)
+        })
+
+        handleClose()
+      } else if (successfulPosts.length > 0 || timeoutPosts.length > 0) {
+        // Partial failure - some posts succeeded or timed out, but at least one failed
+        window.dispatchEvent(
+          new CustomEvent('thread-partial-success', {
+            detail: {
+              successfulPosts,
+              timeoutPosts,
+              failedAtIndex,
+              totalAttempted: postsToCreate.length,
+              error: failureError?.message,
+            },
+          })
+        )
+
+        // Build informative message
+        const parts: string[] = []
+        if (successfulPosts.length > 0) {
+          parts.push(`${successfulPosts.length} confirmed`)
+        }
+        if (timeoutPosts.length > 0) {
+          parts.push(`${timeoutPosts.length} timed out`)
+        }
+        const successPart = parts.join(', ')
+
+        const errorMsg = failureError?.message || 'Unknown error'
+        toast.error(
+          `Thread partially created: ${successPart} of ${postsToCreate.length} posts. ` +
+          `Post ${(failedAtIndex ?? 0) + 1} failed: ${errorMsg}`,
+          { duration: 6000 }
+        )
+
+        // Remove successful posts from the store
+        successfulThreadPostIds.forEach(threadPostId => {
+          removeThreadPost(threadPostId)
+        })
+
+        // Also remove timed-out posts (they likely succeeded)
+        timeoutPosts.forEach(({ threadPostId }) => {
+          removeThreadPost(threadPostId)
+        })
+
+        // Get remaining posts that definitely need retry
+        const removedIds = new Set([
+          ...successfulPosts.map(p => p.threadPostId),
+          ...timeoutPosts.map(p => p.threadPostId)
+        ])
+        const remainingPosts = threadPosts.filter(p => !removedIds.has(p.id))
+
+        if (remainingPosts.length > 0) {
+          setActiveThreadPost(remainingPosts[0].id)
+        }
+      } else {
+        // Complete failure on first post
+        throw failureError || new Error('Post creation failed')
       }
     } catch (error) {
       console.error('Failed to create post:', error)
 
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      const errorMessage = extractErrorMessage(error)
 
       if (
         errorMessage.includes('no available addresses') ||
@@ -625,6 +732,7 @@ export function ComposeModal() {
       }
     } finally {
       setIsPosting(false)
+      setPostingProgress(null)
     }
   }
 
@@ -634,6 +742,7 @@ export function ComposeModal() {
     setQuotingPost(null)
     resetThreadPosts()
     setShowPreview(false)
+    setPostingProgress(null)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -732,10 +841,15 @@ export function ComposeModal() {
                               : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                           }`}
                         >
-                          {isPosting ? (
+                          {isPosting && postingProgress ? (
                             <span className="flex items-center gap-2">
                               <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
-                              <span>{threadPosts.length > 1 ? 'Posting...' : 'Posting'}</span>
+                              <span>{postingProgress.current}/{postingProgress.total}</span>
+                            </span>
+                          ) : isPosting ? (
+                            <span className="flex items-center gap-2">
+                              <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
+                              <span>Posting</span>
                             </span>
                           ) : replyingTo ? (
                             <span className="flex items-center gap-1.5">
@@ -762,6 +876,25 @@ export function ComposeModal() {
                         </Button>
                       </div>
                     </div>
+
+                    {/* Progress bar when posting */}
+                    {isPosting && postingProgress && (
+                      <div className="px-4 py-2 bg-yappr-50 dark:bg-yappr-950/30 border-b border-yappr-200 dark:border-yappr-800">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1">
+                            <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-yappr-500 rounded-full transition-all duration-300"
+                                style={{ width: `${(postingProgress.current / postingProgress.total) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                          <span className="text-xs text-yappr-600 dark:text-yappr-400 font-medium whitespace-nowrap">
+                            {postingProgress.status}
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Reply context */}
                     {replyingTo && (
