@@ -10,13 +10,6 @@ npm run build    # Build for production
 npm run lint     # Run linting
 ```
 
-### Dash Platform Scripts
-```bash
-node register-contract.js           # Register contract on Dash Platform
-node register-contract-with-nonce.js # Register contract with specific nonce
-node test-dpns-resolve.js           # Test DPNS resolution
-```
-
 ## Architecture Overview
 
 Yappr is a decentralized social media platform built with Next.js 14 and Dash Platform.
