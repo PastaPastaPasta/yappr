@@ -1,6 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service'
-import { queryDocuments, identifierToBase58 } from './sdk-helpers'
 import { stateTransitionService } from './state-transition-service'
+import { queryDocuments, identifierToBase58 } from './sdk-helpers'
 import {
   YAPPR_CONTRACT_ID,
   YAPPR_PROFILE_CONTRACT_ID,
@@ -179,6 +179,7 @@ class AccountDeletionService {
   /**
    * Query all documents owned by a user for a specific type
    * Handles pagination for users with many documents
+   * Uses queryDocuments from sdk-helpers for proper error handling
    */
   private async queryUserDocuments(
     contractId: string,
