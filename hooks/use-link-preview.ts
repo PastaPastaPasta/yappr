@@ -7,6 +7,22 @@ import type { LinkPreviewData } from '@/components/post/link-preview'
 const previewCache = new Map<string, LinkPreviewData>()
 const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
 
+/**
+ * CORS Proxy Configuration
+ *
+ * PRIVACY/SECURITY NOTE: These are third-party CORS proxies that will see
+ * the URLs being fetched. For production use with sensitive data, consider:
+ * - Self-hosting a CORS proxy
+ * - Moving URL fetching to a backend API endpoint
+ * - Using a serverless function to proxy requests
+ *
+ * The proxies are tried in order; if one fails, the next is attempted.
+ */
+const CORS_PROXIES = [
+  (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+]
+
 // URLs that commonly don't have good previews or should be skipped
 const SKIP_DOMAINS = [
   'localhost',
@@ -36,6 +52,7 @@ function extractMetaContent(html: string, patterns: RegExp[]): string | undefine
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .replace(/&#x27;/g, "'")
+        .replace(/&nbsp;/g, ' ')
         .trim()
     }
   }
@@ -129,6 +146,40 @@ function parseHtmlForPreview(html: string, url: string): LinkPreviewData {
   }
 }
 
+/**
+ * Fetch HTML via CORS proxy with fallback support
+ * Tries each proxy in order until one succeeds
+ */
+async function fetchViaProxy(url: string): Promise<string> {
+  let lastError: Error | null = null
+
+  for (const proxyFn of CORS_PROXIES) {
+    const proxyUrl = proxyFn(url)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+
+    try {
+      const response = await fetch(proxyUrl, {
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeout)
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      return await response.text()
+    } catch (err) {
+      clearTimeout(timeout)
+      lastError = err instanceof Error ? err : new Error('Unknown error')
+      // Continue to next proxy
+    }
+  }
+
+  throw lastError || new Error('All proxies failed')
+}
+
 async function fetchPreview(url: string): Promise<LinkPreviewData> {
   // Check cache first
   const cached = previewCache.get(url)
@@ -142,26 +193,10 @@ async function fetchPreview(url: string): Promise<LinkPreviewData> {
     return pending
   }
 
-  // Create new request using CORS proxy
+  // Create new request using CORS proxy with fallbacks
   const request = (async () => {
     try {
-      // Use allorigins.win as CORS proxy
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 8000)
-
-      const response = await fetch(proxyUrl, {
-        signal: controller.signal,
-      })
-
-      clearTimeout(timeout)
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch')
-      }
-
-      const html = await response.text()
+      const html = await fetchViaProxy(url)
       const data = parseHtmlForPreview(html, url)
       previewCache.set(url, data)
       return data
@@ -192,18 +227,30 @@ interface UseLinkPreviewResult {
 
 /**
  * Hook to fetch link preview data for a URL
- * Uses a CORS proxy to fetch page metadata client-side
+ * Uses CORS proxies to fetch page metadata client-side
+ *
+ * Note: This sends URLs to third-party CORS proxy services.
+ * For privacy-sensitive applications, consider implementing
+ * a server-side proxy endpoint instead.
  */
 export function useLinkPreview(
   url: string | null,
   options: UseLinkPreviewOptions = {}
 ): UseLinkPreviewResult {
   const { disabled = false } = options
+
+  // Initialize data from cache if available
   const [data, setData] = useState<LinkPreviewData | null>(() => {
     if (!url || disabled) return null
     return previewCache.get(url) || null
   })
-  const [loading, setLoading] = useState(false)
+
+  // Initialize loading to true if we need to fetch (URL exists, not disabled, not cached)
+  const [loading, setLoading] = useState(() => {
+    if (!url || disabled || shouldSkipUrl(url)) return false
+    return !previewCache.has(url)
+  })
+
   const [error, setError] = useState(false)
 
   useEffect(() => {
@@ -250,6 +297,36 @@ export function useLinkPreview(
 }
 
 /**
+ * Strip trailing punctuation while preserving balanced parentheses
+ * This handles URLs like https://en.wikipedia.org/wiki/Foo_(bar)
+ */
+function stripTrailingPunctuation(url: string): string {
+  // Characters to strip from end (excluding closing paren which needs balance check)
+  const punctuation = /[.,;:!?]+$/
+
+  // First strip simple punctuation
+  let result = url.replace(punctuation, '')
+
+  // Handle trailing closing parentheses - only remove if unbalanced
+  while (result.endsWith(')')) {
+    const openCount = (result.match(/\(/g) || []).length
+    const closeCount = (result.match(/\)/g) || []).length
+
+    // If more closing than opening, remove the trailing )
+    if (closeCount > openCount) {
+      result = result.slice(0, -1)
+      // Strip any punctuation that was before the paren
+      result = result.replace(punctuation, '')
+    } else {
+      // Balanced or more opening - keep the closing paren
+      break
+    }
+  }
+
+  return result
+}
+
+/**
  * Extract the first URL from content text
  */
 export function extractFirstUrl(content: string): string | null {
@@ -262,8 +339,8 @@ export function extractFirstUrl(content: string): string | null {
   if (url.startsWith('www.')) {
     url = `https://${url}`
   }
-  // Clean trailing punctuation
-  url = url.replace(/[.,;:!?)]+$/, '')
+  // Clean trailing punctuation while preserving balanced parens
+  url = stripTrailingPunctuation(url)
 
   return url
 }
@@ -281,8 +358,8 @@ export function extractAllUrls(content: string): string[] {
     if (url.startsWith('www.')) {
       url = `https://${url}`
     }
-    // Clean trailing punctuation
-    return url.replace(/[.,;:!?)]+$/, '')
+    // Clean trailing punctuation while preserving balanced parens
+    return stripTrailingPunctuation(url)
   })
 }
 

@@ -18,15 +18,36 @@ interface LinkPreviewProps {
   className?: string
 }
 
+// Sanitize URL to prevent XSS via javascript: or other dangerous protocols
+function sanitizeUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    // Only allow safe protocols
+    if (['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol)) {
+      return parsed.href
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   const [imageError, setImageError] = useState(false)
   const [faviconError, setFaviconError] = useState(false)
 
+  const safeUrl = sanitizeUrl(data.url)
+
+  // Don't render if URL is invalid/unsafe
+  if (!safeUrl) {
+    return null
+  }
+
   const hostname = (() => {
     try {
-      return new URL(data.url).hostname.replace(/^www\./, '')
+      return new URL(safeUrl).hostname.replace(/^www\./, '')
     } catch {
-      return data.url
+      return safeUrl
     }
   })()
 
@@ -36,7 +57,7 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   // Compact horizontal layout with small thumbnail
   return (
     <a
-      href={data.url}
+      href={safeUrl}
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
