@@ -24,6 +24,7 @@ interface LikeWithUser extends LikeDocument {
   username?: string | null
   displayName?: string
   hasDpnsName: boolean
+  hasProfile: boolean
 }
 
 export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
@@ -60,12 +61,14 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
         const username = usernameMap.get(like.$ownerId)
         const profile = profileMap.get(like.$ownerId)
         const profileData = (profile as any)?.data || profile
+        const profileDisplayName = profileData?.displayName
 
         return {
           ...like,
           username: username || null,
-          displayName: profileData?.displayName || username || `User ${like.$ownerId.slice(-6)}`,
-          hasDpnsName: !!username
+          displayName: profileDisplayName || username || `User ${like.$ownerId.slice(-6)}`,
+          hasDpnsName: !!username,
+          hasProfile: !!profileDisplayName
         }
       })
 
@@ -121,8 +124,13 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                         <div>
                           <p className="font-semibold">{like.displayName}</p>
                           {like.hasDpnsName ? (
+                            // Has DPNS: show @username
                             <p className="text-sm text-gray-500">@{like.username} · {formatTime(new Date(like.$createdAt))}</p>
+                          ) : like.hasProfile ? (
+                            // Has profile but no DPNS: just show timestamp
+                            <p className="text-sm text-gray-500">{formatTime(new Date(like.$createdAt))}</p>
                           ) : (
+                            // No DPNS and no profile: show identity ID
                             <div className="flex items-center gap-1 text-sm text-gray-500">
                               <Tooltip.Provider>
                                 <Tooltip.Root>

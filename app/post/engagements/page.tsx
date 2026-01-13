@@ -25,6 +25,7 @@ interface EngagementUser {
   displayName: string
   bio?: string
   hasDpnsName: boolean
+  hasProfile: boolean
   isFollowing: boolean
   // For quotes tab
   quoteContent?: string
@@ -79,13 +80,15 @@ function EngagementsPageContent() {
         const username = dpnsNamesMap.get(id) || null
         const profile = profileMap.get(id)
         const profileData = (profile as any)?.data || profile
+        const profileDisplayName = profileData?.displayName
 
         return {
           id,
           username: username || id.slice(-8),
-          displayName: profileData?.displayName || username || `User ${id.slice(-8)}`,
+          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
           bio: profileData?.bio,
           hasDpnsName: !!username,
+          hasProfile: !!profileDisplayName,
           isFollowing: followStatus.get(id) || false
         }
       })
@@ -131,13 +134,15 @@ function EngagementsPageContent() {
         const username = dpnsNamesMap.get(id) || null
         const profile = profileMap.get(id)
         const profileData = (profile as any)?.data || profile
+        const profileDisplayName = profileData?.displayName
 
         return {
           id,
           username: username || id.slice(-8),
-          displayName: profileData?.displayName || username || `User ${id.slice(-8)}`,
+          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
           bio: profileData?.bio,
           hasDpnsName: !!username,
+          hasProfile: !!profileDisplayName,
           isFollowing: followStatus.get(id) || false
         }
       })
@@ -185,13 +190,15 @@ function EngagementsPageContent() {
         const username = dpnsNamesMap.get(id) || null
         const profile = profileMap.get(id)
         const profileData = (profile as any)?.data || profile
+        const profileDisplayName = profileData?.displayName
 
         return {
           id,
           username: username || id.slice(-8),
-          displayName: profileData?.displayName || username || `User ${id.slice(-8)}`,
+          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
           bio: profileData?.bio,
           hasDpnsName: !!username,
+          hasProfile: !!profileDisplayName,
           isFollowing: followStatus.get(id) || false,
           quoteContent: post.content,
           quotePostId: post.id
@@ -415,13 +422,15 @@ function EngagementsPageContent() {
                               {engagement.displayName}
                             </h3>
                             {engagement.hasDpnsName ? (
+                              // Has DPNS: show @username
                               <p
                                 onClick={() => router.push(`/user?id=${engagement.id}`)}
                                 className="text-sm text-gray-500 hover:underline cursor-pointer"
                               >
                                 @{engagement.username}
                               </p>
-                            ) : (
+                            ) : !engagement.hasProfile ? (
+                              // No DPNS and no profile: show identity ID
                               <Tooltip.Provider>
                                 <Tooltip.Root>
                                   <Tooltip.Trigger asChild>
@@ -446,7 +455,7 @@ function EngagementsPageContent() {
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
                               </Tooltip.Provider>
-                            )}
+                            ) : null /* Has profile but no DPNS: display name is sufficient */}
                             {engagement.bio && (
                               <p className="text-sm mt-1 text-gray-600 dark:text-gray-400 line-clamp-2">
                                 {engagement.bio}

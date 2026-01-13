@@ -82,6 +82,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         ? post.author.username  // Has DPNS
         : null  // No DPNS
 
+  // Check if user has a profile (display name from profile, not a fallback)
+  // A profile exists if displayName is set and is not a placeholder like "Unknown User" or "User abc123"
+  const hasProfile = !!(
+    displayName &&
+    displayName !== 'Unknown User' &&
+    !displayName.startsWith('User ')
+  )
+
   // Stats: use progressive enrichment > post data
   const statsLikes = progressiveEnrichment?.stats?.likes ?? post.likes
   const statsReposts = progressiveEnrichment?.stats?.reposts ?? post.reposts
@@ -398,8 +406,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     >
                       @{usernameState}
                     </Link>
-                  ) : usernameState === null ? (
-                    // Explicitly no DPNS - show identity ID
+                  ) : usernameState === null && !hasProfile ? (
+                    // No DPNS and no profile - show identity ID
                     <Tooltip.Provider>
                       <Tooltip.Root>
                         <Tooltip.Trigger asChild>
@@ -424,10 +432,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                         </Tooltip.Portal>
                       </Tooltip.Root>
                     </Tooltip.Provider>
-                  ) : (
+                  ) : usernameState === undefined ? (
                     // Still loading - show skeleton
                     <span className="inline-block w-20 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-                  )}
+                  ) : null /* Has profile but no DPNS - display name is sufficient */}
                 </>
               )}
             </div>
