@@ -68,7 +68,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Retry an async operation with exponential backoff
  */
-export async function retryAsync<T>(
+async function retryAsync<T>(
   operation: () => Promise<T>,
   options: RetryOptions = {}
 ): Promise<RetryResult<T>> {
@@ -160,6 +160,6 @@ export function isNetworkError(error: any): boolean {
 /**
  * Check if an error is retryable
  */
-export function isRetryableError(error: any): boolean {
+function isRetryableError(error: any): boolean {
   return defaultRetryCondition(error)
 }

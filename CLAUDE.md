@@ -13,7 +13,6 @@ npm run lint     # Run linting
 ### Dash Platform Scripts
 ```bash
 node register-contract.js           # Register contract on Dash Platform
-node register-contract-with-nonce.js # Register contract with specific nonce
 node test-dpns-resolve.js           # Test DPNS resolution
 ```
 
@@ -38,7 +37,7 @@ Singleton service classes handle all Dash Platform operations:
 
 ### Authentication System
 - `contexts/auth-context.tsx` manages user sessions
-- Private keys stored via biometric storage (`lib/biometric-storage.ts`) or session storage (`lib/secure-storage.ts`)
+- Private keys stored via secure storage (`lib/secure-storage.ts`)
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure

@@ -11,7 +11,7 @@ import {
   BenchmarkResult
 } from '../onchain-key-encryption';
 
-export interface EncryptedKeyBackupDocument {
+interface EncryptedKeyBackupDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
@@ -21,13 +21,13 @@ export interface EncryptedKeyBackupDocument {
   kdfIterations: number;
 }
 
-export interface CreateBackupResult {
+interface CreateBackupResult {
   success: boolean;
   error?: string;
   documentId?: string;
 }
 
-export interface LoginWithPasswordResult {
+interface LoginWithPasswordResult {
   identityId: string;
   privateKey: string;
 }

@@ -92,16 +92,6 @@ export interface Media {
   height?: number
 }
 
-export interface Comment {
-  id: string
-  author: User
-  content: string
-  createdAt: Date
-  likes: number
-  liked?: boolean
-  postId: string
-}
-
 export interface Notification {
   id: string
   type: 'like' | 'repost' | 'follow' | 'reply' | 'mention'
@@ -109,12 +99,6 @@ export interface Notification {
   post?: Post
   createdAt: Date
   read: boolean
-}
-
-export interface Trend {
-  topic: string
-  posts: number
-  category?: string
 }
 
 // V3 DM contract document types (raw from platform)

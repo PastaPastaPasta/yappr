@@ -183,7 +183,7 @@ function base64ToBytes(base64: string): Uint8Array {
   }
 }
 
-export interface QueryDocumentsOptions {
+interface QueryDocumentsOptions {
   dataContractId: string;
   documentTypeName: string;
   where?: DocumentWhereClause[];
@@ -307,7 +307,7 @@ export function stringToIdentifierBytes(value: string): number[] {
  * Base document fields returned by all SDK documents.
  * Used by transformDocumentWithField to provide consistent structure.
  */
-export interface BaseDocumentFields {
+interface BaseDocumentFields {
   $id: string;
   $ownerId: string;
   $createdAt: number;

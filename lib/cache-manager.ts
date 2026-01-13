@@ -15,7 +15,7 @@ export interface CacheOptions {
   tags?: string[]
 }
 
-export class CacheManager {
+class CacheManager {
   private caches = new Map<string, Map<string, CacheEntry<any>>>()
   private tagIndex = new Map<string, Set<string>>()
   private cleanupInterval?: NodeJS.Timeout
@@ -277,7 +277,7 @@ if (typeof window !== 'undefined') {
 /**
  * Cache decorator for methods
  */
-export function cached(
+function cached(
   cacheName: string,
   keyGenerator?: (...args: any[]) => string,
   options: CacheOptions = {}

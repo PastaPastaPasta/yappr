@@ -4,7 +4,7 @@ import { postService } from './post-service';
 import { wallet } from '@dashevo/evo-sdk';
 import { TipInfo } from '../types';
 
-export interface TipResult {
+interface TipResult {
   success: boolean;
   transactionHash?: string;
   error?: string;
