@@ -13,6 +13,7 @@ import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 
 export default function ExplorePage() {
   const router = useRouter()
@@ -23,6 +24,11 @@ export default function ExplorePage() {
   const [isSearching, setIsSearching] = useState(false)
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
+
+  // Progressive enrichment - renders posts immediately, fills in data as it loads
+  const { enrichProgressively, getPostEnrichment, reset: resetEnrichment } = useProgressiveEnrichment({
+    currentUserId: user?.identityId
+  })
 
   // Load trending hashtags
   useEffect(() => {
@@ -56,12 +62,14 @@ export default function ExplorePage() {
     if (!searchQuery) {
       setSearchResults([])
       setIsSearching(false)
+      resetEnrichment()
       return
     }
 
     const searchPosts = async () => {
       try {
         setIsSearching(true)
+        resetEnrichment()
         const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
         const dashClient = getDashPlatformClient()
 
@@ -103,7 +111,13 @@ export default function ExplorePage() {
             views: 0
           }))
 
+        // Set results immediately (with placeholder author data)
         setSearchResults(filtered)
+
+        // Start progressive enrichment (non-blocking)
+        if (filtered.length > 0) {
+          enrichProgressively(filtered)
+        }
       } catch (error) {
         console.error('Search failed:', error)
       } finally {
@@ -113,7 +127,7 @@ export default function ExplorePage() {
 
     const debounceTimer = setTimeout(searchPosts, 300)
     return () => clearTimeout(debounceTimer)
-  }, [searchQuery])
+  }, [searchQuery, user?.identityId, enrichProgressively, resetEnrichment])
 
   const handleHashtagClick = (hashtag: string) => {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
@@ -167,7 +181,7 @@ export default function ExplorePage() {
                     <p className="text-gray-500">Searching...</p>
                   </div>
                 ) : searchResults.length > 0 ? (
-                  searchResults.map((post) => <PostCard key={post.id} post={post} />)
+                  searchResults.map((post) => <PostCard key={post.id} post={post} enrichment={getPostEnrichment(post)} />)
                 ) : (
                   <div className="p-8 text-center">
                     <p className="text-gray-500">No results for &quot;{searchQuery}&quot;</p>

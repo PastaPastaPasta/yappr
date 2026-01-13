@@ -30,9 +30,21 @@ function getDisplayUsername(author: Post['author']): { display: string; type: 'd
   }
 }
 
+interface ProgressiveEnrichment {
+  username: string | null | undefined
+  displayName: string | undefined
+  avatarUrl: string | undefined
+  stats: { likes: number; reposts: number; replies: number; views: number } | undefined
+  interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
+  isBlocked: boolean | undefined
+  isFollowing: boolean | undefined
+  replyTo: { id: string; authorId: string; authorUsername: string | null } | undefined
+}
+
 interface ReplyThreadItemProps {
   thread: ReplyThread
   mainPostAuthorId: string
+  getPostEnrichment?: (post: Post) => ProgressiveEnrichment
 }
 
 /**
@@ -40,7 +52,7 @@ interface ReplyThreadItemProps {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemProps) {
+export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }: ReplyThreadItemProps) {
   const { post, isAuthorThread, isThreadContinuation, nestedReplies } = thread
 
   return (
@@ -63,7 +75,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
         </div>
       )}
 
-      <PostCard post={post} />
+      <PostCard post={post} enrichment={getPostEnrichment?.(post)} />
 
       {/* Nested replies (2nd level) - indented */}
       {nestedReplies.length > 0 && (
@@ -73,6 +85,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
               key={nested.post.id}
               reply={nested}
               parentPost={post}
+              getPostEnrichment={getPostEnrichment}
             />
           ))}
         </div>
@@ -84,12 +97,13 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
 interface NestedReplyProps {
   reply: ReplyThread
   parentPost: Post
+  getPostEnrichment?: (post: Post) => ProgressiveEnrichment
 }
 
 /**
  * Renders a nested (2nd level) reply with context about who it's replying to.
  */
-function NestedReply({ reply, parentPost }: NestedReplyProps) {
+function NestedReply({ reply, parentPost, getPostEnrichment }: NestedReplyProps) {
   const { post } = reply
   const parentAuthorDisplay = getDisplayUsername(parentPost.author)
 
@@ -116,7 +130,7 @@ function NestedReply({ reply, parentPost }: NestedReplyProps) {
         </span>
       </div>
 
-      <PostCard post={post} />
+      <PostCard post={post} enrichment={getPostEnrichment?.(post)} />
 
       {/* Show "View more replies" if this reply has replies (3+ level) */}
       {post.replies > 0 && (
