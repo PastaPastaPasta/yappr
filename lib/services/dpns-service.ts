@@ -1,6 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
+import { IdentitySigner } from '@dashevo/evo-sdk';
 
 interface DpnsDocument {
   $id: string;
@@ -383,14 +384,30 @@ class DpnsService {
         throw new Error(`Username ${label} is already taken`);
       }
 
-      // Register the name using EvoSDK facade
+      // Fetch the identity object (new SDK requires Identity object, not just ID)
+      const identity = await sdk.identities.fetch(identityId);
+      if (!identity) {
+        throw new Error(`Identity not found: ${identityId}`);
+      }
+
+      // Get the public key from the identity
+      const identityKey = identity.getPublicKeyById(publicKeyId);
+      if (!identityKey) {
+        throw new Error(`Public key with ID ${publicKeyId} not found on identity`);
+      }
+
+      // Create signer with private key
+      const signer = new IdentitySigner();
+      signer.addKeyFromWif(privateKeyWif);
+
+      // Register the name using EvoSDK facade with new API
       console.log(`Registering DPNS name: ${label}`);
       const result = await sdk.dpns.registerName({
         label,
-        identityId,
-        publicKeyId,
-        privateKeyWif,
-        onPreorder: onPreorderSuccess
+        identity,
+        identityKey,
+        signer,
+        preorderCallback: onPreorderSuccess ? () => onPreorderSuccess() : undefined
       });
 
       // Clear cache for this identity

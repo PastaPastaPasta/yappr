@@ -1,7 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { postService } from './post-service';
-import { wallet } from '@dashevo/evo-sdk';
+import { wallet, IdentitySigner } from '@dashevo/evo-sdk';
 import { TipInfo } from '../types';
 
 export interface TipResult {
@@ -88,81 +88,78 @@ class TipService {
       console.log(`Private key length: ${transferKeyWif.trim().length}`);
       console.log(`Private key starts with: ${transferKeyWif.trim().substring(0, 4)}...`);
 
-      // Fetch sender identity to see available keys
-      try {
-        const identity = await sdk.identities.fetch(senderId);
-        if (identity) {
-          const identityJson = identity.toJSON();
-          console.log('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
-
-          // Try to derive public key from the provided private key and compare
-          try {
-            const keyPair = await wallet.keyPairFromWif(transferKeyWif.trim());
-            console.log('Derived key pair from WIF:', keyPair);
-
-            // Find transfer keys (purpose 3) on the identity
-            const transferKeys = identityJson.publicKeys.filter((k: any) => k.purpose === 3);
-            console.log('Transfer keys on identity:', transferKeys);
-
-            if (keyPair && keyPair.publicKey) {
-              // public_key is a hex string, convert to base64 for comparison
-              const hexToBytes = (hex: string) => {
-                const bytes = [];
-                for (let i = 0; i < hex.length; i += 2) {
-                  bytes.push(parseInt(hex.substr(i, 2), 16));
-                }
-                return bytes;
-              };
-              const pubKeyBytes = hexToBytes(keyPair.publicKey);
-              const pubKeyBase64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
-              console.log('Derived public key (hex):', keyPair.publicKey);
-              console.log('Derived public key (base64):', pubKeyBase64);
-
-              // Compare with key 3's public key
-              const key3 = identityJson.publicKeys.find((k: any) => k.id === 3);
-              if (key3) {
-                console.log('Key 3 public key (from identity):', key3.data);
-                console.log('Keys match:', pubKeyBase64 === key3.data);
-              }
-            }
-          } catch (keyError) {
-            console.log('Error deriving key pair:', keyError);
-          }
-        }
-      } catch (e) {
-        console.log('Could not fetch identity for debugging:', e);
+      // Fetch sender identity (new SDK requires Identity object)
+      const identity = await sdk.identities.fetch(senderId);
+      if (!identity) {
+        return {
+          success: false,
+          error: 'Sender identity not found',
+          errorCode: 'NETWORK_ERROR'
+        };
       }
 
-      // Execute credit transfer
-      const transferArgs: {
-        senderId: string;
-        recipientId: string;
-        amount: bigint;
-        privateKeyWif: string;
-        keyId?: number;
-      } = {
-        senderId,
-        recipientId,
-        amount: BigInt(amountCredits),
-        privateKeyWif: transferKeyWif.trim()
-      };
+      const identityJson = identity.toJSON();
+      console.log('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
 
-      // Add keyId - use provided value or default to 3 (transfer key)
-      const effectiveKeyId = keyId !== undefined ? keyId : 3;
-      transferArgs.keyId = effectiveKeyId;
+      // Try to derive public key from the provided private key and compare
+      try {
+        const keyPair = await wallet.keyPairFromWif(transferKeyWif.trim());
+        console.log('Derived key pair from WIF:', keyPair);
+
+        // Find transfer keys (purpose 3) on the identity
+        const transferKeys = identityJson.publicKeys.filter((k: any) => k.purpose === 3);
+        console.log('Transfer keys on identity:', transferKeys);
+
+        if (keyPair && keyPair.publicKey) {
+          // public_key is a hex string, convert to base64 for comparison
+          const hexToBytes = (hex: string) => {
+            const bytes = [];
+            for (let i = 0; i < hex.length; i += 2) {
+              bytes.push(parseInt(hex.substr(i, 2), 16));
+            }
+            return bytes;
+          };
+          const pubKeyBytes = hexToBytes(keyPair.publicKey);
+          const pubKeyBase64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
+          console.log('Derived public key (hex):', keyPair.publicKey);
+          console.log('Derived public key (base64):', pubKeyBase64);
+
+          // Compare with key 3's public key
+          const key3 = identityJson.publicKeys.find((k: any) => k.id === 3);
+          if (key3) {
+            console.log('Key 3 public key (from identity):', key3.data);
+            console.log('Keys match:', pubKeyBase64 === key3.data);
+          }
+        }
+      } catch (keyError) {
+        console.log('Error deriving key pair:', keyError);
+      }
+
+      // Create signer with the transfer key
+      const signer = new IdentitySigner();
+      signer.addKeyFromWif(transferKeyWif.trim());
+
+      // Get the signing key if a specific key ID is provided
+      const effectiveKeyId = keyId !== undefined ? keyId : 3; // Default to transfer key (purpose 3)
+      const signingKey = identity.getPublicKeyById(effectiveKeyId);
       console.log(`Using key ID: ${effectiveKeyId}${keyId === undefined ? ' (defaulting to transfer key)' : ''}`);
 
       // Log the exact args being sent
       console.log('Transfer args:', JSON.stringify({
-        senderId: transferArgs.senderId,
-        recipientId: transferArgs.recipientId,
-        amount: transferArgs.amount.toString(),
-        keyId: transferArgs.keyId,
-        privateKeyWifLength: transferArgs.privateKeyWif.length
+        senderId,
+        recipientId,
+        amount: amountCredits.toString(),
+        keyId: effectiveKeyId
       }, null, 2));
 
       console.log('Calling sdk.identities.creditTransfer...');
-      const result = await sdk.identities.creditTransfer(transferArgs);
+      const result = await sdk.identities.creditTransfer({
+        identity,
+        recipientId,
+        amount: BigInt(amountCredits),
+        signer,
+        signingKey: signingKey || undefined
+      });
 
       // Clear sender's balance cache so it refreshes
       identityService.clearCache(senderId);
