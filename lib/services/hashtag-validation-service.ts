@@ -1,5 +1,5 @@
 import { hashtagService, PostHashtagDocument } from './hashtag-service'
-import { extractHashtags } from '../post-helpers'
+import { extractAllTags } from '../post-helpers'
 
 export interface HashtagValidationKey {
   postId: string
@@ -78,14 +78,14 @@ class HashtagValidationService {
   }
 
   /**
-   * Validate all hashtags in a post's content.
-   * Returns a Map of hashtag -> 'valid' | 'invalid'.
+   * Validate all tags (hashtags and cashtags) in a post's content.
+   * Returns a Map of tag -> 'valid' | 'invalid'.
    */
   async validatePostHashtags(
     postId: string,
     content: string
   ): Promise<Map<string, 'valid' | 'invalid'>> {
-    const hashtags = extractHashtags(content)
+    const hashtags = extractAllTags(content)
     const result = new Map<string, 'valid' | 'invalid'>()
 
     if (hashtags.length === 0) {

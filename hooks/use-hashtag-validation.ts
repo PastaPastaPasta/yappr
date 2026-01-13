@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Post } from '@/lib/types'
-import { extractHashtags } from '@/lib/post-helpers'
+import { extractAllTags } from '@/lib/post-helpers'
 import { hashtagValidationService } from '@/lib/services/hashtag-validation-service'
 
 export type HashtagValidationStatus = 'pending' | 'valid' | 'invalid'
@@ -29,10 +29,10 @@ export function useHashtagValidation(post: Post | null): HashtagValidationState 
   )
   const [isLoading, setIsLoading] = useState(false)
 
-  // Extract hashtags from post content
+  // Extract all tags (hashtags and cashtags) from post content
   const hashtags = useMemo(() => {
     if (!post?.content) return []
-    return extractHashtags(post.content)
+    return extractAllTags(post.content)
   }, [post?.content])
 
   // Stable post ID reference

@@ -12,6 +12,7 @@ import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 
 export default function ExplorePage() {
   const router = useRouter()
@@ -193,30 +194,36 @@ export default function ExplorePage() {
                   ) : trendingHashtags.length === 0 ? (
                     <div className="p-8 text-center">
                       <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                      <p className="text-gray-500">No trending hashtags yet</p>
-                      <p className="text-sm text-gray-400 mt-1">Post with #hashtags to see them here!</p>
+                      <p className="text-gray-500">No trending tags yet</p>
+                      <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
                     </div>
                   ) : (
-                    trendingHashtags.map((trend, index) => (
-                      <motion.div
-                        key={trend.hashtag}
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: index * 0.05 }}
-                        onClick={() => handleHashtagClick(trend.hashtag)}
-                        className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm text-gray-400 w-6">#{index + 1}</span>
-                          <div className="flex-1">
-                            <p className="font-bold text-yappr-500 hover:underline">#{trend.hashtag}</p>
-                            <p className="text-sm text-gray-500">
-                              {formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}
-                            </p>
+                    trendingHashtags.map((trend, index) => {
+                      const isCashtag = isCashtagStorage(trend.hashtag)
+                      const displayTag = isCashtag ? cashtagStorageToDisplay(trend.hashtag) : trend.hashtag
+                      const tagSymbol = isCashtag ? '$' : '#'
+
+                      return (
+                        <motion.div
+                          key={trend.hashtag}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          onClick={() => handleHashtagClick(trend.hashtag)}
+                          className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-gray-400 w-6">#{index + 1}</span>
+                            <div className="flex-1">
+                              <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
+                              <p className="text-sm text-gray-500">
+                                {formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    ))
+                        </motion.div>
+                      )
+                    })
                   )}
                 </div>
               </motion.div>
