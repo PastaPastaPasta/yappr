@@ -292,7 +292,7 @@ function FeedPage() {
       } else {
         // For You feed - get all posts and reposts
         // Auto-paginate to ensure we have enough non-reply posts after filtering
-        const MIN_NON_REPLY_POSTS = 5 // Minimum posts to show before requiring "Load More"
+        const MIN_NON_REPLY_POSTS = 20 // Minimum posts to show before requiring "Load More"
         const MAX_FETCH_ITERATIONS = 5 // Safety limit to prevent infinite loops
         const dashClient = getDashPlatformClient()
 
