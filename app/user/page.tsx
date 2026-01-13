@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, Suspense, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon,
@@ -67,6 +67,13 @@ function UserProfileContent() {
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
   const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
+
+  // Pagination state
+  const [hasMore, setHasMore] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [lastPostId, setLastPostId] = useState<string | null>(null)
+  const [lastRepostId, setLastRepostId] = useState<string | null>(null)
+  const [hasMoreReposts, setHasMoreReposts] = useState(true)
 
   // Edit profile state
   const [isEditingProfile, setIsEditingProfile] = useState(false)
@@ -190,7 +197,14 @@ function UserProfileContent() {
         // Fetch user's reposts and merge with their posts
         try {
           const { repostService } = await import('@/lib/services/repost-service')
-          const userReposts = await repostService.getUserReposts(userId)
+          const userReposts = await repostService.getUserReposts(userId, { limit: 50 })
+
+          // Track repost pagination
+          if (userReposts.length > 0) {
+            const lastRepost = userReposts[userReposts.length - 1]
+            setLastRepostId(lastRepost.$id)
+          }
+          setHasMoreReposts(userReposts.length >= 50)
 
           if (userReposts.length > 0) {
             // Get unique post IDs that this user has reposted
@@ -263,6 +277,15 @@ function UserProfileContent() {
           enrichProgressively(transformedPosts)
         }
 
+        // Set pagination state based on original posts (not reposts)
+        const originalPosts = postDocs || []
+        if (originalPosts.length > 0) {
+          const lastPost = originalPosts[originalPosts.length - 1] as any
+          setLastPostId(lastPost.$id || lastPost.id)
+        }
+        // If we got fewer posts than requested, there are no more to load
+        setHasMore(originalPosts.length >= 50)
+
         // Try to resolve DPNS username
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
@@ -307,6 +330,164 @@ function UserProfileContent() {
       setSelectedQrPayment(matchingPayment)
     }
   }, [profile?.paymentUris, searchParams])
+
+  const loadMorePosts = useCallback(async () => {
+    // Check if there's more content to load (either posts or reposts)
+    const canLoadMorePosts = hasMore && lastPostId
+    const canLoadMoreReposts = hasMoreReposts && lastRepostId
+    if (!userId || isLoadingMore || (!canLoadMorePosts && !canLoadMoreReposts)) return
+
+    setIsLoadingMore(true)
+    try {
+      const { postService } = await import('@/lib/services')
+      const { repostService } = await import('@/lib/services/repost-service')
+
+      const newPosts: Post[] = []
+      let newPostDocs: any[] = []
+      let newRepostDocs: any[] = []
+
+      // Fetch more posts using cursor-based pagination
+      if (canLoadMorePosts) {
+        const postsResult = await postService.getUserPosts(userId, {
+          limit: 50,
+          startAfter: lastPostId
+        })
+
+        newPostDocs = postsResult.documents || []
+
+        // Transform new posts
+        for (const doc of newPostDocs) {
+          const authorIdStr = doc.$ownerId || doc.ownerId || userId
+          newPosts.push({
+            id: doc.$id || doc.id,
+            content: doc.content || '',
+            author: {
+              id: authorIdStr,
+              username: username || `user_${authorIdStr.slice(-6)}`,
+              displayName: profile?.displayName || `User ${authorIdStr.slice(-6)}`,
+              avatar: '',
+              verified: false,
+              followers: 0,
+              following: 0,
+              joinedAt: new Date(),
+              hasDpns: hasDpns,
+            } as any,
+            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
+            likes: 0,
+            reposts: 0,
+            replies: 0,
+            views: 0,
+            quotedPostId: doc.quotedPostId || undefined,
+          })
+        }
+      }
+
+      // Fetch more reposts using cursor-based pagination
+      if (canLoadMoreReposts) {
+        try {
+          newRepostDocs = await repostService.getUserReposts(userId, {
+            limit: 50,
+            startAfter: lastRepostId
+          })
+
+          if (newRepostDocs.length > 0) {
+            // Get unique post IDs that this user has reposted
+            const repostedPostIds = newRepostDocs.map(r => r.postId).filter((id: string) => id)
+            const repostedPosts = await postService.getPostsByIds(repostedPostIds)
+
+            // Try to resolve DPNS username for reposter display
+            let reposterUsername: string | undefined
+            try {
+              const { dpnsService } = await import('@/lib/services/dpns-service')
+              reposterUsername = await dpnsService.resolveUsername(userId) || undefined
+            } catch (e) {
+              // DPNS resolution is optional
+            }
+
+            // Create repost entries with repostedBy info
+            for (const repost of newRepostDocs) {
+              const originalPost = repostedPosts.find(p => p.id === repost.postId)
+              if (originalPost && originalPost.author.id !== userId) {
+                newPosts.push({
+                  ...originalPost,
+                  repostedBy: {
+                    id: userId,
+                    displayName: profile?.displayName || `User ${userId.slice(-6)}`,
+                    username: reposterUsername
+                  },
+                  repostTimestamp: new Date(repost.$createdAt)
+                })
+              }
+            }
+          }
+        } catch (repostError) {
+          console.error('Failed to fetch more reposts:', repostError)
+          // Continue without reposts - non-critical
+        }
+      }
+
+      // Fetch quoted posts for quote posts
+      try {
+        const quotedPostIds = newPosts
+          .filter((p: any) => p.quotedPostId)
+          .map((p: any) => p.quotedPostId)
+
+        if (quotedPostIds.length > 0) {
+          const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+          const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
+
+          for (const post of newPosts) {
+            if ((post as any).quotedPostId && quotedPostMap.has((post as any).quotedPostId)) {
+              (post as any).quotedPost = quotedPostMap.get((post as any).quotedPostId)
+            }
+          }
+        }
+      } catch (quoteError) {
+        console.error('Failed to fetch quoted posts:', quoteError)
+      }
+
+      // Append to existing posts and sort
+      setPosts(currentPosts => {
+        const existingIds = new Set(currentPosts.map(p => p.id))
+        const uniqueNewPosts = newPosts.filter(p => !existingIds.has(p.id))
+        const allPosts = [...currentPosts, ...uniqueNewPosts]
+        // Sort by timestamp (repostTimestamp for reposts, createdAt for original posts)
+        allPosts.sort((a, b) => {
+          const aTime = a.repostTimestamp?.getTime() || a.createdAt.getTime()
+          const bTime = b.repostTimestamp?.getTime() || b.createdAt.getTime()
+          return bTime - aTime
+        })
+        return allPosts
+      })
+
+      // Start progressive enrichment for new posts
+      if (newPosts.length > 0) {
+        enrichProgressively(newPosts)
+      }
+
+      // Update pagination state for posts (only if posts were fetched)
+      if (canLoadMorePosts) {
+        if (newPostDocs.length > 0) {
+          const lastPost = newPostDocs[newPostDocs.length - 1] as any
+          setLastPostId(lastPost.$id || lastPost.id)
+        }
+        setHasMore(newPostDocs.length >= 50)
+      }
+
+      // Update pagination state for reposts (only if reposts were fetched)
+      if (canLoadMoreReposts) {
+        if (newRepostDocs.length > 0) {
+          const lastRepost = newRepostDocs[newRepostDocs.length - 1] as any
+          setLastRepostId(lastRepost.$id)
+        }
+        setHasMoreReposts(newRepostDocs.length >= 50)
+      }
+    } catch (error) {
+      console.error('Failed to load more posts:', error)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [userId, isLoadingMore, hasMore, hasMoreReposts, lastPostId, lastRepostId, username, profile?.displayName, hasDpns, enrichProgressively])
 
   const handleFollow = async () => {
     const authedUser = requireAuth('follow')
@@ -868,6 +1049,20 @@ function UserProfileContent() {
                       enrichment={getPostEnrichment(post)}
                     />
                   ))}
+
+                  {/* Load More button */}
+                  {(hasMore || hasMoreReposts) && (
+                    <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
+                      <Button
+                        variant="outline"
+                        onClick={loadMorePosts}
+                        disabled={isLoadingMore}
+                        className="w-full max-w-xs"
+                      >
+                        {isLoadingMore ? 'Loading...' : 'Load more posts'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
