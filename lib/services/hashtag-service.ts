@@ -202,6 +202,49 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   }
 
   /**
+   * Get the count of posts with a specific hashtag
+   * Uses a reasonable limit for performance - returns approximate count for high-volume hashtags
+   */
+  async getPostCountByHashtag(hashtag: string): Promise<number> {
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      const normalizedTag = this.normalizeHashtag(hashtag);
+
+      if (!normalizedTag) return 0;
+
+      // Query with a reasonable limit to get approximate count
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [
+          ['hashtag', '==', normalizedTag],
+          ['$createdAt', '>', 0]
+        ],
+        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+        limit: 100
+      } as any);
+
+      // Handle Map response (v3 SDK)
+      let documents: any[] = [];
+      if (response instanceof Map) {
+        documents = Array.from(response.values()).filter(Boolean);
+      } else if (Array.isArray(response)) {
+        documents = response;
+      } else if (response && (response as any).documents) {
+        documents = (response as any).documents;
+      } else if (response && typeof (response as any).toJSON === 'function') {
+        const json = (response as any).toJSON();
+        documents = Array.isArray(json) ? json : json.documents || [];
+      }
+
+      return documents.length;
+    } catch (error) {
+      console.error('Error getting post count by hashtag:', error);
+      return 0;
+    }
+  }
+
+  /**
    * Get post IDs that have a specific hashtag
    * Returns postHashtag documents - caller should fetch actual posts and filter by ownership
    */
