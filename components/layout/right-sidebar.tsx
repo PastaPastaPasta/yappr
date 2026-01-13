@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
+import { SearchInput } from '@/components/search/search-input'
 import { formatNumber } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
 import { postService, followService, likeService } from '@/lib/services'
@@ -96,6 +97,7 @@ export function RightSidebar() {
 
   return (
     <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-[calc(100vh-40px)] sticky top-[40px] overflow-y-auto scrollbar-hide">
+      <SearchInput />
       <div className="bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-hidden">
         <h2 className="text-xl font-bold px-4 py-3">Getting Started</h2>
         <div className="px-4 py-3 space-y-3 text-sm">

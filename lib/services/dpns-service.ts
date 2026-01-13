@@ -401,12 +401,16 @@ class DpnsService {
   async searchUsernamesWithDetails(prefix: string, limit: number = 10): Promise<Array<{ username: string; ownerId: string }>> {
     try {
       const sdk = await getEvoSdk();
-      
+
       // Remove .dash suffix if present for search
-      const searchPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
-      
+      const cleanPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
+
+      // IMPORTANT: Normalize the search prefix to match how DPNS stores normalizedLabel
+      // Characters like 'l' -> '1', 'i' -> '1', 'o' -> '0' etc are converted during registration
+      const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
+
       // Search DPNS names by prefix
-      console.log(`DPNS: Searching usernames with prefix: ${searchPrefix}`);
+      console.log(`DPNS: Searching usernames with prefix: ${cleanPrefix} (normalized: ${searchPrefix})`);
       
       // Build where clause for starts-with query on normalizedLabel
       const where = [
@@ -468,10 +472,14 @@ class DpnsService {
       const sdk = await getEvoSdk();
 
       // Remove .dash suffix if present for search
-      const searchPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
+      const cleanPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
+
+      // IMPORTANT: Normalize the search prefix to match how DPNS stores normalizedLabel
+      // Characters like 'l' -> '1', 'i' -> '1', 'o' -> '0' etc are converted during registration
+      const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
 
       // Search DPNS names by prefix
-      console.log(`DPNS: Searching usernames with prefix: ${searchPrefix}`);
+      console.log(`DPNS: Searching usernames with prefix: ${cleanPrefix} (normalized: ${searchPrefix})`);
       console.log(`DPNS: Using contract ID: ${DPNS_CONTRACT_ID}`);
       console.log(`DPNS: Document type: ${DPNS_DOCUMENT_TYPE}`);
 
