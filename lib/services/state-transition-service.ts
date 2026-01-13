@@ -113,6 +113,10 @@ class StateTransitionService {
         entropy
       );
 
+      // Convert documentId bytes to base58 for logging
+      const docIdBase58 = Identifier.fromBytes(documentId).toBase58();
+      console.log(`Generated document ID: ${docIdBase58}`);
+
       // Create Document object using constructor
       // constructor(js_raw_document: any, js_document_type_name: string, js_revision: bigint,
       //             js_data_contract_id, js_owner_id, js_document_id)
@@ -125,6 +129,11 @@ class StateTransitionService {
         documentId
       );
 
+      // Set entropy on the document (required for new documents)
+      document.entropy = entropy;
+
+      console.log('Document created:', document.toJSON());
+
       // Create the document using the new SDK API
       await sdk.documents.create({
         document,
@@ -133,10 +142,6 @@ class StateTransitionService {
       });
 
       console.log('Document creation completed');
-
-      // The new API returns void, so we construct a basic response
-      // The document ID is deterministic based on the inputs
-      const docIdBase58 = Identifier.fromBytes(documentId).toBase58();
 
       return {
         success: true,
