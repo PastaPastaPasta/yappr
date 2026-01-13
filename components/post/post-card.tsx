@@ -18,9 +18,8 @@ import {
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
 import { formatTime, formatNumber } from '@/lib/utils'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { IconButton } from '@/components/ui/icon-button'
-import { getInitials, cn } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -28,6 +27,7 @@ import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { UserDisplayName, UserHandle, resolveUserDisplayText, hasRealProfile } from '@/components/ui/user-display-name'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { useTipModal } from '@/hooks/use-tip-modal'
@@ -35,6 +35,7 @@ import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
+import { usePostInteraction } from '@/hooks/use-post-interaction'
 import { tipService } from '@/lib/services/tip-service'
 
 // Enrichment data from progressive loading
@@ -82,13 +83,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         ? post.author.username  // Has DPNS
         : null  // No DPNS
 
-  // Check if user has a profile (display name from profile, not a fallback)
-  // A profile exists if displayName is set and is not a placeholder like "Unknown User" or "User abc123"
-  const hasProfile = !!(
-    displayName &&
-    displayName !== 'Unknown User' &&
-    !displayName.startsWith('User ')
-  )
+  // Check if user has a real profile (not a placeholder)
+  const hasProfile = hasRealProfile(displayName)
 
   // Stats: use progressive enrichment > post data
   const statsLikes = progressiveEnrichment?.stats?.likes ?? post.likes
@@ -121,28 +117,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     views: 0
   } : undefined)
 
-  // Helper to get display text for replyTo author
-  // Priority: DPNS username > Profile display name > Truncated identity ID
-  const getReplyToAuthorDisplay = () => {
-    if (!replyTo) return { text: '', showAt: false }
-    const author = replyTo.author
-    const username = author.username
-    const displayName = author.displayName
-
-    // Check for DPNS (non-empty username that's not a placeholder)
-    if (username && !username.startsWith('user_')) {
-      return { text: username, showAt: true }
-    }
-
-    // Check for profile display name (not a placeholder)
-    if (displayName && displayName !== 'Unknown User' && !displayName.startsWith('User ')) {
-      return { text: displayName, showAt: false }
-    }
-
-    // Fallback to truncated identity ID
-    return { text: `${author.id.slice(0, 8)}...${author.id.slice(-6)}`, showAt: false }
-  }
-  const replyToDisplay = getReplyToAuthorDisplay()
+  // Get display text for replyTo author using shared utility
+  const replyToDisplay = replyTo
+    ? resolveUserDisplayText(replyTo.author.id, replyTo.author.username, replyTo.author.displayName)
+    : { text: '', showAt: false }
 
   const [liked, setLiked] = useState(initialLiked)
   const [likes, setLikes] = useState(statsLikes)
@@ -403,62 +381,17 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <div className="flex items-center gap-1 text-sm min-w-0">
               {!hideAvatar && (
                 <>
-                  {usernameState === undefined ? (
-                    // Still loading - show skeleton for display name
-                    <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-                  ) : (
-                    <Link
-                      href={`/user?id=${post.author.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-semibold hover:underline truncate"
-                    >
-                      {displayName}
-                    </Link>
-                  )}
-                  {post.author.verified && (
-                    <svg className="h-4 w-4 text-yappr-500 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484zm-6.616-3.334l-4.334 6.5c-.145.217-.382.334-.625.334-.143 0-.288-.04-.416-.126l-.115-.094-2.415-2.415c-.293-.293-.293-.768 0-1.06s.768-.294 1.06 0l1.77 1.767 3.825-5.74c.23-.345.696-.436 1.04-.207.346.23.44.696.21 1.04z" />
-                    </svg>
-                  )}
-                  {usernameState ? (
-                    // Has DPNS username
-                    <Link
-                      href={`/user?id=${post.author.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-gray-500 hover:underline truncate"
-                    >
-                      @{usernameState}
-                    </Link>
-                  ) : usernameState === null && !hasProfile ? (
-                    // No DPNS and no profile - show identity ID
-                    <Tooltip.Provider>
-                      <Tooltip.Root>
-                        <Tooltip.Trigger asChild>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigator.clipboard.writeText(post.author.id)
-                              toast.success('Identity ID copied')
-                            }}
-                            className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
-                          >
-                            {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
-                          </button>
-                        </Tooltip.Trigger>
-                        <Tooltip.Portal>
-                          <Tooltip.Content
-                            className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                            sideOffset={5}
-                          >
-                            Click to copy full identity ID
-                          </Tooltip.Content>
-                        </Tooltip.Portal>
-                      </Tooltip.Root>
-                    </Tooltip.Provider>
-                  ) : usernameState === undefined ? (
-                    // Still loading - show skeleton
-                    <span className="inline-block w-20 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-                  ) : null /* Has profile but no DPNS - display name is sufficient */}
+                  <UserDisplayName
+                    userId={post.author.id}
+                    username={usernameState}
+                    displayName={displayName}
+                    verified={post.author.verified}
+                  />
+                  <UserHandle
+                    userId={post.author.id}
+                    username={usernameState}
+                    displayName={displayName}
+                  />
                 </>
               )}
             </div>

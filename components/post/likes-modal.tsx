@@ -1,18 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { LoadingState } from '@/components/ui/loading-state'
-import { useAsyncState } from '@/components/ui/loading-state'
+import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
+import { CopyableIdentityId } from '@/components/ui/user-display-name'
 import { likeService, LikeDocument } from '@/lib/services/like-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { formatTime } from '@/lib/utils'
-import * as Tooltip from '@radix-ui/react-tooltip'
-import toast from 'react-hot-toast'
 
 interface LikesModalProps {
   isOpen: boolean
@@ -25,6 +23,25 @@ interface LikeWithUser extends LikeDocument {
   displayName?: string
   hasDpnsName: boolean
   hasProfile: boolean
+}
+
+function LikeUserHandle({ like }: { like: LikeWithUser }): JSX.Element {
+  const timestamp = formatTime(new Date(like.$createdAt))
+
+  if (like.hasDpnsName) {
+    return <p className="text-sm text-gray-500">@{like.username} · {timestamp}</p>
+  }
+
+  if (like.hasProfile) {
+    return <p className="text-sm text-gray-500">{timestamp}</p>
+  }
+
+  return (
+    <div className="flex items-center gap-1 text-sm text-gray-500">
+      <CopyableIdentityId userId={like.$ownerId} />
+      <span>· {timestamp}</span>
+    </div>
+  )
 }
 
 export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
@@ -123,42 +140,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                         </Avatar>
                         <div>
                           <p className="font-semibold">{like.displayName}</p>
-                          {like.hasDpnsName ? (
-                            // Has DPNS: show @username
-                            <p className="text-sm text-gray-500">@{like.username} · {formatTime(new Date(like.$createdAt))}</p>
-                          ) : like.hasProfile ? (
-                            // Has profile but no DPNS: just show timestamp
-                            <p className="text-sm text-gray-500">{formatTime(new Date(like.$createdAt))}</p>
-                          ) : (
-                            // No DPNS and no profile: show identity ID
-                            <div className="flex items-center gap-1 text-sm text-gray-500">
-                              <Tooltip.Provider>
-                                <Tooltip.Root>
-                                  <Tooltip.Trigger asChild>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        navigator.clipboard.writeText(like.$ownerId)
-                                        toast.success('Identity ID copied')
-                                      }}
-                                      className="font-mono text-xs hover:text-gray-700 dark:hover:text-gray-300"
-                                    >
-                                      {like.$ownerId.slice(0, 8)}...{like.$ownerId.slice(-6)}
-                                    </button>
-                                  </Tooltip.Trigger>
-                                  <Tooltip.Portal>
-                                    <Tooltip.Content
-                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                                      sideOffset={5}
-                                    >
-                                      Click to copy full identity ID
-                                    </Tooltip.Content>
-                                  </Tooltip.Portal>
-                                </Tooltip.Root>
-                              </Tooltip.Provider>
-                              <span>· {formatTime(new Date(like.$createdAt))}</span>
-                            </div>
-                          )}
+                          <LikeUserHandle like={like} />
                         </div>
                       </div>
                       <Button variant="outline" size="sm">

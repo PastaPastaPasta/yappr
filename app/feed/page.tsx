@@ -10,7 +10,6 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { useAppStore } from '@/lib/store'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
@@ -18,7 +17,7 @@ import ErrorBoundary from '@/components/error-boundary'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { cacheManager } from '@/lib/cache-manager'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
-import { identifierToBase58 } from '@/lib/services/sdk-helpers'
+import { transformSdkDocumentToPost, transformServicePostToUiPost, sortPostsByTimestamp } from '@/lib/utils/post-transform'
 import { Button } from '@/components/ui/button'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 
@@ -163,33 +162,7 @@ function FeedPage() {
         } while (result.documents.length === 0 && followingCursor)
 
         // Transform the Post objects to match our UI format
-        posts = result.documents.map((post: any) => ({
-          id: post.id,
-          content: post.content || 'No content',
-          author: {
-            id: post.author?.id || 'unknown',
-            // Don't use fake username format - leave empty for display components to handle
-            username: post.author?.username || '',
-            handle: post.author?.username || '',
-            displayName: post.author?.displayName || `User ${(post.author?.id || '').slice(-6)}`,
-            avatar: '',
-            followers: 0,
-            following: 0,
-            verified: false,
-            joinedAt: new Date(),
-            hasDpns: !!(post.author?.username && !post.author.username.startsWith('user_'))
-          },
-          createdAt: post.createdAt || new Date(),
-          likes: post.likes || 0,
-          replies: post.replies || 0,
-          reposts: post.reposts || 0,
-          views: post.views || 0,
-          liked: post.liked || false,
-          reposted: post.reposted || false,
-          bookmarked: post.bookmarked || false,
-          replyToId: post.replyToId || undefined,
-          quotedPostId: post.quotedPostId || undefined
-        }))
+        posts = result.documents.map((post: any) => transformServicePostToUiPost(post))
 
         // Fetch quoted posts for Following feed
         try {
@@ -289,49 +262,8 @@ function FeedPage() {
         console.log('Feed: Loading all posts', pagination?.startAfter ? `starting after ${pagination.startAfter}` : '')
         const rawPosts = await dashClient.queryPosts(queryOptions)
 
-        // Transform posts to match our UI format
-        // SDK v3 toJSON() returns system fields with $ prefix ($id, $ownerId, etc.)
-        posts = rawPosts.map((doc: any) => {
-          const data = doc.data || doc
-          const authorIdStr = doc.$ownerId || doc.ownerId || 'unknown'
-
-          // replyToPostId comes as base64 from SDK v3 toJSON()
-          // Convert to base58 for consistent handling
-          const rawReplyToId = data.replyToPostId || doc.replyToPostId
-          const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) : undefined
-
-          // quotedPostId also comes as base64 from SDK v3 toJSON()
-          const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
-          const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) : undefined
-
-          return {
-            id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
-            content: data.content || 'No content',
-            author: {
-              id: authorIdStr,
-              // Don't use fake username format - leave empty for display components to handle
-              username: '',
-              handle: '',
-              displayName: `User ${authorIdStr.slice(-6)}`,
-              avatar: '',
-              followers: 0,
-              following: 0,
-              verified: false,
-              joinedAt: new Date(),
-              hasDpns: false
-            },
-            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
-            likes: 0,
-            replies: 0,
-            reposts: 0,
-            views: 0,
-            liked: false,
-            reposted: false,
-            bookmarked: false,
-            replyToId: replyToId || undefined,
-            quotedPostId: quotedPostId || undefined
-          }
-        })
+        // Transform posts to match our UI format using shared utility
+        posts = rawPosts.map((doc: any) => transformSdkDocumentToPost(doc))
 
         // Fetch recent reposts and merge into timeline
         try {
@@ -417,15 +349,7 @@ function FeedPage() {
       }
 
       // Sort posts by timestamp (use repostTimestamp if available, otherwise createdAt)
-      const sortedPosts = posts.sort((a: any, b: any) => {
-        const aTime = a.repostTimestamp instanceof Date ? a.repostTimestamp.getTime()
-          : a.createdAt instanceof Date ? a.createdAt.getTime()
-          : new Date(a.createdAt).getTime()
-        const bTime = b.repostTimestamp instanceof Date ? b.repostTimestamp.getTime()
-          : b.createdAt instanceof Date ? b.createdAt.getTime()
-          : new Date(b.createdAt).getTime()
-        return bTime - aTime
-      })
+      const sortedPosts = sortPostsByTimestamp(posts)
 
       // Update pagination state based on feed type
       if (activeTab === 'following') {
