@@ -5,7 +5,7 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, base58ArrayToBytes } from './sdk-helpers';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 
 export interface PostDocument {
@@ -1073,10 +1073,14 @@ class PostService extends BaseDocumentService<Post> {
 
       // Use 'in' operator for batch query on replyToPostId
       // Must include orderBy to match the replyToPost index: [replyToPostId, $createdAt]
+      // Convert base58 strings to byte arrays for the byte array field
+      const postIdBytes = base58ArrayToBytes(postIds);
+      if (postIdBytes.length === 0) return result;
+
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
-        where: [['replyToPostId', 'in', postIds]],
+        where: [['replyToPostId', 'in', postIdBytes]],
         orderBy: [['replyToPostId', 'asc']],
         limit: 100
       } as any);
