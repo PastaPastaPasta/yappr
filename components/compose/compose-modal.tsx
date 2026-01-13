@@ -51,12 +51,13 @@ function FormatButton({
   )
 }
 
-// Character counter component
+// Character counter component with ready-to-post indicator
 function CharacterCounter({ current, limit }: { current: number; limit: number }) {
   const remaining = limit - current
   const percentage = Math.min((current / limit) * 100, 100)
   const isWarning = remaining <= 50 && remaining > 20
   const isDanger = remaining <= 20
+  const isValid = current > 0 && current <= limit
 
   // Calculate circle properties
   const radius = 10
@@ -99,6 +100,14 @@ function CharacterCounter({ current, limit }: { current: number; limit: number }
                 }
               />
             </svg>
+            {/* Checkmark when valid and not in danger zone */}
+            {isValid && !isDanger && !isWarning && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <svg className="w-3 h-3 text-yappr-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+            )}
           </div>
           {isDanger && (
             <span
@@ -707,25 +716,49 @@ export function ComposeModal() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        {/* Post button */}
+                      <div className="flex items-center gap-3">
+                        {/* Ready indicator */}
+                        {canPost && !isPosting && (
+                          <span className="text-xs text-yappr-500 font-medium hidden sm:block">
+                            Ready to post
+                          </span>
+                        )}
+                        {/* Post button - prominent primary action */}
                         <Button
                           onClick={handlePost}
                           disabled={!canPost}
-                          size="sm"
-                          className="min-w-[80px]"
+                          className={`min-w-[100px] h-10 px-5 text-sm font-semibold transition-all ${
+                            canPost
+                              ? 'bg-yappr-500 hover:bg-yappr-600 shadow-lg shadow-yappr-500/25 hover:shadow-xl hover:shadow-yappr-500/30 hover:scale-[1.02]'
+                              : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                          }`}
                         >
                           {isPosting ? (
                             <span className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-current border-t-transparent" />
-                              {threadPosts.length > 1 ? 'Posting...' : 'Posting'}
+                              <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
+                              <span>{threadPosts.length > 1 ? 'Posting...' : 'Posting'}</span>
                             </span>
                           ) : replyingTo ? (
-                            'Reply'
+                            <span className="flex items-center gap-1.5">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                              </svg>
+                              Reply
+                            </span>
                           ) : threadPosts.length > 1 ? (
-                            `Post all (${threadPosts.length})`
+                            <span className="flex items-center gap-1.5">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16m-7 6h7" />
+                              </svg>
+                              Post all ({threadPosts.length})
+                            </span>
                           ) : (
-                            'Post'
+                            <span className="flex items-center gap-1.5">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                              </svg>
+                              Post
+                            </span>
                           )}
                         </Button>
                       </div>
