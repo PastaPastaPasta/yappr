@@ -181,16 +181,14 @@ class StateTransitionService {
    * Wait for a state transition to be confirmed
    */
   async waitForConfirmation(
-    transactionHash: string, 
+    transactionHash: string,
     options: {
       maxWaitTimeMs?: number,
-      pollingIntervalMs?: number,
       onProgress?: (attempt: number, elapsed: number) => void
     } = {}
   ): Promise<{ success: boolean; result?: any; error?: string }> {
     const {
-      maxWaitTimeMs = 10000, // 10 seconds max wait (reduced from 30s)
-      pollingIntervalMs = 2000, // Poll every 2 seconds
+      maxWaitTimeMs = 10000,
       onProgress
     } = options;
 
