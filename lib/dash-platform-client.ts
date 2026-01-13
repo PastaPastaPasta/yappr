@@ -117,28 +117,14 @@ export class DashPlatformClient {
         content: content.trim()
       }
       
-      // Convert replyToPostId if provided
+      // Pass replyToPostId as base58 string (SDK handles conversion)
       if (options?.replyToPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.replyToPostId = Array.from(bs58.decode(options.replyToPostId))
-        } catch (e) {
-          console.error('Failed to decode replyToPostId:', e)
-          throw new Error('Invalid reply post ID format')
-        }
+        postData.replyToPostId = options.replyToPostId
       }
 
-      // Convert quotedPostId if provided
+      // Pass quotedPostId as base58 string (SDK handles conversion)
       if (options?.quotedPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.quotedPostId = Array.from(bs58.decode(options.quotedPostId))
-        } catch (e) {
-          console.error('Failed to decode quotedPostId:', e)
-          throw new Error('Invalid quoted post ID format')
-        }
+        postData.quotedPostId = options.quotedPostId
       }
       
       // Add other optional fields
