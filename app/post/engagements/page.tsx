@@ -64,9 +64,9 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data
-      const [dpnsNames, profiles, followStatus] = await Promise.all([
-        Promise.all(ownerIds.map(id => dpnsService.resolveUsername(id).catch(() => null))),
+      // Batch fetch user data using efficient batch resolution
+      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
+        dpnsService.resolveUsernamesBatch(ownerIds),
         unifiedProfileService.getProfilesByIdentityIds(ownerIds),
         user?.identityId
           ? followService.getFollowStatusBatch(ownerIds, user.identityId)
@@ -75,8 +75,8 @@ function EngagementsPageContent() {
 
       const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
 
-      const users: EngagementUser[] = ownerIds.map((id, index) => {
-        const username = dpnsNames[index]
+      const users: EngagementUser[] = ownerIds.map((id) => {
+        const username = dpnsNamesMap.get(id) || null
         const profile = profileMap.get(id)
         const profileData = (profile as any)?.data || profile
 
@@ -116,9 +116,9 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data
-      const [dpnsNames, profiles, followStatus] = await Promise.all([
-        Promise.all(ownerIds.map(id => dpnsService.resolveUsername(id).catch(() => null))),
+      // Batch fetch user data using efficient batch resolution
+      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
+        dpnsService.resolveUsernamesBatch(ownerIds),
         unifiedProfileService.getProfilesByIdentityIds(ownerIds),
         user?.identityId
           ? followService.getFollowStatusBatch(ownerIds, user.identityId)
@@ -127,8 +127,8 @@ function EngagementsPageContent() {
 
       const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
 
-      const users: EngagementUser[] = ownerIds.map((id, index) => {
-        const username = dpnsNames[index]
+      const users: EngagementUser[] = ownerIds.map((id) => {
+        const username = dpnsNamesMap.get(id) || null
         const profile = profileMap.get(id)
         const profileData = (profile as any)?.data || profile
 
@@ -169,9 +169,9 @@ function EngagementsPageContent() {
 
       const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
 
-      // Batch fetch user data
-      const [dpnsNames, profiles, followStatus] = await Promise.all([
-        Promise.all(ownerIds.map(id => dpnsService.resolveUsername(id).catch(() => null))),
+      // Batch fetch user data using efficient batch resolution
+      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
+        dpnsService.resolveUsernamesBatch(ownerIds),
         unifiedProfileService.getProfilesByIdentityIds(ownerIds),
         user?.identityId
           ? followService.getFollowStatusBatch(ownerIds, user.identityId)
@@ -180,9 +180,9 @@ function EngagementsPageContent() {
 
       const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
 
-      const users: EngagementUser[] = quotePosts.map((post, index) => {
+      const users: EngagementUser[] = quotePosts.map((post) => {
         const id = post.author.id
-        const username = dpnsNames[index]
+        const username = dpnsNamesMap.get(id) || null
         const profile = profileMap.get(id)
         const profileData = (profile as any)?.data || profile
 

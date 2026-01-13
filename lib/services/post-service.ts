@@ -950,20 +950,24 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get default user object when profile not found
+   * Get default user object when profile not found.
+   * Sets username to empty string and hasDpns to false so display components
+   * can properly show the identity ID instead of a fake username.
    */
-  private getDefaultUser(userId: string | undefined): User {
+  private getDefaultUser(userId: string | undefined): User & { hasDpns: boolean } {
     const id = userId || 'unknown';
     return {
       id,
-      username: id.length > 8 ? id.substring(0, 8) + '...' : id,
+      // Don't use fake username format - leave empty for display components to handle
+      username: '',
       displayName: 'Unknown User',
       avatar: '',
       bio: '',
       followers: 0,
       following: 0,
       verified: false,
-      joinedAt: new Date()
+      joinedAt: new Date(),
+      hasDpns: false
     };
   }
 

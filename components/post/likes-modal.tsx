@@ -8,7 +8,11 @@ import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/loading-state'
 import { useAsyncState } from '@/components/ui/loading-state'
 import { likeService, LikeDocument } from '@/lib/services/like-service'
+import { dpnsService } from '@/lib/services/dpns-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { formatTime } from '@/lib/utils'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import toast from 'react-hot-toast'
 
 interface LikesModalProps {
   isOpen: boolean
@@ -17,8 +21,9 @@ interface LikesModalProps {
 }
 
 interface LikeWithUser extends LikeDocument {
-  username?: string
+  username?: string | null
   displayName?: string
+  hasDpnsName: boolean
 }
 
 export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
@@ -32,15 +37,38 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
     try {
       // Fetch actual likes from Dash Platform
       const likes = await likeService.getPostLikes(postId)
-      
-      // Transform likes to include user info
-      // For now, we'll generate usernames from the ownerId
-      const likesWithUsers: LikeWithUser[] = likes.map(like => ({
-        ...like,
-        username: `user_${like.$ownerId.slice(-6)}`,
-        displayName: `User ${like.$ownerId.slice(-6)}`
-      }))
-      
+
+      if (likes.length === 0) {
+        setData([])
+        return
+      }
+
+      // Get unique owner IDs
+      const ownerIds = likes.map(like => like.$ownerId).filter(Boolean)
+
+      // Batch fetch DPNS usernames and profiles
+      const [usernameMap, profiles] = await Promise.all([
+        dpnsService.resolveUsernamesBatch(ownerIds),
+        unifiedProfileService.getProfilesByIdentityIds(ownerIds)
+      ])
+
+      // Create profile lookup map
+      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+
+      // Transform likes with resolved user info
+      const likesWithUsers: LikeWithUser[] = likes.map(like => {
+        const username = usernameMap.get(like.$ownerId)
+        const profile = profileMap.get(like.$ownerId)
+        const profileData = (profile as any)?.data || profile
+
+        return {
+          ...like,
+          username: username || null,
+          displayName: profileData?.displayName || username || `User ${like.$ownerId.slice(-6)}`,
+          hasDpnsName: !!username
+        }
+      })
+
       setData(likesWithUsers)
     } catch (error) {
       console.error('Failed to load likes:', error)
@@ -92,7 +120,37 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                         </Avatar>
                         <div>
                           <p className="font-semibold">{like.displayName}</p>
-                          <p className="text-sm text-gray-500">@{like.username} · {formatTime(new Date(like.$createdAt))}</p>
+                          {like.hasDpnsName ? (
+                            <p className="text-sm text-gray-500">@{like.username} · {formatTime(new Date(like.$createdAt))}</p>
+                          ) : (
+                            <div className="flex items-center gap-1 text-sm text-gray-500">
+                              <Tooltip.Provider>
+                                <Tooltip.Root>
+                                  <Tooltip.Trigger asChild>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        navigator.clipboard.writeText(like.$ownerId)
+                                        toast.success('Identity ID copied')
+                                      }}
+                                      className="font-mono text-xs hover:text-gray-700 dark:hover:text-gray-300"
+                                    >
+                                      {like.$ownerId.slice(0, 8)}...{like.$ownerId.slice(-6)}
+                                    </button>
+                                  </Tooltip.Trigger>
+                                  <Tooltip.Portal>
+                                    <Tooltip.Content
+                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                                      sideOffset={5}
+                                    >
+                                      Click to copy full identity ID
+                                    </Tooltip.Content>
+                                  </Tooltip.Portal>
+                                </Tooltip.Root>
+                              </Tooltip.Provider>
+                              <span>· {formatTime(new Date(like.$createdAt))}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <Button variant="outline" size="sm">

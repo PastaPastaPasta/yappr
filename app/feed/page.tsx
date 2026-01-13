@@ -168,14 +168,16 @@ function FeedPage() {
           content: post.content || 'No content',
           author: {
             id: post.author?.id || 'unknown',
-            username: post.author?.username || `user_${(post.author?.id || '').slice(-6)}`,
-            handle: post.author?.username || `user_${(post.author?.id || '').slice(-6)}`,
+            // Don't use fake username format - leave empty for display components to handle
+            username: post.author?.username || '',
+            handle: post.author?.username || '',
             displayName: post.author?.displayName || `User ${(post.author?.id || '').slice(-6)}`,
             avatar: '',
             followers: 0,
             following: 0,
             verified: false,
-            joinedAt: new Date()
+            joinedAt: new Date(),
+            hasDpns: !!(post.author?.username && !post.author.username.startsWith('user_'))
           },
           createdAt: post.createdAt || new Date(),
           likes: post.likes || 0,
@@ -307,14 +309,16 @@ function FeedPage() {
             content: data.content || 'No content',
             author: {
               id: authorIdStr,
-              username: `user_${authorIdStr.slice(-6)}`,
-              handle: `user_${authorIdStr.slice(-6)}`,
+              // Don't use fake username format - leave empty for display components to handle
+              username: '',
+              handle: '',
               displayName: `User ${authorIdStr.slice(-6)}`,
               avatar: '',
               followers: 0,
               following: 0,
               verified: false,
-              joinedAt: new Date()
+              joinedAt: new Date(),
+              hasDpns: false
             },
             createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
             likes: 0,

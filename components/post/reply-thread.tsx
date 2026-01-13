@@ -4,6 +4,26 @@ import Link from 'next/link'
 import { ReplyThread, Post } from '@/lib/types'
 import { PostCard } from './post-card'
 
+/**
+ * Get the display username for a post author.
+ * Returns the DPNS username if available, otherwise returns a truncated identity ID.
+ */
+function getDisplayUsername(author: Post['author']): { display: string; isDpns: boolean } {
+  const hasDpns = (author as any).hasDpns
+  const username = author.username
+
+  // If we have a confirmed DPNS name, use it
+  if (hasDpns && username && !username.startsWith('user_')) {
+    return { display: `@${username}`, isDpns: true }
+  }
+
+  // Otherwise show truncated identity ID
+  return {
+    display: `${author.id.slice(0, 8)}...${author.id.slice(-6)}`,
+    isDpns: false
+  }
+}
+
 interface ReplyThreadItemProps {
   thread: ReplyThread
   mainPostAuthorId: string
@@ -65,6 +85,7 @@ interface NestedReplyProps {
  */
 function NestedReply({ reply, parentPost }: NestedReplyProps) {
   const { post } = reply
+  const parentAuthorDisplay = getDisplayUsername(parentPost.author)
 
   return (
     <div className="relative">
@@ -74,10 +95,10 @@ function NestedReply({ reply, parentPost }: NestedReplyProps) {
           Replying to{' '}
           <Link
             href={`/user?id=${parentPost.author.id}`}
-            className="text-yappr-500 hover:underline"
+            className={`hover:underline ${parentAuthorDisplay.isDpns ? 'text-yappr-500' : 'text-gray-500 font-mono text-xs'}`}
             onClick={(e) => e.stopPropagation()}
           >
-            @{parentPost.author.username || parentPost.author.id.slice(0, 8) + '...'}
+            {parentAuthorDisplay.display}
           </Link>
         </span>
       </div>

@@ -127,9 +127,9 @@ function FollowingPage() {
         return
       }
       
-      // Batch fetch all usernames, profiles, and follower/following counts
-      const [allUsernamesData, profiles, followerCounts, followingCounts] = await Promise.all([
-        // Fetch all usernames for each identity
+      // Batch fetch all usernames, best usernames, profiles, and follower/following counts
+      const [allUsernamesData, bestUsernamesMap, profiles, followerCounts, followingCounts] = await Promise.all([
+        // Fetch all usernames for each identity (for "Also known as" feature)
         Promise.all(identityIds.map(async (id) => {
           try {
             const usernames = await dpnsService.getAllUsernames(id)
@@ -139,6 +139,8 @@ function FollowingPage() {
             return { id, usernames: [] }
           }
         })),
+        // Batch resolve best usernames efficiently (returns contested names first)
+        dpnsService.resolveUsernamesBatch(identityIds),
         // Fetch Yappr profiles
         unifiedProfileService.getProfilesByIdentityIds(identityIds),
         // Fetch follower counts for all users
@@ -163,11 +165,10 @@ function FollowingPage() {
         }))
       ])
 
-      // Derive best username from all usernames (avoids duplicate DPNS query)
-      const dpnsNames = await Promise.all(allUsernamesData.map(async ({ id, usernames }) => {
-        if (usernames.length === 0) return { id, username: null }
-        const sorted = await dpnsService.sortUsernamesByContested(usernames)
-        return { id, username: sorted[0] || null }
+      // Convert best usernames map to the expected format
+      const dpnsNames = identityIds.map(id => ({
+        id,
+        username: bestUsernamesMap.get(id) || null
       }))
 
       // Create maps for easy lookup

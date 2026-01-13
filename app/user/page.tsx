@@ -163,7 +163,8 @@ function UserProfileContent() {
             content: doc.content || '',
             author: {
               id: authorIdStr,
-              username: `user_${authorIdStr.slice(-6)}`,
+              // Don't use a fake username format - leave empty and let hasDpns control display
+              username: '',
               displayName: profileDisplayName,
               avatar: '', // Let UserAvatar fetch the actual avatar
               verified: false,
