@@ -65,7 +65,7 @@ class PostService extends BaseDocumentService<Post> {
     const ownerId = doc.$ownerId || doc.ownerId;
     const createdAt = doc.$createdAt || doc.createdAt;
     const updatedAt = doc.$updatedAt || doc.updatedAt;
-    const revision = doc.$revision || doc.revision || 0;
+    const revision = doc.$revision || doc.revision || 1;
 
     // Content and other fields may be in data or at root level
     const content = data.content || doc.content || '';
@@ -86,7 +86,7 @@ class PostService extends BaseDocumentService<Post> {
       content,
       createdAt: new Date(createdAt),
       updatedAt: updatedAt ? new Date(updatedAt) : undefined,
-      isEdited: revision > 0,
+      isEdited: revision > 1,  // Base revision is 1 on Dash Platform, so >1 means edited
       likes: 0,
       reposts: 0,
       replies: 0,
