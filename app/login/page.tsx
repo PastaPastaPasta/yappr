@@ -130,19 +130,26 @@ export default function LoginPage() {
 
   // Credential type detection and key validation
   useEffect(() => {
-    if (!credential || !resolvedIdentity) {
+    if (!credential) {
       setKeyValidationStatus('idle')
       setKeyValidationResult(null)
       setDetectedCredentialType(null)
       return
     }
 
-    // Detect credential type based on format
+    // Detect credential type based on format (even without resolved identity)
     const isKey = isLikelyWif(credential)
     setDetectedCredentialType(isKey ? 'key' : 'password')
 
-    // Only validate if it's a private key
+    // Only validate keys if we have a resolved identity
     if (!isKey) {
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+      return
+    }
+
+    // Wait for identity to be resolved before validating key
+    if (!resolvedIdentity) {
       setKeyValidationStatus('idle')
       setKeyValidationResult(null)
       return
@@ -289,15 +296,8 @@ export default function LoginPage() {
                   type={showCredential ? 'text' : 'password'}
                   value={credential}
                   onChange={(e) => setCredential(e.target.value)}
-                  placeholder={
-                    !resolvedIdentity
-                      ? "First enter your username above"
-                      : hasOnchainBackup
-                      ? "Enter your password or private key..."
-                      : "Enter your high or critical authentication key..."
-                  }
-                  disabled={!resolvedIdentity}
-                  className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Enter your password or private key..."
+                  className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                   required
                 />
                 {/* Eye toggle and status indicator */}
@@ -335,18 +335,24 @@ export default function LoginPage() {
               {credential && detectedCredentialType && (
                 <p className={`mt-1 text-sm ${
                   (detectedCredentialType === 'key' && keyValidationStatus === 'invalid') ||
-                  (detectedCredentialType === 'password' && !hasOnchainBackup)
+                  (detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup)
                     ? 'text-red-600 dark:text-red-400'
                     : 'text-gray-500 dark:text-gray-400'
                 }`}>
                   {detectedCredentialType === 'key' ? (
-                    keyValidationStatus === 'valid'
+                    !resolvedIdentity
+                      ? 'Detected as private key - waiting for identity...'
+                      : keyValidationStatus === 'valid'
                       ? 'Valid private key for this identity'
                       : keyValidationStatus === 'validating'
                       ? 'Validating key...'
                       : keyValidationStatus === 'invalid' && keyValidationResult?.error
                       ? keyValidationResult.error
                       : 'Detected as private key'
+                  ) : !resolvedIdentity ? (
+                    credential.length < 16
+                      ? `Detected as password (${credential.length}/16 characters) - waiting for identity...`
+                      : 'Detected as password - waiting for identity...'
                   ) : hasOnchainBackup ? (
                     credential.length < 16
                       ? `Password must be at least 16 characters (${credential.length}/16)`
