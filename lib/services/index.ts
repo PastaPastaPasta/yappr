@@ -44,7 +44,6 @@ export type {
   SocialLink,
 } from '../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
-export type { TipResult } from './tip-service';
 export type {
   UnifiedProfileDocument,
   CreateUnifiedProfileData,
