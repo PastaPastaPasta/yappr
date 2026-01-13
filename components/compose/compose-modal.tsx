@@ -187,9 +187,12 @@ export function ComposeModal() {
                   {replyingTo && (
                     <div className="mb-4 text-sm text-gray-500">
                       Replying to <span className="text-yappr-500">
+                        {/* Priority: DPNS username > Profile display name > Truncated identity ID */}
                         {replyingTo.author.username && !replyingTo.author.username.startsWith('user_')
                           ? `@${replyingTo.author.username}`
-                          : replyingTo.author.displayName || `@${replyingTo.author.username}`}
+                          : replyingTo.author.displayName && replyingTo.author.displayName !== 'Unknown User' && !replyingTo.author.displayName.startsWith('User ')
+                            ? replyingTo.author.displayName
+                            : `${replyingTo.author.id.slice(0, 8)}...${replyingTo.author.id.slice(-6)}`}
                       </span>
                     </div>
                   )}

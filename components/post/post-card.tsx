@@ -105,7 +105,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     id: progressiveEnrichment.replyTo.id,
     author: {
       id: progressiveEnrichment.replyTo.authorId,
-      username: progressiveEnrichment.replyTo.authorUsername || `${progressiveEnrichment.replyTo.authorId.slice(0, 8)}...`,
+      username: progressiveEnrichment.replyTo.authorUsername || '',
       displayName: progressiveEnrichment.replyTo.authorUsername || 'Unknown User',
       avatar: '',
       followers: 0,
@@ -120,6 +120,29 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     replies: 0,
     views: 0
   } : undefined)
+
+  // Helper to get display text for replyTo author
+  // Priority: DPNS username > Profile display name > Truncated identity ID
+  const getReplyToAuthorDisplay = () => {
+    if (!replyTo) return { text: '', showAt: false }
+    const author = replyTo.author
+    const username = author.username
+    const displayName = author.displayName
+
+    // Check for DPNS (non-empty username that's not a placeholder)
+    if (username && !username.startsWith('user_')) {
+      return { text: username, showAt: true }
+    }
+
+    // Check for profile display name (not a placeholder)
+    if (displayName && displayName !== 'Unknown User' && !displayName.startsWith('User ')) {
+      return { text: displayName, showAt: false }
+    }
+
+    // Fallback to truncated identity ID
+    return { text: `${author.id.slice(0, 8)}...${author.id.slice(-6)}`, showAt: false }
+  }
+  const replyToDisplay = getReplyToAuthorDisplay()
 
   const [liked, setLiked] = useState(initialLiked)
   const [likes, setLikes] = useState(statsLikes)
@@ -489,7 +512,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               onClick={(e) => e.stopPropagation()}
               className="text-sm text-gray-500 hover:underline mt-1 block"
             >
-              Replying to <span className="text-yappr-500">@{replyTo.author.username}</span>
+              Replying to <span className={replyToDisplay.showAt ? "text-yappr-500" : "text-yappr-500"}>
+                {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
+              </span>
             </Link>
           )}
 
@@ -510,7 +535,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                             onClick={(e) => e.stopPropagation()}
                             className="font-semibold hover:underline"
                           >
-                            @{replyTo.author.username || replyTo.author.displayName}
+                            {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
                           </Link></>
                         )}
                       </span>
