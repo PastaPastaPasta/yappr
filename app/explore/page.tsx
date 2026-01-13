@@ -83,10 +83,19 @@ export default function ExplorePage() {
             content: post.content,
             author: {
               id: post.$ownerId,
-              username: post.$ownerId.slice(0, 8) + '...',
-              handle: post.$ownerId.slice(0, 8).toLowerCase()
+              // Leave empty for PostCard skeleton - will be enriched progressively
+              username: '',
+              handle: '',
+              displayName: '',
+              avatar: '',
+              followers: 0,
+              following: 0,
+              verified: false,
+              joinedAt: new Date(),
+              // undefined = still loading, will show skeleton in PostCard
+              hasDpns: undefined
             },
-            timestamp: new Date(post.$createdAt || 0).toISOString(),
+            createdAt: new Date(post.$createdAt || 0),
             likes: 0,
             replies: 0,
             reposts: 0,

@@ -163,22 +163,26 @@ function FeedPage() {
         } while (result.documents.length === 0 && followingCursor)
 
         // Transform the Post objects to match our UI format
-        posts = result.documents.map((post: any) => ({
-          id: post.id,
-          content: post.content || 'No content',
-          author: {
-            id: post.author?.id || 'unknown',
-            // Don't use fake username format - leave empty for display components to handle
-            username: post.author?.username || '',
-            handle: post.author?.username || '',
-            displayName: post.author?.displayName || `User ${(post.author?.id || '').slice(-6)}`,
-            avatar: '',
-            followers: 0,
-            following: 0,
-            verified: false,
-            joinedAt: new Date(),
-            hasDpns: !!(post.author?.username && !post.author.username.startsWith('user_'))
-          },
+        posts = result.documents.map((post: any) => {
+          const hasResolvedUsername = !!(post.author?.username && !post.author.username.startsWith('user_'))
+          return {
+            id: post.id,
+            content: post.content || 'No content',
+            author: {
+              id: post.author?.id || 'unknown',
+              // Don't use fake username format - leave empty for display components to handle
+              username: post.author?.username || '',
+              handle: post.author?.username || '',
+              // Use empty displayName - PostCard shows skeleton when hasDpns is undefined
+              displayName: hasResolvedUsername ? (post.author?.displayName || '') : '',
+              avatar: '',
+              followers: 0,
+              following: 0,
+              verified: false,
+              joinedAt: new Date(),
+              // undefined = still loading, will show skeleton; true = has DPNS
+              hasDpns: hasResolvedUsername ? true : undefined
+            },
           createdAt: post.createdAt || new Date(),
           likes: post.likes || 0,
           replies: post.replies || 0,
@@ -189,7 +193,8 @@ function FeedPage() {
           bookmarked: post.bookmarked || false,
           replyToId: post.replyToId || undefined,
           quotedPostId: post.quotedPostId || undefined
-        }))
+        }
+        })
 
         // Fetch quoted posts for Following feed
         try {
@@ -264,7 +269,8 @@ function FeedPage() {
                       ...originalPost,
                       repostedBy: {
                         id: repost.reposterId,
-                        displayName: reposterProfile?.displayName || `User ${repost.reposterId.slice(-6)}`,
+                        // Empty string shows "Someone reposted" instead of "User XKSFJL reposted"
+                        displayName: reposterProfile?.displayName || '',
                         username: reposterProfile?.username
                       },
                       repostTimestamp: new Date(repost.$createdAt)
@@ -312,13 +318,15 @@ function FeedPage() {
               // Don't use fake username format - leave empty for display components to handle
               username: '',
               handle: '',
-              displayName: `User ${authorIdStr.slice(-6)}`,
+              // Use empty string as displayName placeholder - PostCard shows skeleton when hasDpns is undefined
+              displayName: '',
               avatar: '',
               followers: 0,
               following: 0,
               verified: false,
               joinedAt: new Date(),
-              hasDpns: false
+              // undefined = still loading, will show skeleton in PostCard
+              hasDpns: undefined
             },
             createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
             likes: 0,
@@ -379,7 +387,8 @@ function FeedPage() {
                   const reposterProfile = reposterProfiles.get(repost.$ownerId)
                   post.repostedBy = {
                     id: repost.$ownerId,
-                    displayName: reposterProfile?.displayName || `User ${repost.$ownerId.slice(-6)}`,
+                    // Empty string shows "Someone reposted" instead of "User XKSFJL reposted"
+                    displayName: reposterProfile?.displayName || '',
                     username: reposterProfile?.username
                   }
                   post.repostTimestamp = repostTimestamp

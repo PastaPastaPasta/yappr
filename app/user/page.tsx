@@ -177,13 +177,15 @@ function UserProfileContent() {
               id: authorIdStr,
               // Don't use a fake username format - leave empty and let hasDpns control display
               username: '',
-              displayName: profileDisplayName,
+              // Use empty displayName initially - skeleton shows when hasDpns is undefined
+              displayName: '',
               avatar: '', // Let UserAvatar fetch the actual avatar
               verified: false,
               followers: 0,
               following: 0,
               joinedAt: new Date(),
-              hasDpns: false, // Set to false initially, will update if DPNS found
+              // undefined = still loading, will show skeleton in PostCard
+              hasDpns: undefined,
             } as any,
             createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
             likes: 0,
@@ -363,8 +365,10 @@ function UserProfileContent() {
             content: doc.content || '',
             author: {
               id: authorIdStr,
-              username: username || `user_${authorIdStr.slice(-6)}`,
-              displayName: profile?.displayName || `User ${authorIdStr.slice(-6)}`,
+              // Use resolved username or empty string (not fake user_ prefix)
+              username: username || '',
+              // Use resolved displayName or empty string for skeleton/enrichment
+              displayName: profile?.displayName || '',
               avatar: '',
               verified: false,
               followers: 0,
@@ -412,7 +416,8 @@ function UserProfileContent() {
                   ...originalPost,
                   repostedBy: {
                     id: userId,
-                    displayName: profile?.displayName || `User ${userId.slice(-6)}`,
+                    // Empty string shows "Someone reposted" instead of "User XKSFJL reposted"
+                    displayName: profile?.displayName || '',
                     username: reposterUsername
                   },
                   repostTimestamp: new Date(repost.$createdAt)
