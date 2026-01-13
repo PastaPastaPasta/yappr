@@ -20,8 +20,16 @@ interface PostContentProps {
   disableLinkPreview?: boolean
 }
 
+type PartType = 'text' | 'hashtag' | 'cashtag' | 'mention' | 'url' | 'bold' | 'italic' | 'code'
+
+interface ContentPart {
+  type: PartType
+  value: string
+}
+
 /**
- * Renders post content with clickable hashtags, mentions, and URLs
+ * Renders post content with text formatting and clickable elements
+ * Supports: **bold**, *italic*, `code`, @mentions, #hashtags, $cashtags, and URLs
  */
 export function PostContent({
   content,
@@ -39,52 +47,94 @@ export function PostContent({
     { disabled: disableLinkPreview, richPreview: richLinkPreviews }
   )
   const parsedContent = useMemo(() => {
-    // Combined pattern to match URLs, hashtags, cashtags, and mentions
-    // Order matters - URLs first to avoid partial matches
-    // URLs: http://, https://, or www. prefixed
-    // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
-    // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
-    // Mentions: @ followed by alphanumeric/underscore (1-100 chars)
-    const combinedPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)|(#[a-zA-Z0-9_]{1,63})|(\$[a-zA-Z][a-zA-Z0-9_]{0,62})|(@[a-zA-Z0-9_]{1,100})/gi
+    // Pattern definitions with their types
+    // Order matters: more specific patterns first to avoid incorrect matches
+    const patterns: Array<{ regex: RegExp; type: PartType }> = [
+      // Bold: **text** (must come before italic)
+      { regex: /\*\*([^*]+)\*\*/g, type: 'bold' },
+      // Italic: *text* (but not **)
+      { regex: /(?<!\*)\*([^*]+)\*(?!\*)/g, type: 'italic' },
+      // Code: `text`
+      { regex: /`([^`]+)`/g, type: 'code' },
+      // URLs: http://, https://, or www. prefixed
+      { regex: /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/g, type: 'url' },
+      // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
+      { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
+      // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
+      { regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g, type: 'cashtag' },
+      // Mentions: @ followed by alphanumeric/underscore (1-100 chars)
+      { regex: /@([a-zA-Z0-9_]{1,100})/g, type: 'mention' },
+    ]
 
-    const parts: Array<{ type: 'text' | 'hashtag' | 'cashtag' | 'mention' | 'url'; value: string }> = []
-    let lastIndex = 0
-    let match
+    // Find all matches with their positions
+    interface Match {
+      type: PartType
+      start: number
+      end: number
+      fullMatch: string
+      innerContent: string
+    }
 
-    while ((match = combinedPattern.exec(content)) !== null) {
-      // Add text before the match
-      if (match.index > lastIndex) {
-        parts.push({
-          type: 'text',
-          value: content.slice(lastIndex, match.index)
+    const allMatches: Match[] = []
+
+    for (const { regex, type } of patterns) {
+      let match
+      const re = new RegExp(regex.source, regex.flags)
+      while ((match = re.exec(content)) !== null) {
+        allMatches.push({
+          type,
+          start: match.index,
+          end: match.index + match[0].length,
+          fullMatch: match[0],
+          innerContent: match[1] || match[0],
         })
       }
+    }
 
-      // Add the matched element
-      const value = match[0]
-      if (match[1]) {
-        // URL match (first capture group)
-        parts.push({ type: 'url', value })
-      } else if (match[2]) {
-        // Hashtag match (second capture group)
-        parts.push({ type: 'hashtag', value })
-      } else if (match[3]) {
-        // Cashtag match (third capture group)
-        parts.push({ type: 'cashtag', value })
-      } else if (match[4]) {
-        // Mention match (fourth capture group)
-        parts.push({ type: 'mention', value })
+    // Sort matches by start position
+    allMatches.sort((a, b) => a.start - b.start)
+
+    // Remove overlapping matches (keep the first one)
+    const filteredMatches: Match[] = []
+    let lastEnd = 0
+    for (const match of allMatches) {
+      if (match.start >= lastEnd) {
+        filteredMatches.push(match)
+        lastEnd = match.end
+      }
+    }
+
+    // Build parts array
+    const parts: ContentPart[] = []
+    let currentIndex = 0
+
+    for (const match of filteredMatches) {
+      // Add text before this match
+      if (match.start > currentIndex) {
+        const textContent = content.slice(currentIndex, match.start)
+        if (textContent) {
+          parts.push({ type: 'text', value: textContent })
+        }
       }
 
-      lastIndex = match.index + match[0].length
+      // Add the matched part
+      // For formatting (bold/italic/code), store the inner content
+      // For links/tags, store the full match (including prefix)
+      if (match.type === 'bold' || match.type === 'italic' || match.type === 'code') {
+        parts.push({ type: match.type, value: match.innerContent })
+      } else if (match.type === 'url') {
+        parts.push({ type: 'url', value: match.fullMatch })
+      } else {
+        // hashtag, cashtag, mention - include the prefix symbol
+        parts.push({ type: match.type, value: match.fullMatch })
+      }
+
+      currentIndex = match.end
     }
 
     // Add remaining text
-    if (lastIndex < content.length) {
-      parts.push({
-        type: 'text',
-        value: content.slice(lastIndex)
-      })
+    if (currentIndex < content.length) {
+      parts.push({ type: 'text', value: content.slice(currentIndex) })
     }
 
     return parts
@@ -94,6 +144,33 @@ export function PostContent({
     <div className={className}>
       <div className="whitespace-pre-wrap break-words">
         {parsedContent.map((part, index) => {
+          if (part.type === 'bold') {
+            return (
+              <strong key={index} className="font-semibold">
+                {part.value}
+              </strong>
+            )
+          }
+
+          if (part.type === 'italic') {
+            return (
+              <em key={index} className="italic">
+                {part.value}
+              </em>
+            )
+          }
+
+          if (part.type === 'code') {
+            return (
+              <code
+                key={index}
+                className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-sm font-mono text-pink-600 dark:text-pink-400"
+              >
+                {part.value}
+              </code>
+            )
+          }
+
           if (part.type === 'url') {
             // Ensure URL has protocol for href
             const href = part.value.startsWith('www.')
