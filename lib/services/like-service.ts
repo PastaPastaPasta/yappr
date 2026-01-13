@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
+import { identifierToBase58, stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator, base58ArrayToBytes } from './sdk-helpers';
 
 export interface LikeDocument {
   $id: string;
@@ -225,10 +225,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       // Use 'in' operator for batch query on postId
       // Must include orderBy to match the postLikes index: [postId, $createdAt]
+      // Convert base58 strings to byte arrays for the byte array field
+      const postIdBytes = base58ArrayToBytes(postIds);
+      if (postIdBytes.length === 0) return [];
+
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
-        where: [['postId', 'in', postIds]],
+        where: [['postId', 'in', postIdBytes]],
         orderBy: [['postId', 'asc']],
         limit: 100
       } as any);
