@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { queryDocuments, identifierToBase58, stringToIdentifierBytes, RequestDeduplicator } from './sdk-helpers';
+import { queryDocuments, stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 
 export interface FollowDocument {
@@ -20,27 +20,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     super('follow');
   }
 
-  /**
-   * Transform document
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields (followingId) are base64
-   */
   protected transformDocument(doc: Record<string, unknown>): FollowDocument {
-    const data = (doc.data || doc) as Record<string, unknown>;
-    const rawFollowingId = data.followingId;
-
-    // Convert followingId from base64 to base58 (byte array field)
-    const followingId = rawFollowingId ? identifierToBase58(rawFollowingId) : '';
-    if (rawFollowingId && !followingId) {
-      console.error('FollowService: Invalid followingId format:', rawFollowingId);
-    }
-
-    // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
-    return {
-      $id: (doc.$id || doc.id) as string,
-      $ownerId: (doc.$ownerId || doc.ownerId) as string,
-      $createdAt: (doc.$createdAt || doc.createdAt) as number,
-      followingId: followingId || ''
-    };
+    return transformDocumentWithField<FollowDocument>(doc, 'followingId', 'FollowService');
   }
 
   /**

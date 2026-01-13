@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
+import { transformDocumentWithField } from './sdk-helpers';
 
 export interface BookmarkDocument {
   $id: string;
@@ -14,27 +14,8 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     super('bookmark');
   }
 
-  /**
-   * Transform document
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields (postId) are base64
-   */
-  protected transformDocument(doc: any): BookmarkDocument {
-    const data = doc.data || doc;
-    const rawPostId = data.postId || doc.postId;
-
-    // Convert postId from base64 to base58 (byte array field)
-    const postId = rawPostId ? identifierToBase58(rawPostId) : '';
-    if (rawPostId && !postId) {
-      console.error('BookmarkService: Invalid postId format:', rawPostId);
-    }
-
-    // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
-    return {
-      $id: doc.$id || doc.id,
-      $ownerId: doc.$ownerId || doc.ownerId,
-      $createdAt: doc.$createdAt || doc.createdAt,
-      postId: postId || ''
-    };
+  protected transformDocument(doc: Record<string, unknown>): BookmarkDocument {
+    return transformDocumentWithField<BookmarkDocument>(doc, 'postId', 'BookmarkService');
   }
 
   /**

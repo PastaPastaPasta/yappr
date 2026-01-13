@@ -304,6 +304,48 @@ export function stringToIdentifierBytes(value: string): number[] {
 }
 
 /**
+ * Base document fields returned by all SDK documents.
+ * Used by transformDocumentWithField to provide consistent structure.
+ */
+export interface BaseDocumentFields {
+  $id: string;
+  $ownerId: string;
+  $createdAt: number;
+}
+
+/**
+ * Transform a raw SDK document into a typed document with a single byte array field.
+ *
+ * This consolidates the repeated pattern across like, bookmark, repost, and follow services
+ * where documents have system fields ($id, $ownerId, $createdAt) plus one identifier field.
+ *
+ * @param doc - Raw document from SDK (may have nested .data or direct fields)
+ * @param fieldName - Name of the byte array field to extract and convert (e.g., 'postId', 'followingId')
+ * @param serviceName - Service name for error logging
+ * @returns Document with base fields and the converted identifier field
+ */
+export function transformDocumentWithField<T extends BaseDocumentFields>(
+  doc: Record<string, unknown>,
+  fieldName: string,
+  serviceName: string
+): T {
+  const data = (doc.data || doc) as Record<string, unknown>;
+  const rawFieldValue = data[fieldName] || doc[fieldName];
+
+  const convertedValue = rawFieldValue ? identifierToBase58(rawFieldValue) : '';
+  if (rawFieldValue && !convertedValue) {
+    console.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
+  }
+
+  return {
+    $id: doc.$id || doc.id,
+    $ownerId: doc.$ownerId || doc.ownerId,
+    $createdAt: doc.$createdAt || doc.createdAt,
+    [fieldName]: convertedValue || '',
+  } as unknown as T;
+}
+
+/**
  * Generic in-flight request deduplicator.
  * Prevents duplicate concurrent requests by sharing a single promise
  * for the same key.
