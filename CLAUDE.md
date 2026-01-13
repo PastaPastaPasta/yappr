@@ -21,6 +21,19 @@ node test-dpns-resolve.js           # Test DPNS resolution
 
 Yappr is a decentralized social media platform built with Next.js 14 and Dash Platform.
 
+### **CRITICAL: Fully Decentralized - No Backend**
+This app is fully decentralized with **NO backend server**. All code and architecture must be compatible with a **fully static export** (`next export`). The only "backend" is Dash Platform DAPI requests made directly from the client.
+
+**Do NOT introduce:**
+- Server-side API routes (`/api/*`)
+- Server-side rendering that requires a Node.js server
+- Database connections or server-side state
+- Any architecture requiring a hosted backend
+
+**All data operations must go through:**
+- Dash Platform DAPI (via `@dashevo/evo-sdk`)
+- Client-side storage (localStorage, sessionStorage, IndexedDB)
+
 ### SDK Integration
 - Uses `@dashevo/evo-sdk` package for Dash Platform operations
 - `lib/services/evo-sdk-service.ts` manages SDK initialization and connection
