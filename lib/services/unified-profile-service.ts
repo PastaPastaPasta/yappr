@@ -294,17 +294,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         limit: userIds.length
       } as any);
 
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      }
-
+      const documents = this.normalizeDocumentResponse(response);
       const foundUserIds = new Set<string>();
       for (const doc of documents) {
         const profileDoc = this.extractDocumentData(doc);
@@ -344,19 +334,13 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Parse payment URIs from JSON string and filter to approved schemes
    */
   parsePaymentUris(paymentUrisJson: string | undefined): ParsedPaymentUri[] {
-    if (!paymentUrisJson) return [];
-
-    try {
-      const uris: string[] = JSON.parse(paymentUrisJson);
-      return uris
-        .filter(uri => this.isApprovedPaymentScheme(uri))
-        .map(uri => ({
-          scheme: this.extractScheme(uri),
-          uri,
-        }));
-    } catch {
-      return [];
-    }
+    const uris = this.parseJsonSafe<string[]>(paymentUrisJson, []);
+    return uris
+      .filter(uri => this.isApprovedPaymentScheme(uri))
+      .map(uri => ({
+        scheme: this.extractScheme(uri),
+        uri,
+      }));
   }
 
   /**
@@ -391,13 +375,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Parse social links from JSON string
    */
   parseSocialLinks(socialLinksJson: string | undefined): SocialLink[] {
-    if (!socialLinksJson) return [];
-
-    try {
-      return JSON.parse(socialLinksJson);
-    } catch {
-      return [];
-    }
+    return this.parseJsonSafe<SocialLink[]>(socialLinksJson, []);
   }
 
   /**
@@ -433,6 +411,37 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       nsfw: content.nsfw,
       socialLinks: content.socialLinks,
     };
+  }
+
+  /**
+   * Normalize SDK response to array of documents
+   * Handles Map, Array, and {documents: []} response formats
+   */
+  private normalizeDocumentResponse(response: unknown): any[] {
+    if (response instanceof Map) {
+      return Array.from(response.values())
+        .filter(Boolean)
+        .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+    }
+    if (Array.isArray(response)) {
+      return response;
+    }
+    if (response && typeof response === 'object' && 'documents' in response) {
+      return (response as { documents: any[] }).documents;
+    }
+    return [];
+  }
+
+  /**
+   * Parse JSON string with fallback to default value
+   */
+  private parseJsonSafe<T>(json: string | undefined, defaultValue: T): T {
+    if (!json) return defaultValue;
+    try {
+      return JSON.parse(json);
+    } catch {
+      return defaultValue;
+    }
   }
 
   /**
@@ -626,38 +635,49 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     try {
       cacheManager.invalidateByTag(`user:${ownerId}`);
 
-      // Need to get raw profile document to preserve existing field values
       const rawProfile = await this.getRawProfile(ownerId);
       if (!rawProfile) {
         throw new Error('Profile not found');
       }
 
-      // Build document data, preserving existing values for fields not being updated
-      const documentData: Record<string, unknown> = {
-        // displayName is required
-        displayName: updates.displayName !== undefined
-          ? updates.displayName.trim()
-          : rawProfile.displayName,
+      const docId = rawProfile.$id;
+      if (!docId) {
+        throw new Error('Profile document ID not found');
+      }
+
+      // Helper to merge update with existing value, optionally trimming strings
+      const mergeField = (
+        updateVal: string | undefined,
+        existingVal: string | undefined,
+        trim = true
+      ): string | undefined => {
+        if (updateVal !== undefined) {
+          return trim ? updateVal.trim() : updateVal;
+        }
+        return existingVal;
       };
 
-      // For each optional field: use update value if provided, otherwise preserve existing
-      const bio = updates.bio !== undefined ? updates.bio.trim() : rawProfile.bio;
-      if (bio) documentData.bio = bio;
+      // Build document data, preserving existing values for fields not being updated
+      const documentData: Record<string, unknown> = {
+        displayName: mergeField(updates.displayName, rawProfile.displayName) || rawProfile.displayName,
+      };
 
-      const location = updates.location !== undefined ? updates.location.trim() : rawProfile.location;
-      if (location) documentData.location = location;
+      // String fields with trim
+      const stringFields = ['bio', 'location', 'website', 'bannerUri', 'pronouns'] as const;
+      for (const field of stringFields) {
+        const value = mergeField(updates[field], rawProfile[field]);
+        if (value) {
+          documentData[field] = value;
+        }
+      }
 
-      const website = updates.website !== undefined ? updates.website.trim() : rawProfile.website;
-      if (website) documentData.website = website;
+      // Avatar (no trim)
+      const avatar = mergeField(updates.avatar, rawProfile.avatar, false);
+      if (avatar) {
+        documentData.avatar = avatar;
+      }
 
-      const bannerUri = updates.bannerUri !== undefined ? updates.bannerUri.trim() : rawProfile.bannerUri;
-      if (bannerUri) documentData.bannerUri = bannerUri;
-
-      // Avatar: preserve existing if not being updated
-      const avatar = updates.avatar !== undefined ? updates.avatar : rawProfile.avatar;
-      if (avatar) documentData.avatar = avatar;
-
-      // PaymentUris: preserve existing if not being updated
+      // PaymentUris: encode if updating, preserve raw if existing
       if (updates.paymentUris !== undefined) {
         if (updates.paymentUris.length > 0) {
           documentData.paymentUris = this.encodePaymentUris(updates.paymentUris);
@@ -666,28 +686,20 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentData.paymentUris = rawProfile.paymentUris;
       }
 
-      const pronouns = updates.pronouns !== undefined ? updates.pronouns.trim() : rawProfile.pronouns;
-      if (pronouns) documentData.pronouns = pronouns;
-
-      // NSFW: preserve existing if not being updated
+      // NSFW: boolean field
       if (updates.nsfw !== undefined) {
         documentData.nsfw = updates.nsfw;
       } else if (rawProfile.nsfw !== undefined) {
         documentData.nsfw = rawProfile.nsfw;
       }
 
-      // SocialLinks: preserve existing if not being updated
+      // SocialLinks: encode if updating, preserve raw if existing
       if (updates.socialLinks !== undefined) {
         if (updates.socialLinks.length > 0) {
           documentData.socialLinks = this.encodeSocialLinks(updates.socialLinks);
         }
       } else if (rawProfile.socialLinks) {
         documentData.socialLinks = rawProfile.socialLinks;
-      }
-
-      const docId = rawProfile.$id;
-      if (!docId) {
-        throw new Error('Profile document ID not found');
       }
 
       const result = await this.update(docId, ownerId, documentData);
@@ -715,17 +727,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         limit: 1
       } as any);
 
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      }
-
+      const documents = this.normalizeDocumentResponse(response);
       if (documents.length === 0) {
         return null;
       }
@@ -768,22 +770,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         limit: 100
       } as any);
 
-      if (response instanceof Map) {
-        return Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => this.extractDocumentData(
-            typeof doc.toJSON === 'function' ? doc.toJSON() : doc
-          ));
-      }
-
-      const anyResponse = response as any;
-      if (Array.isArray(anyResponse)) {
-        return anyResponse.map(doc => this.extractDocumentData(doc));
-      } else if (anyResponse?.documents) {
-        return anyResponse.documents.map((doc: any) => this.extractDocumentData(doc));
-      }
-
-      return [];
+      const documents = this.normalizeDocumentResponse(response);
+      return documents.map(doc => this.extractDocumentData(doc));
     } catch (error) {
       console.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
       return [];
