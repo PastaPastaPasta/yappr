@@ -92,10 +92,13 @@ export class BloomFilter {
 
       const offset = (i % 8) * 4
       // Read 4 bytes as big-endian unsigned integer
-      const value = ((hash[offset] << 24) >>> 0) |
-                    (hash[offset + 1] << 16) |
-                    (hash[offset + 2] << 8) |
-                    hash[offset + 3]
+      // Note: >>> 0 must be applied to the entire expression, not just the first shift,
+      // because JavaScript's bitwise OR operates on signed 32-bit integers and can
+      // produce negative results if the high bit is set.
+      const value = (((hash[offset] << 24) |
+                      (hash[offset + 1] << 16) |
+                      (hash[offset + 2] << 8) |
+                      hash[offset + 3]) >>> 0)
 
       // Modulo to get position within filter
       positions.push(value % FILTER_SIZE_BITS)
