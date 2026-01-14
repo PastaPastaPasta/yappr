@@ -48,6 +48,8 @@ interface UsePostDetailResult {
     isFollowing: boolean | undefined
     replyTo: { id: string; authorId: string; authorUsername: string | null } | undefined
   }
+  /** Enrichment loading phase - use to trigger re-renders when enrichment updates */
+  enrichmentPhase: 'idle' | 'loading' | 'complete'
 }
 
 /**
@@ -144,7 +146,7 @@ export function usePostDetail({
   const loadedPostIdRef = useRef<string | null>(null)
 
   // Progressive enrichment - renders posts immediately, fills in data as it loads
-  const { enrichProgressively, reset: resetEnrichment, getPostEnrichment } = useProgressiveEnrichment({
+  const { enrichProgressively, enrichmentState, reset: resetEnrichment, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: user?.identityId
   })
 
@@ -372,6 +374,7 @@ export function usePostDetail({
     addOptimisticReply,
     updatePost,
     updateReply,
-    getPostEnrichment
+    getPostEnrichment,
+    enrichmentPhase: enrichmentState.phase
   }
 }

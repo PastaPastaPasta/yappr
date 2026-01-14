@@ -96,7 +96,8 @@ function UserProfileContent() {
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
 
   // Progressive enrichment for post metadata (likes, reposts, etc.)
-  const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
+  // enrichmentState is destructured to trigger re-renders when enrichment data arrives
+  const { enrichProgressively, enrichmentState, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: currentUser?.identityId
   })
 

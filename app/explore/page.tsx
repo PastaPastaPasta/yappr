@@ -26,7 +26,8 @@ export default function ExplorePage() {
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
 
   // Progressive enrichment - renders posts immediately, fills in data as it loads
-  const { enrichProgressively, getPostEnrichment, reset: resetEnrichment } = useProgressiveEnrichment({
+  // enrichmentState is destructured to trigger re-renders when enrichment data arrives
+  const { enrichProgressively, enrichmentState, getPostEnrichment, reset: resetEnrichment } = useProgressiveEnrichment({
     currentUserId: user?.identityId
   })
 

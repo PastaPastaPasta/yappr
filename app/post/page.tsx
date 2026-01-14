@@ -26,6 +26,7 @@ function PostDetailContent() {
   const [isReplying, setIsReplying] = useState(false)
 
   // All post loading and enrichment handled by hook
+  // enrichmentPhase is destructured to trigger re-renders when enrichment data arrives
   const {
     post,
     parentPost,
@@ -33,7 +34,8 @@ function PostDetailContent() {
     isLoading,
     addOptimisticReply,
     updatePost,
-    getPostEnrichment
+    getPostEnrichment,
+    enrichmentPhase
   } = usePostDetail({
     postId,
     enabled: !!postId
