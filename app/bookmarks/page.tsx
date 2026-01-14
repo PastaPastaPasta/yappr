@@ -149,13 +149,13 @@ function BookmarksPage() {
   const filteredBookmarks = bookmarks
     .filter(post => {
       const query = searchQuery.toLowerCase()
-      const contentMatch = post.content.toLowerCase().includes(query)
-      // Also check enriched username if available
-      const enrichment = getPostEnrichment(post)
-      const usernameMatch = enrichment.username?.toLowerCase().includes(query) ||
-        post.author.username?.toLowerCase().includes(query)
-      const displayNameMatch = enrichment.displayName?.toLowerCase().includes(query) ||
-        post.author.displayName?.toLowerCase().includes(query)
+      const contentMatch = post.content?.toLowerCase().includes(query) ?? false
+      // Also check enriched username if available (guard against undefined enrichment)
+      const enrichment = getPostEnrichment(post) ?? {}
+      const usernameMatch = enrichment.username?.toLowerCase()?.includes(query) ||
+        post.author?.username?.toLowerCase()?.includes(query)
+      const displayNameMatch = enrichment.displayName?.toLowerCase()?.includes(query) ||
+        post.author?.displayName?.toLowerCase()?.includes(query)
       return contentMatch || usernameMatch || displayNameMatch
     })
     .sort((a, b) => {
