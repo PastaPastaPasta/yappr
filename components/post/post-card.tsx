@@ -418,8 +418,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     openHashtagRecoveryModal(post, hashtag)
   }
 
-  const handleCardClick = () => {
-    router.push(`/post?id=${post.id}`)
+  const handleCardClick = (e: React.MouseEvent) => {
+    const url = `/post?id=${post.id}`
+    // Handle Ctrl/Cmd+click to open in new tab (standard browser behavior)
+    if (e.ctrlKey || e.metaKey) {
+      window.open(url, '_blank')
+    } else {
+      router.push(url)
+    }
   }
 
   return (
