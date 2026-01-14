@@ -26,13 +26,16 @@ function PostDetailContent() {
   const [isReplying, setIsReplying] = useState(false)
 
   // All post loading and enrichment handled by hook
+  // enrichmentPhase is destructured to trigger re-renders when enrichment data arrives
   const {
     post,
     parentPost,
     replyThreads,
     isLoading,
     addOptimisticReply,
-    updatePost
+    updatePost,
+    getPostEnrichment,
+    enrichmentPhase
   } = usePostDetail({
     postId,
     enabled: !!postId
@@ -124,12 +127,12 @@ function PostDetailContent() {
                 <div className="px-4 pt-3 pb-1">
                   <span className="text-sm text-gray-500">Replying to:</span>
                 </div>
-                <PostCard post={parentPost} />
+                <PostCard post={parentPost} enrichment={getPostEnrichment(parentPost)} />
               </div>
             )}
 
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} />
+              <PostCard post={post} enrichment={getPostEnrichment(post)} />
             </div>
 
             {user ? (
@@ -188,6 +191,7 @@ function PostDetailContent() {
                     key={thread.post.id}
                     thread={thread}
                     mainPostAuthorId={post.author.id}
+                    getPostEnrichment={getPostEnrichment}
                   />
                 ))
               )}

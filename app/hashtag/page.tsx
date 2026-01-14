@@ -15,6 +15,7 @@ import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 
 function HashtagPageContent() {
   const router = useRouter()
@@ -25,6 +26,12 @@ function HashtagPageContent() {
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [postCount, setPostCount] = useState(0)
+
+  // Progressive enrichment - renders posts immediately, fills in data as it loads
+  // enrichmentState is destructured to trigger re-renders when enrichment data arrives
+  const { enrichProgressively, enrichmentState, getPostEnrichment, reset: resetEnrichment } = useProgressiveEnrichment({
+    currentUserId: user?.identityId
+  })
 
   // Determine if this is a cashtag and get display values
   const isCashtag = isCashtagStorage(tag)
@@ -40,6 +47,7 @@ function HashtagPageContent() {
       }
 
       setIsLoading(true)
+      resetEnrichment()
       try {
         // Check if hashtag contract is deployed
         if (!HASHTAG_CONTRACT_ID) {
@@ -52,10 +60,10 @@ function HashtagPageContent() {
 
         // Get post IDs that have this hashtag
         const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag, { limit: 50 })
-        setPostCount(hashtagDocs.length)
 
         if (hashtagDocs.length === 0) {
           setPosts([])
+          setPostCount(0)
           setIsLoading(false)
           return
         }
@@ -65,38 +73,32 @@ function HashtagPageContent() {
 
         const postIds = Array.from(new Set(hashtagDocs.map(h => h.postId)))
 
-        // Fetch posts and validate ownership
-        const fetchedPosts: Post[] = []
-        for (const postId of postIds) {
-          try {
-            const post = await postService.get(postId)
-            if (post) {
-              // Verify hashtag was created by post owner (security filter)
-              const hashtagDoc = hashtagDocs.find(h => h.postId === postId)
-              if (hashtagDoc && hashtagDoc.$ownerId === post.author.id) {
-                fetchedPosts.push(post)
-              }
-            }
-          } catch (error) {
-            console.error('Failed to fetch post:', postId, error)
-          }
-        }
+        // Batch fetch all posts at once
+        const allPosts = await postService.getPostsByIds(postIds)
+
+        // Validate ownership - filter to posts where hashtag was created by post owner
+        const fetchedPosts = allPosts.filter(post => {
+          const hashtagDoc = hashtagDocs.find(h => h.postId === post.id)
+          return hashtagDoc && hashtagDoc.$ownerId === post.author.id
+        })
 
         // Sort by creation date (newest first)
         fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
 
-        // Enrich posts with author data (DPNS names, displayNames, stats)
-        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
-
-        // Filter out posts from blocked users
-        if (user?.identityId && enrichedPosts.length > 0) {
-          const authorIds = Array.from(new Set(enrichedPosts.map(p => p.author.id)))
+        // Filter out posts from blocked users (before setting)
+        let visiblePosts = fetchedPosts
+        if (user?.identityId && fetchedPosts.length > 0) {
+          const authorIds = Array.from(new Set(fetchedPosts.map(p => p.author.id)))
           const blockedMap = await checkBlockedForAuthors(user.identityId, authorIds)
-          enrichedPosts = enrichedPosts.filter(post => !blockedMap.get(post.author.id))
+          visiblePosts = fetchedPosts.filter(post => !blockedMap.get(post.author.id))
         }
 
-        setPosts(enrichedPosts)
-        setPostCount(enrichedPosts.length)
+        // Set posts immediately (with placeholder author data)
+        setPosts(visiblePosts)
+        setPostCount(visiblePosts.length)
+
+        // Start progressive enrichment (non-blocking)
+        enrichProgressively(visiblePosts)
       } catch (error) {
         console.error('Failed to load hashtag posts:', error)
         setPosts([])
@@ -106,7 +108,7 @@ function HashtagPageContent() {
     }
 
     loadHashtagPosts()
-  }, [tag])
+  }, [tag, user?.identityId, enrichProgressively, resetEnrichment])
 
   if (!tag) {
     return (
@@ -183,7 +185,7 @@ function HashtagPageContent() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05 }}
                 >
-                  <PostCard post={post} />
+                  <PostCard post={post} enrichment={getPostEnrichment(post)} />
                 </motion.div>
               ))
             )}

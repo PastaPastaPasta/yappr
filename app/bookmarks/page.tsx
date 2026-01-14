@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { 
+import {
   BookmarkIcon,
   MagnifyingGlassIcon,
   EllipsisHorizontalIcon,
@@ -17,29 +17,12 @@ import { ComposeModal } from '@/components/compose/compose-modal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { withAuth, useAuth } from '@/contexts/auth-context'
+import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
+import type { Post } from '@/lib/types'
 
-interface BookmarkedPost {
-  id: string
-  content: string
-  author: {
-    id: string
-    username: string
-    handle: string
-    displayName: string
-    avatar: string
-    followers: number
-    following: number
-    verified?: boolean
-    joinedAt: Date
-  }
-  createdAt: Date
-  timestamp: string
-  likes: number
-  replies: number
-  reposts: number
-  views: number
+interface BookmarkedPost extends Post {
   bookmarkedAt: Date
 }
 
@@ -50,11 +33,18 @@ function BookmarksPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
 
+  // Progressive enrichment - renders posts immediately, fills in data as it loads
+  // enrichmentState is destructured to trigger re-renders when enrichment data arrives
+  const { enrichProgressively, enrichmentState, getPostEnrichment, reset: resetEnrichment } = useProgressiveEnrichment({
+    currentUserId: user?.identityId
+  })
+
   useEffect(() => {
     const loadBookmarks = async () => {
       if (!user) return
 
       setIsLoading(true)
+      resetEnrichment()
       try {
         const { bookmarkService } = await import('@/lib/services/bookmark-service')
         const { postService } = await import('@/lib/services/post-service')
@@ -62,20 +52,35 @@ function BookmarksPage() {
         // Get bookmark documents
         const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
 
-        // Fetch full post data for each bookmark
-        const postsWithBookmarkData = await Promise.all(
-          bookmarkDocs.map(async (bookmark) => {
-            const post = await postService.getEnrichedPostById(bookmark.postId)
-            if (!post) return null
-            return {
-              ...post,
-              bookmarkedAt: new Date(bookmark.$createdAt)
-            }
-          })
-        )
+        if (bookmarkDocs.length === 0) {
+          setBookmarks([])
+          setIsLoading(false)
+          return
+        }
 
-        // Filter out deleted posts and set bookmarks
-        setBookmarks(postsWithBookmarkData.filter((p): p is BookmarkedPost => p !== null))
+        // Create a map of postId -> bookmarkedAt for later
+        const bookmarkTimeMap = new Map<string, Date>()
+        for (const bookmark of bookmarkDocs) {
+          bookmarkTimeMap.set(bookmark.postId, new Date(bookmark.$createdAt))
+        }
+
+        // Batch fetch all posts at once (instead of N separate calls)
+        const postIds = bookmarkDocs.map(b => b.postId)
+        const posts = await postService.getPostsByIds(postIds)
+
+        // Transform posts and attach bookmarkedAt timestamp
+        const bookmarkedPosts: BookmarkedPost[] = posts
+          .map(post => ({
+            ...post,
+            bookmarkedAt: bookmarkTimeMap.get(post.id) || new Date()
+          }))
+          .filter((p): p is BookmarkedPost => p !== null)
+
+        // Set posts immediately (with placeholder author data)
+        setBookmarks(bookmarkedPosts)
+
+        // Start progressive enrichment (non-blocking)
+        enrichProgressively(bookmarkedPosts)
       } catch (error) {
         console.error('Error loading bookmarks:', error)
         toast.error('Failed to load bookmarks')
@@ -85,7 +90,7 @@ function BookmarksPage() {
     }
 
     loadBookmarks()
-  }, [user])
+  }, [user, enrichProgressively, resetEnrichment])
 
   const removeBookmark = async (postId: string) => {
     if (!user) return
@@ -143,10 +148,17 @@ function BookmarksPage() {
   }
 
   const filteredBookmarks = bookmarks
-    .filter(post => 
-      post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      post.author.username.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    .filter(post => {
+      const query = searchQuery.toLowerCase()
+      const contentMatch = post.content?.toLowerCase().includes(query) ?? false
+      // Also check enriched username if available (guard against undefined enrichment)
+      const enrichment = getPostEnrichment(post) ?? {}
+      const usernameMatch = enrichment.username?.toLowerCase()?.includes(query) ||
+        post.author?.username?.toLowerCase()?.includes(query)
+      const displayNameMatch = enrichment.displayName?.toLowerCase()?.includes(query) ||
+        post.author?.displayName?.toLowerCase()?.includes(query)
+      return contentMatch || usernameMatch || displayNameMatch
+    })
     .sort((a, b) => {
       const timeA = a.bookmarkedAt.getTime()
       const timeB = b.bookmarkedAt.getTime()
@@ -243,7 +255,7 @@ function BookmarksPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className="relative group"
               >
-                <PostCard post={post} />
+                <PostCard post={post} enrichment={getPostEnrichment(post)} />
                 
                 {/* Bookmark Options Overlay */}
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, ReplyThread } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
-import { usePostEnrichment } from './use-post-enrichment'
+import { useProgressiveEnrichment } from './use-progressive-enrichment'
+import { useAuth } from '@/contexts/auth-context'
 
 interface PostDetailState {
   post: Post | null
@@ -36,6 +37,19 @@ interface UsePostDetailResult {
   updatePost: (updates: Partial<Post>) => void
   /** Update a specific reply */
   updateReply: (replyId: string, updates: Partial<Post>) => void
+  /** Get progressive enrichment data for a specific post */
+  getPostEnrichment: (post: Post) => {
+    username: string | null | undefined
+    displayName: string | undefined
+    avatarUrl: string | undefined
+    stats: { likes: number; reposts: number; replies: number; views: number } | undefined
+    interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
+    isBlocked: boolean | undefined
+    isFollowing: boolean | undefined
+    replyTo: { id: string; authorId: string; authorUsername: string | null } | undefined
+  }
+  /** Enrichment loading phase - use to trigger re-renders when enrichment updates */
+  enrichmentPhase: 'idle' | 'loading' | 'complete'
 }
 
 /**
@@ -118,6 +132,7 @@ export function usePostDetail({
   postId,
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
+  const { user } = useAuth()
   const [state, setState] = useState<PostDetailState>({
     post: null,
     parentPost: null,
@@ -130,32 +145,9 @@ export function usePostDetail({
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
 
-  // Enrichment hook with callback to update state
-  const { enrich, reset: resetEnrichment } = usePostEnrichment({
-    onEnriched: (enrichedPosts) => {
-      setState(current => {
-        const enrichedMap = new Map(enrichedPosts.map(p => [p.id, p]))
-
-        // Update enriched posts in replyThreads
-        const updateThread = (thread: ReplyThread): ReplyThread => ({
-          ...thread,
-          post: enrichedMap.get(thread.post.id) || thread.post,
-          nestedReplies: thread.nestedReplies.map(nested => ({
-            ...nested,
-            post: enrichedMap.get(nested.post.id) || nested.post
-          }))
-        })
-
-        return {
-          post: current.post ? (enrichedMap.get(current.post.id) || current.post) : null,
-          parentPost: current.parentPost
-            ? (enrichedMap.get(current.parentPost.id) || current.parentPost)
-            : null,
-          replies: current.replies.map(r => enrichedMap.get(r.id) || r),
-          replyThreads: current.replyThreads.map(updateThread)
-        }
-      })
-    }
+  // Progressive enrichment - renders posts immediately, fills in data as it loads
+  const { enrichProgressively, enrichmentState, reset: resetEnrichment, getPostEnrichment } = useProgressiveEnrichment({
+    currentUserId: user?.identityId
   })
 
   const loadPost = useCallback(async () => {
@@ -291,9 +283,10 @@ export function usePostDetail({
       // Set initial state immediately (with placeholder data)
       setState({ post: loadedPost, parentPost, replies, replyThreads })
 
-      // Enrich all posts in batch (including nested replies)
+      // Start progressive enrichment (non-blocking) for all posts
+      // This updates enrichmentState as data loads, triggering re-renders
       const allPosts = [loadedPost, parentPost, ...replies, ...allNestedReplies].filter(Boolean) as Post[]
-      await enrich(allPosts)
+      enrichProgressively(allPosts)
 
     } catch (err) {
       console.error('usePostDetail: Failed to load post:', err)
@@ -302,7 +295,7 @@ export function usePostDetail({
     } finally {
       setIsLoading(false)
     }
-  }, [postId, enabled, enrich])
+  }, [postId, enabled, enrichProgressively])
 
   // Load on mount/postId change
   useEffect(() => {
@@ -325,9 +318,9 @@ export function usePostDetail({
         ? { ...current.post, replies: current.post.replies + 1 }
         : null
     }))
-    // Enrich the new reply to get DPNS username/display name
-    enrich([reply])
-  }, [enrich])
+    // Start progressive enrichment for the new reply
+    enrichProgressively([reply])
+  }, [enrichProgressively])
 
   const updatePost = useCallback((updates: Partial<Post>) => {
     setState(current => ({
@@ -380,6 +373,8 @@ export function usePostDetail({
     refresh,
     addOptimisticReply,
     updatePost,
-    updateReply
+    updateReply,
+    getPostEnrichment,
+    enrichmentPhase: enrichmentState.phase
   }
 }
