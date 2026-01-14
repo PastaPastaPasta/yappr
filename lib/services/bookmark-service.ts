@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { transformDocumentWithField, normalizeSDKResponse } from './sdk-helpers';
+import { transformDocumentWithField } from './sdk-helpers';
 
 export interface BookmarkDocument {
   $id: string;
@@ -134,21 +134,16 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     if (postIds.length === 0) return [];
 
     try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'bookmark',
+      const result = await this.query({
         where: [
           ['$ownerId', '==', userId],
           ['postId', 'in', postIds]
         ],
         orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
         limit: postIds.length
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+      return result.documents;
     } catch (error) {
       console.error('Error getting user bookmarks for posts:', error);
       return [];
