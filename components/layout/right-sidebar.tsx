@@ -180,22 +180,28 @@ export function RightSidebar() {
       </div>
 
       <div className="px-4 py-3 flex justify-center">
-        <Image
-          src="/pbde-light.png"
-          alt="Powered by Dash Evolution"
-          width={140}
-          height={47}
-          className="dark:hidden"
-          style={{ width: 'auto', height: 'auto' }}
-        />
-        <Image
-          src="/pbde-dark.png"
-          alt="Powered by Dash Evolution"
-          width={140}
-          height={47}
-          className="hidden dark:block"
-          style={{ width: 'auto', height: 'auto' }}
-        />
+        <a
+          href="https://github.com/dashpay/platform"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            src="/pbde-light.png"
+            alt="Powered by Dash Evolution"
+            width={140}
+            height={47}
+            className="dark:hidden"
+            style={{ width: 'auto', height: 'auto' }}
+          />
+          <Image
+            src="/pbde-dark.png"
+            alt="Powered by Dash Evolution"
+            width={140}
+            height={47}
+            className="hidden dark:block"
+            style={{ width: 'auto', height: 'auto' }}
+          />
+        </a>
       </div>
 
       <div className="px-4 py-2 text-xs text-gray-500 space-x-2">
