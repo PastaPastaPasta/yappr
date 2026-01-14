@@ -1032,22 +1032,27 @@ class PostService extends BaseDocumentService<Post> {
     });
 
     try {
-      // Fetch all user's likes, reposts, and bookmarks in 3 queries total
       const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
         import('./like-service'),
         import('./repost-service'),
         import('./bookmark-service')
       ]);
 
-      const [userLikes, userReposts, userBookmarks] = await Promise.all([
-        likeService.getUserLikes(currentUserId),
-        repostService.getUserReposts(currentUserId),
-        bookmarkService.getUserBookmarks(currentUserId)
+      // Fetch interactions for these specific posts, not all user interactions
+      // This scales properly regardless of how many total likes/reposts/bookmarks a user has
+      const [allLikesForPosts, allRepostsForPosts, userBookmarks] = await Promise.all([
+        likeService.getLikesByPostIds(postIds),
+        repostService.getRepostsByPostIds(postIds),
+        bookmarkService.getUserBookmarksForPosts(currentUserId, postIds)
       ]);
 
-      // Create Sets of post IDs the user has interacted with
-      const likedPostIds = new Set(userLikes.map(l => l.postId));
-      const repostedPostIds = new Set(userReposts.map(r => r.postId));
+      // Filter likes/reposts to find current user's interactions
+      const likedPostIds = new Set(
+        allLikesForPosts.filter(l => l.$ownerId === currentUserId).map(l => l.postId)
+      );
+      const repostedPostIds = new Set(
+        allRepostsForPosts.filter(r => r.$ownerId === currentUserId).map(r => r.postId)
+      );
       const bookmarkedPostIds = new Set(userBookmarks.map(b => b.postId));
 
       // Check each post against the Sets
