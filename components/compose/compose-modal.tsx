@@ -602,6 +602,17 @@ export function ComposeModal() {
                   .then((results) => {
                     const successCount = results.filter((r) => r).length
                     console.log(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
+
+                    // Dispatch event for each successful mention to trigger cache invalidation
+                    results.forEach((success, mentionIndex) => {
+                      if (success) {
+                        window.dispatchEvent(
+                          new CustomEvent('mention-registered', {
+                            detail: { postId, username: mentions[mentionIndex] },
+                          })
+                        )
+                      }
+                    })
                   })
                   .catch((err) => {
                     console.error(`Post ${i + 1}: Failed to create mention documents:`, err)
