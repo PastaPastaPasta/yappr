@@ -16,15 +16,25 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
+import { usePlatformDetection } from '@/hooks/use-platform-detection'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { MENTION_CONTRACT_ID } from '@/lib/constants'
-import { formatTime } from '@/lib/utils'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { getInitials } from '@/lib/utils'
+import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
 import { MarkdownContent } from '@/components/ui/markdown-content'
+import {
+  PostingProgress,
+  PostButtonContent,
+  getPostButtonState,
+  PostingProgressBar,
+  QuotedPostPreview,
+  ReplyContext,
+  getModalTitle,
+  getDialogTitle,
+  getDialogDescription,
+} from './compose-sub-components'
 
 const CHARACTER_LIMIT = 500
 
@@ -66,61 +76,61 @@ function CharacterCounter({ current, limit }: { current: number; limit: number }
   const circumference = 2 * Math.PI * radius
   const offset = circumference * (1 - percentage / 100)
 
+  function getProgressColor(): string {
+    if (isDanger) return 'text-red-500'
+    if (isWarning) return 'text-amber-500'
+    return 'text-yappr-500'
+  }
+
+  if (current === 0) {
+    return <div className="flex items-center gap-2" />
+  }
+
   return (
     <div className="flex items-center gap-2">
-      {current > 0 && (
-        <>
-          <div className="relative w-6 h-6">
-            <svg className="w-6 h-6 -rotate-90" viewBox="0 0 24 24">
-              {/* Background circle */}
-              <circle
-                cx="12"
-                cy="12"
-                r={radius}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="text-gray-200 dark:text-gray-700"
-              />
-              {/* Progress circle */}
-              <circle
-                cx="12"
-                cy="12"
-                r={radius}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeDasharray={circumference}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-                className={
-                  isDanger
-                    ? 'text-red-500'
-                    : isWarning
-                    ? 'text-amber-500'
-                    : 'text-yappr-500'
-                }
-              />
+      <div className="relative w-6 h-6">
+        <svg className="w-6 h-6 -rotate-90" viewBox="0 0 24 24">
+          {/* Background circle */}
+          <circle
+            cx="12"
+            cy="12"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="text-gray-200 dark:text-gray-700"
+          />
+          {/* Progress circle */}
+          <circle
+            cx="12"
+            cy="12"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            className={getProgressColor()}
+          />
+        </svg>
+        {/* Checkmark when valid and not in danger zone */}
+        {isValid && !isDanger && !isWarning && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <svg className="w-3 h-3 text-yappr-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
-            {/* Checkmark when valid and not in danger zone */}
-            {isValid && !isDanger && !isWarning && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <svg className="w-3 h-3 text-yappr-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-            )}
           </div>
-          {isDanger && (
-            <span
-              className={`text-xs font-medium tabular-nums ${
-                remaining < 0 ? 'text-red-500' : 'text-amber-500'
-              }`}
-            >
-              {remaining}
-            </span>
-          )}
-        </>
+        )}
+      </div>
+      {isDanger && (
+        <span
+          className={`text-xs font-medium tabular-nums ${
+            remaining < 0 ? 'text-red-500' : 'text-amber-500'
+          }`}
+        >
+          {remaining}
+        </span>
       )}
     </div>
   )
@@ -424,20 +434,11 @@ export function ComposeModal() {
 
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const isMac = usePlatformDetection()
   const [isPosting, setIsPosting] = useState(false)
-  const [postingProgress, setPostingProgress] = useState<{
-    current: number
-    total: number
-    status: string
-  } | null>(null)
+  const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
-  const [isMac, setIsMac] = useState(true) // Default to Mac symbol, will detect on mount
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
-
-  // Detect platform for keyboard shortcut hints
-  useEffect(() => {
-    setIsMac(typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform))
-  }, [])
 
   // Focus first textarea when modal opens
   useEffect(() => {
@@ -462,40 +463,6 @@ export function ComposeModal() {
   const lastPostedId = postedPosts.length > 0
     ? postedPosts[postedPosts.length - 1].postedPostId
     : null
-
-  // Helper to extract error message from various error formats
-  const extractErrorMessage = (error: unknown): string => {
-    if (!error) return 'Unknown error'
-    if (typeof error === 'string') return error
-    if (error instanceof Error) return error.message
-
-    // Handle nested error objects
-    const err = error as Record<string, unknown>
-    if (err.message && typeof err.message === 'string') return err.message
-    if (err.error) return extractErrorMessage(err.error)
-    if (err.cause) return extractErrorMessage(err.cause)
-
-    // Try to stringify, but avoid [object Object]
-    try {
-      const str = JSON.stringify(error)
-      if (str && str !== '{}') return str.slice(0, 200)
-    } catch {
-      // Ignore stringify errors
-    }
-
-    return 'Unknown error'
-  }
-
-  // Check if error is a timeout that might mean success
-  const isTimeoutError = (error: unknown): boolean => {
-    const msg = extractErrorMessage(error).toLowerCase()
-    return (
-      msg.includes('timeout') ||
-      msg.includes('deadline') ||
-      msg.includes('expired') ||
-      msg.includes('timed out')
-    )
-  }
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -759,28 +726,7 @@ export function ComposeModal() {
       }
     } catch (error) {
       console.error('Failed to create post:', error)
-
-      const errorMessage = extractErrorMessage(error)
-
-      if (
-        errorMessage.includes('no available addresses') ||
-        errorMessage.includes('Missing response message')
-      ) {
-        toast.error('Dash Platform is temporarily unavailable. Please try again in a few moments.')
-      } else if (
-        errorMessage.includes('Network') ||
-        errorMessage.includes('connection') ||
-        errorMessage.includes('timeout')
-      ) {
-        toast.error('Network error. Please check your connection and try again.')
-      } else if (
-        errorMessage.includes('Private key not found') ||
-        errorMessage.includes('Not logged in')
-      ) {
-        toast.error('Your session has expired. Please log in again.')
-      } else {
-        toast.error(`Failed to create post: ${errorMessage}`)
-      }
+      toast.error(categorizeError(error))
     } finally {
       setIsPosting(false)
       setPostingProgress(null)
@@ -827,18 +773,10 @@ export function ComposeModal() {
                   >
                     {/* Accessibility */}
                     <Dialog.Title className="sr-only">
-                      {replyingTo
-                        ? 'Reply to post'
-                        : quotingPost
-                        ? 'Quote post'
-                        : 'Create a new post'}
+                      {getDialogTitle(!!replyingTo, !!quotingPost)}
                     </Dialog.Title>
                     <Dialog.Description className="sr-only">
-                      {replyingTo
-                        ? 'Write your reply to the post'
-                        : quotingPost
-                        ? 'Add your thoughts to this quote'
-                        : 'Share your thoughts with the community'}
+                      {getDialogDescription(!!replyingTo, !!quotingPost)}
                     </Dialog.Description>
 
                     {/* Header */}
@@ -849,13 +787,7 @@ export function ComposeModal() {
                         </IconButton>
                         <div className="flex items-center gap-2">
                           <h2 className="font-semibold text-gray-900 dark:text-gray-100">
-                            {replyingTo
-                              ? 'Reply'
-                              : quotingPost
-                              ? 'Quote'
-                              : threadPosts.length > 1
-                              ? `Thread (${threadPosts.length} posts)`
-                              : 'New Post'}
+                            {getModalTitle(!!replyingTo, !!quotingPost, threadPosts.length)}
                           </h2>
                           {/* Preview toggle */}
                           <button
@@ -892,86 +824,27 @@ export function ComposeModal() {
                               : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                           }`}
                         >
-                          {isPosting && postingProgress ? (
-                            <span className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
-                              <span>{postingProgress.current}/{postingProgress.total}</span>
-                            </span>
-                          ) : isPosting ? (
-                            <span className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
-                              <span>Posting</span>
-                            </span>
-                          ) : postedPosts.length > 0 ? (
-                            <span className="flex items-center gap-1.5">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                              </svg>
-                              Retry ({unpostedPosts.length})
-                            </span>
-                          ) : replyingTo ? (
-                            <span className="flex items-center gap-1.5">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                              </svg>
-                              Reply
-                            </span>
-                          ) : threadPosts.length > 1 ? (
-                            <span className="flex items-center gap-1.5">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16m-7 6h7" />
-                              </svg>
-                              Post all ({threadPosts.length})
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1.5">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                              </svg>
-                              Post
-                            </span>
-                          )}
+                          <PostButtonContent
+                            state={getPostButtonState(
+                              isPosting,
+                              postingProgress,
+                              postedPosts.length > 0,
+                              unpostedPosts.length,
+                              !!replyingTo,
+                              threadPosts.length
+                            )}
+                          />
                         </Button>
                       </div>
                     </div>
 
                     {/* Progress bar when posting */}
                     {isPosting && postingProgress && (
-                      <div className="px-4 py-2 bg-yappr-50 dark:bg-yappr-950/30 border-b border-yappr-200 dark:border-yappr-800">
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1">
-                            <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-yappr-500 rounded-full transition-all duration-300"
-                                style={{ width: `${(postingProgress.current / postingProgress.total) * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                          <span className="text-xs text-yappr-600 dark:text-yappr-400 font-medium whitespace-nowrap">
-                            {postingProgress.status}
-                          </span>
-                        </div>
-                      </div>
+                      <PostingProgressBar progress={postingProgress} />
                     )}
 
                     {/* Reply context */}
-                    {replyingTo && (
-                      <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-950 border-b border-gray-200 dark:border-gray-800">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-gray-500">Replying to</span>
-                          <span className="text-yappr-500 font-medium">
-                            {replyingTo.author.username &&
-                            !replyingTo.author.username.startsWith('user_')
-                              ? `@${replyingTo.author.username}`
-                              : replyingTo.author.displayName &&
-                                replyingTo.author.displayName !== 'Unknown User' &&
-                                !replyingTo.author.displayName.startsWith('User ')
-                              ? replyingTo.author.displayName
-                              : `${replyingTo.author.id.slice(0, 8)}...${replyingTo.author.id.slice(-6)}`}
-                          </span>
-                        </div>
-                      </div>
-                    )}
+                    {replyingTo && <ReplyContext author={replyingTo.author} />}
 
                     {/* Main content area */}
                     <div className="p-4 max-h-[60vh] overflow-y-auto">
@@ -1016,31 +889,7 @@ export function ComposeModal() {
                           )}
 
                           {/* Quoted post preview */}
-                          {quotingPost && (
-                            <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
-                              <div className="flex items-center gap-2 text-sm">
-                                <Avatar className="h-5 w-5">
-                                  <AvatarImage src={quotingPost.author.avatar} />
-                                  <AvatarFallback>
-                                    {getInitials(quotingPost.author.displayName)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <span className="font-semibold text-gray-900 dark:text-gray-100">
-                                  {quotingPost.author.displayName}
-                                </span>
-                                <span className="text-gray-500">
-                                  @{quotingPost.author.username}
-                                </span>
-                                <span className="text-gray-500">·</span>
-                                <span className="text-gray-500">
-                                  {formatTime(quotingPost.createdAt)}
-                                </span>
-                              </div>
-                              <p className="mt-2 text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
-                                {quotingPost.content}
-                              </p>
-                            </div>
-                          )}
+                          {quotingPost && <QuotedPostPreview post={quotingPost} />}
                         </div>
                       </div>
                     </div>
