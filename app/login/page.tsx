@@ -3,14 +3,13 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
-import { useRouter } from 'next/navigation'
 import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { isLikelyWif } from '@/lib/crypto/wif'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
-import { Loader2, Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff } from 'lucide-react'
 
 // Check if input looks like an Identity ID (base58, ~44 chars)
 function isLikelyIdentityId(input: string): boolean {
@@ -49,7 +48,6 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(true)
 
   const { login, loginWithPassword } = useAuth()
-  const router = useRouter()
   const openBackupModal = useKeyBackupModal((state) => state.open)
 
   // Debounced identity lookup

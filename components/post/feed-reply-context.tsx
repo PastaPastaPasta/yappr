@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
-import { Post, FeedReplyContext as FeedReplyContextType } from '@/lib/types'
+import { Post } from '@/lib/types'
 import { PostCard, ProgressiveEnrichment } from './post-card'
 
 interface FeedReplyContextProps {

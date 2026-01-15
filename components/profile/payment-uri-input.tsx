@@ -46,14 +46,6 @@ function isValidPaymentUri(uri: string): boolean {
   return APPROVED_PAYMENT_SCHEMES.some(scheme => lowerUri.startsWith(scheme))
 }
 
-function extractScheme(uri: string): string {
-  const colonIndex = uri.indexOf(':')
-  if (colonIndex > 0) {
-    return uri.substring(0, colonIndex + 1).toLowerCase()
-  }
-  return ''
-}
-
 export function PaymentUriInput({
   uris,
   onChange,

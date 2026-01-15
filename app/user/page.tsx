@@ -328,8 +328,23 @@ function UserProfileContent() {
       }
     }
 
-    loadProfileData()
+    loadProfileData().catch(err => console.error('Failed to load profile:', err))
+  // currentUser is intentionally not a dependency - we only want to reload on userId change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
+
+  // Define handleStartEdit before the useEffect that uses it
+  const handleStartEdit = useCallback(() => {
+    setEditDisplayName(profile?.displayName || '')
+    setEditBio(profile?.bio || '')
+    setEditLocation(profile?.location || '')
+    setEditWebsite(profile?.website || '')
+    setEditPronouns(profile?.pronouns || '')
+    setEditNsfw(profile?.nsfw || false)
+    setEditPaymentUris(profile?.paymentUris?.map(p => p.uri) || [])
+    setEditSocialLinks(profile?.socialLinks || [])
+    setIsEditingProfile(true)
+  }, [profile])
 
   // Handle edit URL parameter for deep linking to edit mode
   useEffect(() => {
@@ -343,7 +358,7 @@ function UserProfileContent() {
       url.searchParams.delete('edit')
       window.history.replaceState({}, '', url.toString())
     }
-  }, [isOwnProfile, isLoading, searchParams, isEditingProfile])
+  }, [isOwnProfile, isLoading, searchParams, isEditingProfile, handleStartEdit])
 
   // Handle tip URL parameter for deep linking
   useEffect(() => {
@@ -625,18 +640,6 @@ function UserProfileContent() {
     } finally {
       setFollowLoading(false)
     }
-  }
-
-  const handleStartEdit = () => {
-    setEditDisplayName(profile?.displayName || '')
-    setEditBio(profile?.bio || '')
-    setEditLocation(profile?.location || '')
-    setEditWebsite(profile?.website || '')
-    setEditPronouns(profile?.pronouns || '')
-    setEditNsfw(profile?.nsfw || false)
-    setEditPaymentUris(profile?.paymentUris?.map(p => p.uri) || [])
-    setEditSocialLinks(profile?.socialLinks || [])
-    setIsEditingProfile(true)
   }
 
   const handleCancelEdit = () => {

@@ -13,7 +13,7 @@ import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
-import type { MigrationStatus, LegacyProfileData, LegacyAvatarData } from '@/lib/services/profile-migration-service'
+import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import {
   unifiedProfileService,
   DICEBEAR_STYLES,
@@ -97,7 +97,7 @@ function CreateProfilePage() {
       }
     }
 
-    checkExistingProfile()
+    checkExistingProfile().catch(err => console.error('Failed to check profile:', err))
   }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -158,12 +158,13 @@ function CreateProfilePage() {
 
       // Redirect to home
       router.push('/')
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to create profile:', error)
 
       // Check if it's a duplicate profile error
-      if (error.message?.includes('duplicate unique properties') ||
-          error.message?.includes('already exists')) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      if (errorMessage.includes('duplicate unique properties') ||
+          errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
         setTimeout(() => {
           router.push(`/user?id=${user?.identityId}`)

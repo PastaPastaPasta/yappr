@@ -9,7 +9,7 @@ import { PostCard } from './post-card'
  * Priority: DPNS username > Profile display name > Truncated identity ID
  */
 function getDisplayUsername(author: Post['author']): { display: string; type: 'dpns' | 'profile' | 'id' } {
-  const hasDpns = (author as any).hasDpns
+  const hasDpns = (author as { hasDpns?: boolean }).hasDpns
   const username = author.username
   const displayName = author.displayName
 
@@ -40,7 +40,7 @@ interface ReplyThreadItemProps {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemProps) {
+export function ReplyThreadItem({ thread }: ReplyThreadItemProps) {
   const { post, isAuthorThread, isThreadContinuation, nestedReplies } = thread
 
   return (

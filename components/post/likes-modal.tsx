@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -29,9 +29,9 @@ interface LikeWithUser extends LikeDocument {
 
 export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
   const likesState = useAsyncState<LikeWithUser[]>([])
+  const { setLoading, setError, setData } = likesState
 
-  const loadLikes = async () => {
-    const { setLoading, setError, setData } = likesState
+  const loadLikes = useCallback(async () => {
     setLoading(true)
     setError(null)
 
@@ -79,13 +79,13 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [postId, setLoading, setError, setData])
 
   useEffect(() => {
     if (isOpen) {
-      loadLikes()
+      loadLikes().catch(err => console.error('Failed to load likes:', err))
     }
-  }, [isOpen])
+  }, [isOpen, loadLikes])
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onClose}>
@@ -139,7 +139,8 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         navigator.clipboard.writeText(like.$ownerId)
-                                        toast.success('Identity ID copied')
+                                          .then(() => toast.success('Identity ID copied'))
+                                          .catch(() => toast.error('Failed to copy ID'))
                                       }}
                                       className="font-mono text-xs hover:text-gray-700 dark:hover:text-gray-300"
                                     >

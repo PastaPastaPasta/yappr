@@ -9,7 +9,7 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
+import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
 
 interface UserResult {
@@ -71,7 +71,7 @@ function SearchPageContent() {
       }
     }
 
-    performSearch()
+    performSearch().catch(err => console.error('Search failed:', err))
   }, [query])
 
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {

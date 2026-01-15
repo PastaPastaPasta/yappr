@@ -10,7 +10,6 @@ import {
   PlusIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -59,7 +58,7 @@ function MessagesPage() {
         setIsLoading(false)
       }
     }
-    loadConversations()
+    loadConversations().catch(err => console.error('Failed to load conversations:', err))
   }, [user])
 
   // Load messages when conversation is selected
@@ -101,7 +100,7 @@ function MessagesPage() {
         setIsLoadingMessages(false)
       }
     }
-    loadMessages()
+    loadMessages().catch(err => console.error('Failed to load messages:', err))
   }, [selectedConversation, user])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
