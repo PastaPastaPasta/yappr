@@ -148,11 +148,11 @@ export function MentionRecoveryModal() {
                               className="font-mono text-lg font-medium text-yappr-500 hover:underline"
                               onClick={close}
                             >
-                              @{username}
+                              {username}
                             </Link>
                           ) : (
                             <span className="font-mono text-lg font-medium text-yappr-500">
-                              @{username}
+                              {username}
                             </span>
                           )}
                         </div>
