@@ -174,7 +174,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         documentTypeName: this.documentType,
         where: [
           ['postId', '==', postId],
-          ['hashtag', '>', '']  // Range query to enable ordering
+          ['hashtag', '>', '']  // Range query on string field for ordering
         ],
         orderBy: [['postId', 'asc'], ['hashtag', 'asc']],
         limit: 20

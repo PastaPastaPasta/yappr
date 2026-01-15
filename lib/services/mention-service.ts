@@ -148,16 +148,13 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Convert IDs to byte arrays for where clause (matching other services)
-      const postIdBytes = stringToIdentifierBytes(postId);
-      const mentionedUserIdBytes = stringToIdentifierBytes(mentionedUserId);
-
+      // Use strings for identifiers in queries - SDK handles conversion
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postIdBytes],
-          ['mentionedUserId', '==', mentionedUserIdBytes]
+          ['postId', '==', postId],
+          ['mentionedUserId', '==', mentionedUserId]
         ],
         limit: 1
       } as any);
@@ -178,17 +175,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Convert postId to byte array for where clause
-      const postIdBytes = stringToIdentifierBytes(postId);
-
+      // Use byPost index - simple query by postId only
+      // SDK handles string to byte array conversion for identifier fields
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postIdBytes],
-          ['mentionedUserId', '>', '']  // Range query to enable ordering
+          ['postId', '==', postId]
         ],
-        orderBy: [['postId', 'asc'], ['mentionedUserId', 'asc']],
         limit: 100
       } as any);
 
@@ -210,16 +204,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Convert userId to byte array for where clause
-      const userIdBytes = stringToIdentifierBytes(userId);
-
+      // Use strings for identifiers in queries - SDK handles conversion
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
           documentTypeName: this.documentType,
           where: [
-            ['mentionedUserId', '==', userIdBytes],
+            ['mentionedUserId', '==', userId],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
