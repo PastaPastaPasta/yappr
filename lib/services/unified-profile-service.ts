@@ -278,6 +278,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
   /**
    * Batch fetch avatar URLs for multiple users
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   private async fetchAvatarUrlsBatch(userIds: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();

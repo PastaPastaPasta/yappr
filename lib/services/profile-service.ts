@@ -400,6 +400,11 @@ class ProfileService extends BaseDocumentService<User> {
 
   /**
    * Get profiles by array of identity IDs
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getProfilesByIdentityIds(identityIds: string[]): Promise<ProfileDocument[]> {
     try {

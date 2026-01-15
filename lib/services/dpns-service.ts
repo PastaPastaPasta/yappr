@@ -123,6 +123,11 @@ class DpnsService {
   /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async resolveUsernamesBatch(identityIds: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();

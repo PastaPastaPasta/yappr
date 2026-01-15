@@ -1,6 +1,7 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { transformDocumentWithField } from './sdk-helpers';
+import { paginateFetchAll } from './pagination-utils';
 
 export interface BookmarkDocument {
   $id: string;
@@ -100,18 +101,28 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   }
 
   /**
-   * Get user's bookmarks
+   * Get user's bookmarks.
+   * Paginates through all results to return complete list.
    */
   async getUserBookmarks(userId: string, options: QueryOptions = {}): Promise<BookmarkDocument[]> {
     try {
-      const result = await this.query({
-        where: [['$ownerId', '==', userId]],
-        orderBy: [['$createdAt', 'desc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'bookmark',
+          where: [
+            ['$ownerId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
       console.error('Error getting user bookmarks:', error);
       return [];
@@ -129,6 +140,11 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   /**
    * Get user's bookmarks for specific posts.
    * Uses the ownerAndPost index: [$ownerId, postId]
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getUserBookmarksForPosts(userId: string, postIds: string[]): Promise<BookmarkDocument[]> {
     if (postIds.length === 0) return [];

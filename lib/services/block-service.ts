@@ -224,6 +224,11 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /**
    * Get bloom filters for multiple users in batch.
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getBloomFiltersBatch(userIds: string[]): Promise<Map<string, BloomFilter>> {
     const result = new Map<string, BloomFilter>()
@@ -724,6 +729,11 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /**
    * Query blocks using 'in' operator for efficient batch lookup.
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   private async queryBlockedIn(blockerId: string, targetIds: string[]): Promise<BlockDocument[]> {
     if (targetIds.length === 0) return []
@@ -746,6 +756,11 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   /**
    * Query inherited blocks for multiple targets from multiple blockers.
    * Queries each blocker in parallel since Platform only supports one 'in' clause per query.
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   private async queryInheritedBlocksBatch(
     targetIds: string[],

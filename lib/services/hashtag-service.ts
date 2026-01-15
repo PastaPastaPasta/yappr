@@ -1,7 +1,8 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { HASHTAG_CONTRACT_ID, YAPPR_CONTRACT_ID } from '../constants';
+import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
   $id: string;
@@ -202,8 +203,8 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   }
 
   /**
-   * Get the count of posts with a specific hashtag
-   * Uses a reasonable limit for performance - returns approximate count for high-volume hashtags
+   * Get the count of posts with a specific hashtag.
+   * Paginates through all results for accurate count.
    */
   async getPostCountByHashtag(hashtag: string): Promise<number> {
     try {
@@ -212,32 +213,20 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       if (!normalizedTag) return 0;
 
-      // Query with a reasonable limit to get approximate count
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['hashtag', '==', normalizedTag],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
-        limit: 100
-      } as any);
+      const { count } = await paginateCount(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [
+            ['hashtag', '==', normalizedTag],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']]
+        })
+      );
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values()).filter(Boolean);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.length;
+      return count;
     } catch (error) {
       console.error('Error getting post count by hashtag:', error);
       return 0;
@@ -245,8 +234,9 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   }
 
   /**
-   * Get post IDs that have a specific hashtag
-   * Returns postHashtag documents - caller should fetch actual posts and filter by ownership
+   * Get post IDs that have a specific hashtag.
+   * Paginates through all results to return complete list.
+   * Returns postHashtag documents - caller should fetch actual posts and filter by ownership.
    */
   async getPostIdsByHashtag(hashtag: string, options: QueryOptions = {}): Promise<PostHashtagDocument[]> {
     try {
@@ -255,34 +245,21 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       if (!normalizedTag) return [];
 
-      // Use byHashtag index: [hashtag, $createdAt] - desc supported at query time
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['hashtag', '==', normalizedTag],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
-        limit: options.limit || 50
-      } as any);
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [
+            ['hashtag', '==', normalizedTag],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      return documents;
     } catch (error) {
       console.error('Error getting posts by hashtag:', error);
       return [];
@@ -290,7 +267,8 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   }
 
   /**
-   * Get recent hashtag documents for trending calculation
+   * Get recent hashtag documents for trending calculation.
+   * Paginates through all results to return complete list.
    */
   async getRecentHashtags(hours: number = 24): Promise<PostHashtagDocument[]> {
     try {
@@ -299,33 +277,18 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Calculate timestamp for X hours ago
       const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
 
-      // Use byTime index: [$createdAt] - desc supported at query time
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['$createdAt', '>', cutoffTime]
-        ],
-        orderBy: [['$createdAt', 'desc']],
-        limit: 100
-      } as any);
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [['$createdAt', '>', cutoffTime]],
+          orderBy: [['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      return documents;
     } catch (error) {
       console.error('Error getting recent hashtags:', error);
       return [];

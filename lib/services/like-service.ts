@@ -1,6 +1,7 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
+import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface LikeDocument {
   $id: string;
@@ -107,26 +108,28 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Get likes for a post
+   * Get likes for a post.
+   * Paginates through all results to return complete list.
    */
   async getPostLikes(postId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'like',
-        where: [
-          ['postId', '==', postId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'asc']],
-        limit: options.limit || 50
-      } as any);
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'like',
+          where: [
+            ['postId', '==', postId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
 
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+      return documents;
     } catch (error) {
       console.error('Error getting post likes:', error);
       return [];
@@ -134,22 +137,28 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Get user's likes
+   * Get user's likes.
+   * Paginates through all results to return complete list.
    */
   async getUserLikes(userId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
     try {
-      // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const result = await this.query({
-        where: [
-          ['$ownerId', '==', userId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'like',
+          where: [
+            ['$ownerId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
       console.error('Error getting user likes:', error);
       return [];
@@ -157,7 +166,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Count likes given by a user - uses direct SDK query for reliability.
+   * Count likes given by a user.
+   * Paginates through all results for accurate count.
    * Deduplicates in-flight requests.
    */
   async countUserLikes(userId: string): Promise<number> {
@@ -165,19 +175,20 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       try {
         const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-        // Dash Platform requires a where clause on the orderBy field for ordering to work
-        const response = await sdk.documents.query({
-          dataContractId: this.contractId,
-          documentTypeName: 'like',
-          where: [
-            ['$ownerId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['$createdAt', 'asc']],
-          limit: 100
-        } as any);
+        const { count } = await paginateCount(
+          sdk,
+          () => ({
+            dataContractId: this.contractId,
+            documentTypeName: 'like',
+            where: [
+              ['$ownerId', '==', userId],
+              ['$createdAt', '>', 0]
+            ],
+            orderBy: [['$createdAt', 'asc']]
+          })
+        );
 
-        return normalizeSDKResponse(response).length;
+        return count;
       } catch (error) {
         console.error('Error counting user likes:', error);
         return 0;
@@ -197,6 +208,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   /**
    * Get likes for multiple posts in a single batch query
    * Uses 'in' operator for efficient querying
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getLikesByPostIds(postIds: string[]): Promise<LikeDocument[]> {
     if (postIds.length === 0) return [];

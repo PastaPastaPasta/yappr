@@ -8,6 +8,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 import { retryAsync } from '../retry-utils';
+import { paginateCount } from './pagination-utils';
 
 export interface PostDocument {
   $id: string;
@@ -185,6 +186,11 @@ class PostService extends BaseDocumentService<Post> {
    * Batch fetch parent posts to get their owner IDs.
    * Deduplicates in-flight requests.
    * Returns a Map of postId -> ownerId
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getParentPostOwners(parentPostIds: string[]): Promise<Map<string, string>> {
     if (parentPostIds.length === 0) {
@@ -441,6 +447,11 @@ class PostService extends BaseDocumentService<Post> {
    * to prevent prolific users from dominating the feed.
    *
    * Features adaptive window sizing based on post density to target ~50 posts per load.
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getFollowingFeed(
     userId: string,
@@ -638,7 +649,8 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count posts by user - uses direct SDK query for reliability.
+   * Count posts by user.
+   * Paginates through all results for accurate count.
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -647,15 +659,20 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
-        const response = await sdk.documents.query({
-          dataContractId: this.contractId,
-          documentTypeName: 'post',
-          where: [['$ownerId', '==', userId]],
-          orderBy: [['$createdAt', 'asc']],
-          limit: 100
-        } as any);
+        const { count } = await paginateCount(
+          sdk,
+          () => ({
+            dataContractId: this.contractId,
+            documentTypeName: 'post',
+            where: [
+              ['$ownerId', '==', userId],
+              ['$createdAt', '>', 0]
+            ],
+            orderBy: [['$createdAt', 'asc']]
+          })
+        );
 
-        return normalizeSDKResponse(response).length;
+        return count;
       } catch (error) {
         console.error('Error counting user posts:', error);
         return 0;
@@ -670,60 +687,26 @@ class PostService extends BaseDocumentService<Post> {
   async countAllPosts(): Promise<number> {
     // Use a constant key since this counts all posts
     return this.countAllPostsDeduplicator.dedupe('all', async () => {
-      const result = await retryAsync(
-        async () => {
-          const { getEvoSdk } = await import('./evo-sdk-service');
-          const sdk = await getEvoSdk();
-          let totalCount = 0;
-          let startAfter: string | undefined = undefined;
-          const PAGE_SIZE = 100;
+      try {
+        const { getEvoSdk } = await import('./evo-sdk-service');
+        const sdk = await getEvoSdk();
 
-          while (true) {
-            const queryParams: any = {
-              dataContractId: this.contractId,
-              documentTypeName: 'post',
-              orderBy: [['$createdAt', 'asc']],
-              limit: PAGE_SIZE
-            };
+        const { count } = await paginateCount(
+          sdk,
+          () => ({
+            dataContractId: this.contractId,
+            documentTypeName: 'post',
+            where: [['$createdAt', '>', 0]],
+            orderBy: [['$createdAt', 'asc']]
+          }),
+          { maxResults: 10000 } // Higher limit for platform-wide count
+        );
 
-            if (startAfter) {
-              queryParams.startAfter = startAfter;
-            }
-
-            const response = await sdk.documents.query(queryParams as any);
-            const documents = normalizeSDKResponse(response);
-
-            totalCount += documents.length;
-
-            // If we got fewer than PAGE_SIZE, we've reached the end
-            if (documents.length < PAGE_SIZE) {
-              break;
-            }
-
-            // Get the last document's ID for pagination
-            const lastDoc = documents[documents.length - 1];
-            if (!lastDoc.$id) {
-              break;
-            }
-            startAfter = lastDoc.$id as string;
-          }
-
-          return totalCount;
-        },
-        {
-          maxAttempts: 3,
-          initialDelayMs: 1000,
-          maxDelayMs: 5000,
-          backoffMultiplier: 2
-        }
-      );
-
-      if (!result.success) {
-        console.error('Error counting all posts after retries:', result.error);
-        throw result.error || new Error('Failed to count posts');
+        return count;
+      } catch (error) {
+        console.error('Error counting all posts:', error);
+        return 0;
       }
-
-      return result.data!;
     });
   }
 
@@ -763,6 +746,11 @@ class PostService extends BaseDocumentService<Post> {
    * Get nested replies for multiple parent posts.
    * Returns a Map of parentPostId -> replies array.
    * Used for building 2-level threaded reply trees.
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getNestedReplies(
     parentPostIds: string[],
@@ -1073,6 +1061,11 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get reply counts for multiple posts in a single batch query.
    * Deduplicates in-flight requests.
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getRepliesByPostIds(postIds: string[]): Promise<Map<string, number>> {
     if (postIds.length === 0) {

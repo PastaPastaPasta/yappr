@@ -1,6 +1,7 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, transformDocumentWithField } from './sdk-helpers';
+import { paginateFetchAll } from './pagination-utils';
 
 export interface RepostDocument {
   $id: string;
@@ -101,23 +102,28 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   }
 
   /**
-   * Get reposts for a post
+   * Get reposts for a post.
+   * Paginates through all results to return complete list.
    */
   async getPostReposts(postId: string, options: QueryOptions = {}): Promise<RepostDocument[]> {
     try {
-      // Pass identifier as base58 string - the SDK handles conversion
-      // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const result = await this.query({
-        where: [
-          ['postId', '==', postId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'repost',
+          where: [
+            ['postId', '==', postId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
       console.error('Error getting post reposts:', error);
       return [];
@@ -125,22 +131,28 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   }
 
   /**
-   * Get user's reposts
+   * Get user's reposts.
+   * Paginates through all results to return complete list.
    */
   async getUserReposts(userId: string, options: QueryOptions = {}): Promise<RepostDocument[]> {
     try {
-      // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const result = await this.query({
-        where: [
-          ['$ownerId', '==', userId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'desc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'repost',
+          where: [
+            ['$ownerId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
       console.error('Error getting user reposts:', error);
       return [];
@@ -158,6 +170,11 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   /**
    * Get reposts for multiple posts in a single batch query
    * Uses 'in' operator for efficient querying
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async getRepostsByPostIds(postIds: string[]): Promise<RepostDocument[]> {
     if (postIds.length === 0) return [];

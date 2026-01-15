@@ -2,6 +2,7 @@ import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { queryDocuments, stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
+import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface FollowDocument {
   $id: string;
@@ -112,18 +113,28 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Get followers of a user
+   * Get followers of a user.
+   * Paginates through all results to return complete list.
    */
   async getFollowers(userId: string, options: QueryOptions = {}): Promise<FollowDocument[]> {
     try {
-      const result = await this.query({
-        where: [['followingId', '==', userId]],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await getEvoSdk();
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [
+            ['followingId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
       console.error('Error getting followers:', error);
       return [];
@@ -131,18 +142,28 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Get users that a user follows
+   * Get users that a user follows.
+   * Paginates through all results to return complete list.
    */
   async getFollowing(userId: string, options: QueryOptions = {}): Promise<FollowDocument[]> {
     try {
-      const result = await this.query({
-        where: [['$ownerId', '==', userId]],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await getEvoSdk();
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [
+            ['$ownerId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'asc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
       console.error('Error getting following:', error);
       return [];
@@ -151,6 +172,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
   /**
    * Get array of following user IDs.
+   * Paginates through all results for complete list.
    * Deduplicates in-flight requests: if called multiple times before the first
    * request completes, all callers share the same promise/network request.
    */
@@ -158,7 +180,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     if (!userId) return [];
 
     return this.followingDeduplicator.dedupe(userId, async () => {
-      const following = await this.getFollowing(userId, { limit: 100 });
+      const following = await this.getFollowing(userId);
       return following.map(f => f.followingId);
     });
   }
@@ -197,24 +219,29 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Count followers - uses queryDocuments helper.
+   * Count followers.
+   * Paginates through all results for accurate count.
    * Deduplicates in-flight requests.
    */
   async countFollowers(userId: string): Promise<number> {
     return this.countFollowersDeduplicator.dedupe(userId, async () => {
       try {
         const sdk = await getEvoSdk();
-        const documents = await queryDocuments(sdk, {
-          dataContractId: this.contractId,
-          documentTypeName: 'follow',
-          where: [
-            ['followingId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['$createdAt', 'asc']],
-          limit: 100
-        });
-        return documents.length;
+
+        const { count } = await paginateCount(
+          sdk,
+          () => ({
+            dataContractId: this.contractId,
+            documentTypeName: 'follow',
+            where: [
+              ['followingId', '==', userId],
+              ['$createdAt', '>', 0]
+            ],
+            orderBy: [['$createdAt', 'asc']]
+          })
+        );
+
+        return count;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('Error counting followers:', errorMessage, error);
@@ -224,21 +251,29 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Count following - uses queryDocuments helper.
+   * Count following.
+   * Paginates through all results for accurate count.
    * Deduplicates in-flight requests.
    */
   async countFollowing(userId: string): Promise<number> {
     return this.countFollowingDeduplicator.dedupe(userId, async () => {
       try {
         const sdk = await getEvoSdk();
-        const documents = await queryDocuments(sdk, {
-          dataContractId: this.contractId,
-          documentTypeName: 'follow',
-          where: [['$ownerId', '==', userId]],
-          orderBy: [['$createdAt', 'asc']],
-          limit: 100
-        });
-        return documents.length;
+
+        const { count } = await paginateCount(
+          sdk,
+          () => ({
+            dataContractId: this.contractId,
+            documentTypeName: 'follow',
+            where: [
+              ['$ownerId', '==', userId],
+              ['$createdAt', '>', 0]
+            ],
+            orderBy: [['$createdAt', 'asc']]
+          })
+        );
+
+        return count;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('Error counting following:', errorMessage, error);
