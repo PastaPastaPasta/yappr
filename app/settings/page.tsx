@@ -85,7 +85,6 @@ function SettingsPage() {
   const [privacySettings, setPrivacySettings] = useState({
     publicProfile: true,
     showActivity: true,
-    allowMessages: 'everyone', // 'everyone', 'followers', 'none'
   })
 
   // Account creation date from profile
@@ -346,7 +345,7 @@ function SettingsPage() {
       
       <div>
         <h3 className="font-semibold mb-4">Direct Messages</h3>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between">
           <div>
             <p className="font-medium">Read Receipts</p>
             <p className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
@@ -361,52 +360,6 @@ function SettingsPage() {
             <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
           </Switch.Root>
         </div>
-        <RadioGroup.Root
-          value={privacySettings.allowMessages}
-          onValueChange={(value) => 
-            setPrivacySettings(prev => ({ ...prev, allowMessages: value }))
-          }
-          className="space-y-3"
-        >
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950">
-            <RadioGroup.Item
-              value="everyone"
-              className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-700 data-[state=checked]:border-yappr-500"
-            >
-              <RadioGroup.Indicator className="flex items-center justify-center w-full h-full after:block after:w-2.5 after:h-2.5 after:rounded-full after:bg-yappr-500" />
-            </RadioGroup.Item>
-            <label htmlFor="everyone" className="flex-1 cursor-pointer">
-              <p className="font-medium">Everyone</p>
-              <p className="text-sm text-gray-500">Anyone can message you</p>
-            </label>
-          </div>
-          
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950">
-            <RadioGroup.Item
-              value="followers"
-              className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-700 data-[state=checked]:border-yappr-500"
-            >
-              <RadioGroup.Indicator className="flex items-center justify-center w-full h-full after:block after:w-2.5 after:h-2.5 after:rounded-full after:bg-yappr-500" />
-            </RadioGroup.Item>
-            <label htmlFor="followers" className="flex-1 cursor-pointer">
-              <p className="font-medium">Followers Only</p>
-              <p className="text-sm text-gray-500">Only people you follow can message you</p>
-            </label>
-          </div>
-          
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950">
-            <RadioGroup.Item
-              value="none"
-              className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-700 data-[state=checked]:border-yappr-500"
-            >
-              <RadioGroup.Indicator className="flex items-center justify-center w-full h-full after:block after:w-2.5 after:h-2.5 after:rounded-full after:bg-yappr-500" />
-            </RadioGroup.Item>
-            <label htmlFor="none" className="flex-1 cursor-pointer">
-              <p className="font-medium">No One</p>
-              <p className="text-sm text-gray-500">Disable direct messages</p>
-            </label>
-          </div>
-        </RadioGroup.Root>
       </div>
 
       {/* Block Lists Section */}
