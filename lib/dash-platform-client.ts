@@ -284,9 +284,10 @@ export class DashPlatformClient {
       })
       
       // Check if there's already a pending query for this exact request
-      if (!options?.forceRefresh && this.pendingQueries.has(cacheKey)) {
+      const pendingQuery = this.pendingQueries.get(cacheKey)
+      if (!options?.forceRefresh && pendingQuery) {
         console.log('DashPlatformClient: Returning pending query result')
-        return await this.pendingQueries.get(cacheKey)!
+        return await pendingQuery
       }
       
       // Check cache first (unless force refresh)

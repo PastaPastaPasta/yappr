@@ -166,7 +166,7 @@ class HashtagValidationService {
 
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null
-      this.processBatch()
+      void this.processBatch()
     }, this.BATCH_DELAY)
   }
 

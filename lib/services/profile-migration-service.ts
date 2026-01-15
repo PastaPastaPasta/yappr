@@ -1,7 +1,6 @@
-import { profileService, ProfileDocument } from './profile-service';
+import { profileService } from './profile-service';
 import { unifiedProfileService } from './unified-profile-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { cacheManager } from '../cache-manager';
 
 // Legacy profile data structure (from old contract)
 export interface LegacyProfileData {

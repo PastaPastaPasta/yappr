@@ -199,23 +199,23 @@ function MessagesPage() {
       )
 
       if (result.success && result.message) {
+        const sentMessage = result.message
         // Add message to UI (with deduplication in case poll already added it)
         setMessages(prev => {
-          const msg = result.message!
           // Check if poll already added this message (with real ID while we have temp)
           const alreadyExists = prev.some(m =>
-            m.id === msg.id ||
-            (m.senderId === msg.senderId &&
-             m.content === msg.content &&
-             Math.abs(m.createdAt.getTime() - msg.createdAt.getTime()) < 60000)
+            m.id === sentMessage.id ||
+            (m.senderId === sentMessage.senderId &&
+             m.content === sentMessage.content &&
+             Math.abs(m.createdAt.getTime() - sentMessage.createdAt.getTime()) < 60000)
           )
-          return alreadyExists ? prev : [...prev, msg]
+          return alreadyExists ? prev : [...prev, sentMessage]
         })
 
         // Update conversation's last message
         setConversations(prev => prev.map(conv =>
           conv.id === selectedConversation.id
-            ? { ...conv, lastMessage: result.message!, updatedAt: new Date() }
+            ? { ...conv, lastMessage: sentMessage, updatedAt: new Date() }
             : conv
         ))
       } else {
@@ -513,7 +513,7 @@ function MessagesPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  sendMessage()
+                  void sendMessage()
                 }}
                 className="flex items-center gap-1 sm:gap-2"
               >
@@ -573,7 +573,7 @@ function MessagesPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                startNewConversation()
+                void startNewConversation()
               }}
             >
               <div className="mb-4">

@@ -111,7 +111,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Get likes for a post.
    * Paginates through all results to return complete list.
    */
-  async getPostLikes(postId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
+  async getPostLikes(postId: string, _options: QueryOptions = {}): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -140,7 +140,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Get user's likes.
    * Paginates through all results to return complete list.
    */
-  async getUserLikes(userId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
+  async getUserLikes(userId: string, _options: QueryOptions = {}): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 

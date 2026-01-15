@@ -5,10 +5,7 @@ import { dpnsService } from './dpns-service'
 import { unifiedProfileService } from './unified-profile-service'
 import {
   DirectMessage,
-  Conversation,
-  ConversationInviteDocument,
-  DirectMessageDocument,
-  ReadReceiptDocument
+  Conversation
 } from '../types'
 import {
   encryptToBinary,
@@ -183,13 +180,14 @@ class DirectMessageService {
         const convId = bs58.encode(Buffer.from(convIdBytes))
         const senderId = invite.$ownerId
 
-        if (!conversationMap.has(convId)) {
+        const existingConv = conversationMap.get(convId)
+        if (!existingConv) {
           conversationMap.set(convId, {
             participantId: senderId,
             invites: [invite]
           })
         } else {
-          conversationMap.get(convId)!.invites.push(invite)
+          existingConv.invites.push(invite)
         }
       }
 
@@ -200,13 +198,14 @@ class DirectMessageService {
         const recipientIdBytes = this.extractByteArray(invite.recipientId || invite.data?.recipientId)
         const recipientId = bs58.encode(Buffer.from(recipientIdBytes))
 
-        if (!conversationMap.has(convId)) {
+        const existingSentConv = conversationMap.get(convId)
+        if (!existingSentConv) {
           conversationMap.set(convId, {
             participantId: recipientId,
             invites: [invite]
           })
         } else {
-          conversationMap.get(convId)!.invites.push(invite)
+          existingSentConv.invites.push(invite)
         }
       }
 

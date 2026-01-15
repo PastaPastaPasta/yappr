@@ -1,6 +1,6 @@
 import * as secp256k1 from '@noble/secp256k1'
 import { hash160 } from './hash'
-import { wifToPrivateKey, validateWifNetwork, TESTNET_WIF_PREFIX, MAINNET_WIF_PREFIX } from './wif'
+import { wifToPrivateKey, validateWifNetwork } from './wif'
 
 export interface IdentityPublicKeyInfo {
   id: number

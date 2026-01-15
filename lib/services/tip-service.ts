@@ -104,7 +104,7 @@ class TipService {
             const transferKeys = identityJson.publicKeys.filter((k: any) => k.purpose === 3);
             console.log('Transfer keys on identity:', transferKeys);
 
-            if (keyPair && keyPair.publicKey) {
+            if (keyPair?.publicKey) {
               // public_key is a hex string, convert to base64 for comparison
               const hexToBytes = (hex: string) => {
                 const bytes = [];

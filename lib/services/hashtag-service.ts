@@ -1,7 +1,7 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
-import { HASHTAG_CONTRACT_ID, YAPPR_CONTRACT_ID } from '../constants';
+import { identifierToBase58 } from './sdk-helpers';
+import { HASHTAG_CONTRACT_ID } from '../constants';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
@@ -238,7 +238,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    * Paginates through all results to return complete list.
    * Returns postHashtag documents - caller should fetch actual posts and filter by ownership.
    */
-  async getPostIdsByHashtag(hashtag: string, options: QueryOptions = {}): Promise<PostHashtagDocument[]> {
+  async getPostIdsByHashtag(hashtag: string, _options: QueryOptions = {}): Promise<PostHashtagDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const normalizedTag = this.normalizeHashtag(hashtag);

@@ -35,7 +35,7 @@ export function KeyBackupModal() {
   // Benchmark on mount to get device speed
   useEffect(() => {
     if (isOpen && iterationsPerMs === null) {
-      runBenchmark()
+      void runBenchmark()
     }
   }, [isOpen, iterationsPerMs])
 

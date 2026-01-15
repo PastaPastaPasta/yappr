@@ -105,8 +105,8 @@ function HashtagPageContent() {
       }
     }
 
-    loadHashtagPosts()
-  }, [tag])
+    void loadHashtagPosts()
+  }, [tag, user?.identityId])
 
   if (!tag) {
     return (

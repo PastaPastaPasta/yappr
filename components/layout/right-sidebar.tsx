@@ -63,7 +63,7 @@ export function RightSidebar() {
       }
     }
 
-    fetchStats()
+    void fetchStats()
   }, [user?.identityId])
 
   // Fetch global stats (independent of user login)
@@ -92,7 +92,7 @@ export function RightSidebar() {
       }
     }
 
-    fetchGlobalStats()
+    void fetchGlobalStats()
   }, [])
 
   return (

@@ -503,16 +503,21 @@ function FeedPage() {
             // Build reply context items
             const replyContextItems: FeedItem[] = replies
               .filter((reply: any) => parentPostMap.has(reply.replyToId))
-              .map((reply: any) => ({
-                type: 'reply_context' as const,
-                originalPost: parentPostMap.get(reply.replyToId)!,
-                reply,
-                replier: {
-                  id: reply.author.id,
-                  username: reply.author.username,
-                  displayName: reply.author.displayName
+              .map((reply: any) => {
+                const originalPost = parentPostMap.get(reply.replyToId)
+                if (!originalPost) return null
+                return {
+                  type: 'reply_context' as const,
+                  originalPost,
+                  reply,
+                  replier: {
+                    id: reply.author.id,
+                    username: reply.author.username,
+                    displayName: reply.author.displayName
+                  }
                 }
-              }))
+              })
+              .filter((item): item is NonNullable<typeof item> => item !== null)
 
             // Merge non-replies with reply contexts
             feedItems = [...nonReplies, ...replyContextItems]
@@ -634,7 +639,7 @@ function FeedPage() {
     } finally {
       setLoading(false)
     }
-  }, [postsState.setLoading, postsState.setError, postsState.setData, enrichProgressively, activeTab, user?.identityId])
+  }, [postsState, enrichProgressively, activeTab, user?.identityId])
 
   // Load more posts (pagination)
   const loadMore = useCallback(async () => {
@@ -664,7 +669,7 @@ function FeedPage() {
     const handlePostCreated = () => {
       // Reset enrichment tracking so new data gets enriched
       resetEnrichment()
-      loadPosts(true) // Force refresh when new post is created
+      void loadPosts(true) // Force refresh when new post is created
     }
 
     window.addEventListener('post-created', handlePostCreated)
@@ -682,7 +687,7 @@ function FeedPage() {
     setLastPostId(null)
     setFollowingNextWindow(null)
     setHasMore(true)
-    loadPosts()
+    void loadPosts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab])
 
@@ -728,7 +733,7 @@ function FeedPage() {
             <button
               onClick={() => {
                 resetEnrichment()
-                loadPosts(true)
+                void loadPosts(true)
               }}
               disabled={postsState.loading}
               className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"

@@ -49,7 +49,7 @@ export default function ExplorePage() {
       }
     }
 
-    loadTrendingHashtags()
+    void loadTrendingHashtags()
   }, [])
 
   // Search posts when query changes
@@ -114,7 +114,7 @@ export default function ExplorePage() {
 
     const debounceTimer = setTimeout(searchPosts, 300)
     return () => clearTimeout(debounceTimer)
-  }, [searchQuery])
+  }, [searchQuery, user?.identityId])
 
   const handleHashtagClick = (hashtag: string) => {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)

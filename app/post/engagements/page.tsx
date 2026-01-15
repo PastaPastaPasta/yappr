@@ -100,7 +100,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId])
+  }, [postId, user?.identityId, likesState])
 
   // Load reposts
   const loadReposts = useCallback(async () => {
@@ -154,7 +154,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId])
+  }, [postId, user?.identityId, repostsState])
 
   // Load quotes
   const loadQuotes = useCallback(async () => {
@@ -212,7 +212,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId])
+  }, [postId, user?.identityId, quotesState])
 
   // Load data for active tab (only if not yet loaded)
   useEffect(() => {
@@ -221,17 +221,17 @@ function EngagementsPageContent() {
     switch (activeTab) {
       case 'likes':
         if (likesState.data === null) {
-          loadLikes()
+          void loadLikes()
         }
         break
       case 'reposts':
         if (repostsState.data === null) {
-          loadReposts()
+          void loadReposts()
         }
         break
       case 'quotes':
         if (quotesState.data === null) {
-          loadQuotes()
+          void loadQuotes()
         }
         break
     }
@@ -437,7 +437,7 @@ function EngagementsPageContent() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(engagement.id)
+                                        void navigator.clipboard.writeText(engagement.id)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

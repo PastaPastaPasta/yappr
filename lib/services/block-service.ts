@@ -85,7 +85,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       const blockedIdBytes = Array.from(bs58.decode(targetUserId))
       const documentData: Record<string, unknown> = { blockedId: blockedIdBytes }
-      if (message && message.trim()) {
+      if (message?.trim()) {
         documentData.message = message.trim().slice(0, 280)
       }
 

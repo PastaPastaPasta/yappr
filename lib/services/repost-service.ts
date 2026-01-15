@@ -105,7 +105,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
    * Get reposts for a post.
    * Paginates through all results to return complete list.
    */
-  async getPostReposts(postId: string, options: QueryOptions = {}): Promise<RepostDocument[]> {
+  async getPostReposts(postId: string, _options: QueryOptions = {}): Promise<RepostDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -134,7 +134,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
    * Get user's reposts.
    * Paginates through all results to return complete list.
    */
-  async getUserReposts(userId: string, options: QueryOptions = {}): Promise<RepostDocument[]> {
+  async getUserReposts(userId: string, _options: QueryOptions = {}): Promise<RepostDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 

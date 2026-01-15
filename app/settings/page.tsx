@@ -109,7 +109,7 @@ function SettingsPage() {
       }
     }
 
-    fetchProfileCreatedAt()
+    void fetchProfileCreatedAt()
   }, [user?.identityId])
 
   const handleBack = () => {

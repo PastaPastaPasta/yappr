@@ -104,7 +104,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
    * Get user's bookmarks.
    * Paginates through all results to return complete list.
    */
-  async getUserBookmarks(userId: string, options: QueryOptions = {}): Promise<BookmarkDocument[]> {
+  async getUserBookmarks(userId: string, _options: QueryOptions = {}): Promise<BookmarkDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 

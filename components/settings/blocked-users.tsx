@@ -91,7 +91,7 @@ export function BlockedUsersSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadBlockedUsers()
+    void loadBlockedUsers()
   }, [loadBlockedUsers])
 
   const handleUnblock = async (blockedUserId: string) => {

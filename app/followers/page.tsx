@@ -207,12 +207,12 @@ function FollowersPage() {
     } finally {
       setLoading(false)
     }
-  }, [followersState.setLoading, followersState.setError, followersState.setData, user?.identityId, targetUserId])
+  }, [followersState, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      loadFollowers()
+      void loadFollowers()
     }
   }, [loadFollowers, user, targetUserId])
 
@@ -375,7 +375,7 @@ function FollowersPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(follower.id)
+                                        void navigator.clipboard.writeText(follower.id)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

@@ -10,6 +10,7 @@ import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { Loader2 } from 'lucide-react'
 import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import Image from 'next/image'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -266,10 +267,13 @@ function CreateProfilePage() {
                 <div className="flex-shrink-0">
                   <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
                     {avatarSeed && (
-                      <img
+                      <Image
                         src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
                         alt="Avatar preview"
+                        width={96}
+                        height={96}
                         className="w-full h-full object-cover"
+                        unoptimized
                       />
                     )}
                   </div>

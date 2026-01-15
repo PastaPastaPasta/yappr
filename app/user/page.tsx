@@ -590,7 +590,7 @@ function UserProfileContent() {
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded && MENTION_CONTRACT_ID) {
-      loadMentions()
+      void loadMentions()
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
@@ -786,7 +786,7 @@ function UserProfileContent() {
                         <button
                           onClick={() => {
                             const profileUrl = `${window.location.origin}/user?id=${userId}`
-                            navigator.clipboard.writeText(profileUrl)
+                            void navigator.clipboard.writeText(profileUrl)
                             toast.success('Profile link copied!')
                           }}
                           className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -966,7 +966,7 @@ function UserProfileContent() {
                             <button
                               onClick={() => {
                                 if (userId) {
-                                  navigator.clipboard.writeText(userId)
+                                  void navigator.clipboard.writeText(userId)
                                   toast.success('Identity ID copied')
                                 }
                               }}

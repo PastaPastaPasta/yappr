@@ -46,7 +46,7 @@ export function MentionLink({ username, displayText, isFailed, onFailedClick }: 
       }
     }
 
-    resolveUser()
+    void resolveUser()
     return () => { cancelled = true }
   }, [username])
 

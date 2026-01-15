@@ -112,7 +112,7 @@ function MentionsPageContent() {
       }
     }
 
-    loadMentionedPosts()
+    void loadMentionedPosts()
   }, [targetUserId, currentUser?.identityId])
 
   // If not logged in and no user specified

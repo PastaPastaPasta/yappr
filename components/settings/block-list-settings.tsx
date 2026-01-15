@@ -109,7 +109,7 @@ export function BlockListSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadData()
+    void loadData()
   }, [loadData])
 
   const handleToggle = async (targetUserId: string, currentlyFollowing: boolean) => {

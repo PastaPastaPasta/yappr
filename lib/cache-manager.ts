@@ -28,10 +28,12 @@ export class CacheManager {
    * Get or create a named cache
    */
   private getCache(cacheName: string): Map<string, CacheEntry<any>> {
-    if (!this.caches.has(cacheName)) {
-      this.caches.set(cacheName, new Map())
+    let cache = this.caches.get(cacheName)
+    if (!cache) {
+      cache = new Map()
+      this.caches.set(cacheName, cache)
     }
-    return this.caches.get(cacheName)!
+    return cache
   }
 
   /**
@@ -58,10 +60,12 @@ export class CacheManager {
     // Update tag index
     const cacheKey = `${cacheName}:${key}`
     tags.forEach(tag => {
-      if (!this.tagIndex.has(tag)) {
-        this.tagIndex.set(tag, new Set())
+      let tagSet = this.tagIndex.get(tag)
+      if (!tagSet) {
+        tagSet = new Set()
+        this.tagIndex.set(tag, tagSet)
       }
-      this.tagIndex.get(tag)!.add(cacheKey)
+      tagSet.add(cacheKey)
     })
   }
 

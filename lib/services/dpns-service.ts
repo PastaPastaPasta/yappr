@@ -2,26 +2,6 @@ import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
 
-interface DpnsDocument {
-  $id: string;
-  $ownerId: string;
-  $revision: number;
-  $createdAt?: number;
-  $updatedAt?: number;
-  label: string;
-  normalizedLabel: string;
-  normalizedParentDomainName: string;
-  preorderSalt: string;
-  records: {
-    identity?: string;
-    dashUniqueIdentityId?: string;
-    dashAliasIdentityId?: string;
-  };
-  subdomainRules?: {
-    allowSubdomains: boolean;
-  };
-}
-
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
  */

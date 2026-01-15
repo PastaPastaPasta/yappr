@@ -12,6 +12,7 @@ import {
 } from '@/lib/services/unified-profile-service'
 import { Button } from '@/components/ui/button'
 import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import Image from 'next/image'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -120,11 +121,13 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
       {/* Preview */}
       <div className="flex justify-center">
         {previewUrl ? (
-          <img
+          <Image
             src={previewUrl}
             alt="Avatar preview"
+            width={96}
+            height={96}
             className="w-24 h-24 rounded-full border-4 border-gray-200 dark:border-gray-700"
-            crossOrigin="anonymous"
+            unoptimized
           />
         ) : (
           <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
@@ -152,11 +155,13 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
                 }`}
                 title={DICEBEAR_STYLE_LABELS[s]}
               >
-                <img
+                <Image
                   src={stylePreviewUrl}
                   alt={DICEBEAR_STYLE_LABELS[s]}
+                  width={48}
+                  height={48}
                   className="w-full aspect-square rounded"
-                  crossOrigin="anonymous"
+                  unoptimized
                 />
                 {!compact && <p className="text-[10px] text-center mt-1 truncate">{DICEBEAR_STYLE_LABELS[s]}</p>}
               </button>

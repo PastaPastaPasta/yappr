@@ -1,7 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { queryDocuments, mapToDocumentArray, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { queryDocuments, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];

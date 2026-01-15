@@ -44,7 +44,7 @@ export function KeyBackupSettings() {
   }, [user])
 
   useEffect(() => {
-    checkBackupStatus()
+    void checkBackupStatus()
   }, [checkBackupStatus])
 
   const handleCreateBackup = async () => {
@@ -93,7 +93,7 @@ export function KeyBackupSettings() {
     const unsubscribe = useKeyBackupModal.subscribe((state, prevState) => {
       if (prevState.isOpen && !state.isOpen) {
         // Modal just closed, refresh backup status
-        checkBackupStatus()
+        void checkBackupStatus()
       }
     })
     return unsubscribe

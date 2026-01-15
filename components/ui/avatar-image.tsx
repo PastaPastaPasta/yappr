@@ -118,7 +118,7 @@ export const UserAvatar = memo(function UserAvatar({
 
     let mounted = true
 
-    fetchAvatarUrl(userId).then((url) => {
+    void fetchAvatarUrl(userId).then((url) => {
       // Only set if mounted and we got a valid URL
       if (mounted && url) {
         setAvatarUrl(url)

@@ -1,6 +1,5 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, User, PostQueryOptions } from '../types';
-import { identityService } from './identity-service';
 import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
@@ -741,8 +740,11 @@ class PostService extends BaseDocumentService<Post> {
       for (const doc of documents) {
         const post = this.transformDocument(doc);
         const parentId = post.replyToId;
-        if (parentId && result.has(parentId)) {
-          result.get(parentId)!.push(post);
+        if (parentId) {
+          const parentReplies = result.get(parentId);
+          if (parentReplies) {
+            parentReplies.push(post);
+          }
         }
       }
 
@@ -1175,12 +1177,12 @@ class PostService extends BaseDocumentService<Post> {
         }
       );
 
-      if (!result.success) {
+      if (!result.success || result.data === undefined) {
         console.error('Error counting unique authors after retries:', result.error);
         throw result.error || new Error('Failed to count unique authors');
       }
 
-      return result.data!;
+      return result.data;
     });
   }
 
@@ -1223,7 +1225,7 @@ class PostService extends BaseDocumentService<Post> {
    * Get post counts per author
    * Returns a Map of authorId -> post count
    */
-  async getAuthorPostCounts(limit: number = 50): Promise<Map<string, number>> {
+  async getAuthorPostCounts(_limit: number = 50): Promise<Map<string, number>> {
     const authorCounts = new Map<string, number>();
 
     try {

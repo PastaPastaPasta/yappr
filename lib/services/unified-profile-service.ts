@@ -1,5 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
-import { stateTransitionService } from './state-transition-service';
+import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
@@ -218,7 +217,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null;
-      this.processBatch();
+      void this.processBatch();
     }, 5);
   }
 
@@ -481,7 +480,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     };
 
     // Queue async enrichment
-    this.enrichUser(user, !!cachedUsername);
+    void this.enrichUser(user, !!cachedUsername);
 
     return user;
   }
@@ -532,7 +531,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Get user statistics
    */
-  private async getUserStats(userId: string): Promise<{ followers: number; following: number }> {
+  private async getUserStats(_userId: string): Promise<{ followers: number; following: number }> {
     // TODO: Query follow documents for actual counts
     return { followers: 0, following: 0 };
   }

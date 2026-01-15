@@ -400,7 +400,7 @@ export class RequestDeduplicator<K, V> {
     const promise = fetchFn();
     this.inFlight.set(key, promise);
 
-    promise.finally(() => {
+    void promise.finally(() => {
       setTimeout(() => this.inFlight.delete(key), this.cleanupDelayMs);
     });
 
