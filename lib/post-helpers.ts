@@ -99,8 +99,8 @@ export function normalizeDpnsUsername(username: string): string {
  * Max 100 chars to accommodate DPNS username constraints
  */
 export function extractMentions(content: string): string[] {
-  // Match @username or @username.dash format
-  const regex = /@([a-zA-Z0-9_-]{1,100}(?:\.dash)?)/gi
+  // Match @username or @username.dash format (no hyphens - DPNS doesn't allow them)
+  const regex = /@([a-zA-Z0-9_]{1,100}(?:\.dash)?)/gi
   const matches = content.match(regex) || []
   return Array.from(new Set(
     matches.map(mention => normalizeDpnsUsername(mention.slice(1))) // Remove @ prefix, normalize, dedupe

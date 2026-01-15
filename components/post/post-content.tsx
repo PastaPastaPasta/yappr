@@ -67,8 +67,8 @@ export function PostContent({
       { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
       // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
       { regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g, type: 'cashtag' },
-      // Mentions: @ followed by alphanumeric/underscore/hyphen, optionally with .dash suffix
-      { regex: /@([a-zA-Z0-9_-]{1,100}(?:\.dash)?)/gi, type: 'mention' },
+      // Mentions: @ followed by alphanumeric/underscore, optionally with .dash suffix (no hyphens - DPNS doesn't allow them)
+      { regex: /@([a-zA-Z0-9_]{1,100}(?:\.dash)?)/gi, type: 'mention' },
     ]
 
     // Parse text for inline elements only (used for inner content of bold/italic)

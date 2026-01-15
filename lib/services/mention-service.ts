@@ -64,11 +64,26 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         return true;
       }
 
-      // Convert IDs to byte arrays
+      // Convert IDs to byte arrays with defensive error handling
       const bs58Module = await import('bs58');
       const bs58 = bs58Module.default;
-      const postIdBytes = Array.from(bs58.decode(postId));
-      const mentionedUserIdBytes = Array.from(bs58.decode(mentionedUserId));
+
+      let postIdBytes: number[];
+      let mentionedUserIdBytes: number[];
+
+      try {
+        postIdBytes = Array.from(bs58.decode(postId));
+      } catch (decodeError) {
+        console.error('MentionService: Invalid base58 postId:', postId, decodeError);
+        return false;
+      }
+
+      try {
+        mentionedUserIdBytes = Array.from(bs58.decode(mentionedUserId));
+      } catch (decodeError) {
+        console.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
+        return false;
+      }
 
       // Create document via state transition
       const result = await stateTransitionService.createDocument(
