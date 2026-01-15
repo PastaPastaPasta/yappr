@@ -83,3 +83,16 @@ export function extractAllTags(content: string): string[] {
   const cashtags = extractCashtags(content)
   return Array.from(new Set([...hashtags, ...cashtags]))
 }
+
+/**
+ * Extract @mentions from post content
+ * Returns usernames without the @ prefix, lowercase and deduplicated
+ * Max 100 chars to accommodate DPNS username constraints
+ */
+export function extractMentions(content: string): string[] {
+  const regex = /@([a-zA-Z0-9_-]{1,100})/g
+  const matches = content.match(regex) || []
+  return Array.from(new Set(
+    matches.map(mention => mention.slice(1).toLowerCase()) // Remove @ prefix, lowercase, dedupe
+  ))
+}

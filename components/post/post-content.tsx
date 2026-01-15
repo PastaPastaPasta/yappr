@@ -8,6 +8,7 @@ import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt } from './lin
 import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage } from '@/lib/post-helpers'
+import { MentionLink } from './mention-link'
 
 interface PostContentProps {
   content: string
@@ -296,10 +297,14 @@ export function PostContent({
     }
 
     if (part.type === 'mention') {
+      // Extract username without @ prefix
+      const username = part.value.slice(1).toLowerCase()
       return (
-        <span key={key} className="text-yappr-500">
-          {part.value}
-        </span>
+        <MentionLink
+          key={key}
+          username={username}
+          displayText={part.value}
+        />
       )
     }
 
