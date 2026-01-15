@@ -46,7 +46,7 @@ export function MentionLink({ username, displayText, isFailed, onFailedClick }: 
       }
     }
 
-    void resolveUser()
+    resolveUser().catch(err => console.error('Failed to resolve user:', err))
     return () => { cancelled = true }
   }, [username])
 

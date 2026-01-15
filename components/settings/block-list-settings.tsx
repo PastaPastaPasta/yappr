@@ -109,7 +109,7 @@ export function BlockListSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    void loadData()
+    loadData().catch(err => console.error('Failed to load block list data:', err))
   }, [loadData])
 
   const handleToggle = async (targetUserId: string, currentlyFollowing: boolean) => {

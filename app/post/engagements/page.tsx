@@ -221,17 +221,17 @@ function EngagementsPageContent() {
     switch (activeTab) {
       case 'likes':
         if (likesState.data === null) {
-          void loadLikes()
+          loadLikes().catch(err => console.error('Failed to load likes:', err))
         }
         break
       case 'reposts':
         if (repostsState.data === null) {
-          void loadReposts()
+          loadReposts().catch(err => console.error('Failed to load reposts:', err))
         }
         break
       case 'quotes':
         if (quotesState.data === null) {
-          void loadQuotes()
+          loadQuotes().catch(err => console.error('Failed to load quotes:', err))
         }
         break
     }
@@ -437,7 +437,7 @@ function EngagementsPageContent() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        void navigator.clipboard.writeText(engagement.id)
+                                        navigator.clipboard.writeText(engagement.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

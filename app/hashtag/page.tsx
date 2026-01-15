@@ -105,7 +105,7 @@ function HashtagPageContent() {
       }
     }
 
-    void loadHashtagPosts()
+    loadHashtagPosts().catch(err => console.error('Failed to load hashtag posts:', err))
   }, [tag, user?.identityId])
 
   if (!tag) {

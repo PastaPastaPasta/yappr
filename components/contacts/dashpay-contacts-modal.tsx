@@ -48,7 +48,7 @@ export function DashPayContactsModal() {
   // Load contacts when modal opens
   useEffect(() => {
     if (isOpen && user) {
-      void loadContacts()
+      loadContacts().catch(err => console.error('Failed to load contacts:', err))
     }
   }, [isOpen, user, loadContacts])
 

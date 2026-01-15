@@ -513,7 +513,7 @@ function MessagesPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  void sendMessage()
+                  sendMessage().catch(err => console.error('Failed to send message:', err))
                 }}
                 className="flex items-center gap-1 sm:gap-2"
               >
@@ -573,7 +573,7 @@ function MessagesPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                void startNewConversation()
+                startNewConversation().catch(err => console.error('Failed to start conversation:', err))
               }}
             >
               <div className="mb-4">

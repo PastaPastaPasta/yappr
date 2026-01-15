@@ -168,7 +168,7 @@ class MentionValidationService {
 
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null
-      void this.processBatch()
+      this.processBatch().catch(err => console.error('Failed to process mention batch:', err))
     }, this.BATCH_DELAY)
   }
 

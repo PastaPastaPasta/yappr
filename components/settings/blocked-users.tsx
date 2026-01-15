@@ -91,7 +91,7 @@ export function BlockedUsersSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    void loadBlockedUsers()
+    loadBlockedUsers().catch(err => console.error('Failed to load blocked users:', err))
   }, [loadBlockedUsers])
 
   const handleUnblock = async (blockedUserId: string) => {

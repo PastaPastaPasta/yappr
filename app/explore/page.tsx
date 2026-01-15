@@ -49,7 +49,7 @@ export default function ExplorePage() {
       }
     }
 
-    void loadTrendingHashtags()
+    loadTrendingHashtags().catch(err => console.error('Failed to load trending hashtags:', err))
   }, [])
 
   // Search posts when query changes

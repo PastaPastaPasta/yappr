@@ -669,7 +669,7 @@ function FeedPage() {
     const handlePostCreated = () => {
       // Reset enrichment tracking so new data gets enriched
       resetEnrichment()
-      void loadPosts(true) // Force refresh when new post is created
+      loadPosts(true).catch(err => console.error('Failed to load posts:', err)) // Force refresh when new post is created
     }
 
     window.addEventListener('post-created', handlePostCreated)
@@ -687,7 +687,7 @@ function FeedPage() {
     setLastPostId(null)
     setFollowingNextWindow(null)
     setHasMore(true)
-    void loadPosts()
+    loadPosts().catch(err => console.error('Failed to load posts:', err))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab])
 
@@ -733,7 +733,7 @@ function FeedPage() {
             <button
               onClick={() => {
                 resetEnrichment()
-                void loadPosts(true)
+                loadPosts(true).catch(err => console.error('Failed to load posts:', err))
               }}
               disabled={postsState.loading}
               className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"

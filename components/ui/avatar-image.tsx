@@ -118,12 +118,12 @@ export const UserAvatar = memo(function UserAvatar({
 
     let mounted = true
 
-    void fetchAvatarUrl(userId).then((url) => {
+    fetchAvatarUrl(userId).then((url) => {
       // Only set if mounted and we got a valid URL
       if (mounted && url) {
         setAvatarUrl(url)
       }
-    })
+    }).catch(err => console.error('Failed to fetch avatar URL:', err))
 
     return () => {
       mounted = false

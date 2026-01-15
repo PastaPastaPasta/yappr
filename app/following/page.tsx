@@ -224,7 +224,7 @@ function FollowingPage() {
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      void loadFollowing()
+      loadFollowing().catch(err => console.error('Failed to load following:', err))
     }
   }, [loadFollowing, user, targetUserId])
 
@@ -421,7 +421,7 @@ function FollowingPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery) {
-        void searchUsers()
+        searchUsers().catch(err => console.error('Failed to search users:', err))
       }
     }, 500)
 
@@ -664,7 +664,7 @@ function FollowingPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        void navigator.clipboard.writeText(followingUser.id)
+                                        navigator.clipboard.writeText(followingUser.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

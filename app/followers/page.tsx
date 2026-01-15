@@ -212,7 +212,7 @@ function FollowersPage() {
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      void loadFollowers()
+      loadFollowers().catch(err => console.error('Failed to load followers:', err))
     }
   }, [loadFollowers, user, targetUserId])
 
@@ -375,7 +375,7 @@ function FollowersPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        void navigator.clipboard.writeText(follower.id)
+                                        navigator.clipboard.writeText(follower.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

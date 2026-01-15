@@ -161,7 +161,7 @@ class ProfileService extends BaseDocumentService<User> {
 
     // Queue async operations to enrich the user
     // Skip username resolution if we already have a cached username
-    void this.enrichUser(user, !!cachedUsername);
+    this.enrichUser(user, !!cachedUsername).catch(err => console.error('Failed to enrich user:', err));
 
     return user;
   }

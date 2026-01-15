@@ -400,9 +400,9 @@ export class RequestDeduplicator<K, V> {
     const promise = fetchFn();
     this.inFlight.set(key, promise);
 
-    void promise.finally(() => {
+    promise.finally(() => {
       setTimeout(() => this.inFlight.delete(key), this.cleanupDelayMs);
-    });
+    }).catch(() => {/* Errors are handled by the consumer */});
 
     return promise;
   }

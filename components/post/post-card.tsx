@@ -216,7 +216,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  void navigator.clipboard.writeText(post.author.id)
+                  navigator.clipboard.writeText(post.author.id).catch(console.error)
                   toast.success('Identity ID copied')
                 }}
                 className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
@@ -425,7 +425,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleShare = () => {
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-    void navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`)
+    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`).catch(console.error)
     toast.success('Link copied to clipboard')
   }
 
@@ -527,7 +527,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); void toggleFollow(); }}
+                    onClick={(e) => { e.stopPropagation(); toggleFollow().catch(console.error); }}
                     disabled={followLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
                   >
@@ -543,7 +543,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     View post engagements
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); void toggleBlock(); }}
+                    onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
                     disabled={blockLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
                   >
@@ -724,7 +724,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     onClick={(e) => e.stopPropagation()}
                   >
                     <DropdownMenu.Item
-                      onClick={(e) => { e.stopPropagation(); void handleRepost(); }}
+                      onClick={(e) => { e.stopPropagation(); handleRepost().catch(console.error); }}
                       className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
                     >
                       <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
@@ -744,7 +744,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <Tooltip.Root>
                 <Tooltip.Trigger asChild>
                   <button
-                    onClick={(e) => { e.stopPropagation(); void handleLike(); }}
+                    onClick={(e) => { e.stopPropagation(); handleLike().catch(console.error); }}
                     disabled={likeLoading}
                     className={cn(
                       'group flex items-center gap-1 p-2 rounded-full transition-colors',
@@ -815,7 +815,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <Tooltip.Root>
                   <Tooltip.Trigger asChild>
                     <button
-                      onClick={(e) => { e.stopPropagation(); void handleBookmark(); }}
+                      onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
                       disabled={bookmarkLoading}
                       className={cn(
                         'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',

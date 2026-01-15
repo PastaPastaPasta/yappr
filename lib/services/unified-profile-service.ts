@@ -217,7 +217,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null;
-      void this.processBatch();
+      this.processBatch().catch(err => console.error('Failed to process avatar batch:', err));
     }, 5);
   }
 
@@ -480,7 +480,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     };
 
     // Queue async enrichment
-    void this.enrichUser(user, !!cachedUsername);
+    this.enrichUser(user, !!cachedUsername).catch(err => console.error('Failed to enrich user:', err));
 
     return user;
   }
