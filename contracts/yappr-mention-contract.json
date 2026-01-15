@@ -12,7 +12,7 @@
         "name": "byMentionedUser",
         "properties": [
           { "mentionedUserId": "asc" },
-          { "$createdAt": "desc" }
+          { "$createdAt": "asc" }
         ]
       },
       {
@@ -33,7 +33,7 @@
         "name": "byOwner",
         "properties": [
           { "$ownerId": "asc" },
-          { "$createdAt": "desc" }
+          { "$createdAt": "asc" }
         ]
       }
     ],

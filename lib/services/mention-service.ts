@@ -224,7 +224,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
             ['mentionedUserId', '==', userId],
             ['$createdAt', '>', 0]
           ],
-          orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']]
+          orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );
