@@ -771,7 +771,7 @@ export function ComposeModal() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
-      void handlePost()
+      handlePost().catch(err => console.error('Failed to post:', err))
     }
   }
 

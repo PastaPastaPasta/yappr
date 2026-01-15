@@ -34,7 +34,6 @@ export function TipModal() {
 
   // Payment URI support
   const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[]>([])
-  const [, setIsLoadingUris] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credits')
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
 
@@ -52,12 +51,10 @@ export function TipModal() {
   // Fetch recipient's payment URIs when modal opens
   useEffect(() => {
     if (isOpen && post) {
-      setIsLoadingUris(true)
       import('@/lib/services/unified-profile-service')
         .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(post.author.id))
         .then(uris => setPaymentUris(uris))
         .catch(() => setPaymentUris([]))
-        .finally(() => setIsLoadingUris(false))
     }
   }, [isOpen, post])
 
@@ -142,7 +139,7 @@ export function TipModal() {
         .then(b => setBalance(b.confirmed))
         .catch(() => {})
       // Update global balance in auth context (persists to localStorage)
-      void refreshBalance()
+      refreshBalance().catch(err => console.error('Failed to refresh balance:', err))
     } else {
       setState('error')
       setError(result.error || 'Transfer failed')
