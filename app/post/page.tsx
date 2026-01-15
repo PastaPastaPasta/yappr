@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, Suspense } from 'react'
+import { Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -10,97 +10,31 @@ import { ReplyThreadItem } from '@/components/post/reply-thread'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Post } from '@/lib/types'
-import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { usePostDetail } from '@/hooks/use-post-detail'
-import { extractAllTags } from '@/lib/post-helpers'
-import { hashtagService } from '@/lib/services/hashtag-service'
-import toast from 'react-hot-toast'
+import { useAppStore } from '@/lib/store'
 
 function PostDetailContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const postId = searchParams.get('id')
   const { user } = useAuth()
-
-  const [replyContent, setReplyContent] = useState('')
-  const [isReplying, setIsReplying] = useState(false)
+  const { setReplyingTo, setComposeOpen } = useAppStore()
 
   // All post loading and enrichment handled by hook
   const {
     post,
     parentPost,
     replyThreads,
-    isLoading,
-    addOptimisticReply,
-    updatePost
+    isLoading
   } = usePostDetail({
     postId,
     enabled: !!postId
   })
 
-  const handleReply = async () => {
-    if (!replyContent.trim() || !post || !user) return
-
-    setIsReplying(true)
-    try {
-      const dashClient = getDashPlatformClient()
-      const result = await dashClient.createPost(replyContent, { replyToPostId: post.id })
-
-      // Extract postId from result for hashtag registration
-      const replyPostId =
-        result.data?.documentId ||
-        result.data?.document?.$id ||
-        result.data?.document?.id ||
-        result.data?.$id ||
-        result.data?.id
-
-      // Register hashtags if any exist
-      if (replyPostId) {
-        const hashtags = extractAllTags(replyContent)
-        if (hashtags.length > 0) {
-          hashtagService.createPostHashtags(replyPostId, user.identityId, hashtags)
-            .then((results) => {
-              const successCount = results.filter((r) => r).length
-              console.log(`Reply: Created ${successCount}/${hashtags.length} hashtag documents`)
-            })
-            .catch((err) => {
-              console.error('Failed to create hashtag documents for reply:', err)
-            })
-        }
-      }
-
-      // Add optimistic reply
-      const newReply: Post = {
-        id: replyPostId || `reply_${Date.now()}`,
-        content: replyContent,
-        author: {
-          id: user.identityId,
-          username: user.identityId.slice(0, 8) + '...',
-          displayName: user.identityId.slice(0, 8) + '...',
-          avatar: '',
-          followers: 0,
-          following: 0,
-          joinedAt: new Date()
-        },
-        createdAt: new Date(),
-        likes: 0,
-        replies: 0,
-        reposts: 0,
-        views: 0,
-        replyToId: post.id
-      }
-
-      addOptimisticReply(newReply)
-      setReplyContent('')
-      toast.success('Reply posted!')
-    } catch (error) {
-      console.error('Failed to post reply:', error)
-      toast.error('Failed to post reply')
-    } finally {
-      setIsReplying(false)
-    }
+  const handleReply = () => {
+    if (!post) return
+    setReplyingTo(post)
+    setComposeOpen(true)
   }
 
   if (!postId) {
@@ -159,40 +93,13 @@ function PostDetailContent() {
 
             {user ? (
               <div className="p-4 border-b border-gray-200 dark:border-gray-800">
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    handleReply()
-                  }}
-                  className="space-y-3"
+                <Button
+                  onClick={handleReply}
+                  variant="outline"
+                  className="w-full"
                 >
-                  <Input
-                    type="text"
-                    placeholder="Post your reply"
-                    value={replyContent}
-                    onChange={(e) => setReplyContent(e.target.value)}
-                    onKeyDown={(e) => {
-                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                        e.preventDefault()
-                        handleReply()
-                      }
-                    }}
-                    className="w-full"
-                    maxLength={500}
-                  />
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">
-                      {replyContent.length}/500
-                    </span>
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={!replyContent.trim() || isReplying}
-                    >
-                      {isReplying ? 'Posting...' : 'Reply'}
-                    </Button>
-                  </div>
-                </form>
+                  Post your reply
+                </Button>
               </div>
             ) : (
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
