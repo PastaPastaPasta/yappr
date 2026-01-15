@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Fragment, useMemo } from 'react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
+import { MentionValidationStatus } from '@/hooks/use-mention-validation'
 import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt } from './link-preview'
 import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
 import { useSettingsStore } from '@/lib/store'
@@ -17,6 +18,10 @@ interface PostContentProps {
   hashtagValidations?: Map<string, HashtagValidationStatus>
   /** Optional: callback when failed hashtag/cashtag warning is clicked */
   onFailedHashtagClick?: (hashtag: string) => void
+  /** Optional: validation status per mention (normalized, no @) */
+  mentionValidations?: Map<string, MentionValidationStatus>
+  /** Optional: callback when failed mention warning is clicked */
+  onFailedMentionClick?: (username: string) => void
   /** Optional: disable link preview */
   disableLinkPreview?: boolean
 }
@@ -39,6 +44,8 @@ export function PostContent({
   className = '',
   hashtagValidations,
   onFailedHashtagClick,
+  mentionValidations,
+  onFailedMentionClick,
   disableLinkPreview = false
 }: PostContentProps) {
   const linkPreviews = useSettingsStore((s) => s.linkPreviews)
@@ -299,11 +306,16 @@ export function PostContent({
     if (part.type === 'mention') {
       // Extract username without @ prefix
       const username = part.value.slice(1).toLowerCase()
+      const validationStatus = mentionValidations?.get(username)
+      const isFailed = validationStatus === 'invalid'
+
       return (
         <MentionLink
           key={key}
           username={username}
           displayText={part.value}
+          isFailed={isFailed}
+          onFailedClick={onFailedMentionClick}
         />
       )
     }

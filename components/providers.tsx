@@ -8,6 +8,7 @@ import { KeyBackupModal } from '@/components/auth/key-backup-modal'
 import { LoginPromptModal } from '@/components/auth/login-prompt-modal'
 import { TipModal } from '@/components/post/tip-modal'
 import { HashtagRecoveryModal } from '@/components/post/hashtag-recovery-modal'
+import { MentionRecoveryModal } from '@/components/post/mention-recovery-modal'
 import { DashPayContactsModal } from '@/components/contacts/dashpay-contacts-modal'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -26,6 +27,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <LoginPromptModal />
           <TipModal />
           <HashtagRecoveryModal />
+          <MentionRecoveryModal />
           <DashPayContactsModal />
         </AuthProvider>
       </SdkProvider>
