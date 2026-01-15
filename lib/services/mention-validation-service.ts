@@ -232,11 +232,11 @@ class MentionValidationService {
 
       // Build set of usernames (lowercase for comparison)
       const usernames = new Set<string>()
-      for (const [identityId, username] of usernamesMap) {
+      usernamesMap.forEach((username) => {
         if (username) {
           usernames.add(username.toLowerCase())
         }
-      }
+      })
 
       return usernames
     } catch (error) {
