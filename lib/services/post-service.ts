@@ -429,8 +429,7 @@ class PostService extends BaseDocumentService<Post> {
       const { followService } = await import('./follow-service');
       const following = await followService.getFollowing(userId, { limit: 100 });
 
-      // Include the current user's ID so they see their own posts in the feed
-      const followingIds = [...following.map(f => f.followingId), userId];
+      const followingIds = following.map(f => f.followingId);
 
       if (followingIds.length === 0) {
         return { documents: [], nextCursor: undefined, prevCursor: undefined };
