@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
 import { MENTION_CONTRACT_ID } from '../constants';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
@@ -51,6 +51,10 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * Create a single mention document for a post
    */
   async createPostMention(postId: string, ownerId: string, mentionedUserId: string): Promise<boolean> {
+    if (!postId) {
+      console.warn('MentionService: Invalid postId');
+      return false;
+    }
     if (!mentionedUserId) {
       console.warn('MentionService: Invalid mentionedUserId');
       return false;
@@ -64,22 +68,19 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         return true;
       }
 
-      // Convert IDs to byte arrays with defensive error handling
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-
+      // Convert IDs to byte arrays using shared helper with defensive error handling
       let postIdBytes: number[];
       let mentionedUserIdBytes: number[];
 
       try {
-        postIdBytes = Array.from(bs58.decode(postId));
+        postIdBytes = stringToIdentifierBytes(postId);
       } catch (decodeError) {
         console.error('MentionService: Invalid base58 postId:', postId, decodeError);
         return false;
       }
 
       try {
-        mentionedUserIdBytes = Array.from(bs58.decode(mentionedUserId));
+        mentionedUserIdBytes = stringToIdentifierBytes(mentionedUserId);
       } catch (decodeError) {
         console.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
         return false;
@@ -147,33 +148,22 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
+      // Convert IDs to byte arrays for where clause (matching other services)
+      const postIdBytes = stringToIdentifierBytes(postId);
+      const mentionedUserIdBytes = stringToIdentifierBytes(mentionedUserId);
+
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postId],
-          ['mentionedUserId', '==', mentionedUserId]
+          ['postId', '==', postIdBytes],
+          ['mentionedUserId', '==', mentionedUserIdBytes]
         ],
         limit: 1
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
-      }
-
+      // Use shared helper for response normalization
+      const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
       console.error('Error getting mention for post:', error);
@@ -188,32 +178,22 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
+      // Convert postId to byte array for where clause
+      const postIdBytes = stringToIdentifierBytes(postId);
+
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postId],
+          ['postId', '==', postIdBytes],
           ['mentionedUserId', '>', '']  // Range query to enable ordering
         ],
         orderBy: [['postId', 'asc'], ['mentionedUserId', 'asc']],
         limit: 100
       } as any);
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
+      // Use shared helper for response normalization
+      const documents = normalizeSDKResponse(response);
       return documents.map((doc: any) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting mentions for post:', error);
@@ -230,13 +210,16 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
+      // Convert userId to byte array for where clause
+      const userIdBytes = stringToIdentifierBytes(userId);
+
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
           documentTypeName: this.documentType,
           where: [
-            ['mentionedUserId', '==', userId],
+            ['mentionedUserId', '==', userIdBytes],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
