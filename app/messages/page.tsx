@@ -58,7 +58,7 @@ function MessagesPage() {
         setIsLoading(false)
       }
     }
-    void loadConversations()
+    loadConversations().catch(err => console.error('Failed to load conversations:', err))
   }, [user])
 
   // Load messages when conversation is selected
@@ -100,7 +100,7 @@ function MessagesPage() {
         setIsLoadingMessages(false)
       }
     }
-    void loadMessages()
+    loadMessages().catch(err => console.error('Failed to load messages:', err))
   }, [selectedConversation, user])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)

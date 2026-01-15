@@ -97,7 +97,7 @@ function CreateProfilePage() {
       }
     }
 
-    void checkExistingProfile()
+    checkExistingProfile().catch(err => console.error('Failed to check profile:', err))
   }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {

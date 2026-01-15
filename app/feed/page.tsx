@@ -73,7 +73,7 @@ function FeedPage() {
       }
     }
 
-    void checkMigration()
+    checkMigration().catch(err => console.error('Failed to check migration:', err))
   }, [user?.identityId])
 
   // Load posts function - using real WASM SDK with updated version

@@ -71,7 +71,7 @@ function SearchPageContent() {
       }
     }
 
-    void performSearch()
+    performSearch().catch(err => console.error('Search failed:', err))
   }, [query])
 
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
