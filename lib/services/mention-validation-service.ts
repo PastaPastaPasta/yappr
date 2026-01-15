@@ -1,5 +1,5 @@
 import { mentionService, PostMentionDocument } from './mention-service'
-import { extractMentions } from '../post-helpers'
+import { extractMentions, normalizeDpnsUsername } from '../post-helpers'
 import { dpnsService } from './dpns-service'
 
 export interface MentionValidationKey {
@@ -43,7 +43,7 @@ class MentionValidationService {
    * Returns true if the mention is registered, false otherwise.
    */
   async validateMention(postId: string, username: string): Promise<boolean> {
-    const normalizedUsername = username.toLowerCase().replace(/^@/, '')
+    const normalizedUsername = normalizeDpnsUsername(username.replace(/^@/, ''))
     const registeredMentions = await this.getRegisteredMentionsForPost(postId)
     return registeredMentions.has(normalizedUsername)
   }
@@ -230,11 +230,11 @@ class MentionValidationService {
       const identityIds = documents.map((doc: PostMentionDocument) => doc.mentionedUserId)
       const usernamesMap = await dpnsService.resolveUsernamesBatch(identityIds)
 
-      // Build set of usernames (lowercase for comparison)
+      // Build set of usernames (normalized: lowercase, no .dash suffix)
       const usernames = new Set<string>()
       usernamesMap.forEach((username) => {
         if (username) {
-          usernames.add(username.toLowerCase())
+          usernames.add(normalizeDpnsUsername(username))
         }
       })
 
