@@ -14,6 +14,8 @@ import { Input } from '@/components/ui/input'
 import { Post } from '@/lib/types'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { usePostDetail } from '@/hooks/use-post-detail'
+import { extractAllTags } from '@/lib/post-helpers'
+import { hashtagService } from '@/lib/services/hashtag-service'
 import toast from 'react-hot-toast'
 
 function PostDetailContent() {
@@ -44,11 +46,34 @@ function PostDetailContent() {
     setIsReplying(true)
     try {
       const dashClient = getDashPlatformClient()
-      await dashClient.createPost(replyContent, { replyToPostId: post.id })
+      const result = await dashClient.createPost(replyContent, { replyToPostId: post.id })
+
+      // Extract postId from result for hashtag registration
+      const replyPostId =
+        result.data?.documentId ||
+        result.data?.document?.$id ||
+        result.data?.document?.id ||
+        result.data?.$id ||
+        result.data?.id
+
+      // Register hashtags if any exist
+      if (replyPostId) {
+        const hashtags = extractAllTags(replyContent)
+        if (hashtags.length > 0) {
+          hashtagService.createPostHashtags(replyPostId, user.identityId, hashtags)
+            .then((results) => {
+              const successCount = results.filter((r) => r).length
+              console.log(`Reply: Created ${successCount}/${hashtags.length} hashtag documents`)
+            })
+            .catch((err) => {
+              console.error('Failed to create hashtag documents for reply:', err)
+            })
+        }
+      }
 
       // Add optimistic reply
       const newReply: Post = {
-        id: `reply_${Date.now()}`,
+        id: replyPostId || `reply_${Date.now()}`,
         content: replyContent,
         author: {
           id: user.identityId,
