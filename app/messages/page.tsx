@@ -370,7 +370,14 @@ function MessagesPage() {
             <div className="p-8 text-center flex-1 flex flex-col items-center justify-center">
               <PaperAirplaneIcon className="h-12 w-12 text-gray-300 mb-4" />
               <h2 className="text-xl font-semibold mb-2">No messages yet</h2>
-              <p className="text-gray-500 text-sm">When someone messages you, it&apos;ll show up here</p>
+              <p className="text-gray-500 text-sm mb-6">Send a private message to another user</p>
+              <Button
+                onClick={() => setShowNewConversation(true)}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                Start a conversation
+              </Button>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
@@ -548,7 +555,14 @@ function MessagesPage() {
             <div className="text-center">
               <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
               <h2 className="text-2xl font-semibold mb-2">Select a message</h2>
-              <p className="text-gray-500">Choose from your existing conversations or start a new one</p>
+              <p className="text-gray-500 mb-6">Choose from your existing conversations or start a new one</p>
+              <Button
+                onClick={() => setShowNewConversation(true)}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                New message
+              </Button>
             </div>
           </div>
         )}
