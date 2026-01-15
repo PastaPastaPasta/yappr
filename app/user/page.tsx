@@ -317,7 +317,9 @@ function UserProfileContent() {
       }
     }
 
-    loadProfileData()
+    void loadProfileData()
+  // currentUser is intentionally not a dependency - we only want to reload on userId change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
 
   // Handle edit URL parameter for deep linking to edit mode
@@ -332,6 +334,8 @@ function UserProfileContent() {
       url.searchParams.delete('edit')
       window.history.replaceState({}, '', url.toString())
     }
+  // handleStartEdit is stable, but we can't add it without causing re-renders
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOwnProfile, isLoading, searchParams, isEditingProfile])
 
   // Handle tip URL parameter for deep linking

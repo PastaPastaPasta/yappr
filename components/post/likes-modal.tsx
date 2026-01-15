@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -83,8 +83,9 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
 
   useEffect(() => {
     if (isOpen) {
-      loadLikes()
+      void loadLikes()
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   return (
@@ -138,7 +139,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(like.$ownerId)
+                                        void navigator.clipboard.writeText(like.$ownerId)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="font-mono text-xs hover:text-gray-700 dark:hover:text-gray-300"

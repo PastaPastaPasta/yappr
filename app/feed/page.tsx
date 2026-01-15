@@ -12,7 +12,6 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { useAppStore } from '@/lib/store'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
@@ -74,7 +73,7 @@ function FeedPage() {
       }
     }
 
-    checkMigration()
+    void checkMigration()
   }, [user?.identityId])
 
   // Load posts function - using real WASM SDK with updated version

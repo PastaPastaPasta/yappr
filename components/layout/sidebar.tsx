@@ -5,8 +5,6 @@ import { usePathname } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import {
   HomeIcon,
-  MagnifyingGlassIcon,
-  BellIcon,
   EnvelopeIcon,
   BookmarkIcon,
   UserIcon,
@@ -21,8 +19,6 @@ import {
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeIconSolid,
-  MagnifyingGlassIcon as SearchIconSolid,
-  BellIcon as BellIconSolid,
   EnvelopeIcon as EnvelopeIconSolid,
   BookmarkIcon as BookmarkIconSolid,
   UserIcon as UserIconSolid,
@@ -32,9 +28,7 @@ import {
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { useAppStore } from '@/lib/store'
-import { getInitials } from '@/lib/utils'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { useAuth } from '@/contexts/auth-context'

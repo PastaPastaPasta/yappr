@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
-import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from './payment-icons'
+import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS } from './payment-icons'
 import type { ParsedPaymentUri } from '@/lib/types'
 
 // Get scheme color for QR code styling

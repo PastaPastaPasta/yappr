@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { 
-  HeartIcon, 
-  ArrowPathRoundedSquareIcon, 
+import {
+  ArrowPathRoundedSquareIcon,
   ChatBubbleLeftIcon,
   UserPlusIcon,
   BellIcon,
@@ -13,7 +12,6 @@ import {
 import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -33,7 +31,7 @@ interface Notification {
 }
 
 function NotificationsPage() {
-  const { user } = useAuth()
+  useAuth()
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [filter, setFilter] = useState<NotificationType | 'all'>('all')
@@ -137,7 +135,7 @@ function NotificationsPage() {
             {['all', 'like', 'repost', 'reply', 'follow'].map((filterType) => (
               <button
                 key={filterType}
-                onClick={() => setFilter(filterType as any)}
+                onClick={() => setFilter(filterType as NotificationType | 'all')}
                 className={`flex-1 py-4 text-sm font-medium capitalize transition-colors relative ${
                   filter === filterType
                     ? 'text-gray-900 dark:text-white'
