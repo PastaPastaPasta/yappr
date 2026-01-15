@@ -1,4 +1,5 @@
 import { getEvoSdk } from './evo-sdk-service';
+import { Document, IdentitySigner, Identifier, Identity, IdentityPublicKey } from '@dashevo/evo-sdk';
 
 export interface StateTransitionResult {
   success: boolean;
@@ -29,7 +30,7 @@ class StateTransitionService {
   /**
    * Generate entropy for state transitions
    */
-  private generateEntropy(): string {
+  private generateEntropy(): Uint8Array {
     const bytes = new Uint8Array(32);
     if (typeof window !== 'undefined' && window.crypto) {
       window.crypto.getRandomValues(bytes);
@@ -39,7 +40,45 @@ class StateTransitionService {
         bytes[i] = Math.floor(Math.random() * 256);
       }
     }
-    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return bytes;
+  }
+
+  /**
+   * Fetch identity and get signing key
+   */
+  private async getIdentityAndKey(
+    sdk: Awaited<ReturnType<typeof getEvoSdk>>,
+    identityId: string,
+    keyPurpose: number = 0 // 0 = AUTHENTICATION
+  ): Promise<{ identity: Identity; identityKey: IdentityPublicKey }> {
+    const identity = await sdk.identities.fetch(identityId);
+    if (!identity) {
+      throw new Error(`Identity not found: ${identityId}`);
+    }
+
+    const identityJson = identity.toJSON();
+    // Find a key with the specified purpose (0 = AUTHENTICATION for document ops)
+    const keyData = identityJson.publicKeys.find((k: any) => k.purpose === keyPurpose);
+    if (!keyData) {
+      throw new Error(`No key with purpose ${keyPurpose} found on identity`);
+    }
+
+    // Get the actual IdentityPublicKey object from the identity
+    const identityKey = identity.getPublicKeyById(keyData.id);
+    if (!identityKey) {
+      throw new Error(`Could not get public key with ID ${keyData.id}`);
+    }
+
+    return { identity, identityKey };
+  }
+
+  /**
+   * Create a signer with the private key
+   */
+  private createSigner(privateKeyWif: string): IdentitySigner {
+    const signer = new IdentitySigner();
+    signer.addKeyFromWif(privateKeyWif);
+    return signer;
   }
 
   /**
@@ -55,28 +94,63 @@ class StateTransitionService {
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
       const entropy = this.generateEntropy();
-      
+
       console.log(`Creating ${documentType} document with data:`, documentData);
       console.log(`Contract ID: ${contractId}`);
       console.log(`Owner ID: ${ownerId}`);
 
-      // Create the document using the EvoSDK facade
-      const result = await sdk.documents.create({
-        contractId,
-        type: documentType,
+      // Fetch identity and get signing key
+      const { identity, identityKey } = await this.getIdentityAndKey(sdk, ownerId);
+
+      // Create signer
+      const signer = this.createSigner(privateKey);
+
+      // Generate document ID
+      const documentId = Document.generateId(
+        documentType,
         ownerId,
-        data: documentData,
-        entropyHex: entropy,
-        privateKeyWif: privateKey
+        contractId,
+        entropy
+      );
+
+      // Convert documentId bytes to base58 for logging
+      const docIdBase58 = Identifier.fromBytes(documentId).toBase58();
+      console.log(`Generated document ID: ${docIdBase58}`);
+
+      // Create Document object using constructor
+      // constructor(js_raw_document: any, js_document_type_name: string, js_revision: bigint,
+      //             js_data_contract_id, js_owner_id, js_document_id)
+      const document = new Document(
+        documentData,
+        documentType,
+        BigInt(1), // Initial revision
+        contractId,
+        ownerId,
+        documentId
+      );
+
+      // Set entropy on the document (required for new documents)
+      document.entropy = entropy;
+
+      console.log('Document created:', document.toJSON());
+
+      // Create the document using the new SDK API
+      await sdk.documents.create({
+        document,
+        identityKey,
+        signer
       });
-      
-      console.log('Document creation result:', result);
-      
-      // The result contains the document and transition info
+
+      console.log('Document creation completed');
+
       return {
         success: true,
-        transactionHash: result.stateTransition?.$id || result.transitionId,
-        document: result.document || result
+        transactionHash: docIdBase58, // Use document ID as reference
+        document: {
+          $id: docIdBase58,
+          $ownerId: ownerId,
+          ...documentData
+        }
       };
     } catch (error) {
       console.error('Error creating document:', error);
@@ -101,35 +175,46 @@ class StateTransitionService {
     try {
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
-      
+
       console.log(`Updating ${documentType} document ${documentId}...`);
 
-      // Update the document using the EvoSDK facade
-      const result = await sdk.documents.replace({
+      // Fetch identity and get signing key
+      const { identity, identityKey } = await this.getIdentityAndKey(sdk, ownerId);
+
+      // Create signer
+      const signer = this.createSigner(privateKey);
+
+      // Create Document object for replacement
+      // Revision should be current revision + 1
+      const newRevision = BigInt(revision + 1);
+      const document = new Document(
+        documentData,
+        documentType,
+        newRevision,
         contractId,
-        type: documentType,
-        documentId,
         ownerId,
-        data: documentData,
-        revision: BigInt(revision),
-        privateKeyWif: privateKey
+        documentId
+      );
+
+      // Replace the document using the new SDK API
+      await sdk.documents.replace({
+        document,
+        identityKey,
+        signer
       });
 
-      // Normalize document fields to use $ prefix (SDK returns without prefix)
-      const doc = result.document || result;
-      const normalizedDoc = {
-        $id: doc.$id || doc.id,
-        $ownerId: doc.$ownerId || doc.ownerId,
-        $createdAt: doc.$createdAt || doc.createdAt,
-        $updatedAt: doc.$updatedAt || doc.updatedAt,
-        $revision: doc.$revision || doc.revision,
-        ...(doc.data || {}),
-      };
+      console.log('Document update completed');
 
+      // Construct response
       return {
         success: true,
-        transactionHash: result.stateTransition?.$id || result.transitionId,
-        document: normalizedDoc
+        transactionHash: documentId,
+        document: {
+          $id: documentId,
+          $ownerId: ownerId,
+          $revision: Number(newRevision),
+          ...documentData
+        }
       };
     } catch (error) {
       console.error('Error updating document:', error);
@@ -152,21 +237,33 @@ class StateTransitionService {
     try {
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
-      
+
       console.log(`Deleting ${documentType} document ${documentId}...`);
 
-      // Delete the document using the EvoSDK facade
-      const result = await sdk.documents.delete({
-        contractId,
-        type: documentType,
-        documentId,
-        ownerId,
-        privateKeyWif: privateKey
+      // Fetch identity and get signing key
+      const { identity, identityKey } = await this.getIdentityAndKey(sdk, ownerId);
+
+      // Create signer
+      const signer = this.createSigner(privateKey);
+
+      // Delete the document using the new SDK API
+      // For delete, we can use the simplified document identifier format
+      await sdk.documents.delete({
+        document: {
+          id: documentId,
+          ownerId: ownerId,
+          dataContractId: contractId,
+          documentTypeName: documentType
+        },
+        identityKey,
+        signer
       });
-      
+
+      console.log('Document deletion completed');
+
       return {
         success: true,
-        transactionHash: result.stateTransition?.$id || result.transitionId
+        transactionHash: documentId
       };
     } catch (error) {
       console.error('Error deleting document:', error);
@@ -194,23 +291,23 @@ class StateTransitionService {
 
     try {
       const sdk = await getEvoSdk();
-      
+
       console.log(`Waiting for transaction confirmation: ${transactionHash}`);
-      
+
       // Try wait_for_state_transition_result once with a short timeout
       try {
         // Create a timeout promise
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Wait timeout')), 8000); // 8 second timeout
         });
-        
+
         // Race the wait call against the timeout
         // Use sdk.wasm to get the underlying WasmSdk for the method call
         const result = await Promise.race([
           sdk.wasm.waitForStateTransitionResult(transactionHash),
           timeoutPromise
         ]);
-        
+
         if (result) {
           console.log('Transaction confirmed via wait_for_state_transition_result:', result);
           return { success: true, result };
@@ -219,27 +316,27 @@ class StateTransitionService {
         // This is expected to timeout frequently due to DAPI gateway issues
         console.log('wait_for_state_transition_result timed out (expected):', waitError);
       }
-      
+
       // Since wait_for_state_transition_result often times out even for successful transactions,
       // we'll assume success if the transaction was broadcast successfully
       // This is a workaround for the known DAPI gateway timeout issue
       console.log('Transaction broadcast successfully. Assuming confirmation due to known DAPI timeout issue.');
       console.log('Note: The transaction is likely confirmed on the network despite the timeout.');
-      
-      return { 
-        success: true, 
-        result: { 
-          assumed: true, 
+
+      return {
+        success: true,
+        result: {
+          assumed: true,
           reason: 'DAPI wait timeout is a known issue - transaction likely succeeded',
-          transactionHash 
-        } 
+          transactionHash
+        }
       };
-      
+
     } catch (error) {
       console.error('Error waiting for confirmation:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
   }
@@ -255,18 +352,18 @@ class StateTransitionService {
     waitForConfirmation: boolean = false
   ): Promise<StateTransitionResult & { confirmed?: boolean }> {
     const result = await this.createDocument(contractId, documentType, ownerId, documentData);
-    
+
     if (!result.success || !waitForConfirmation || !result.transactionHash) {
       return result;
     }
-    
+
     console.log('Waiting for transaction confirmation...');
     const confirmation = await this.waitForConfirmation(result.transactionHash, {
       onProgress: (attempt, elapsed) => {
         console.log(`Confirmation attempt ${attempt}, elapsed: ${Math.round(elapsed / 1000)}s`);
       }
     });
-    
+
     return {
       ...result,
       confirmed: confirmation.success
