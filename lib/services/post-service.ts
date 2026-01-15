@@ -105,49 +105,7 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Enrich post with background data (author, stats, interactions).
-   * This is fire-and-forget - mutates the post object asynchronously.
-   *
-   * NOTE: Related entities (replyTo, quotedPost) are NOT fetched here.
-   * Components that need them should fetch explicitly using the replyToId/quotedPostId fields.
-   * This prevents cascade fetching and gives components control over what they load.
-   */
-  private async enrichPost(
-    post: Post,
-    postId: string,
-    ownerId: string
-  ): Promise<void> {
-    try {
-      // Get author information
-      if (ownerId) {
-        const author = await unifiedProfileService.getProfile(ownerId);
-        if (author) {
-          post.author = author;
-        }
-      }
-
-      // Get post stats
-      if (postId) {
-        const stats = await this.getPostStats(postId);
-        post.likes = stats.likes;
-        post.reposts = stats.reposts;
-        post.replies = stats.replies;
-        post.views = stats.views;
-
-        // Get interaction status for current user
-        const interactions = await this.getUserInteractions(postId);
-        post.liked = interactions.liked;
-        post.reposted = interactions.reposted;
-        post.bookmarked = interactions.bookmarked;
-      }
-    } catch (error) {
-      console.error('Error enriching post:', error);
-    }
-  }
-
-  /**
    * Enrich a single post with all data (stats, interactions, author).
-   * This is the explicit, awaitable alternative to fire-and-forget enrichment.
    * Returns a new Post object with enriched data.
    */
   async enrichPostFull(post: Post): Promise<Post> {
@@ -368,7 +326,7 @@ class PostService extends BaseDocumentService<Post> {
             username: username || post.author.username,
             displayName: profileData?.displayName || post.author.displayName,
             avatar: authorAvatarUrl || post.author.avatar,
-            hasDpns: username ? true : false
+            hasDpns: Boolean(username)
           },
           // Pre-fetched enrichment data to avoid N+1 queries in PostCard
           _enrichment: {
@@ -969,24 +927,6 @@ class PostService extends BaseDocumentService<Post> {
       joinedAt: new Date(),
       hasDpns: false
     };
-  }
-
-  /**
-   * Public wrapper for getPostStats - for use by feed page
-   */
-  async getPostStatsPublic(postId: string): Promise<PostStats> {
-    return this.getPostStats(postId);
-  }
-
-  /**
-   * Public wrapper for getUserInteractions - for use by feed page
-   */
-  async getUserInteractionsPublic(postId: string): Promise<{
-    liked: boolean;
-    reposted: boolean;
-    bookmarked: boolean;
-  }> {
-    return this.getUserInteractions(postId);
   }
 
   /**
