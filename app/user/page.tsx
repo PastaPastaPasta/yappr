@@ -35,6 +35,10 @@ import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/component
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { AtSymbolIcon } from '@heroicons/react/24/outline'
+import { mentionService } from '@/lib/services/mention-service'
+import { MENTION_CONTRACT_ID } from '@/lib/constants'
+import { cn } from '@/lib/utils'
 
 interface ProfileData {
   displayName: string
@@ -95,6 +99,13 @@ function UserProfileContent() {
 
   // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
+
+  // Tab state for Posts/Mentions
+  const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
+  const [mentions, setMentions] = useState<Post[]>([])
+  const [mentionsLoading, setMentionsLoading] = useState(false)
+  const [mentionsLoaded, setMentionsLoaded] = useState(false)
+  const [mentionCount, setMentionCount] = useState<number | null>(null)
 
   // Progressive enrichment for post metadata (likes, reposts, etc.)
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
@@ -508,6 +519,73 @@ function UserProfileContent() {
       setIsLoadingMore(false)
     }
   }, [userId, isLoadingMore, hasMore, hasMoreReposts, lastPostId, lastRepostId, username, profile?.displayName, hasDpns, enrichProgressively])
+
+  // Load mentions for this user (lazy load when tab is selected)
+  const loadMentions = useCallback(async () => {
+    if (!userId || mentionsLoaded || !MENTION_CONTRACT_ID) return
+
+    setMentionsLoading(true)
+    try {
+      const mentionDocs = await mentionService.getPostsMentioningUser(userId)
+      setMentionCount(mentionDocs.length)
+
+      if (mentionDocs.length === 0) {
+        setMentions([])
+        setMentionsLoaded(true)
+        return
+      }
+
+      const { postService } = await import('@/lib/services/post-service')
+      const postIds = Array.from(new Set(mentionDocs.map(m => m.postId)))
+
+      // Fetch posts and validate ownership
+      const fetchedPosts: Post[] = []
+      for (const postId of postIds) {
+        try {
+          const post = await postService.get(postId)
+          if (post) {
+            // Verify mention was created by post owner (security filter)
+            const mentionDoc = mentionDocs.find(m => m.postId === postId)
+            if (mentionDoc && mentionDoc.$ownerId === post.author.id) {
+              fetchedPosts.push(post)
+            }
+          }
+        } catch (error) {
+          console.error('Failed to fetch post:', postId, error)
+        }
+      }
+
+      // Sort by creation date (newest first)
+      fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+
+      // Enrich posts with author data
+      const enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
+
+      setMentions(enrichedPosts)
+      setMentionCount(enrichedPosts.length)
+    } catch (error) {
+      console.error('Failed to load mentions:', error)
+      setMentions([])
+    } finally {
+      setMentionsLoading(false)
+      setMentionsLoaded(true)
+    }
+  }, [userId, mentionsLoaded])
+
+  // Load mentions when tab is activated
+  useEffect(() => {
+    if (activeTab === 'mentions' && !mentionsLoaded && MENTION_CONTRACT_ID) {
+      loadMentions()
+    }
+  }, [activeTab, mentionsLoaded, loadMentions])
+
+  // Reset mentions when user changes
+  useEffect(() => {
+    setMentions([])
+    setMentionsLoaded(false)
+    setMentionCount(null)
+    setActiveTab('posts')
+  }, [userId])
 
   const handleFollow = async () => {
     const authedUser = requireAuth('follow')
@@ -1060,38 +1138,102 @@ function UserProfileContent() {
             )}
 
             <div className="border-t border-gray-200 dark:border-gray-800">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-                <h3 className="font-semibold">{postCount !== null ? postCount : '–'} Posts</h3>
+              {/* Tab Navigation */}
+              <div className="flex border-b border-gray-200 dark:border-gray-800">
+                <button
+                  onClick={() => setActiveTab('posts')}
+                  className={cn(
+                    'flex-1 py-4 text-center font-medium transition-colors relative',
+                    activeTab === 'posts'
+                      ? 'text-gray-900 dark:text-white'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  )}
+                >
+                  Posts {postCount !== null && `(${postCount})`}
+                  {activeTab === 'posts' && (
+                    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab('mentions')}
+                  className={cn(
+                    'flex-1 py-4 text-center font-medium transition-colors relative',
+                    activeTab === 'mentions'
+                      ? 'text-gray-900 dark:text-white'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  )}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <AtSymbolIcon className="h-4 w-4" />
+                    Mentions {mentionCount !== null && `(${mentionCount})`}
+                  </span>
+                  {activeTab === 'mentions' && (
+                    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                  )}
+                </button>
               </div>
 
-              {posts.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <p>No posts yet</p>
-                </div>
-              ) : (
-                <div>
-                  {posts.map((post) => (
-                    <PostCard
-                      key={post.id}
-                      post={post}
-                      enrichment={getPostEnrichment(post)}
-                    />
-                  ))}
+              {/* Tab Content */}
+              {activeTab === 'posts' ? (
+                // Posts Tab
+                posts.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    <p>No posts yet</p>
+                  </div>
+                ) : (
+                  <div>
+                    {posts.map((post) => (
+                      <PostCard
+                        key={post.id}
+                        post={post}
+                        enrichment={getPostEnrichment(post)}
+                      />
+                    ))}
 
-                  {/* Load More button */}
-                  {(hasMore || hasMoreReposts) && (
-                    <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
-                      <Button
-                        variant="outline"
-                        onClick={loadMorePosts}
-                        disabled={isLoadingMore}
-                        className="w-full max-w-xs"
-                      >
-                        {isLoadingMore ? 'Loading...' : 'Load more posts'}
-                      </Button>
+                    {/* Load More button */}
+                    {(hasMore || hasMoreReposts) && (
+                      <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
+                        <Button
+                          variant="outline"
+                          onClick={loadMorePosts}
+                          disabled={isLoadingMore}
+                          className="w-full max-w-xs"
+                        >
+                          {isLoadingMore ? 'Loading...' : 'Load more posts'}
+                        </Button>
                     </div>
                   )}
                 </div>
+              )
+              ) : (
+                // Mentions Tab
+                mentionsLoading ? (
+                  <div className="p-8 text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                    <p className="text-gray-500">Loading mentions...</p>
+                  </div>
+                ) : !MENTION_CONTRACT_ID ? (
+                  <div className="p-8 text-center text-gray-500">
+                    <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                    <p>Mentions feature not yet available</p>
+                    <p className="text-sm mt-2">Mention contract not deployed</p>
+                  </div>
+                ) : mentions.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                    <p>No mentions yet</p>
+                    <p className="text-sm mt-2">Posts that mention this user will appear here</p>
+                  </div>
+                ) : (
+                  <div>
+                    {mentions.map((post) => (
+                      <PostCard
+                        key={post.id}
+                        post={post}
+                      />
+                    ))}
+                  </div>
+                )
               )}
             </div>
           </>

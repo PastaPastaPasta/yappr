@@ -4,10 +4,12 @@ import Link from 'next/link'
 import { Fragment, useMemo } from 'react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
+import { MentionValidationStatus } from '@/hooks/use-mention-validation'
 import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt } from './link-preview'
 import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
 import { useSettingsStore } from '@/lib/store'
-import { cashtagDisplayToStorage } from '@/lib/post-helpers'
+import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
+import { MentionLink } from './mention-link'
 
 interface PostContentProps {
   content: string
@@ -16,6 +18,10 @@ interface PostContentProps {
   hashtagValidations?: Map<string, HashtagValidationStatus>
   /** Optional: callback when failed hashtag/cashtag warning is clicked */
   onFailedHashtagClick?: (hashtag: string) => void
+  /** Optional: validation status per mention (normalized, no @) */
+  mentionValidations?: Map<string, MentionValidationStatus>
+  /** Optional: callback when failed mention warning is clicked */
+  onFailedMentionClick?: (username: string) => void
   /** Optional: disable link preview */
   disableLinkPreview?: boolean
 }
@@ -38,6 +44,8 @@ export function PostContent({
   className = '',
   hashtagValidations,
   onFailedHashtagClick,
+  mentionValidations,
+  onFailedMentionClick,
   disableLinkPreview = false
 }: PostContentProps) {
   const linkPreviews = useSettingsStore((s) => s.linkPreviews)
@@ -59,8 +67,8 @@ export function PostContent({
       { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
       // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
       { regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g, type: 'cashtag' },
-      // Mentions: @ followed by alphanumeric/underscore (1-100 chars)
-      { regex: /@([a-zA-Z0-9_]{1,100})/g, type: 'mention' },
+      // Mentions: @ followed by alphanumeric/underscore, optionally with .dash suffix (no hyphens - DPNS doesn't allow them)
+      { regex: /@([a-zA-Z0-9_]{1,100}(?:\.dash)?)/gi, type: 'mention' },
     ]
 
     // Parse text for inline elements only (used for inner content of bold/italic)
@@ -296,10 +304,20 @@ export function PostContent({
     }
 
     if (part.type === 'mention') {
+      // Extract and normalize username (removes @ prefix and .dash suffix)
+      const rawUsername = part.value.slice(1)
+      const normalizedUsername = normalizeDpnsUsername(rawUsername)
+      const validationStatus = mentionValidations?.get(normalizedUsername)
+      const isFailed = validationStatus === 'invalid'
+
       return (
-        <span key={key} className="text-yappr-500">
-          {part.value}
-        </span>
+        <MentionLink
+          key={key}
+          username={normalizedUsername}
+          displayText={part.value}
+          isFailed={isFailed}
+          onFailedClick={onFailedMentionClick}
+        />
       )
     }
 

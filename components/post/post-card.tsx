@@ -34,6 +34,8 @@ import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
+import { useMentionValidation } from '@/hooks/use-mention-validation'
+import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { tipService } from '@/lib/services/tip-service'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
@@ -251,9 +253,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const { setReplyingTo, setComposeOpen, setQuotingPost } = useAppStore()
   const { open: openTipModal } = useTipModal()
   const { open: openHashtagRecoveryModal } = useHashtagRecoveryModal()
+  const { open: openMentionRecoveryModal } = useMentionRecoveryModal()
 
   // Validate hashtags for all posts (checks if hashtag documents exist on platform)
   const { validations: hashtagValidations, revalidate: revalidateHashtags } = useHashtagValidation(post)
+
+  // Validate mentions for all posts (checks if mention documents exist on platform)
+  const { validations: mentionValidations, revalidate: revalidateMentions } = useMentionValidation(post)
 
   // Use pre-fetched enrichment data to avoid N+1 queries
   const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id, {
@@ -285,6 +291,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       window.removeEventListener('hashtag-registered', handleHashtagRegistered as EventListener)
     }
   }, [post.id, revalidateHashtags])
+
+  // Listen for mention registration events to revalidate
+  useEffect(() => {
+    const handleMentionRegistered = (event: CustomEvent<{ postId: string; username: string }>) => {
+      if (event.detail.postId === post.id) {
+        revalidateMentions()
+      }
+    }
+
+    window.addEventListener('mention-registered', handleMentionRegistered as EventListener)
+    return () => {
+      window.removeEventListener('mention-registered', handleMentionRegistered as EventListener)
+    }
+  }, [post.id, revalidateMentions])
 
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
@@ -416,6 +436,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleFailedHashtagClick = (hashtag: string) => {
     openHashtagRecoveryModal(post, hashtag)
+  }
+
+  const handleFailedMentionClick = (username: string) => {
+    openMentionRecoveryModal(post, username)
   }
 
   const handleCardClick = (e: React.MouseEvent) => {
@@ -586,6 +610,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               className="mt-1"
               hashtagValidations={hashtagValidations}
               onFailedHashtagClick={handleFailedHashtagClick}
+              mentionValidations={mentionValidations}
+              onFailedMentionClick={handleFailedMentionClick}
             />
           )}
 

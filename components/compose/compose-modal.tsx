@@ -17,8 +17,10 @@ import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { extractAllTags } from '@/lib/post-helpers'
+import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
+import { mentionService } from '@/lib/services/mention-service'
+import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { formatTime } from '@/lib/utils'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials } from '@/lib/utils'
@@ -590,6 +592,32 @@ export function ComposeModal() {
                 .catch((err) => {
                   console.error(`Post ${i + 1}: Failed to create hashtag documents:`, err)
                 })
+            }
+
+            // Create mention documents for this successful post (if contract is deployed)
+            if (MENTION_CONTRACT_ID) {
+              const mentions = extractMentions(postContent)
+              if (mentions.length > 0) {
+                mentionService.createPostMentionsFromUsernames(postId, authedUser.identityId, mentions)
+                  .then((results) => {
+                    const successCount = results.filter((r) => r).length
+                    console.log(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
+
+                    // Dispatch event for each successful mention to trigger cache invalidation
+                    results.forEach((success, mentionIndex) => {
+                      if (success) {
+                        window.dispatchEvent(
+                          new CustomEvent('mention-registered', {
+                            detail: { postId, username: mentions[mentionIndex] },
+                          })
+                        )
+                      }
+                    })
+                  })
+                  .catch((err) => {
+                    console.error(`Post ${i + 1}: Failed to create mention documents:`, err)
+                  })
+              }
             }
 
             // Dispatch event for first post
