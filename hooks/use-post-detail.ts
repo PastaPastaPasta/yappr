@@ -318,13 +318,24 @@ export function usePostDetail({
   }, [loadPost, resetEnrichment])
 
   const addOptimisticReply = useCallback((reply: Post) => {
-    setState(current => ({
-      ...current,
-      replies: [reply, ...current.replies],
-      post: current.post
-        ? { ...current.post, replies: current.post.replies + 1 }
-        : null
-    }))
+    setState(current => {
+      // Create a new thread entry for the reply
+      const newThread: ReplyThread = {
+        post: reply,
+        isAuthorThread: false,
+        isThreadContinuation: false,
+        nestedReplies: []
+      }
+
+      return {
+        ...current,
+        replies: [reply, ...current.replies],
+        replyThreads: [newThread, ...current.replyThreads],
+        post: current.post
+          ? { ...current.post, replies: current.post.replies + 1 }
+          : null
+      }
+    })
     // Enrich the new reply to get DPNS username/display name
     enrich([reply])
   }, [enrich])
