@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   MagnifyingGlassIcon,
@@ -30,8 +31,11 @@ interface UserSearchResult {
 
 function MessagesPage() {
   const { user } = useAuth()
+  const searchParams = useSearchParams()
+  const startConversationWith = searchParams.get('startConversation')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
+  const [pendingStartConversation, setPendingStartConversation] = useState<string | null>(startConversationWith)
   const [messages, setMessages] = useState<DirectMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -72,6 +76,67 @@ function MessagesPage() {
     }
     loadConversations().catch(err => console.error('Failed to load conversations:', err))
   }, [user])
+
+  // Handle auto-starting a conversation from URL parameter
+  useEffect(() => {
+    const handleStartConversation = async () => {
+      if (!pendingStartConversation || !user || isLoading) return
+
+      // Clear the pending state so we don't run this again
+      setPendingStartConversation(null)
+
+      const participantId = pendingStartConversation
+
+      // Don't start conversation with yourself
+      if (participantId === user.identityId) {
+        toast.error("You can't message yourself")
+        return
+      }
+
+      // Check if conversation already exists
+      const existingConv = conversations.find(c => c.participantId === participantId)
+      if (existingConv) {
+        setSelectedConversation(existingConv)
+        return
+      }
+
+      // Need to create a new conversation - fetch user info first
+      setIsResolvingUser(true)
+      try {
+        // Get username and profile for the participant
+        const [username, profile] = await Promise.all([
+          dpnsService.resolveUsername(participantId),
+          unifiedProfileService.getProfile(participantId).catch(() => null)
+        ])
+
+        // Create new conversation entry
+        const { conversationId } = await directMessageService.getOrCreateConversation(
+          user.identityId,
+          participantId
+        )
+
+        const newConv: Conversation = {
+          id: conversationId,
+          participantId,
+          participantUsername: username || undefined,
+          participantDisplayName: profile?.displayName,
+          unreadCount: 0,
+          updatedAt: new Date()
+        }
+
+        setConversations(prev => [newConv, ...prev])
+        setSelectedConversation(newConv)
+        setMessages([])
+      } catch (error) {
+        console.error('Failed to start conversation from URL:', error)
+        toast.error('Failed to start conversation')
+      } finally {
+        setIsResolvingUser(false)
+      }
+    }
+
+    handleStartConversation().catch(err => console.error('Failed to handle start conversation:', err))
+  }, [pendingStartConversation, user, isLoading, conversations])
 
   // Load messages when conversation is selected
   useEffect(() => {
