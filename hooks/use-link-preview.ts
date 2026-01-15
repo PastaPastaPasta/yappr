@@ -38,6 +38,25 @@ const SKIP_DOMAINS = [
   '0.0.0.0',
 ]
 
+// Common image file extensions
+const IMAGE_EXTENSIONS = [
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'
+]
+
+/**
+ * Check if a URL points directly to an image file based on its extension.
+ * This is used to render direct image links with a larger preview format.
+ */
+export function isDirectImageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const pathname = parsed.pathname.toLowerCase()
+    return IMAGE_EXTENSIONS.some(ext => pathname.endsWith(ext))
+  } catch {
+    return false
+  }
+}
+
 function shouldSkipUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
