@@ -60,19 +60,34 @@ function BookmarksPage() {
         // Get bookmark documents
         const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
 
-        // Fetch full post data for each bookmark
-        const postsWithBookmarkData = await Promise.all(
+        // Fetch raw post data for each bookmark (without individual enrichment)
+        const rawPostsWithBookmarkData = await Promise.all(
           bookmarkDocs.map(async (bookmark) => {
-            const post = await postService.getEnrichedPostById(bookmark.postId)
+            const post = await postService.get(bookmark.postId)
             if (!post) return null
             return {
-              ...post,
+              post,
               bookmarkedAt: new Date(bookmark.$createdAt)
             }
           })
         )
 
-        // Filter out deleted posts and set bookmarks
+        // Filter out deleted posts
+        const validPostsWithData = rawPostsWithBookmarkData.filter(
+          (item): item is NonNullable<typeof item> => item !== null
+        )
+
+        // Batch enrich all posts at once (efficient DPNS resolution)
+        const postsToEnrich = validPostsWithData.map(item => item.post)
+        const enrichedPosts = await postService.enrichPostsBatch(postsToEnrich)
+
+        // Combine enriched posts with bookmark data
+        const postsWithBookmarkData = validPostsWithData.map((item, index) => ({
+          ...enrichedPosts[index],
+          bookmarkedAt: item.bookmarkedAt
+        }))
+
+        // Filter out any remaining invalid posts and set bookmarks
         setBookmarks(postsWithBookmarkData.filter((p): p is BookmarkedPost => p !== null))
       } catch (error) {
         console.error('Error loading bookmarks:', error)
