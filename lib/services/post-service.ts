@@ -426,7 +426,7 @@ class PostService extends BaseDocumentService<Post> {
     try {
       // Get list of followed user IDs (up to 100 - platform limit for 'in' clause)
       const { followService } = await import('./follow-service');
-      const following = await followService.getFollowing(userId, { limit: 100 });
+      const following = await followService.getFollowing(userId);
 
       // Include the current user's ID so they see their own posts in the feed
       const followingIds = [...following.map(f => f.followingId), userId];

@@ -40,7 +40,7 @@ export function BlockListSettings() {
 
       // Load following list and block follows in parallel
       const [follows, blockFollows] = await Promise.all([
-        followService.getFollowing(user.identityId, { limit: 100 }),
+        followService.getFollowing(user.identityId),
         blockService.getBlockFollows(user.identityId)
       ])
 

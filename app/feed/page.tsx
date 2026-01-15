@@ -237,7 +237,7 @@ function FeedPage() {
             const allReposts: any[] = []
             await Promise.all(followedIds.slice(0, 20).map(async (followedId: string) => {
               try {
-                const userReposts = await repostService.getUserReposts(followedId, { limit: 10 })
+                const userReposts = await repostService.getUserReposts(followedId)
                 allReposts.push(...userReposts.map(r => ({ ...r, reposterId: followedId })))
               } catch (e) {
                 // Ignore individual failures

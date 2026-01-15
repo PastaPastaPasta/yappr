@@ -51,7 +51,7 @@ function HashtagPageContent() {
         }
 
         // Get post IDs that have this hashtag
-        const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag, { limit: 50 })
+        const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag)
         setPostCount(hashtagDocs.length)
 
         if (hashtagDocs.length === 0) {

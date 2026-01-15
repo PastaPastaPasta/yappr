@@ -211,7 +211,7 @@ function UserProfileContent() {
         // Fetch user's reposts and merge with their posts
         try {
           const { repostService } = await import('@/lib/services/repost-service')
-          const userReposts = await repostService.getUserReposts(userId, { limit: 50 })
+          const userReposts = await repostService.getUserReposts(userId)
 
           // Track repost pagination
           if (userReposts.length > 0) {
@@ -430,10 +430,7 @@ function UserProfileContent() {
       // Fetch more reposts using cursor-based pagination
       if (canLoadMoreReposts) {
         try {
-          newRepostDocs = await repostService.getUserReposts(userId, {
-            limit: 50,
-            startAfter: lastRepostId
-          })
+          newRepostDocs = await repostService.getUserReposts(userId)
 
           if (newRepostDocs.length > 0) {
             // Get unique post IDs that this user has reposted

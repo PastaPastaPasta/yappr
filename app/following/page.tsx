@@ -112,7 +112,7 @@ function FollowingPage() {
       }
 
       // Use followService to get following list
-      const follows = await followService.getFollowing(userIdToLoad, { limit: 50 })
+      const follows = await followService.getFollowing(userIdToLoad)
       
       console.log('Following: Raw follows from platform:', follows)
 

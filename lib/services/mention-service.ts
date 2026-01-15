@@ -1,4 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
 import { MENTION_CONTRACT_ID } from '../constants';
@@ -200,7 +200,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * Paginates through all results to return complete list.
    * Returns mention documents - caller should fetch actual posts and filter by ownership.
    */
-  async getPostsMentioningUser(userId: string, _options: QueryOptions = {}): Promise<PostMentionDocument[]> {
+  async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 

@@ -1,4 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { transformDocumentWithField } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
@@ -104,7 +104,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
    * Get user's bookmarks.
    * Paginates through all results to return complete list.
    */
-  async getUserBookmarks(userId: string, _options: QueryOptions = {}): Promise<BookmarkDocument[]> {
+  async getUserBookmarks(userId: string): Promise<BookmarkDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
