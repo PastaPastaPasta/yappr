@@ -5,8 +5,6 @@ import { motion } from 'framer-motion'
 import {
   MagnifyingGlassIcon,
   PaperAirplaneIcon,
-  PhotoIcon,
-  FaceSmileIcon,
   InformationCircleIcon,
   EllipsisHorizontalIcon,
   PlusIcon
@@ -520,13 +518,6 @@ function MessagesPage() {
                 }}
                 className="flex items-center gap-1 sm:gap-2"
               >
-                <button
-                  type="button"
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
-                >
-                  <PhotoIcon className="h-5 w-5" />
-                </button>
-
                 <Input
                   type="text"
                   placeholder="Type a message..."
@@ -535,13 +526,6 @@ function MessagesPage() {
                   disabled={isSending}
                   className="flex-1 min-w-0"
                 />
-
-                <button
-                  type="button"
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0 hidden sm:block"
-                >
-                  <FaceSmileIcon className="h-5 w-5" />
-                </button>
 
                 <Button
                   type="submit"
