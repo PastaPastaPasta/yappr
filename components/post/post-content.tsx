@@ -345,7 +345,7 @@ export function PostContent({
         })}
       </div>
       {/* Link preview */}
-      {!disableLinkPreview && previewLoading && <LinkPreviewSkeleton />}
+      {!disableLinkPreview && previewLoading && <LinkPreviewSkeleton url={firstUrl ?? undefined} />}
       {!disableLinkPreview && previewData && (
         <LinkPreview data={previewData} />
       )}

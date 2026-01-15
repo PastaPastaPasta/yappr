@@ -5,7 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { LinkIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { useSettingsStore } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
+import { CORS_PROXY_INFO, isDirectImageUrl } from '@/hooks/use-link-preview'
 
 // Note: We use next/image for favicon (small, fixed size) but regular img
 // for preview images so we can check naturalWidth/Height on load
@@ -78,6 +78,9 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   const hasRichContent = data.title || data.description || data.image
   const isBasicPreview = !hasRichContent
 
+  // Check if URL points directly to an image file
+  const isDirectImage = isDirectImageUrl(data.url)
+
   // Handler to check actual image dimensions after load
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget
@@ -92,7 +95,56 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     setRichLinkPreviews(true)
   }
 
-  // Compact horizontal layout with small thumbnail
+  // Direct image URL - use larger layout with prominent image display
+  if (isDirectImage) {
+    return (
+      <div className={`mt-3 ${className}`}>
+        <a
+          href={safeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="block border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+        >
+          {/* Large image display */}
+          {!imageError ? (
+            <div className="relative bg-neutral-100 dark:bg-neutral-800">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={safeUrl}
+                alt="Image preview"
+                className="w-full max-h-[400px] object-contain"
+                onError={() => setImageError(true)}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-32 bg-neutral-100 dark:bg-neutral-800 text-neutral-400">
+              Failed to load image
+            </div>
+          )}
+          {/* Domain info footer */}
+          <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700">
+            {data.favicon && !faviconError ? (
+              <Image
+                src={data.favicon}
+                alt=""
+                width={14}
+                height={14}
+                className="rounded-sm flex-shrink-0"
+                onError={() => setFaviconError(true)}
+                unoptimized
+              />
+            ) : (
+              <LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />
+            )}
+            <span className="truncate">{hostname}</span>
+          </div>
+        </a>
+      </div>
+    )
+  }
+
+  // Compact horizontal layout with small thumbnail (for articles/pages)
   return (
     <div className={`mt-3 ${className}`}>
       <a
@@ -225,9 +277,31 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
 
 interface LinkPreviewSkeletonProps {
   className?: string
+  /** Optional URL to determine skeleton layout (larger for direct images) */
+  url?: string
 }
 
-export function LinkPreviewSkeleton({ className = '' }: LinkPreviewSkeletonProps) {
+export function LinkPreviewSkeleton({ className = '', url }: LinkPreviewSkeletonProps) {
+  // Check if URL points directly to an image file for larger skeleton
+  const isDirectImage = url ? isDirectImageUrl(url) : false
+
+  if (isDirectImage) {
+    return (
+      <div
+        className={`mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden ${className}`}
+      >
+        {/* Large image skeleton */}
+        <div className="h-48 bg-neutral-200 dark:bg-neutral-700 animate-pulse" />
+        {/* Domain footer skeleton */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-t border-neutral-200 dark:border-neutral-700">
+          <div className="w-3.5 h-3.5 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+          <div className="h-3 w-24 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+
+  // Compact skeleton for articles/pages
   return (
     <div
       className={`flex mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden ${className}`}
