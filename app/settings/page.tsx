@@ -53,6 +53,8 @@ function SettingsPage() {
   const { theme, setTheme } = useTheme()
   const linkPreviews = useSettingsStore((s) => s.linkPreviews)
   const setLinkPreviews = useSettingsStore((s) => s.setLinkPreviews)
+  const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
+  const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -344,6 +346,21 @@ function SettingsPage() {
       
       <div>
         <h3 className="font-semibold mb-4">Direct Messages</h3>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="font-medium">Read Receipts</p>
+            <p className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
+          </div>
+          <Switch.Root
+            checked={sendReadReceipts}
+            onCheckedChange={setSendReadReceipts}
+            className={`w-11 h-6 rounded-full relative transition-colors ${
+              sendReadReceipts ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+            }`}
+          >
+            <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
+          </Switch.Root>
+        </div>
         <RadioGroup.Root
           value={privacySettings.allowMessages}
           onValueChange={(value) => 

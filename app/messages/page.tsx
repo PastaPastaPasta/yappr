@@ -16,6 +16,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
 import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
+import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -34,6 +35,7 @@ function MessagesPage() {
   const [newConversationInput, setNewConversationInput] = useState('')
   const [isResolvingUser, setIsResolvingUser] = useState(false)
   const [participantLastRead, setParticipantLastRead] = useState<number | null>(null)
+  const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -82,8 +84,8 @@ function MessagesPage() {
         )
         setParticipantLastRead(lastRead)
 
-        // Only mark as read if there are unread messages
-        if (selectedConversation.unreadCount > 0) {
+        // Only mark as read if there are unread messages and read receipts are enabled
+        if (selectedConversation.unreadCount > 0 && sendReadReceipts) {
           await directMessageService.markAsRead(selectedConversation.id, user.identityId)
         }
 
@@ -101,7 +103,7 @@ function MessagesPage() {
       }
     }
     loadMessages().catch(err => console.error('Failed to load messages:', err))
-  }, [selectedConversation, user])
+  }, [selectedConversation, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
   useEffect(() => {

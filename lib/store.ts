@@ -123,6 +123,9 @@ interface SettingsState {
   /** Enable link previews (fetches metadata via third-party proxy) */
   linkPreviews: boolean
   setLinkPreviews: (enabled: boolean) => void
+  /** Send read receipts in direct messages */
+  sendReadReceipts: boolean
+  setSendReadReceipts: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -130,6 +133,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       linkPreviews: false, // Disabled by default for privacy
       setLinkPreviews: (enabled) => set({ linkPreviews: enabled }),
+      sendReadReceipts: true, // Enabled by default
+      setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
     }),
     {
       name: 'yappr-settings',
