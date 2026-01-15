@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { Fragment, useMemo } from 'react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
-import { LinkPreview, LinkPreviewSkeleton } from './link-preview'
+import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt } from './link-preview'
 import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage } from '@/lib/post-helpers'
@@ -40,13 +40,15 @@ export function PostContent({
   onFailedHashtagClick,
   disableLinkPreview = false
 }: PostContentProps) {
-  const richLinkPreviews = useSettingsStore((s) => s.richLinkPreviews)
+  const linkPreviews = useSettingsStore((s) => s.linkPreviews)
 
   // Extract first URL for preview
   const firstUrl = useMemo(() => extractFirstUrl(content), [content])
+
+  // Only fetch preview if link previews are enabled
   const { data: previewData, loading: previewLoading } = useLinkPreview(
     firstUrl,
-    { disabled: disableLinkPreview, richPreview: richLinkPreviews }
+    { disabled: disableLinkPreview || !linkPreviews }
   )
   const parsedContent = useMemo(() => {
     // Patterns for inline elements (hashtags, cashtags, mentions, urls)
@@ -345,9 +347,13 @@ export function PostContent({
         })}
       </div>
       {/* Link preview */}
-      {!disableLinkPreview && previewLoading && <LinkPreviewSkeleton url={firstUrl ?? undefined} />}
-      {!disableLinkPreview && previewData && (
+      {!disableLinkPreview && linkPreviews && previewLoading && <LinkPreviewSkeleton url={firstUrl ?? undefined} />}
+      {!disableLinkPreview && linkPreviews && previewData && (
         <LinkPreview data={previewData} />
+      )}
+      {/* Enable link previews prompt - shown when disabled and URL exists */}
+      {!disableLinkPreview && !linkPreviews && firstUrl && (
+        <LinkPreviewEnablePrompt />
       )}
     </div>
   )

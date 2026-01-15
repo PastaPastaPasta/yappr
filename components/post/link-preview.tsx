@@ -7,6 +7,90 @@ import { LinkIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO, isDirectImageUrl } from '@/hooks/use-link-preview'
 
+/**
+ * Prompt shown when link previews are disabled but a URL exists
+ * Allows users to enable link previews with privacy disclosure
+ */
+export function LinkPreviewEnablePrompt() {
+  const [showEnableHint, setShowEnableHint] = useState(false)
+  const setLinkPreviews = useSettingsStore((s) => s.setLinkPreviews)
+
+  const handleEnablePreviews = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setLinkPreviews(true)
+  }
+
+  return (
+    <div className="mt-2 text-xs text-neutral-400 dark:text-neutral-500">
+      {showEnableHint ? (
+        <div className="p-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg space-y-2">
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {CORS_PROXY_INFO.warning}
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleEnablePreviews}
+              className="text-yappr-500 hover:text-yappr-600 font-medium"
+            >
+              Enable link previews
+            </button>
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setShowEnableHint(false)
+              }}
+              className="text-neutral-500 hover:text-neutral-600"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-neutral-500 text-[10px]">
+            Uses:{' '}
+            {CORS_PROXY_INFO.proxies.map((p, i) => (
+              <span key={p.name}>
+                {i > 0 && ', '}
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-neutral-600"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {p.name}
+                </a>
+              </span>
+            ))}
+          </p>
+          <p className="text-neutral-500 text-[10px]">
+            You can change this anytime in{' '}
+            <Link
+              href="/settings"
+              className="underline hover:text-neutral-600"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Settings
+            </Link>
+          </p>
+        </div>
+      ) : (
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setShowEnableHint(true)
+          }}
+          className="flex items-center gap-1 hover:text-neutral-500 dark:hover:text-neutral-400 transition-colors"
+        >
+          <SparklesIcon className="h-3 w-3" />
+          <span>Enable link previews</span>
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Note: We use next/image for favicon (small, fixed size) but regular img
 // for preview images so we can check naturalWidth/Height on load
 
@@ -53,10 +137,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     return false
   })
   const [faviconError, setFaviconError] = useState(false)
-  const [showEnableHint, setShowEnableHint] = useState(false)
-
-  const richLinkPreviews = useSettingsStore((s) => s.richLinkPreviews)
-  const setRichLinkPreviews = useSettingsStore((s) => s.setRichLinkPreviews)
 
   const safeUrl = sanitizeUrl(data.url)
 
@@ -75,8 +155,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
 
   // Hide image if error, too small, or dimensions indicate it's not useful
   const showImage = data.image && !imageError && !imageTooSmall
-  const hasRichContent = data.title || data.description || data.image
-  const isBasicPreview = !hasRichContent
 
   // Check if URL points directly to an image file
   const isDirectImage = isDirectImageUrl(data.url)
@@ -87,12 +165,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     if (img.naturalWidth < MIN_IMAGE_SIZE || img.naturalHeight < MIN_IMAGE_SIZE) {
       setImageTooSmall(true)
     }
-  }
-
-  const handleEnableRichPreviews = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setRichLinkPreviews(true)
   }
 
   // Direct image URL - use larger layout with prominent image display
@@ -201,76 +273,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           </div>
         )}
       </a>
-
-      {/* Enable rich previews hint - only show for basic previews */}
-      {isBasicPreview && !richLinkPreviews && (
-        <div className="mt-1.5 text-xs text-neutral-400 dark:text-neutral-500">
-          {showEnableHint ? (
-            <div className="p-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg space-y-2">
-              <p className="text-neutral-600 dark:text-neutral-400">
-                {CORS_PROXY_INFO.warning}
-              </p>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleEnableRichPreviews}
-                  className="text-yappr-500 hover:text-yappr-600 font-medium"
-                >
-                  Enable rich previews
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setShowEnableHint(false)
-                  }}
-                  className="text-neutral-500 hover:text-neutral-600"
-                >
-                  Cancel
-                </button>
-              </div>
-              <p className="text-neutral-500 text-[10px]">
-                Uses:{' '}
-                {CORS_PROXY_INFO.proxies.map((p, i) => (
-                  <span key={p.name}>
-                    {i > 0 && ', '}
-                    <a
-                      href={p.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-neutral-600"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {p.name}
-                    </a>
-                  </span>
-                ))}
-              </p>
-              <p className="text-neutral-500 text-[10px]">
-                You can change this anytime in{' '}
-                <Link
-                  href="/settings"
-                  className="underline hover:text-neutral-600"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Settings
-                </Link>
-              </p>
-            </div>
-          ) : (
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setShowEnableHint(true)
-              }}
-              className="flex items-center gap-1 hover:text-neutral-500 dark:hover:text-neutral-400 transition-colors"
-            >
-              <SparklesIcon className="h-3 w-3" />
-              <span>Enable rich previews</span>
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }

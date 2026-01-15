@@ -120,16 +120,16 @@ export const useAppStore = create<AppState>((set) => ({
 
 // Settings store with localStorage persistence
 interface SettingsState {
-  /** Enable rich link previews (fetches metadata via third-party proxy) */
-  richLinkPreviews: boolean
-  setRichLinkPreviews: (enabled: boolean) => void
+  /** Enable link previews (fetches metadata via third-party proxy) */
+  linkPreviews: boolean
+  setLinkPreviews: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      richLinkPreviews: false, // Disabled by default for privacy
-      setRichLinkPreviews: (enabled) => set({ richLinkPreviews: enabled }),
+      linkPreviews: false, // Disabled by default for privacy
+      setLinkPreviews: (enabled) => set({ linkPreviews: enabled }),
     }),
     {
       name: 'yappr-settings',

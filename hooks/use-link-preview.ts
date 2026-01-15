@@ -275,53 +275,43 @@ function createBasicPreview(url: string): LinkPreviewData {
 interface UseLinkPreviewOptions {
   /** Disable preview entirely */
   disabled?: boolean
-  /** Enable rich preview (uses third-party proxy) */
-  richPreview?: boolean
 }
 
 interface UseLinkPreviewResult {
   data: LinkPreviewData | null
   loading: boolean
   error: boolean
-  /** Whether this is a basic (privacy-preserving) or rich preview */
-  isRichPreview: boolean
 }
 
 /**
  * Hook to get link preview data for a URL
  *
- * By default, returns basic preview (domain + favicon) without network requests.
- * When richPreview is enabled, fetches full metadata via third-party CORS proxy.
+ * When enabled, fetches full metadata (title, description, image) via third-party CORS proxy.
+ * Returns null when disabled.
  */
 export function useLinkPreview(
   url: string | null,
   options: UseLinkPreviewOptions = {}
 ): UseLinkPreviewResult {
-  const { disabled = false, richPreview = false } = options
+  const { disabled = false } = options
 
-  // For basic preview, we can compute immediately without state
-  const basicData = url && !disabled && !shouldSkipUrl(url)
-    ? createBasicPreview(url)
-    : null
-
-  // Initialize data from cache if available (for rich preview)
-  const [richData, setRichData] = useState<LinkPreviewData | null>(() => {
-    if (!url || disabled || !richPreview) return null
+  // Initialize data from cache if available
+  const [data, setData] = useState<LinkPreviewData | null>(() => {
+    if (!url || disabled || shouldSkipUrl(url)) return null
     return previewCache.get(url) || null
   })
 
-  // Initialize loading state for rich preview
+  // Initialize loading state
   const [loading, setLoading] = useState(() => {
-    if (!url || disabled || !richPreview || shouldSkipUrl(url)) return false
+    if (!url || disabled || shouldSkipUrl(url)) return false
     return !previewCache.has(url)
   })
 
   const [error, setError] = useState(false)
 
   useEffect(() => {
-    // Only fetch if rich preview is enabled
-    if (!url || disabled || !richPreview || shouldSkipUrl(url)) {
-      setRichData(null)
+    if (!url || disabled || shouldSkipUrl(url)) {
+      setData(null)
       setLoading(false)
       setError(false)
       return
@@ -330,7 +320,7 @@ export function useLinkPreview(
     // Check cache first
     const cached = previewCache.get(url)
     if (cached) {
-      setRichData(cached)
+      setData(cached)
       setLoading(false)
       setError(false)
       return
@@ -343,7 +333,7 @@ export function useLinkPreview(
     fetchRichPreview(url)
       .then((result) => {
         if (!cancelled) {
-          setRichData(result)
+          setData(result)
           setLoading(false)
         }
       })
@@ -357,16 +347,12 @@ export function useLinkPreview(
     return () => {
       cancelled = true
     }
-  }, [url, disabled, richPreview])
-
-  // Return rich data if available, otherwise basic data
-  const data = richPreview ? (richData || basicData) : basicData
+  }, [url, disabled])
 
   return {
     data,
-    loading: richPreview ? loading : false,
+    loading,
     error,
-    isRichPreview: richPreview && !!richData && !loading,
   }
 }
 
