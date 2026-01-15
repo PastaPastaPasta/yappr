@@ -17,6 +17,26 @@ node register-contract-with-nonce.js # Register contract with specific nonce
 node test-dpns-resolve.js           # Test DPNS resolution
 ```
 
+## Code Quality Guidelines
+
+### Linter Errors and Warnings
+**Always fix linter issues properly.** Do not suppress, disable, or work around linter warnings without a genuinely compelling reason.
+
+**Do NOT:**
+- Add `// eslint-disable-next-line` comments to silence warnings
+- Use `@ts-ignore` or `@ts-expect-error` to bypass TypeScript errors
+- Add `any` types to avoid proper typing
+- Rename unused variables with `_` prefix just to quiet the linter
+- Use other suppression patterns that hide problems rather than fix them
+
+**Instead:**
+- Fix the underlying issue the linter is flagging
+- If a variable is unused, remove it entirely
+- If a type is wrong, correct the type properly
+- If code triggers a legitimate warning, refactor the code
+
+Linter rules exist to catch real problems. Suppression comments should be rare exceptions with clear justification, not a standard way to make warnings disappear.
+
 ## Architecture Overview
 
 Yappr is a decentralized social media platform built with Next.js 14 and Dash Platform.
