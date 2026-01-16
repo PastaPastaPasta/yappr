@@ -124,45 +124,45 @@ export function usePostDetail({
   postId,
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
-  // Consume pending navigation data (set when clicking from feed)
-  // This is called once on mount and clears the pending data
-  const consumePendingPostNavigation = useAppStore(state => state.consumePendingPostNavigation)
-
-  // Use a ref to track the initial navigation data (consumed once)
-  const initialNavigationRef = useRef<{ post: Post; enrichment?: ProgressiveEnrichment } | null>(null)
-
-  // On first render, try to consume pending navigation for this post
-  if (initialNavigationRef.current === null && postId) {
-    const pending = consumePendingPostNavigation(postId)
-    initialNavigationRef.current = pending || { post: null as unknown as Post } // Mark as checked
+  // Get initial navigation data synchronously from store (for useState initializers)
+  // This must be done outside hooks to capture the value at component mount time
+  const getInitialData = () => {
+    const pending = useAppStore.getState().pendingPostNavigation
+    if (pending && pending.post.id === postId) {
+      return pending
+    }
+    return null
   }
 
-  const initialPost = initialNavigationRef.current?.post?.id === postId
-    ? initialNavigationRef.current.post
-    : null
-  const initialEnrichment = initialNavigationRef.current?.post?.id === postId
-    ? initialNavigationRef.current.enrichment
-    : undefined
+  const [state, setState] = useState<PostDetailState>(() => {
+    const initial = getInitialData()
+    return {
+      post: initial?.post || null,
+      parentPost: null,
+      replies: [],
+      replyThreads: []
+    }
+  })
 
-  const [state, setState] = useState<PostDetailState>(() => ({
-    // Use navigation data immediately if available
-    post: initialPost,
-    parentPost: null,
-    replies: [],
-    replyThreads: []
-  }))
-  // Only show main loading if no navigation data
-  const [isLoading, setIsLoading] = useState(!initialPost)
+  const [isLoading, setIsLoading] = useState(() => {
+    const initial = getInitialData()
+    return !initial?.post
+  })
+
   const [isLoadingReplies, setIsLoadingReplies] = useState(true)
-  const [postEnrichment, setPostEnrichment] = useState<ProgressiveEnrichment | undefined>(
-    initialEnrichment
-  )
+
+  const [postEnrichment, setPostEnrichment] = useState<ProgressiveEnrichment | undefined>(() => {
+    const initial = getInitialData()
+    return initial?.enrichment
+  })
+
   const [error, setError] = useState<string | null>(null)
 
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
-  // Track if we used navigation data for initial render
-  const usedNavigationDataRef = useRef<boolean>(!!initialPost)
+
+  // Track if we used navigation data for initial render (computed once at mount)
+  const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
 
   // Enrichment hook with callback to update state
   const { enrich, reset: resetEnrichment } = usePostEnrichment({
@@ -353,10 +353,11 @@ export function usePostDetail({
     loadedPostIdRef.current = null // Reset on postId change
     resetEnrichment() // Reset enrichment tracking
 
-    // Try to consume pending navigation data for the new postId
+    // Check for pending navigation data for the new postId
     if (postId) {
-      const pending = consumePendingPostNavigation(postId)
-      if (pending) {
+      const store = useAppStore.getState()
+      const pending = store.pendingPostNavigation
+      if (pending && pending.post.id === postId) {
         // Use navigation data immediately
         setState(current => ({
           ...current,
@@ -365,6 +366,8 @@ export function usePostDetail({
         setPostEnrichment(pending.enrichment)
         usedNavigationDataRef.current = true
         setIsLoading(false)
+        // Clear the pending navigation
+        store.consumePendingPostNavigation(postId)
       } else {
         usedNavigationDataRef.current = false
         setIsLoading(true)
@@ -372,7 +375,7 @@ export function usePostDetail({
     }
 
     loadPost()
-  }, [postId, loadPost, resetEnrichment, consumePendingPostNavigation])
+  }, [postId, loadPost, resetEnrichment])
 
   const refresh = useCallback(async () => {
     loadedPostIdRef.current = null
