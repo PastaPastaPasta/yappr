@@ -7,14 +7,14 @@ A decentralized social media platform built on Dash Platform. All data—posts, 
 ## Features
 
 ### Core Social
-- **Posts**: 500-character posts with optional media
+- **Posts**: 500-character posts with optional media and links
 - **Replies & Threads**: Nested conversation threads with quote posts
 - **Likes & Reposts**: Engage with posts
 - **Follows**: Follow users to see their posts in your feed
 - **Bookmarks**: Save posts to your bookmarks (stored on-chain)
 - **Direct Messages**: Encrypted point-to-point messaging
 - **Mentions**: Tag users with @username in posts
-- **Blocking**: Block users to prevent interactions
+- **Blocking**: Block users to prevent interactions, subscribe to others' block lists
 
 ### Discovery
 - **Hashtags**: Tag posts with #hashtags, browse trending topics
@@ -32,7 +32,7 @@ A decentralized social media platform built on Dash Platform. All data—posts, 
 - **Testnet Banner**: Visual indicator when running on testnet
 
 ### Payments
-- **Tips**: Send Dash tips to users via QR code
+- **Tips**: Send tips to users via QR code (Dash and other crypto addresses)
 - **Payment QR Codes**: Generate payment requests with amount and message
 
 ### Security
@@ -80,14 +80,6 @@ npm run lint
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-### Serving Static Build
-
-After building, you can serve the static export using the included Python server (handles WASM headers correctly):
-
-```bash
-python serve.py
-```
 
 ## Project Structure
 
@@ -233,7 +225,6 @@ yappr/
 │
 ├── next.config.js         # Next.js configuration (static export, WASM)
 ├── tailwind.config.js     # Tailwind CSS configuration
-├── serve.py               # Python server for static build with WASM headers
 ├── register-contract.js   # Register contract on Dash Platform
 ├── register-contract-with-nonce.js # Register contract with specific nonce
 ├── register-hashtag-contract.js    # Register hashtag contract
