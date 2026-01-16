@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { User, Post } from './types'
+import { User, Post, FeedItem, isFeedReplyContext } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
@@ -176,6 +176,10 @@ export const useSettingsStore = create<SettingsState>()(
   )
 )
 
+// Helper to get a stable ID from a feed item (handles both Post and FeedReplyContext)
+const getFeedItemId = (item: FeedItem): string | undefined =>
+  isFeedReplyContext(item) ? item.reply.id : item.id
+
 // Feed state store - persists feed data across navigation
 export interface FeedPagination {
   forYou: {
@@ -239,15 +243,15 @@ export const useFeedStore = create<FeedState>((set) => ({
 
   appendForYouPosts: (posts) =>
     set((state) => {
-      const existingIds = new Set((state.forYouPosts || []).map((p: any) => p.id))
-      const newPosts = posts.filter((p: any) => !existingIds.has(p.id))
+      const existingIds = new Set((state.forYouPosts || []).map(getFeedItemId))
+      const newPosts = posts.filter((p) => !existingIds.has(getFeedItemId(p)))
       return { forYouPosts: [...(state.forYouPosts || []), ...newPosts] }
     }),
 
   appendFollowingPosts: (posts) =>
     set((state) => {
-      const existingIds = new Set((state.followingPosts || []).map((p: any) => p.id))
-      const newPosts = posts.filter((p: any) => !existingIds.has(p.id))
+      const existingIds = new Set((state.followingPosts || []).map(getFeedItemId))
+      const newPosts = posts.filter((p) => !existingIds.has(getFeedItemId(p)))
       return { followingPosts: [...(state.followingPosts || []), ...newPosts] }
     }),
 

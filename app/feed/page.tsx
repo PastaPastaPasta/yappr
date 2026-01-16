@@ -136,8 +136,8 @@ function FeedPage() {
             }
           } else {
             setFollowingPosts(cached, user?.identityId || null)
-            // For following, we can't restore cursor from cache, so set hasMore based on length
-            setFollowingPagination(null, cached.length >= 20)
+            // Cursor can't be restored from cache; disable Load More since we have no cursor
+            setFollowingPagination(null, false)
           }
           setIsLoading(false)
           // Enrich cached posts (needed after back navigation when enrichment state is reset)
