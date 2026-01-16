@@ -61,7 +61,7 @@ function CreateProfilePage() {
 
         if (status === 'migrated') {
           toast.success('You already have a profile!')
-          router.push(`/user?id=${user.identityId}`)
+          router.push('/')
           return
         }
 
@@ -168,7 +168,7 @@ function CreateProfilePage() {
           errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
         setTimeout(() => {
-          router.push(`/user?id=${user?.identityId}`)
+          router.push('/')
         }, 2000)
       } else {
         toast.error(error instanceof Error ? error.message : 'Failed to create profile')
