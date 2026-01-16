@@ -38,6 +38,8 @@ function FollowersPage() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const followersState = useAsyncState<Follower[]>(null)
+  // Extract stable setter functions to avoid infinite loop in useCallback dependencies
+  const { setLoading, setError, setData } = followersState
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
 
@@ -47,8 +49,6 @@ function FollowersPage() {
 
   // Load followers list
   const loadFollowers = useCallback(async (forceRefresh: boolean = false) => {
-    const { setLoading, setError, setData } = followersState
-
     setLoading(true)
     setError(null)
 
@@ -205,7 +205,7 @@ function FollowersPage() {
     } finally {
       setLoading(false)
     }
-  }, [followersState, isOwnProfile, user?.identityId, targetUserId])
+  }, [setLoading, setError, setData, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
