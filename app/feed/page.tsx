@@ -139,6 +139,22 @@ function FeedPage() {
             // Cursor can't be restored from cache; disable Load More since we have no cursor
             setFollowingPagination(null, false)
           }
+          // Set newestPostTimestamp so auto-refresh interval works after back navigation
+          if (cached.length > 0) {
+            const getItemTimestamp = (item: FeedItem): number => {
+              if (isFeedReplyContext(item)) {
+                return item.reply.createdAt instanceof Date
+                  ? item.reply.createdAt.getTime()
+                  : new Date(item.reply.createdAt).getTime()
+              }
+              const post = item as any
+              return post.createdAt instanceof Date
+                ? post.createdAt.getTime()
+                : new Date(post.createdAt).getTime()
+            }
+            setNewestPostTimestamp(Math.max(...cached.map(getItemTimestamp)))
+            setPendingNewPosts([])
+          }
           setIsLoading(false)
           // Enrich cached posts (needed after back navigation when enrichment state is reset)
           // Blocked users will be filtered via enrichmentState.blockStatus in render
@@ -973,6 +989,20 @@ function FeedPage() {
         )
         enrichProgressively(postsToEnrich)
         lastEnrichmentUserIdRef.current = user?.identityId
+        // Set newestPostTimestamp so auto-refresh interval works after back navigation
+        const getItemTimestamp = (item: FeedItem): number => {
+          if (isFeedReplyContext(item)) {
+            return item.reply.createdAt instanceof Date
+              ? item.reply.createdAt.getTime()
+              : new Date(item.reply.createdAt).getTime()
+          }
+          const post = item as any
+          return post.createdAt instanceof Date
+            ? post.createdAt.getTime()
+            : new Date(post.createdAt).getTime()
+        }
+        setNewestPostTimestamp(Math.max(...existingPosts.map(getItemTimestamp)))
+        setPendingNewPosts([])
         // Restore scroll position after a short delay to let content render
         const savedScrollPos = scrollPositions[activeTab]
         if (savedScrollPos > 0) {

@@ -243,15 +243,21 @@ export const useFeedStore = create<FeedState>((set) => ({
 
   appendForYouPosts: (posts) =>
     set((state) => {
-      const existingIds = new Set((state.forYouPosts || []).map(getFeedItemId))
-      const newPosts = posts.filter((p) => !existingIds.has(getFeedItemId(p)))
+      const existingIds = new Set((state.forYouPosts || []).map(getFeedItemId).filter(Boolean))
+      const newPosts = posts.filter((p) => {
+        const id = getFeedItemId(p)
+        return !id || !existingIds.has(id)
+      })
       return { forYouPosts: [...(state.forYouPosts || []), ...newPosts] }
     }),
 
   appendFollowingPosts: (posts) =>
     set((state) => {
-      const existingIds = new Set((state.followingPosts || []).map(getFeedItemId))
-      const newPosts = posts.filter((p) => !existingIds.has(getFeedItemId(p)))
+      const existingIds = new Set((state.followingPosts || []).map(getFeedItemId).filter(Boolean))
+      const newPosts = posts.filter((p) => {
+        const id = getFeedItemId(p)
+        return !id || !existingIds.has(id)
+      })
       return { followingPosts: [...(state.followingPosts || []), ...newPosts] }
     }),
 
