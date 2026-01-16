@@ -2,12 +2,12 @@
 
 A decentralized social media platform built on Dash Platform. All data—posts, profiles, likes, follows, bookmarks, mentions, tips, and direct messages—is stored on-chain with full user ownership.
 
-![Yappr Screenshot](yappr.png)
+<img src="yappr.png" alt="Yappr Screenshot" width="600">
 
 ## Features
 
 ### Core Social
-- **Posts**: 500-character posts with optional media and links
+- **Posts**: 500-character posts with optional links
 - **Replies & Threads**: Nested conversation threads with quote posts
 - **Likes & Reposts**: Engage with posts
 - **Follows**: Follow users to see their posts in your feed
