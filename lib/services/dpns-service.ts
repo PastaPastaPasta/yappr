@@ -110,6 +110,7 @@ class DpnsService {
   /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
+   * Selects the "best" username for identities with multiple names (contested first, then alphabetically)
    *
    * TODO: This query uses 'in' clause which doesn't support reliable pagination.
    * The SDK returns incomplete results when subtrees are empty but still count against the limit.
@@ -152,6 +153,9 @@ class DpnsService {
       });
 
       const documents = extractDocuments(response);
+
+      // Collect ALL usernames per identity (some users have multiple)
+      const usernamesByIdentity = new Map<string, string[]>();
       for (const doc of documents) {
         const data = (doc.data || doc) as Record<string, unknown>;
         const records = data.records as Record<string, unknown> | undefined;
@@ -163,9 +167,25 @@ class DpnsService {
         const username = `${label}.${parentDomain}`;
 
         if (identityId && label) {
-          results.set(identityId, username);
-          this._cacheEntry(username, identityId);
+          const existing = usernamesByIdentity.get(identityId) || [];
+          existing.push(username);
+          usernamesByIdentity.set(identityId, existing);
         }
+      }
+
+      // For identities with multiple usernames, sort and pick the best one
+      // For identities with one username, use it directly
+      for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
+        let bestUsername: string;
+        if (usernames.length === 1) {
+          bestUsername = usernames[0];
+        } else {
+          // Sort: contested usernames first, then alphabetically
+          const sortedUsernames = await this.sortUsernamesByContested(usernames);
+          bestUsername = sortedUsernames[0];
+        }
+        results.set(identityId, bestUsername);
+        this._cacheEntry(bestUsername, identityId);
       }
     } catch (error) {
       console.error('DPNS: Batch resolution error:', error);
