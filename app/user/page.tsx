@@ -39,6 +39,7 @@ import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import { mentionService } from '@/lib/services/mention-service'
 import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { cn } from '@/lib/utils'
+import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 
 interface ProfileData {
   displayName: string
@@ -65,6 +66,7 @@ function UserProfileContent() {
 
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [username, setUsername] = useState<string | null>(null)
+  const [allUsernames, setAllUsernames] = useState<string[]>([])
   const [hasDpns, setHasDpns] = useState(false)
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -300,25 +302,34 @@ function UserProfileContent() {
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
 
-        // Try to resolve DPNS username
+        // Try to resolve DPNS usernames (fetch all, use first as primary)
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
-          const resolvedUsername = await dpnsService.resolveUsername(userId)
-          if (resolvedUsername) {
-            setUsername(resolvedUsername)
+          const usernames = await dpnsService.getAllUsernames(userId)
+          if (usernames.length > 0) {
+            setAllUsernames(usernames)
+            setUsername(usernames[0])
             setHasDpns(true)
             // Update posts with hasDpns flag
             setPosts(currentPosts => currentPosts.map(post => ({
               ...post,
               author: {
                 ...post.author,
-                username: resolvedUsername,
+                username: usernames[0],
                 hasDpns: true
               } as any
             })))
+          } else {
+            // Reset DPNS state when no usernames found
+            setAllUsernames([])
+            setUsername(null)
+            setHasDpns(false)
           }
         } catch (e) {
-          // DPNS resolution is optional
+          // Reset DPNS state on error to avoid stale data
+          setAllUsernames([])
+          setUsername(null)
+          setHasDpns(false)
         }
 
       } catch (error) {
@@ -954,8 +965,8 @@ function UserProfileContent() {
                 <>
                   <div className="mb-3">
                     <h2 className="text-xl font-bold">{displayName}</h2>
-                    {hasDpns ? (
-                      <p className="text-gray-500">@{username}</p>
+                    {hasDpns && username ? (
+                      <UsernameDropdown username={username} allUsernames={allUsernames} />
                     ) : (
                       <Tooltip.Provider>
                         <Tooltip.Root>

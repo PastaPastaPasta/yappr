@@ -1,6 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
+import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -440,6 +441,92 @@ class DpnsService {
     return null;
   }
 
+
+  /**
+   * Batch check availability and contested status for multiple usernames
+   */
+  async batchCheckAvailability(labels: string[]): Promise<Map<string, UsernameCheckResult>> {
+    const results = new Map<string, UsernameCheckResult>();
+
+    // Check each username in parallel
+    const checks = await Promise.allSettled(
+      labels.map(async (label) => {
+        const normalizedLabel = label.toLowerCase().replace(/\.dash$/, '');
+        try {
+          const sdk = await getEvoSdk();
+          const [available, contested] = await Promise.all([
+            sdk.dpns.isNameAvailable(normalizedLabel),
+            sdk.dpns.isContestedUsername(normalizedLabel),
+          ]);
+          return { label: normalizedLabel, available, contested };
+        } catch (error) {
+          return {
+            label: normalizedLabel,
+            available: false,
+            contested: false,
+            error: error instanceof Error ? error.message : 'Check failed',
+          };
+        }
+      })
+    );
+
+    // Process results
+    for (const result of checks) {
+      if (result.status === 'fulfilled') {
+        const { label, available, contested, error } = result.value;
+        results.set(label, { available, contested, error });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Register multiple usernames sequentially with progress callback
+   */
+  async registerUsernamesSequentially(
+    registrations: Array<{
+      label: string;
+      identityId: string;
+      publicKeyId: number;
+      privateKeyWif: string;
+    }>,
+    onProgress?: (index: number, total: number, label: string) => void
+  ): Promise<UsernameRegistrationResult[]> {
+    const results: UsernameRegistrationResult[] = [];
+
+    for (let i = 0; i < registrations.length; i++) {
+      const reg = registrations[i];
+      onProgress?.(i, registrations.length, reg.label);
+
+      try {
+        const sdk = await getEvoSdk();
+        const isContested = await sdk.dpns.isContestedUsername(reg.label);
+
+        await this.registerUsername(
+          reg.label,
+          reg.identityId,
+          reg.publicKeyId,
+          reg.privateKeyWif
+        );
+
+        results.push({
+          label: reg.label,
+          success: true,
+          isContested,
+        });
+      } catch (error) {
+        results.push({
+          label: reg.label,
+          success: false,
+          isContested: false,
+          error: error instanceof Error ? error.message : 'Registration failed',
+        });
+      }
+    }
+
+    return results;
+  }
 
   /**
    * Clear cache entries

@@ -226,3 +226,30 @@ export type FeedItem = Post | FeedReplyContext
 export function isFeedReplyContext(item: FeedItem): item is FeedReplyContext {
   return 'type' in item && item.type === 'reply_context'
 }
+
+// DPNS Multi-Username Registration Types
+export type UsernameStatus = 'pending' | 'checking' | 'available' | 'contested' | 'taken' | 'invalid'
+export type RegistrationStep = 'username-entry' | 'checking' | 'review' | 'registering' | 'complete'
+
+export interface UsernameEntry {
+  id: string
+  label: string
+  status: UsernameStatus
+  isContested: boolean
+  validationError?: string
+  registrationError?: string
+  registered?: boolean
+}
+
+export interface UsernameCheckResult {
+  available: boolean
+  contested: boolean
+  error?: string
+}
+
+export interface UsernameRegistrationResult {
+  label: string
+  success: boolean
+  isContested: boolean
+  error?: string
+}
