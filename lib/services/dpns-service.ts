@@ -186,8 +186,19 @@ class DpnsService {
           bestUsername = usernames[0];
         } else {
           // Sort: contested first, then shortest, then alphabetically
-          const sortedUsernames = await this.sortUsernamesByContested(usernames);
-          bestUsername = sortedUsernames[0];
+          // Wrap in try-catch so one failed contested lookup doesn't break the batch
+          try {
+            const sortedUsernames = await this.sortUsernamesByContested(usernames);
+            bestUsername = sortedUsernames[0];
+          } catch (err) {
+            console.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
+            // Fallback: sort by length then alphabetically (skip contested check)
+            const sorted = [...usernames].sort((a, b) => {
+              if (a.length !== b.length) return a.length - b.length;
+              return a.localeCompare(b);
+            });
+            bestUsername = sorted[0];
+          }
         }
         results.set(identityId, bestUsername);
         this._cacheEntry(bestUsername, identityId);
