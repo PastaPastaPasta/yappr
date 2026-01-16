@@ -2,7 +2,7 @@
 
 A decentralized social media platform built on Dash Platform. All data—posts, profiles, likes, follows, bookmarks, mentions, tips, and direct messages—is stored on-chain with full user ownership.
 
-<img src="yappr.png" alt="Yappr Screenshot" width="600">
+<img src="yappr.png" alt="Yappr Screenshot" width="200">
 
 ## Features
 
