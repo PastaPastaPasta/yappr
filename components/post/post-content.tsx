@@ -224,6 +224,12 @@ export function PostContent({
       const cleanDisplay = part.value.replace(/[.,;:!?)]+$/, '')
       const trailingPunctuation = part.value.slice(cleanDisplay.length)
 
+      // If link previews are enabled and this URL is being previewed, strip it from content
+      // Keep only trailing punctuation (if any)
+      if (linkPreviews && firstUrl && cleanHref === firstUrl) {
+        return trailingPunctuation ? <Fragment key={key}>{trailingPunctuation}</Fragment> : null
+      }
+
       return (
         <Fragment key={key}>
           <a
