@@ -116,6 +116,9 @@ function UserProfileContent() {
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
+  // Check if display name is still in loading/fallback state
+  const isDisplayNameLoading = isLoading || !profile?.displayName || displayName.startsWith('User ')
+
   useEffect(() => {
     if (!userId) return
 
@@ -736,7 +739,11 @@ function UserProfileContent() {
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
             <div className="flex-1">
-              <h1 className="text-xl font-bold">{displayName}</h1>
+              {isDisplayNameLoading ? (
+                <div className="h-6 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
+              ) : (
+                <h1 className="text-xl font-bold">{displayName}</h1>
+              )}
               <p className="text-sm text-gray-500">{postCount !== null ? postCount : '–'} posts</p>
             </div>
           </div>
@@ -964,7 +971,11 @@ function UserProfileContent() {
               ) : (
                 <>
                   <div className="mb-3">
-                    <h2 className="text-xl font-bold">{displayName}</h2>
+                    {isDisplayNameLoading ? (
+                      <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
+                    ) : (
+                      <h2 className="text-xl font-bold">{displayName}</h2>
+                    )}
                     {hasDpns && username ? (
                       <UsernameDropdown username={username} allUsernames={allUsernames} />
                     ) : (
