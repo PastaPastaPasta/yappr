@@ -444,6 +444,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleCardClick = (e: React.MouseEvent) => {
     const url = `/post?id=${post.id}`
+
+    // Cache the post for instant navigation
+    // Merge post data with enrichment for the cached version
+    const { cachePost } = useAppStore.getState()
+    cachePost(enrichedPost, progressiveEnrichment)
+
     // Handle Ctrl/Cmd+click to open in new tab (standard browser behavior)
     if (e.ctrlKey || e.metaKey) {
       window.open(url, '_blank')

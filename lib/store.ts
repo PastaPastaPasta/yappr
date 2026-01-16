@@ -2,11 +2,19 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
+import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 export interface ThreadPost {
   id: string
   content: string
   postedPostId?: string // Platform post ID if successfully posted
+}
+
+// Cache entry for posts seen in feed (for instant navigation)
+export interface CachedPost {
+  post: Post
+  enrichment?: ProgressiveEnrichment
+  cachedAt: number
 }
 
 interface AppState {
@@ -17,6 +25,8 @@ interface AppState {
   // Thread composition state
   threadPosts: ThreadPost[]
   activeThreadPostId: string | null
+  // Post cache for instant navigation from feed to post detail
+  postCache: Map<string, CachedPost>
 
   setCurrentUser: (user: User | null) => void
   setComposeOpen: (open: boolean) => void
@@ -29,6 +39,10 @@ interface AppState {
   markThreadPostAsPosted: (id: string, postedPostId: string) => void
   setActiveThreadPost: (id: string | null) => void
   resetThreadPosts: () => void
+  // Post cache actions
+  cachePost: (post: Post, enrichment?: ProgressiveEnrichment) => void
+  getCachedPost: (postId: string) => CachedPost | undefined
+  clearPostCache: () => void
 }
 
 const createInitialThreadPost = (): ThreadPost => ({
@@ -36,13 +50,19 @@ const createInitialThreadPost = (): ThreadPost => ({
   content: '',
 })
 
-export const useAppStore = create<AppState>((set) => ({
+// Cache TTL: 5 minutes
+const POST_CACHE_TTL = 5 * 60 * 1000
+// Max cache size to prevent memory issues
+const MAX_CACHE_SIZE = 100
+
+export const useAppStore = create<AppState>((set, get) => ({
   currentUser: mockCurrentUser,
   isComposeOpen: false,
   replyingTo: null,
   quotingPost: null,
   threadPosts: [createInitialThreadPost()],
   activeThreadPostId: null,
+  postCache: new Map(),
 
   setCurrentUser: (user) => set({ currentUser: user }),
   setComposeOpen: (open) => {
@@ -115,6 +135,53 @@ export const useAppStore = create<AppState>((set) => ({
       threadPosts: [initialPost],
       activeThreadPostId: initialPost.id
     })
+  },
+
+  // Post cache actions for instant navigation
+  cachePost: (post, enrichment) => {
+    const { postCache } = get()
+    const now = Date.now()
+
+    // Create new map to trigger React update
+    const newCache = new Map(postCache)
+
+    // Add/update the post
+    newCache.set(post.id, {
+      post,
+      enrichment,
+      cachedAt: now
+    })
+
+    // Clean up expired entries and enforce max size
+    const entries = Array.from(newCache.entries())
+    const validEntries = entries
+      .filter(([, entry]) => now - entry.cachedAt < POST_CACHE_TTL)
+      .sort((a, b) => b[1].cachedAt - a[1].cachedAt) // Most recent first
+      .slice(0, MAX_CACHE_SIZE)
+
+    set({ postCache: new Map(validEntries) })
+  },
+
+  getCachedPost: (postId) => {
+    const { postCache } = get()
+    const cached = postCache.get(postId)
+
+    if (!cached) return undefined
+
+    // Check if still valid
+    if (Date.now() - cached.cachedAt > POST_CACHE_TTL) {
+      // Expired - remove it
+      const newCache = new Map(postCache)
+      newCache.delete(postId)
+      set({ postCache: newCache })
+      return undefined
+    }
+
+    return cached
+  },
+
+  clearPostCache: () => {
+    set({ postCache: new Map() })
   },
 }))
 

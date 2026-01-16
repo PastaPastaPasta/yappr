@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, ReplyThread } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
 import { usePostEnrichment } from './use-post-enrichment'
+import { useAppStore, CachedPost } from '@/lib/store'
+import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
   post: Post | null
@@ -24,8 +26,12 @@ interface UsePostDetailResult {
   replies: Post[]
   /** Threaded replies with nesting and author thread info */
   replyThreads: ReplyThread[]
-  /** Whether initial load is in progress */
+  /** Whether initial load is in progress (false if using cached data) */
   isLoading: boolean
+  /** Whether replies are still loading (separate from main post) */
+  isLoadingReplies: boolean
+  /** Enrichment data for the main post (from cache or progressive loading) */
+  postEnrichment?: ProgressiveEnrichment
   /** Error message if load failed */
   error: string | null
   /** Refetch all data */
@@ -118,17 +124,29 @@ export function usePostDetail({
   postId,
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
-  const [state, setState] = useState<PostDetailState>({
-    post: null,
+  // Get cached post for instant display
+  const getCachedPost = useAppStore(state => state.getCachedPost)
+  const cachedData = postId ? getCachedPost(postId) : undefined
+
+  const [state, setState] = useState<PostDetailState>(() => ({
+    // Use cached post immediately if available
+    post: cachedData?.post || null,
     parentPost: null,
     replies: [],
     replyThreads: []
-  })
-  const [isLoading, setIsLoading] = useState(false)
+  }))
+  // Only show main loading if no cached post
+  const [isLoading, setIsLoading] = useState(!cachedData?.post)
+  const [isLoadingReplies, setIsLoadingReplies] = useState(true)
+  const [postEnrichment, setPostEnrichment] = useState<ProgressiveEnrichment | undefined>(
+    cachedData?.enrichment
+  )
   const [error, setError] = useState<string | null>(null)
 
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
+  // Track if we used cached data for initial render
+  const usedCacheRef = useRef<boolean>(!!cachedData?.post)
 
   // Enrichment hook with callback to update state
   const { enrich, reset: resetEnrichment } = usePostEnrichment({
@@ -165,7 +183,16 @@ export function usePostDetail({
     if (loadedPostIdRef.current === postId) return
     loadedPostIdRef.current = postId
 
-    setIsLoading(true)
+    // Check cache again (in case it was populated after mount)
+    const freshCachedData = getCachedPost(postId)
+    const hasCachedPost = usedCacheRef.current || !!freshCachedData?.post
+
+    // Only show main loading if no cached data
+    if (!hasCachedPost) {
+      setIsLoading(true)
+    }
+    // Always loading replies until we fetch them
+    setIsLoadingReplies(true)
     setError(null)
 
     try {
@@ -174,6 +201,7 @@ export function usePostDetail({
 
       if (!loadedPost) {
         setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+        setIsLoadingReplies(false)
         return
       }
 
@@ -298,18 +326,39 @@ export function usePostDetail({
     } catch (err) {
       console.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
-      setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      // Only clear state if we don't have cached data to show
+      if (!usedCacheRef.current) {
+        setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      }
     } finally {
       setIsLoading(false)
+      setIsLoadingReplies(false)
     }
-  }, [postId, enabled, enrich])
+  }, [postId, enabled, enrich, getCachedPost])
 
   // Load on mount/postId change
   useEffect(() => {
     loadedPostIdRef.current = null // Reset on postId change
     resetEnrichment() // Reset enrichment tracking
+
+    // Check for cached post on postId change
+    const newCachedData = postId ? getCachedPost(postId) : undefined
+    if (newCachedData?.post) {
+      // Use cached post immediately
+      setState(current => ({
+        ...current,
+        post: newCachedData.post
+      }))
+      setPostEnrichment(newCachedData.enrichment)
+      usedCacheRef.current = true
+      setIsLoading(false)
+    } else {
+      usedCacheRef.current = false
+      setIsLoading(true)
+    }
+
     loadPost()
-  }, [postId, loadPost, resetEnrichment])
+  }, [postId, loadPost, resetEnrichment, getCachedPost])
 
   const refresh = useCallback(async () => {
     loadedPostIdRef.current = null
@@ -387,6 +436,8 @@ export function usePostDetail({
     replies: state.replies,
     replyThreads: state.replyThreads,
     isLoading,
+    isLoadingReplies,
+    postEnrichment,
     error,
     refresh,
     addOptimisticReply,
