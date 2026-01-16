@@ -907,11 +907,14 @@ function FeedPage() {
   // Track previous tab to detect tab switches vs initial mount/back navigation
   const previousTabRef = useRef<string | null>(null)
   const isInitialMountRef = useRef(true)
+  // Track if we've enriched with the current user (to re-enrich when user becomes available)
+  const lastEnrichmentUserIdRef = useRef<string | undefined>(undefined)
 
   // Load posts on mount and when tab changes
   // This effect distinguishes between:
   // 1. Initial mount / back navigation - restore from store if available
   // 2. Tab switch - clear and reload that tab's data
+  // 3. User becomes available after initial mount - re-enrich with user context
   useEffect(() => {
     const wasTabSwitch = previousTabRef.current !== null && previousTabRef.current !== activeTab
     previousTabRef.current = activeTab
@@ -920,10 +923,14 @@ function FeedPage() {
     const existingPosts = activeTab === 'forYou' ? forYouPosts : followingPosts
     const isFollowingUserChanged = activeTab === 'following' && followingUserId !== user?.identityId
 
+    // Check if user became available after we already enriched without user context
+    const userBecameAvailable = user?.identityId && lastEnrichmentUserIdRef.current === undefined && !isInitialMountRef.current
+
     if (wasTabSwitch) {
       // Tab was switched - always load fresh data for the new tab
       // But don't clear the store - we keep cached data for each tab
       resetEnrichment()
+      lastEnrichmentUserIdRef.current = undefined
       // Clear auto-refresh state on tab switch
       setPendingNewPosts([])
       setNewestPostTimestamp(null)
@@ -935,6 +942,7 @@ function FeedPage() {
           isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
         )
         enrichProgressively(postsToEnrich)
+        lastEnrichmentUserIdRef.current = user?.identityId
         // Restore scroll position
         const savedScrollPos = scrollPositions[activeTab]
         if (savedScrollPos > 0) {
@@ -964,6 +972,7 @@ function FeedPage() {
           isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
         )
         enrichProgressively(postsToEnrich)
+        lastEnrichmentUserIdRef.current = user?.identityId
         // Restore scroll position after a short delay to let content render
         const savedScrollPos = scrollPositions[activeTab]
         if (savedScrollPos > 0) {
@@ -976,6 +985,16 @@ function FeedPage() {
         resetEnrichment()
         loadPosts().catch(err => console.error('Failed to load posts:', err))
       }
+    } else if (userBecameAvailable && existingPosts && existingPosts.length > 0) {
+      // User became available after we already restored posts without user context
+      // Re-enrich to get user-specific data (likes, interactions, etc.)
+      console.log('Feed: Re-enriching posts now that user is available')
+      resetEnrichment()
+      const postsToEnrich = existingPosts.flatMap(item =>
+        isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
+      )
+      enrichProgressively(postsToEnrich)
+      lastEnrichmentUserIdRef.current = user?.identityId
     }
   }, [activeTab, forYouPosts, followingPosts, followingUserId, user?.identityId, loadPosts, resetEnrichment, enrichProgressively, scrollPositions, clearFeedState])
 
