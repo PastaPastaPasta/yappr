@@ -113,18 +113,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
       return
     }
 
-    const identity = await identityService.getIdentity(identityId)
-    if (!identity) {
-      toast.error('Identity not found.')
-      return
-    }
-
-    const suitableKey = findDpnsSuitableKey(identity.publicKeys)
-    if (!suitableKey) {
-      toast.error('No suitable key found. DPNS requires CRITICAL or HIGH security level key.')
-      return
-    }
-
     const availableUsernames = usernames.filter(
       (u) => u.status === 'available' || u.status === 'contested'
     )
@@ -137,34 +125,59 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
     setStep('registering')
     setCurrentRegistrationIndex(0)
 
-    const registrations = availableUsernames.map((u) => ({
-      label: u.label,
-      identityId,
-      publicKeyId: suitableKey.id,
-      privateKeyWif: privateKey,
-    }))
-
-    const results = await dpnsService.registerUsernamesSequentially(
-      registrations,
-      (index) => setCurrentRegistrationIndex(index)
-    )
-
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i]
-      const entry = availableUsernames[i]
-      setUsernameRegistered(entry.id, result.success, result.error)
-      if (result.isContested) {
-        setUsernameContested(entry.id, true)
+    try {
+      const identity = await identityService.getIdentity(identityId)
+      if (!identity) {
+        toast.error('Identity not found.')
+        setStep('review')
+        return
       }
-    }
 
-    const firstSuccess = results.find((r) => r.success)
-    if (firstSuccess) {
-      updateDPNSUsername(firstSuccess.label)
-      toast.success('Username registered successfully!')
-    }
+      const suitableKey = findDpnsSuitableKey(identity.publicKeys)
+      if (!suitableKey) {
+        toast.error('No suitable key found. DPNS requires CRITICAL or HIGH security level key.')
+        setStep('review')
+        return
+      }
 
-    setStep('complete')
+      const registrations = availableUsernames.map((u) => ({
+        label: u.label,
+        identityId,
+        publicKeyId: suitableKey.id,
+        privateKeyWif: privateKey,
+      }))
+
+      const results = await dpnsService.registerUsernamesSequentially(
+        registrations,
+        (index) => setCurrentRegistrationIndex(index)
+      )
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i]
+        const entry = availableUsernames[i]
+        setUsernameRegistered(entry.id, result.success, result.error)
+        if (result.isContested) {
+          setUsernameContested(entry.id, true)
+        }
+      }
+
+      const firstSuccess = results.find((r) => r.success)
+      if (firstSuccess) {
+        updateDPNSUsername(firstSuccess.label)
+        toast.success('Username registered successfully!')
+      }
+
+      setStep('complete')
+    } catch (error) {
+      console.error('Registration failed:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Registration failed. Please try again.'
+      toast.error(errorMessage)
+      // Mark any pending usernames as failed
+      for (const entry of availableUsernames) {
+        setUsernameRegistered(entry.id, false, 'Registration interrupted')
+      }
+      setStep('complete')
+    }
   }, [
     identityId,
     usernames,

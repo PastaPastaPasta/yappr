@@ -16,10 +16,16 @@ export function UsernameDropdown({ username, allUsernames }: UsernameDropdownPro
     return <p className="text-gray-500">@{username}</p>
   }
 
-  function handleCopyUsername(name: string): void {
-    navigator.clipboard.writeText(name).catch(console.error)
-    toast.success(`Copied @${name}`)
-    setIsOpen(false)
+  async function handleCopyUsername(name: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(name)
+      toast.success(`Copied @${name}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to copy username'
+      toast.error(message)
+    } finally {
+      setIsOpen(false)
+    }
   }
 
   return (
