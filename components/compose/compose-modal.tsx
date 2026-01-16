@@ -759,7 +759,7 @@ export function ComposeModal() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12"
+                className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12"
               >
                 <Dialog.Content asChild>
                   <motion.div
