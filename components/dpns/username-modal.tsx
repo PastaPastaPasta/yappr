@@ -13,9 +13,10 @@ interface UsernameModalProps {
   isOpen: boolean
   onClose: () => void
   customIdentityId?: string
+  hasExistingUsernames?: boolean
 }
 
-export function UsernameModal({ isOpen, onClose, customIdentityId }: UsernameModalProps) {
+export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUsernames }: UsernameModalProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { reset } = useDpnsRegistration()
@@ -89,7 +90,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId }: UsernameMod
               </div>
 
               {/* Registration Wizard */}
-              <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} />
+              <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />
             </div>
           </motion.div>
         </>

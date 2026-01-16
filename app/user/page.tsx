@@ -1378,6 +1378,7 @@ function UserProfileContent() {
           setIsUsernameModalOpen(false)
           refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
         }}
+        hasExistingUsernames={hasDpns}
       />
     </div>
   )
