@@ -575,18 +575,16 @@ function MessagesPage() {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
               <p className="text-gray-500">Loading conversations...</p>
             </div>
+          ) : conversations.length === 0 ? (
+            /* When no conversations exist, show minimal state - main empty state is in right panel */
+            <div className="p-6 text-center text-gray-500 text-sm">
+              <p>Your conversations will appear here</p>
+            </div>
           ) : filteredConversations.length === 0 ? (
             <div className="p-8 text-center flex-1 flex flex-col items-center justify-center">
-              <PaperAirplaneIcon className="h-12 w-12 text-gray-300 mb-4" />
-              <h2 className="text-xl font-semibold mb-2">No messages yet</h2>
-              <p className="text-gray-500 text-sm mb-6">Send a private message to another user</p>
-              <Button
-                onClick={() => setShowNewConversation(true)}
-                className="gap-2"
-              >
-                <PlusIcon className="h-5 w-5" />
-                Start a conversation
-              </Button>
+              <MagnifyingGlassIcon className="h-12 w-12 text-gray-300 mb-4" />
+              <h2 className="text-xl font-semibold mb-2">No results</h2>
+              <p className="text-gray-500 text-sm">No conversations match your search</p>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
@@ -759,11 +757,33 @@ function MessagesPage() {
               </form>
             </div>
           </div>
+        ) : conversations.length === 0 ? (
+          /* Primary empty state when user has no conversations */
+          <div className="flex flex-1 items-center justify-center p-8">
+            <div className="text-center max-w-sm">
+              <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+              <h2 className="text-2xl font-semibold mb-2">Welcome to Messages</h2>
+              <p className="text-gray-500 mb-2">
+                Have private 1-on-1 conversations with other users.
+              </p>
+              <p className="text-gray-400 text-sm mb-6">
+                Messages are stored securely on Dash Platform.
+              </p>
+              <Button
+                onClick={() => setShowNewConversation(true)}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                New message
+              </Button>
+            </div>
+          </div>
         ) : (
+          /* Secondary empty state when conversations exist but none selected */
           <div className="hidden md:flex flex-1 items-center justify-center p-8">
             <div className="text-center">
               <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-2xl font-semibold mb-2">Select a message</h2>
+              <h2 className="text-2xl font-semibold mb-2">Select a conversation</h2>
               <p className="text-gray-500 mb-6">Choose from your existing conversations or start a new one</p>
               <Button
                 onClick={() => setShowNewConversation(true)}
