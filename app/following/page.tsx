@@ -112,7 +112,7 @@ function FollowingPage() {
       }
 
       // Use followService to get following list
-      const follows = await followService.getFollowing(userIdToLoad, { limit: 50 })
+      const follows = await followService.getFollowing(userIdToLoad)
       
       console.log('Following: Raw follows from platform:', follows)
 
@@ -219,12 +219,12 @@ function FollowingPage() {
     } finally {
       setLoading(false)
     }
-  }, [followingState.setLoading, followingState.setError, followingState.setData, user?.identityId, targetUserId])
+  }, [followingState, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      loadFollowing()
+      loadFollowing().catch(err => console.error('Failed to load following:', err))
     }
   }, [loadFollowing, user, targetUserId])
 
@@ -421,7 +421,7 @@ function FollowingPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery) {
-        searchUsers()
+        searchUsers().catch(err => console.error('Failed to search users:', err))
       }
     }, 500)
 
@@ -664,7 +664,7 @@ function FollowingPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(followingUser.id)
+                                        navigator.clipboard.writeText(followingUser.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

@@ -1,4 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, transformDocumentWithField } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
@@ -105,7 +105,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
    * Get reposts for a post.
    * Paginates through all results to return complete list.
    */
-  async getPostReposts(postId: string, options: QueryOptions = {}): Promise<RepostDocument[]> {
+  async getPostReposts(postId: string): Promise<RepostDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -134,7 +134,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
    * Get user's reposts.
    * Paginates through all results to return complete list.
    */
-  async getUserReposts(userId: string, options: QueryOptions = {}): Promise<RepostDocument[]> {
+  async getUserReposts(userId: string): Promise<RepostDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 

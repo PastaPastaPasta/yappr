@@ -211,7 +211,7 @@ function UserProfileContent() {
         // Fetch user's reposts and merge with their posts
         try {
           const { repostService } = await import('@/lib/services/repost-service')
-          const userReposts = await repostService.getUserReposts(userId, { limit: 50 })
+          const userReposts = await repostService.getUserReposts(userId)
 
           // Track repost pagination
           if (userReposts.length > 0) {
@@ -430,10 +430,7 @@ function UserProfileContent() {
       // Fetch more reposts using cursor-based pagination
       if (canLoadMoreReposts) {
         try {
-          newRepostDocs = await repostService.getUserReposts(userId, {
-            limit: 50,
-            startAfter: lastRepostId
-          })
+          newRepostDocs = await repostService.getUserReposts(userId)
 
           if (newRepostDocs.length > 0) {
             // Get unique post IDs that this user has reposted
@@ -590,7 +587,7 @@ function UserProfileContent() {
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded && MENTION_CONTRACT_ID) {
-      loadMentions()
+      loadMentions().catch(err => console.error('Failed to load mentions:', err))
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
@@ -786,7 +783,7 @@ function UserProfileContent() {
                         <button
                           onClick={() => {
                             const profileUrl = `${window.location.origin}/user?id=${userId}`
-                            navigator.clipboard.writeText(profileUrl)
+                            navigator.clipboard.writeText(profileUrl).catch(console.error)
                             toast.success('Profile link copied!')
                           }}
                           className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -966,7 +963,7 @@ function UserProfileContent() {
                             <button
                               onClick={() => {
                                 if (userId) {
-                                  navigator.clipboard.writeText(userId)
+                                  navigator.clipboard.writeText(userId).catch(console.error)
                                   toast.success('Identity ID copied')
                                 }
                               }}

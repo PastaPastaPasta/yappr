@@ -100,7 +100,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId])
+  }, [postId, user?.identityId, likesState])
 
   // Load reposts
   const loadReposts = useCallback(async () => {
@@ -154,7 +154,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId])
+  }, [postId, user?.identityId, repostsState])
 
   // Load quotes
   const loadQuotes = useCallback(async () => {
@@ -212,7 +212,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId])
+  }, [postId, user?.identityId, quotesState])
 
   // Load data for active tab (only if not yet loaded)
   useEffect(() => {
@@ -221,17 +221,17 @@ function EngagementsPageContent() {
     switch (activeTab) {
       case 'likes':
         if (likesState.data === null) {
-          loadLikes()
+          loadLikes().catch(err => console.error('Failed to load likes:', err))
         }
         break
       case 'reposts':
         if (repostsState.data === null) {
-          loadReposts()
+          loadReposts().catch(err => console.error('Failed to load reposts:', err))
         }
         break
       case 'quotes':
         if (quotesState.data === null) {
-          loadQuotes()
+          loadQuotes().catch(err => console.error('Failed to load quotes:', err))
         }
         break
     }
@@ -437,7 +437,7 @@ function EngagementsPageContent() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(engagement.id)
+                                        navigator.clipboard.writeText(engagement.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

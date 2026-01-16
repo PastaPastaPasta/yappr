@@ -64,7 +64,7 @@ export function RightSidebar() {
       }
     }
 
-    fetchStats()
+    fetchStats().catch(err => console.error('Failed to fetch stats:', err))
   }, [user?.identityId])
 
   // Fetch global stats (independent of user login)
@@ -96,7 +96,7 @@ export function RightSidebar() {
       }
     }
 
-    fetchGlobalStats()
+    fetchGlobalStats().catch(err => console.error('Failed to fetch global stats:', err))
   }, [])
 
   return (

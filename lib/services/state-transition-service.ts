@@ -31,8 +31,8 @@ class StateTransitionService {
    */
   private generateEntropy(): string {
     const bytes = new Uint8Array(32);
-    if (typeof window !== 'undefined' && window.crypto) {
-      window.crypto.getRandomValues(bytes);
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(bytes);
     } else {
       // Fallback for non-browser environments (should not happen in production)
       for (let i = 0; i < 32; i++) {
@@ -186,11 +186,10 @@ class StateTransitionService {
       maxWaitTimeMs?: number,
       onProgress?: (attempt: number, elapsed: number) => void
     } = {}
-  ): Promise<{ success: boolean; result?: any; error?: string }> {
-    const {
-      maxWaitTimeMs = 10000,
-      onProgress
-    } = options;
+  ): Promise<{ success: boolean; result?: unknown; error?: string }> {
+    // Note: maxWaitTimeMs and onProgress are available for future use but currently
+    // we use a fixed short timeout due to known DAPI gateway issues
+    void options;
 
     try {
       const sdk = await getEvoSdk();

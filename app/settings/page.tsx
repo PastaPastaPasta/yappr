@@ -109,7 +109,7 @@ function SettingsPage() {
       }
     }
 
-    fetchProfileCreatedAt()
+    fetchProfileCreatedAt().catch(err => console.error('Failed to fetch profile created at:', err))
   }, [user?.identityId])
 
   const handleBack = () => {

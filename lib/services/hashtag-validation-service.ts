@@ -166,7 +166,7 @@ class HashtagValidationService {
 
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null
-      this.processBatch()
+      this.processBatch().catch(err => console.error('Failed to process hashtag batch:', err))
     }, this.BATCH_DELAY)
   }
 

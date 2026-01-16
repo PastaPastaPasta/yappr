@@ -49,11 +49,15 @@ class EvoSdkService {
   }
 
   private async _performInitialization(): Promise<void> {
+    if (!this.config) {
+      throw new Error('SDK configuration is missing');
+    }
+
     try {
       console.log('EvoSdkService: Creating EvoSDK instance...');
 
       // Create SDK with trusted mode based on network
-      if (this.config!.network === 'testnet') {
+      if (this.config.network === 'testnet') {
         console.log('EvoSdkService: Building testnet SDK in trusted mode...');
         this.sdk = EvoSDK.testnetTrusted({
           settings: {
@@ -143,7 +147,10 @@ class EvoSdkService {
       }
       await this.initialize(this.config);
     }
-    return this.sdk!;
+    if (!this.sdk) {
+      throw new Error('SDK initialization failed');
+    }
+    return this.sdk;
   }
 
   /**

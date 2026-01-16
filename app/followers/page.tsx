@@ -89,7 +89,7 @@ function FollowersPage() {
       }
 
       // Use followService to get followers list
-      const follows = await followService.getFollowers(userIdToLoad, { limit: 50 })
+      const follows = await followService.getFollowers(userIdToLoad)
       
       console.log('Followers: Raw follows from platform:', follows)
 
@@ -207,12 +207,12 @@ function FollowersPage() {
     } finally {
       setLoading(false)
     }
-  }, [followersState.setLoading, followersState.setError, followersState.setData, user?.identityId, targetUserId])
+  }, [followersState, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      loadFollowers()
+      loadFollowers().catch(err => console.error('Failed to load followers:', err))
     }
   }, [loadFollowers, user, targetUserId])
 
@@ -375,7 +375,7 @@ function FollowersPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(follower.id)
+                                        navigator.clipboard.writeText(follower.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

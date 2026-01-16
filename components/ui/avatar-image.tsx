@@ -123,7 +123,7 @@ export const UserAvatar = memo(function UserAvatar({
       if (mounted && url) {
         setAvatarUrl(url)
       }
-    })
+    }).catch(err => console.error('Failed to fetch avatar URL:', err))
 
     return () => {
       mounted = false

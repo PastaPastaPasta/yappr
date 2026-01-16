@@ -161,7 +161,7 @@ class ProfileService extends BaseDocumentService<User> {
 
     // Queue async operations to enrich the user
     // Skip username resolution if we already have a cached username
-    this.enrichUser(user, !!cachedUsername);
+    this.enrichUser(user, !!cachedUsername).catch(err => console.error('Failed to enrich user:', err));
 
     return user;
   }
@@ -386,7 +386,7 @@ class ProfileService extends BaseDocumentService<User> {
   /**
    * Get user statistics (followers/following)
    */
-  private async getUserStats(userId: string): Promise<{
+  private async getUserStats(_userId: string): Promise<{
     followers: number;
     following: number;
   }> {
@@ -458,7 +458,7 @@ class ProfileService extends BaseDocumentService<User> {
       if (Array.isArray(anyResponse)) {
         console.log(`ProfileService: Found ${anyResponse.length} profiles`);
         return anyResponse;
-      } else if (anyResponse && anyResponse.documents) {
+      } else if (anyResponse?.documents) {
         console.log(`ProfileService: Found ${anyResponse.documents.length} profiles`);
         return anyResponse.documents;
       }
@@ -476,4 +476,3 @@ export const profileService = new ProfileService();
 
 // Import at the bottom to avoid circular dependency
 import { getEvoSdk } from './evo-sdk-service';
-import { stateTransitionService } from './state-transition-service';

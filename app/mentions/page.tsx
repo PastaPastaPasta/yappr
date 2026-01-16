@@ -112,7 +112,7 @@ function MentionsPageContent() {
       }
     }
 
-    loadMentionedPosts()
+    loadMentionedPosts().catch(err => console.error('Failed to load mentioned posts:', err))
   }, [targetUserId, currentUser?.identityId])
 
   // If not logged in and no user specified
