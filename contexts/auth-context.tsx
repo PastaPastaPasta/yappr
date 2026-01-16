@@ -25,6 +25,7 @@ interface AuthContextType {
   loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
   logout: () => void
   updateDPNSUsername: (username: string) => void
+  refreshDpnsUsernames: () => Promise<void>
   refreshBalance: () => Promise<void>
 }
 
@@ -303,6 +304,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = username })
   }, [user])
 
+  // Refresh DPNS usernames from the network (fetches primary username)
+  const refreshDpnsUsernames = useCallback(async () => {
+    const identityId = user?.identityId
+    if (!identityId) return
+
+    try {
+      const { dpnsService } = await import('@/lib/services/dpns-service')
+      dpnsService.clearCache(undefined, identityId)
+      const dpnsUsername = await dpnsService.resolveUsername(identityId)
+
+      if (dpnsUsername && dpnsUsername !== user.dpnsUsername) {
+        setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
+        updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = dpnsUsername })
+      }
+    } catch (error) {
+      console.error('Failed to refresh DPNS usernames:', error)
+    }
+  }, [user?.identityId, user?.dpnsUsername])
+
   // Refresh balance from the network (clears cache first)
   const refreshBalance = useCallback(async () => {
     const identityId = user?.identityId
@@ -352,6 +372,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loginWithPassword,
       logout,
       updateDPNSUsername,
+      refreshDpnsUsernames,
       refreshBalance
     }}>
       {children}
