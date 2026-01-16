@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { User, Post } from './types'
+import { User, Post, FeedItem, isFeedReplyContext } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
@@ -175,3 +175,140 @@ export const useSettingsStore = create<SettingsState>()(
     }
   )
 )
+
+// Helper to get a stable ID from a feed item (handles both Post and FeedReplyContext)
+function getFeedItemId(item: FeedItem): string | undefined {
+  return isFeedReplyContext(item) ? item.reply.id : item.id
+}
+
+// Helper to append posts with deduplication
+function appendPostsWithDedup(existing: FeedItem[] | null, newPosts: FeedItem[]): FeedItem[] {
+  const existingIds = new Set((existing || []).map(getFeedItemId).filter(Boolean))
+  const uniqueNewPosts = newPosts.filter((p) => {
+    const id = getFeedItemId(p)
+    return !id || !existingIds.has(id)
+  })
+  return [...(existing || []), ...uniqueNewPosts]
+}
+
+// Feed state store - persists feed data across navigation
+export interface FeedPagination {
+  forYou: {
+    lastPostId: string | null
+    hasMore: boolean
+  }
+  following: {
+    nextWindow: { start: Date; end: Date; windowHours: number } | null
+    hasMore: boolean
+  }
+}
+
+// Default pagination state for resetting
+const DEFAULT_FOR_YOU_PAGINATION = { lastPostId: null, hasMore: true } as const
+const DEFAULT_FOLLOWING_PAGINATION = { nextWindow: null, hasMore: true } as const
+
+interface FeedState {
+  // Feed posts by tab
+  forYouPosts: FeedItem[] | null
+  followingPosts: FeedItem[] | null
+  // Pagination state
+  pagination: FeedPagination
+  // Scroll position by tab
+  scrollPositions: {
+    forYou: number
+    following: number
+  }
+  // Track which user's following feed is cached
+  followingUserId: string | null
+  // Actions
+  setForYouPosts: (posts: FeedItem[] | null) => void
+  setFollowingPosts: (posts: FeedItem[] | null, userId: string | null) => void
+  appendForYouPosts: (posts: FeedItem[]) => void
+  appendFollowingPosts: (posts: FeedItem[]) => void
+  setForYouPagination: (lastPostId: string | null, hasMore: boolean) => void
+  setFollowingPagination: (nextWindow: { start: Date; end: Date; windowHours: number } | null, hasMore: boolean) => void
+  setScrollPosition: (tab: 'forYou' | 'following', position: number) => void
+  clearFeedState: (tab?: 'forYou' | 'following') => void
+}
+
+export const useFeedStore = create<FeedState>((set) => ({
+  forYouPosts: null,
+  followingPosts: null,
+  pagination: {
+    forYou: DEFAULT_FOR_YOU_PAGINATION,
+    following: DEFAULT_FOLLOWING_PAGINATION,
+  },
+  scrollPositions: { forYou: 0, following: 0 },
+  followingUserId: null,
+
+  setForYouPosts: (posts) =>
+    set({ forYouPosts: posts }),
+
+  setFollowingPosts: (posts, userId) =>
+    set({ followingPosts: posts, followingUserId: userId }),
+
+  appendForYouPosts: (posts) =>
+    set((state) => ({
+      forYouPosts: appendPostsWithDedup(state.forYouPosts, posts)
+    })),
+
+  appendFollowingPosts: (posts) =>
+    set((state) => ({
+      followingPosts: appendPostsWithDedup(state.followingPosts, posts)
+    })),
+
+  setForYouPagination: (lastPostId, hasMore) =>
+    set((state) => ({
+      pagination: {
+        ...state.pagination,
+        forYou: { lastPostId, hasMore },
+      },
+    })),
+
+  setFollowingPagination: (nextWindow, hasMore) =>
+    set((state) => ({
+      pagination: {
+        ...state.pagination,
+        following: { nextWindow, hasMore },
+      },
+    })),
+
+  setScrollPosition: (tab, position) =>
+    set((state) => ({
+      scrollPositions: {
+        ...state.scrollPositions,
+        [tab]: position,
+      },
+    })),
+
+  clearFeedState: (tab) =>
+    set((state) => {
+      switch (tab) {
+        case 'forYou':
+          return {
+            forYouPosts: null,
+            pagination: { ...state.pagination, forYou: DEFAULT_FOR_YOU_PAGINATION },
+            scrollPositions: { ...state.scrollPositions, forYou: 0 },
+          }
+        case 'following':
+          return {
+            followingPosts: null,
+            followingUserId: null,
+            pagination: { ...state.pagination, following: DEFAULT_FOLLOWING_PAGINATION },
+            scrollPositions: { ...state.scrollPositions, following: 0 },
+          }
+        default:
+          // Clear all if no tab specified
+          return {
+            forYouPosts: null,
+            followingPosts: null,
+            followingUserId: null,
+            pagination: {
+              forYou: DEFAULT_FOR_YOU_PAGINATION,
+              following: DEFAULT_FOLLOWING_PAGINATION,
+            },
+            scrollPositions: { forYou: 0, following: 0 },
+          }
+      }
+    }),
+}))
