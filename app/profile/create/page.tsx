@@ -15,6 +15,7 @@ import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
+import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
 import {
   unifiedProfileService,
   DICEBEAR_STYLES,
@@ -162,7 +163,7 @@ function CreateProfilePage() {
     } catch (error: unknown) {
       console.error('Failed to create profile:', error)
 
-      const errorMessage = error instanceof Error ? error.message : String(error)
+      const errorMessage = extractErrorMessage(error)
 
       // Check if it's a duplicate profile error
       if (errorMessage.includes('duplicate unique properties') ||
@@ -175,12 +176,7 @@ function CreateProfilePage() {
       }
 
       // Check if it's a timeout error - the profile might have been created successfully
-      const isTimeoutError = errorMessage.toLowerCase().includes('timeout') ||
-                            errorMessage.toLowerCase().includes('timed out') ||
-                            errorMessage.toLowerCase().includes('deadline expired') ||
-                            errorMessage.toLowerCase().includes('deadline_exceeded')
-
-      if (isTimeoutError && user) {
+      if (isTimeoutError(error) && user) {
         toast.loading('Request timed out. Checking if profile was created...', { duration: 3000 })
 
         // Wait a moment for the network to propagate, then check if profile exists
