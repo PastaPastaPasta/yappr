@@ -8,6 +8,8 @@ import {
   TrashIcon,
   EyeIcon,
   EyeSlashIcon,
+  GlobeAltIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline'
 import { useAppStore, ThreadPost } from '@/lib/store'
 import { Button } from '@/components/ui/button'
@@ -37,6 +39,99 @@ import {
 } from './compose-sub-components'
 
 const CHARACTER_LIMIT = 500
+
+// Supported languages for post creation (ISO 639-1 codes)
+const SUPPORTED_LANGUAGES = [
+  { code: 'en', name: 'English' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'fr', name: 'French' },
+  { code: 'de', name: 'German' },
+  { code: 'it', name: 'Italian' },
+  { code: 'nl', name: 'Dutch' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'zh', name: 'Chinese' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'ar', name: 'Arabic' },
+  { code: 'hi', name: 'Hindi' },
+  { code: 'tr', name: 'Turkish' },
+  { code: 'pl', name: 'Polish' },
+  { code: 'uk', name: 'Ukrainian' },
+  { code: 'vi', name: 'Vietnamese' },
+  { code: 'th', name: 'Thai' },
+  { code: 'id', name: 'Indonesian' },
+  { code: 'sv', name: 'Swedish' },
+] as const
+
+// Language selector component
+function LanguageSelector({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: string
+  onChange: (code: string) => void
+  disabled?: boolean
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const selectedLanguage = SUPPORTED_LANGUAGES.find(l => l.code === value) || SUPPORTED_LANGUAGES[0]
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+          disabled
+            ? 'text-gray-400 cursor-not-allowed'
+            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+        }`}
+        title="Select post language"
+      >
+        <GlobeAltIcon className="w-4 h-4" />
+        <span>{selectedLanguage.name}</span>
+        <ChevronDownIcon className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute bottom-full left-0 mb-1 w-40 max-h-60 overflow-y-auto bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50">
+          {SUPPORTED_LANGUAGES.map((lang) => (
+            <button
+              key={lang.code}
+              type="button"
+              onClick={() => {
+                onChange(lang.code)
+                setIsOpen(false)
+              }}
+              className={`w-full px-3 py-2 text-left text-sm transition-colors ${
+                lang.code === value
+                  ? 'bg-yappr-50 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400 font-medium'
+                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              {lang.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Formatting button component
 function FormatButton({
@@ -438,6 +533,7 @@ export function ComposeModal() {
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [postLanguage, setPostLanguage] = useState('en')
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Focus first textarea when modal opens
@@ -513,6 +609,7 @@ export function ComposeModal() {
           return await dashClient.createPost(postContent, {
             replyToPostId: previousPostId || undefined,
             quotedPostId: i === 0 ? quotingPost?.id : undefined,
+            language: postLanguage,
           })
         })
 
@@ -740,6 +837,7 @@ export function ComposeModal() {
     resetThreadPosts()
     setShowPreview(false)
     setPostingProgress(null)
+    setPostLanguage('en')
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -894,9 +992,14 @@ export function ComposeModal() {
                       </div>
                     </div>
 
-                    {/* Footer - minimal with keyboard hint */}
+                    {/* Footer - language selector and keyboard hint */}
                     <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
-                      <div className="flex items-center justify-end">
+                      <div className="flex items-center justify-between">
+                        <LanguageSelector
+                          value={postLanguage}
+                          onChange={setPostLanguage}
+                          disabled={isPosting}
+                        />
                         <span className="text-xs text-gray-400">
                           {threadPosts.length > 1
                             ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`
