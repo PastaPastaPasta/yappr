@@ -14,8 +14,14 @@ const getGitInfo = () => {
 
 const gitInfo = getGitInfo()
 
+// For GitHub Pages deployment - set to repo name when deploying to username.github.io/repo
+const isGitHubPages = process.env.GITHUB_ACTIONS === 'true'
+const basePath = isGitHubPages ? '/yappr' : ''
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  basePath,
+  assetPrefix: basePath,
   env: {
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
     NEXT_PUBLIC_GIT_COMMIT_DATE: gitInfo.commitDate,
