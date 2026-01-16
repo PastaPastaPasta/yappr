@@ -15,6 +15,7 @@ import {
   CurrencyDollarIcon,
   QrCodeIcon,
   EnvelopeIcon,
+  UserPlusIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -41,6 +42,7 @@ import { mentionService } from '@/lib/services/mention-service'
 import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { UsernameDropdown } from '@/components/dpns/username-dropdown'
+import { UsernameModal } from '@/components/dpns/username-modal'
 
 interface ProfileData {
   displayName: string
@@ -99,6 +101,9 @@ function UserProfileContent() {
 
   // QR code dialog state for tip addresses
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
+
+  // Username registration modal state
+  const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
 
   // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
@@ -666,6 +671,33 @@ function UserProfileContent() {
     setEditSocialLinks([])
   }
 
+  // Refresh DPNS usernames after registration
+  const refreshUsernames = useCallback(async () => {
+    if (!userId) return
+    try {
+      const { dpnsService } = await import('@/lib/services/dpns-service')
+      // Clear cache to get fresh data
+      dpnsService.clearCache(userId)
+      const usernames = await dpnsService.getAllUsernames(userId)
+      if (usernames.length > 0) {
+        setAllUsernames(usernames)
+        setUsername(usernames[0])
+        setHasDpns(true)
+      } else {
+        // No usernames found, reset state
+        setAllUsernames([])
+        setUsername('')
+        setHasDpns(false)
+      }
+    } catch (e) {
+      console.error('Failed to refresh usernames:', e)
+      // On error, reset to safe state
+      setAllUsernames([])
+      setUsername('')
+      setHasDpns(false)
+    }
+  }, [userId])
+
   const handleSaveProfile = async () => {
     if (!currentUser?.identityId) return
 
@@ -1000,35 +1032,46 @@ function UserProfileContent() {
                     ) : (
                       <h2 className="text-xl font-bold">{displayName}</h2>
                     )}
-                    {hasDpns && username ? (
-                      <UsernameDropdown username={username} allUsernames={allUsernames} />
-                    ) : (
-                      <Tooltip.Provider>
-                        <Tooltip.Root>
-                          <Tooltip.Trigger asChild>
-                            <button
-                              onClick={() => {
-                                if (userId) {
-                                  navigator.clipboard.writeText(userId).catch(console.error)
-                                  toast.success('Identity ID copied')
-                                }
-                              }}
-                              className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono text-sm"
-                            >
-                              {userId?.slice(0, 8)}...{userId?.slice(-6)}
-                            </button>
-                          </Tooltip.Trigger>
-                          <Tooltip.Portal>
-                            <Tooltip.Content
-                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                              sideOffset={5}
-                            >
-                              Click to copy full identity ID
-                            </Tooltip.Content>
-                          </Tooltip.Portal>
-                        </Tooltip.Root>
-                      </Tooltip.Provider>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {hasDpns && username ? (
+                        <UsernameDropdown username={username} allUsernames={allUsernames} />
+                      ) : (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <button
+                                onClick={() => {
+                                  if (userId) {
+                                    navigator.clipboard.writeText(userId).catch(console.error)
+                                    toast.success('Identity ID copied')
+                                  }
+                                }}
+                                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono text-sm"
+                              >
+                                {userId?.slice(0, 8)}...{userId?.slice(-6)}
+                              </button>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                Click to copy full identity ID
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
+                      )}
+                      {isOwnProfile && (
+                        <button
+                          onClick={() => setIsUsernameModalOpen(true)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
+                        >
+                          <UserPlusIcon className="h-3 w-3" />
+                          {hasDpns ? 'Register More' : 'Register Username'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Pronouns */}
@@ -1335,6 +1378,16 @@ function UserProfileContent() {
         }}
         paymentUri={selectedQrPayment}
         recipientName={username || displayName}
+      />
+
+      {/* Username Registration Modal */}
+      <UsernameModal
+        isOpen={isUsernameModalOpen}
+        onClose={() => {
+          setIsUsernameModalOpen(false)
+          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+        }}
+        hasExistingUsernames={hasDpns}
       />
     </div>
   )

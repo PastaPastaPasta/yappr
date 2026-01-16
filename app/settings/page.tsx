@@ -15,7 +15,8 @@ import {
   SunIcon,
   ComputerDesktopIcon,
   ExclamationTriangleIcon,
-  UserGroupIcon
+  UserGroupIcon,
+  UserPlusIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -33,6 +34,7 @@ import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
+import { UsernameModal } from '@/components/dpns/username-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'appearance', 'about']
@@ -90,6 +92,10 @@ function SettingsPage() {
   // Account creation date from profile
   const [accountCreatedAt, setAccountCreatedAt] = useState<Date | null>(null)
 
+  // DPNS username state
+  const [dpnsUsernames, setDpnsUsernames] = useState<string[]>([])
+  const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
+
   // Fetch account creation date from profile
   useEffect(() => {
     if (!user?.identityId) return
@@ -112,6 +118,36 @@ function SettingsPage() {
 
     fetchProfileCreatedAt().catch(err => console.error('Failed to fetch profile created at:', err))
   }, [user?.identityId])
+
+  // Fetch DPNS usernames
+  useEffect(() => {
+    if (!user?.identityId) return
+
+    const fetchUsernames = async () => {
+      try {
+        const { dpnsService } = await import('@/lib/services/dpns-service')
+        const usernames = await dpnsService.getAllUsernames(user.identityId)
+        setDpnsUsernames(usernames)
+      } catch (error) {
+        console.error('Failed to fetch DPNS usernames:', error)
+      }
+    }
+
+    fetchUsernames().catch(err => console.error('Failed to fetch usernames:', err))
+  }, [user?.identityId])
+
+  // Refresh DPNS usernames after registration
+  const refreshUsernames = async () => {
+    if (!user?.identityId) return
+    try {
+      const { dpnsService } = await import('@/lib/services/dpns-service')
+      dpnsService.clearCache(user.identityId)
+      const usernames = await dpnsService.getAllUsernames(user.identityId)
+      setDpnsUsernames(usernames)
+    } catch (error) {
+      console.error('Failed to refresh usernames:', error)
+    }
+  }
 
   const handleBack = () => {
     if (activeSection === 'main') {
@@ -180,7 +216,48 @@ function SettingsPage() {
           </div>
         </div>
       </div>
-      
+
+      {/* DPNS Username Registration */}
+      <div>
+        <h3 className="font-semibold mb-4">DPNS Usernames</h3>
+        <div className="space-y-4">
+          {dpnsUsernames.length > 0 ? (
+            <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+              <p className="text-sm text-gray-500 mb-2">Registered Usernames</p>
+              <div className="flex flex-wrap gap-2">
+                {dpnsUsernames.map((username, index) => (
+                  <span
+                    key={username}
+                    className="inline-flex items-center px-3 py-1 bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded-full text-sm font-medium"
+                  >
+                    @{username}
+                    {index === 0 && (
+                      <span className="ml-1.5 text-xs bg-yappr-500 text-white px-1.5 py-0.5 rounded-full">
+                        Primary
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                No usernames registered yet. Register a username to make it easier for others to find you.
+              </p>
+            </div>
+          )}
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() => setIsUsernameModalOpen(true)}
+          >
+            <UserPlusIcon className="h-4 w-4 mr-2" />
+            {dpnsUsernames.length > 0 ? 'Register More Usernames' : 'Register Username'}
+          </Button>
+        </div>
+      </div>
+
       <div>
         <h3 className="font-semibold mb-4">Account Actions</h3>
         <div className="space-y-3">
@@ -188,8 +265,8 @@ function SettingsPage() {
             <KeyIcon className="h-4 w-4 mr-2" />
             Log Out
           </Button>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             className="w-full justify-start text-red-600 hover:text-red-700 hover:border-red-300"
             onClick={handleDeleteAccount}
           >
@@ -571,6 +648,16 @@ function SettingsPage() {
       </div>
 
       <RightSidebar />
+
+      {/* Username Registration Modal */}
+      <UsernameModal
+        isOpen={isUsernameModalOpen}
+        onClose={() => {
+          setIsUsernameModalOpen(false)
+          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+        }}
+        hasExistingUsernames={dpnsUsernames.length > 0}
+      />
     </div>
   )
 }

@@ -9,6 +9,7 @@ import type { UsernameStatus } from '@/lib/types'
 interface ReviewStepProps {
   onBack: () => void
   onRegister: () => void
+  hasExistingUsernames?: boolean
 }
 
 function getStatusIcon(status: UsernameStatus): React.ReactNode {
@@ -48,7 +49,7 @@ function getStatusTextClass(status: UsernameStatus): string {
   }
 }
 
-export function ReviewStep({ onBack, onRegister }: ReviewStepProps): React.ReactNode {
+export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewStepProps): React.ReactNode {
   const {
     usernames,
     contestedAcknowledged,
@@ -61,7 +62,8 @@ export function ReviewStep({ onBack, onRegister }: ReviewStepProps): React.React
   const nonContestedUsernames = usernames.filter((u) => u.status === 'available')
   const contestedUsernames = usernames.filter((u) => u.status === 'contested')
 
-  const allContestedWarning = availableUsernames.length > 0 && nonContestedUsernames.length === 0
+  // Only show contested warning if user has no existing usernames to fall back on
+  const allContestedWarning = availableUsernames.length > 0 && nonContestedUsernames.length === 0 && !hasExistingUsernames
   const canProceed = availableUsernames.length > 0 && (!allContestedWarning || contestedAcknowledged)
 
   return (

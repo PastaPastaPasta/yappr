@@ -19,6 +19,7 @@ import { CompleteStep } from './steps/complete-step'
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
   onSkip?: () => void
+  hasExistingUsernames?: boolean
 }
 
 interface IdentityPublicKey {
@@ -39,7 +40,7 @@ function findDpnsSuitableKey(publicKeys: IdentityPublicKey[]): IdentityPublicKey
   })
 }
 
-export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationWizardProps): React.ReactNode {
+export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsernames }: DpnsRegistrationWizardProps): React.ReactNode {
   const router = useRouter()
   const { user, updateDPNSUsername } = useAuth()
   const { isReady: isSdkReady } = useSdk()
@@ -215,7 +216,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
       {step === 'checking' && <CheckingStep />}
 
       {step === 'review' && (
-        <ReviewStep onBack={handleBackToEdit} onRegister={handleRegister} />
+        <ReviewStep onBack={handleBackToEdit} onRegister={handleRegister} hasExistingUsernames={hasExistingUsernames} />
       )}
 
       {step === 'registering' && <RegisteringStep />}
