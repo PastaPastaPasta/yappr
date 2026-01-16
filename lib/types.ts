@@ -105,7 +105,7 @@ export interface Comment {
 
 export interface Notification {
   id: string
-  type: 'like' | 'repost' | 'follow' | 'reply' | 'mention'
+  type: 'follow' | 'mention'  // Currently implemented types
   from: User
   post?: Post
   createdAt: Date
