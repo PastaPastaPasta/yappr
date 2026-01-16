@@ -57,6 +57,8 @@ function FollowingPage() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const followingState = useAsyncState<FollowingUser[]>(null)
+  // Extract stable setter functions to avoid infinite loop in useCallback dependencies
+  const { setLoading, setError, setData } = followingState
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<FollowingUser[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -70,8 +72,6 @@ function FollowingPage() {
 
   // Load following list
   const loadFollowing = useCallback(async (forceRefresh: boolean = false) => {
-    const { setLoading, setError, setData } = followingState
-
     setLoading(true)
     setError(null)
 
@@ -219,7 +219,7 @@ function FollowingPage() {
     } finally {
       setLoading(false)
     }
-  }, [followingState, user?.identityId, targetUserId])
+  }, [setLoading, setError, setData, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
