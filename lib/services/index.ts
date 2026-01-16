@@ -12,6 +12,7 @@ export { blockService } from './block-service';
 export { stateTransitionService } from './state-transition-service';
 export { directMessageService } from './direct-message-service';
 export { hashtagService } from './hashtag-service';
+export { notificationService } from './notification-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
 
 // New unified profile services
@@ -45,6 +46,7 @@ export type {
 } from '../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
 export type { TipResult } from './tip-service';
+export type { NotificationResult } from './notification-service';
 export type {
   UnifiedProfileDocument,
   CreateUnifiedProfileData,
