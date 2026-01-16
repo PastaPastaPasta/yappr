@@ -639,7 +639,7 @@ function FeedPage() {
     } finally {
       setLoading(false)
     }
-  }, [postsState, enrichProgressively, activeTab, user?.identityId])
+  }, [enrichProgressively, activeTab, user?.identityId])
 
   // Load more posts (pagination)
   const loadMore = useCallback(async () => {
