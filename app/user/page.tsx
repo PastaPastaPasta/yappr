@@ -14,6 +14,7 @@ import {
   ArrowPathIcon,
   CurrencyDollarIcon,
   QrCodeIcon,
+  EnvelopeIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -861,14 +862,37 @@ function UserProfileContent() {
                       </Button>
                     )
                   ) : (
-                    <Button
-                      variant={isFollowing ? "outline" : "default"}
-                      size="sm"
-                      onClick={handleFollow}
-                      disabled={followLoading}
-                    >
-                      {isFollowing ? 'Following' : 'Follow'}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Tooltip.Provider>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <button
+                              onClick={() => router.push(`/messages?startConversation=${userId}`)}
+                              aria-label={`Message ${profile?.displayName || username || 'user'}`}
+                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                            >
+                              <EnvelopeIcon className="h-4 w-4" />
+                            </button>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content
+                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                              sideOffset={5}
+                            >
+                              Message
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </Tooltip.Provider>
+                      <Button
+                        variant={isFollowing ? "outline" : "default"}
+                        size="sm"
+                        onClick={handleFollow}
+                        disabled={followLoading}
+                      >
+                        {isFollowing ? 'Following' : 'Follow'}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>
