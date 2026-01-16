@@ -194,8 +194,8 @@ export interface FeedPagination {
 
 interface FeedState {
   // Feed posts by tab
-  forYouPosts: any[] | null
-  followingPosts: any[] | null
+  forYouPosts: FeedItem[] | null
+  followingPosts: FeedItem[] | null
   // Pagination state
   pagination: FeedPagination
   // Scroll position by tab
@@ -206,10 +206,10 @@ interface FeedState {
   // Track which user's following feed is cached
   followingUserId: string | null
   // Actions
-  setForYouPosts: (posts: any[] | null) => void
-  setFollowingPosts: (posts: any[] | null, userId: string | null) => void
-  appendForYouPosts: (posts: any[]) => void
-  appendFollowingPosts: (posts: any[]) => void
+  setForYouPosts: (posts: FeedItem[] | null) => void
+  setFollowingPosts: (posts: FeedItem[] | null, userId: string | null) => void
+  appendForYouPosts: (posts: FeedItem[]) => void
+  appendFollowingPosts: (posts: FeedItem[]) => void
   setForYouPagination: (lastPostId: string | null, hasMore: boolean) => void
   setFollowingPagination: (nextWindow: { start: Date; end: Date; windowHours: number } | null, hasMore: boolean) => void
   setScrollPosition: (tab: 'forYou' | 'following', position: number) => void

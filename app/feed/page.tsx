@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
 import { FeedReplyContext } from '@/components/post/feed-reply-context'
-import { FeedItem, isFeedReplyContext } from '@/lib/types'
+import { FeedItem, isFeedReplyContext, getFeedItemTimestamp } from '@/lib/types'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
@@ -141,18 +141,7 @@ function FeedPage() {
           }
           // Set newestPostTimestamp so auto-refresh interval works after back navigation
           if (cached.length > 0) {
-            const getItemTimestamp = (item: FeedItem): number => {
-              if (isFeedReplyContext(item)) {
-                return item.reply.createdAt instanceof Date
-                  ? item.reply.createdAt.getTime()
-                  : new Date(item.reply.createdAt).getTime()
-              }
-              const post = item as any
-              return post.createdAt instanceof Date
-                ? post.createdAt.getTime()
-                : new Date(post.createdAt).getTime()
-            }
-            setNewestPostTimestamp(Math.max(...cached.map(getItemTimestamp)))
+            setNewestPostTimestamp(Math.max(...cached.map(getFeedItemTimestamp)))
             setPendingNewPosts([])
           }
           setIsLoading(false)
@@ -647,19 +636,7 @@ function FeedPage() {
         }
         // Track the newest post timestamp for auto-refresh feature
         if (sortedFeedItems.length > 0) {
-          const getItemTimestamp = (item: FeedItem): number => {
-            if (isFeedReplyContext(item)) {
-              return item.reply.createdAt instanceof Date
-                ? item.reply.createdAt.getTime()
-                : new Date(item.reply.createdAt).getTime()
-            }
-            const post = item as any
-            return post.createdAt instanceof Date
-              ? post.createdAt.getTime()
-              : new Date(post.createdAt).getTime()
-          }
-          const newestTimestamp = Math.max(...sortedFeedItems.map(getItemTimestamp))
-          setNewestPostTimestamp(newestTimestamp)
+          setNewestPostTimestamp(Math.max(...sortedFeedItems.map(getFeedItemTimestamp)))
           // Clear any pending new posts when doing a fresh load
           setPendingNewPosts([])
         }
@@ -857,19 +834,7 @@ function FeedPage() {
     if (pendingNewPosts.length === 0) return
 
     // Get the newest timestamp from pending posts
-    const getItemTimestamp = (item: FeedItem): number => {
-      if (isFeedReplyContext(item)) {
-        return item.reply.createdAt instanceof Date
-          ? item.reply.createdAt.getTime()
-          : new Date(item.reply.createdAt).getTime()
-      }
-      const post = item as any
-      return post.createdAt instanceof Date
-        ? post.createdAt.getTime()
-        : new Date(post.createdAt).getTime()
-    }
-
-    const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getItemTimestamp))
+    const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getFeedItemTimestamp))
 
     // Prepend pending posts to current feed
     if (activeTab === 'forYou') {
@@ -990,18 +955,7 @@ function FeedPage() {
         enrichProgressively(postsToEnrich)
         lastEnrichmentUserIdRef.current = user?.identityId
         // Set newestPostTimestamp so auto-refresh interval works after back navigation
-        const getItemTimestamp = (item: FeedItem): number => {
-          if (isFeedReplyContext(item)) {
-            return item.reply.createdAt instanceof Date
-              ? item.reply.createdAt.getTime()
-              : new Date(item.reply.createdAt).getTime()
-          }
-          const post = item as any
-          return post.createdAt instanceof Date
-            ? post.createdAt.getTime()
-            : new Date(post.createdAt).getTime()
-        }
-        setNewestPostTimestamp(Math.max(...existingPosts.map(getItemTimestamp)))
+        setNewestPostTimestamp(Math.max(...existingPosts.map(getFeedItemTimestamp)))
         setPendingNewPosts([])
         // Restore scroll position after a short delay to let content render
         const savedScrollPos = scrollPositions[activeTab]

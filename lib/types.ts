@@ -228,6 +228,12 @@ export function isFeedReplyContext(item: FeedItem): item is FeedReplyContext {
   return 'type' in item && item.type === 'reply_context'
 }
 
+// Helper to get a timestamp from a feed item (handles both Post and FeedReplyContext)
+export function getFeedItemTimestamp(item: FeedItem): number {
+  const date = isFeedReplyContext(item) ? item.reply.createdAt : item.createdAt
+  return date instanceof Date ? date.getTime() : new Date(date).getTime()
+}
+
 // DPNS Multi-Username Registration Types
 export type UsernameStatus = 'pending' | 'checking' | 'available' | 'contested' | 'taken' | 'invalid'
 export type RegistrationStep = 'username-entry' | 'checking' | 'review' | 'registering' | 'complete'
