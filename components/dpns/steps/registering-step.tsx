@@ -3,15 +3,70 @@
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { cn } from '@/lib/utils'
+import type { UsernameEntry } from '@/lib/types'
 
-export function RegisteringStep() {
+type RegistrationState = 'pending' | 'current' | 'success' | 'failed'
+
+function getRegistrationState(
+  index: number,
+  currentIndex: number,
+  entry: UsernameEntry
+): RegistrationState {
+  if (index === currentIndex) {
+    return 'current'
+  }
+  if (index < currentIndex) {
+    return entry.registrationError ? 'failed' : 'success'
+  }
+  return 'pending'
+}
+
+function getRowStyles(state: RegistrationState): string {
+  switch (state) {
+    case 'current':
+      return 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+    case 'success':
+      return 'border-green-500 bg-green-50 dark:bg-green-900/20'
+    case 'failed':
+      return 'border-red-500 bg-red-50 dark:bg-red-900/20'
+    case 'pending':
+      return 'border-gray-200 dark:border-gray-700 opacity-50'
+  }
+}
+
+function RegistrationIcon({ state }: { state: RegistrationState }): React.ReactNode {
+  switch (state) {
+    case 'current':
+      return <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
+    case 'success':
+      return <CheckCircle2 className="w-5 h-5 text-green-500" />
+    case 'failed':
+      return <XCircle className="w-5 h-5 text-red-500" />
+    case 'pending':
+      return <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+  }
+}
+
+function RegistrationStatusText({ state }: { state: RegistrationState }): React.ReactNode {
+  switch (state) {
+    case 'current':
+      return 'Registering...'
+    case 'success':
+      return 'Done'
+    case 'failed':
+      return <span className="text-red-500">Failed</span>
+    case 'pending':
+      return 'Pending'
+  }
+}
+
+export function RegisteringStep(): React.ReactNode {
   const { usernames, currentRegistrationIndex } = useDpnsRegistration()
 
   const availableUsernames = usernames.filter(
     (u) => u.status === 'available' || u.status === 'contested'
   )
 
-  // Clamp display values to avoid showing "N+1 of N" or "1 of 0"
   const total = availableUsernames.length
   const displayIndex = total === 0 ? 0 : Math.min(currentRegistrationIndex + 1, total)
 
@@ -27,29 +82,15 @@ export function RegisteringStep() {
 
       <div className="space-y-2">
         {availableUsernames.map((entry, index) => {
-          const isCurrentOrDone = index <= currentRegistrationIndex
-          const isCurrent = index === currentRegistrationIndex
-          const isDone = index < currentRegistrationIndex
-          const hasFailed = entry.registrationError
+          const state = getRegistrationState(index, currentRegistrationIndex, entry)
 
           return (
             <div
               key={entry.id}
-              className={cn(
-                'flex items-center gap-3 p-3 rounded-lg border',
-                isCurrent && 'border-purple-500 bg-purple-50 dark:bg-purple-900/20',
-                isDone && !hasFailed && 'border-green-500 bg-green-50 dark:bg-green-900/20',
-                isDone && hasFailed && 'border-red-500 bg-red-50 dark:bg-red-900/20',
-                !isCurrentOrDone && 'border-gray-200 dark:border-gray-700 opacity-50'
-              )}
+              className={cn('flex items-center gap-3 p-3 rounded-lg border', getRowStyles(state))}
             >
               <div className="flex-shrink-0">
-                {isCurrent && <Loader2 className="w-5 h-5 animate-spin text-purple-600" />}
-                {isDone && !hasFailed && <CheckCircle2 className="w-5 h-5 text-green-500" />}
-                {isDone && hasFailed && <XCircle className="w-5 h-5 text-red-500" />}
-                {!isCurrentOrDone && (
-                  <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
-                )}
+                <RegistrationIcon state={state} />
               </div>
               <div className="flex-1">
                 <code className="text-sm">{entry.label}.dash</code>
@@ -58,12 +99,7 @@ export function RegisteringStep() {
                 )}
               </div>
               <div className="text-sm text-gray-500">
-                {isCurrent && 'Registering...'}
-                {isDone && !hasFailed && 'Done'}
-                {isDone && hasFailed && (
-                  <span className="text-red-500">Failed</span>
-                )}
-                {!isCurrentOrDone && 'Pending'}
+                <RegistrationStatusText state={state} />
               </div>
             </div>
           )

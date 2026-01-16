@@ -4,13 +4,51 @@ import { Button } from '@/components/ui/button'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { CheckCircle2, AlertTriangle, XCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { UsernameStatus } from '@/lib/types'
 
 interface ReviewStepProps {
   onBack: () => void
   onRegister: () => void
 }
 
-export function ReviewStep({ onBack, onRegister }: ReviewStepProps) {
+function getStatusIcon(status: UsernameStatus): React.ReactNode {
+  switch (status) {
+    case 'available':
+      return <CheckCircle2 className="w-5 h-5 text-green-500" />
+    case 'contested':
+      return <AlertTriangle className="w-5 h-5 text-orange-500" />
+    default:
+      return <XCircle className="w-5 h-5 text-red-500" />
+  }
+}
+
+function getStatusText(status: UsernameStatus): string {
+  switch (status) {
+    case 'available':
+      return 'Available'
+    case 'contested':
+      return 'Contested'
+    case 'taken':
+      return 'Taken'
+    case 'invalid':
+      return 'Invalid'
+    default:
+      return 'Unknown'
+  }
+}
+
+function getStatusTextClass(status: UsernameStatus): string {
+  switch (status) {
+    case 'available':
+      return 'text-green-600'
+    case 'contested':
+      return 'text-orange-600'
+    default:
+      return 'text-red-600'
+  }
+}
+
+export function ReviewStep({ onBack, onRegister }: ReviewStepProps): React.ReactNode {
   const {
     usernames,
     contestedAcknowledged,
@@ -23,35 +61,8 @@ export function ReviewStep({ onBack, onRegister }: ReviewStepProps) {
   const nonContestedUsernames = usernames.filter((u) => u.status === 'available')
   const contestedUsernames = usernames.filter((u) => u.status === 'contested')
 
-  // Only show warning if ALL available usernames are contested (no non-contested options)
   const allContestedWarning = availableUsernames.length > 0 && nonContestedUsernames.length === 0
   const canProceed = availableUsernames.length > 0 && (!allContestedWarning || contestedAcknowledged)
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'available':
-        return <CheckCircle2 className="w-5 h-5 text-green-500" />
-      case 'contested':
-        return <AlertTriangle className="w-5 h-5 text-orange-500" />
-      default:
-        return <XCircle className="w-5 h-5 text-red-500" />
-    }
-  }
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'available':
-        return 'Available'
-      case 'contested':
-        return 'Contested'
-      case 'taken':
-        return 'Taken'
-      case 'invalid':
-        return 'Invalid'
-      default:
-        return 'Unknown'
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -89,15 +100,7 @@ export function ReviewStep({ onBack, onRegister }: ReviewStepProps) {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(entry.status)}
-                      <span
-                        className={cn(
-                          'text-sm',
-                          entry.status === 'available' && 'text-green-600',
-                          entry.status === 'contested' && 'text-orange-600',
-                          (entry.status === 'taken' || entry.status === 'invalid') &&
-                            'text-red-600'
-                        )}
-                      >
+                      <span className={cn('text-sm', getStatusTextClass(entry.status))}>
                         {getStatusText(entry.status)}
                       </span>
                       {entry.status === 'contested' && (

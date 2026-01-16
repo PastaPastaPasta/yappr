@@ -2,7 +2,7 @@
 
 import { Input } from '@/components/ui/input'
 import { CheckCircle2, AlertTriangle, XCircle, Loader2, X } from 'lucide-react'
-import type { UsernameEntry } from '@/lib/types'
+import type { UsernameEntry, UsernameStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 interface UsernameInputRowProps {
@@ -13,6 +13,34 @@ interface UsernameInputRowProps {
   disabled?: boolean
 }
 
+function getStatusBorderClass(status: UsernameStatus): string {
+  switch (status) {
+    case 'invalid':
+    case 'taken':
+      return 'border-red-500 focus-visible:ring-red-500'
+    case 'contested':
+      return 'border-orange-500 focus-visible:ring-orange-500'
+    case 'available':
+      return 'border-green-500 focus-visible:ring-green-500'
+    default:
+      return ''
+  }
+}
+
+function getStatusTextClass(status: UsernameStatus): string {
+  switch (status) {
+    case 'invalid':
+    case 'taken':
+      return 'text-red-500'
+    case 'contested':
+      return 'text-orange-500'
+    case 'available':
+      return 'text-green-500'
+    default:
+      return 'text-gray-500'
+  }
+}
+
 export function UsernameInputRow({
   entry,
   onChange,
@@ -20,7 +48,7 @@ export function UsernameInputRow({
   canRemove,
   disabled = false,
 }: UsernameInputRowProps) {
-  const getStatusIcon = () => {
+  function getStatusIcon(): React.ReactNode {
     switch (entry.status) {
       case 'checking':
         return <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
@@ -36,7 +64,7 @@ export function UsernameInputRow({
     }
   }
 
-  const getStatusMessage = () => {
+  function getStatusMessage(): string | null {
     if (entry.validationError) {
       return entry.validationError
     }
@@ -57,6 +85,7 @@ export function UsernameInputRow({
   }
 
   const statusMessage = getStatusMessage()
+  const canRemoveUsername = canRemove && !disabled
 
   return (
     <div className="space-y-1">
@@ -69,16 +98,7 @@ export function UsernameInputRow({
             placeholder="username"
             disabled={disabled}
             maxLength={20}
-            className={cn(
-              'pr-16',
-              entry.status === 'invalid' || entry.status === 'taken'
-                ? 'border-red-500 focus-visible:ring-red-500'
-                : entry.status === 'contested'
-                ? 'border-orange-500 focus-visible:ring-orange-500'
-                : entry.status === 'available'
-                ? 'border-green-500 focus-visible:ring-green-500'
-                : ''
-            )}
+            className={cn('pr-16', getStatusBorderClass(entry.status))}
           />
           <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
             <span className="text-gray-400 text-sm mr-2">.dash</span>
@@ -88,10 +108,10 @@ export function UsernameInputRow({
         <button
           type="button"
           onClick={onRemove}
-          disabled={!canRemove || disabled}
+          disabled={!canRemoveUsername}
           className={cn(
             'p-2 rounded-md transition-colors',
-            canRemove && !disabled
+            canRemoveUsername
               ? 'text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
               : 'text-gray-200 dark:text-gray-700 cursor-not-allowed'
           )}
@@ -100,18 +120,7 @@ export function UsernameInputRow({
         </button>
       </div>
       {statusMessage && entry.status !== 'pending' && (
-        <p
-          className={cn(
-            'text-xs ml-1',
-            entry.status === 'invalid' || entry.status === 'taken'
-              ? 'text-red-500'
-              : entry.status === 'contested'
-              ? 'text-orange-500'
-              : entry.status === 'available'
-              ? 'text-green-500'
-              : 'text-gray-500'
-          )}
-        >
+        <p className={cn('text-xs ml-1', getStatusTextClass(entry.status))}>
           {statusMessage}
         </p>
       )}

@@ -21,7 +21,25 @@ interface DpnsRegistrationWizardProps {
   onSkip?: () => void
 }
 
-export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationWizardProps) {
+interface IdentityPublicKey {
+  id: number
+  securityLevel: number
+  disabledAt?: number
+}
+
+/**
+ * Find a suitable key for DPNS registration (CRITICAL or HIGH security level).
+ * Security levels: MASTER=0, CRITICAL=1, HIGH=2, MEDIUM=3
+ */
+function findDpnsSuitableKey(publicKeys: IdentityPublicKey[]): IdentityPublicKey | undefined {
+  return publicKeys.find((key) => {
+    const isEnabled = !key.disabledAt
+    const hasSufficientSecurityLevel = key.securityLevel === 1 || key.securityLevel === 2
+    return isEnabled && hasSufficientSecurityLevel
+  })
+}
+
+export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationWizardProps): React.ReactNode {
   const router = useRouter()
   const { user, updateDPNSUsername } = useAuth()
   const { isReady: isSdkReady } = useSdk()
@@ -38,7 +56,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
 
   const identityId = user?.identityId
 
-  // Check availability for all valid usernames
   const handleCheckAvailability = useCallback(async () => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
@@ -60,20 +77,19 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
       const labels = validUsernames.map((u) => u.label)
       const results = await dpnsService.batchCheckAvailability(labels)
 
-      // Update each username with results
       for (const entry of validUsernames) {
         const result = results.get(entry.label.toLowerCase())
-        if (result) {
-          if (result.error) {
-            updateUsernameStatus(entry.id, 'invalid', result.error)
-          } else if (!result.available) {
-            updateUsernameStatus(entry.id, 'taken')
-          } else if (result.contested) {
-            updateUsernameStatus(entry.id, 'contested')
-            setUsernameContested(entry.id, true)
-          } else {
-            updateUsernameStatus(entry.id, 'available')
-          }
+        if (!result) continue
+
+        if (result.error) {
+          updateUsernameStatus(entry.id, 'invalid', result.error)
+        } else if (!result.available) {
+          updateUsernameStatus(entry.id, 'taken')
+        } else if (result.contested) {
+          updateUsernameStatus(entry.id, 'contested')
+          setUsernameContested(entry.id, true)
+        } else {
+          updateUsernameStatus(entry.id, 'available')
         }
       }
 
@@ -85,7 +101,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
     }
   }, [isSdkReady, usernames, setStep, updateUsernameStatus, setUsernameContested])
 
-  // Handle registration
   const handleRegister = useCallback(async () => {
     if (!identityId) {
       toast.error('No identity found. Please log in again.')
@@ -98,20 +113,13 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
       return
     }
 
-    // Get identity to find suitable key
     const identity = await identityService.getIdentity(identityId)
     if (!identity) {
       toast.error('Identity not found.')
       return
     }
 
-    // Find suitable key (CRITICAL or HIGH security level)
-    const suitableKey = identity.publicKeys.find((key: { id: number; securityLevel: number; disabledAt?: number }) => {
-      const keySecurityLevel = key.securityLevel
-      const keyDisabledAt = key.disabledAt
-      return !keyDisabledAt && (keySecurityLevel === 1 || keySecurityLevel === 2)
-    })
-
+    const suitableKey = findDpnsSuitableKey(identity.publicKeys)
     if (!suitableKey) {
       toast.error('No suitable key found. DPNS requires CRITICAL or HIGH security level key.')
       return
@@ -129,7 +137,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
     setStep('registering')
     setCurrentRegistrationIndex(0)
 
-    // Register each username sequentially
     const registrations = availableUsernames.map((u) => ({
       label: u.label,
       identityId,
@@ -139,12 +146,9 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
 
     const results = await dpnsService.registerUsernamesSequentially(
       registrations,
-      (index) => {
-        setCurrentRegistrationIndex(index)
-      }
+      (index) => setCurrentRegistrationIndex(index)
     )
 
-    // Update usernames with results
     for (let i = 0; i < results.length; i++) {
       const result = results[i]
       const entry = availableUsernames[i]
@@ -154,7 +158,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
       }
     }
 
-    // Update auth context with first successful username
     const firstSuccess = results.find((r) => r.success)
     if (firstSuccess) {
       updateDPNSUsername(firstSuccess.label)
@@ -172,9 +175,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
     updateDPNSUsername,
   ])
 
-  // Handle back to edit
   const handleBackToEdit = useCallback(() => {
-    // Reset statuses to pending for re-checking
     for (const entry of usernames) {
       if (entry.status !== 'invalid') {
         updateUsernameStatus(entry.id, 'pending')
@@ -183,12 +184,10 @@ export function DpnsRegistrationWizard({ onComplete, onSkip }: DpnsRegistrationW
     setStep('username-entry')
   }, [usernames, updateUsernameStatus, setStep])
 
-  // Handle register more
   const handleRegisterMore = useCallback(() => {
     reset()
   }, [reset])
 
-  // Handle continue after completion
   const handleContinue = useCallback(() => {
     onComplete?.()
     router.push('/profile/create')

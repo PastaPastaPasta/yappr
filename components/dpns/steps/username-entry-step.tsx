@@ -42,7 +42,7 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
       const validationError = dpnsService.getUsernameValidationError(trimmedLabel)
       if (validationError) {
         // Only update if status would change or error message differs
-        if (currentStatus !== 'invalid' || currentEntry?.error !== validationError) {
+        if (currentStatus !== 'invalid' || currentEntry?.validationError !== validationError) {
           updateUsernameStatus(id, 'invalid', validationError)
         }
       } else {

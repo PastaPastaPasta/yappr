@@ -14,7 +14,6 @@ import {
   ArrowPathIcon,
   CurrencyDollarIcon,
   QrCodeIcon,
-  ChevronDownIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -40,6 +39,7 @@ import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import { mentionService } from '@/lib/services/mention-service'
 import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { cn } from '@/lib/utils'
+import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 
 interface ProfileData {
   displayName: string
@@ -67,7 +67,6 @@ function UserProfileContent() {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [username, setUsername] = useState<string | null>(null)
   const [allUsernames, setAllUsernames] = useState<string[]>([])
-  const [showUsernameDropdown, setShowUsernameDropdown] = useState(false)
   const [hasDpns, setHasDpns] = useState(false)
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -966,53 +965,8 @@ function UserProfileContent() {
                 <>
                   <div className="mb-3">
                     <h2 className="text-xl font-bold">{displayName}</h2>
-                    {hasDpns ? (
-                      <div className="relative inline-block">
-                        {allUsernames.length > 1 ? (
-                          <>
-                            <button
-                              onClick={() => setShowUsernameDropdown(!showUsernameDropdown)}
-                              className="flex items-center gap-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-                            >
-                              <span>@{username}</span>
-                              <ChevronDownIcon className={`h-4 w-4 transition-transform ${showUsernameDropdown ? 'rotate-180' : ''}`} />
-                              <span className="text-xs bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
-                                +{allUsernames.length - 1}
-                              </span>
-                            </button>
-                            {showUsernameDropdown && (
-                              <>
-                                <div
-                                  className="fixed inset-0 z-10"
-                                  onClick={() => setShowUsernameDropdown(false)}
-                                />
-                                <div className="absolute top-full left-0 mt-1 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[160px]">
-                                  {allUsernames.map((name, index) => (
-                                    <button
-                                      key={name}
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(name)
-                                        toast.success(`Copied @${name}`)
-                                        setShowUsernameDropdown(false)
-                                      }}
-                                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-                                    >
-                                      <span className="text-gray-500">@{name}</span>
-                                      {index === 0 && (
-                                        <span className="text-xs bg-yappr-100 dark:bg-yappr-900 text-yappr-600 dark:text-yappr-400 px-1.5 py-0.5 rounded">
-                                          primary
-                                        </span>
-                                      )}
-                                    </button>
-                                  ))}
-                                </div>
-                              </>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-gray-500">@{username}</p>
-                        )}
-                      </div>
+                    {hasDpns && username ? (
+                      <UsernameDropdown username={username} allUsernames={allUsernames} />
                     ) : (
                       <Tooltip.Provider>
                         <Tooltip.Root>
