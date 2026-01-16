@@ -84,7 +84,7 @@ class DpnsService {
   }
 
   /**
-   * Sort usernames by contested status (contested usernames first)
+   * Sort usernames by: contested first, then shortest, then alphabetically
    */
   async sortUsernamesByContested(usernames: string[]): Promise<string[]> {
     const sdk = await getEvoSdk();
@@ -99,9 +99,14 @@ class DpnsService {
 
     return contestedStatuses
       .sort((a, b) => {
+        // 1. Contested usernames first
         if (a.contested && !b.contested) return -1;
         if (!a.contested && b.contested) return 1;
-        // If both contested or both not contested, sort alphabetically
+        // 2. Shorter usernames first
+        if (a.username.length !== b.username.length) {
+          return a.username.length - b.username.length;
+        }
+        // 3. Alphabetically
         return a.username.localeCompare(b.username);
       })
       .map(item => item.username);
@@ -110,7 +115,7 @@ class DpnsService {
   /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
-   * Selects the "best" username for identities with multiple names (contested first, then alphabetically)
+   * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
    *
    * TODO: This query uses 'in' clause which doesn't support reliable pagination.
    * The SDK returns incomplete results when subtrees are empty but still count against the limit.
@@ -180,7 +185,7 @@ class DpnsService {
         if (usernames.length === 1) {
           bestUsername = usernames[0];
         } else {
-          // Sort: contested usernames first, then alphabetically
+          // Sort: contested first, then shortest, then alphabetically
           const sortedUsernames = await this.sortUsernamesByContested(usernames);
           bestUsername = sortedUsernames[0];
         }
