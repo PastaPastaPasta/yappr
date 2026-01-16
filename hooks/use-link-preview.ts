@@ -360,7 +360,7 @@ export function useLinkPreview(
  * Strip trailing punctuation while preserving balanced parentheses
  * This handles URLs like https://en.wikipedia.org/wiki/Foo_(bar)
  */
-function stripTrailingPunctuation(url: string): string {
+export function stripTrailingPunctuation(url: string): string {
   // Characters to strip from end (excluding closing paren which needs balance check)
   const punctuation = /[.,;:!?]+$/
 
