@@ -112,6 +112,8 @@ export interface Notification {
   read: boolean
 }
 
+export type NotificationFilter = 'all' | 'follow' | 'mention'
+
 export interface Trend {
   topic: string
   posts: number

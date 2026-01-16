@@ -11,6 +11,18 @@ const INITIAL_FETCH_DAYS = 7;
 const INITIAL_FETCH_MS = INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000;
 
 /**
+ * Type alias for SDK document query parameters.
+ * SDK types are incomplete, so we define our own to avoid `as any` casts.
+ */
+type DocumentQuery = {
+  dataContractId: string;
+  documentTypeName: string;
+  where?: Array<[string, string, unknown]>;
+  orderBy?: Array<[string, 'asc' | 'desc']>;
+  limit?: number;
+};
+
+/**
  * Raw notification data before enrichment
  */
 interface RawNotification {
@@ -43,8 +55,7 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // SDK query types are incomplete, cast needed for valid query options
-      const response = await sdk.documents.query({
+      const query: DocumentQuery = {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'follow',
         where: [
@@ -53,7 +64,8 @@ class NotificationService {
         ],
         orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      };
+      const response = await sdk.documents.query(query);
 
       const documents = normalizeSDKResponse(response);
 
@@ -77,8 +89,7 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // SDK query types are incomplete, cast needed for valid query options
-      const response = await sdk.documents.query({
+      const query: DocumentQuery = {
         dataContractId: MENTION_CONTRACT_ID,
         documentTypeName: 'postMention',
         where: [
@@ -87,7 +98,8 @@ class NotificationService {
         ],
         orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      };
+      const response = await sdk.documents.query(query);
 
       const documents = normalizeSDKResponse(response);
 
@@ -196,12 +208,13 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
+      const query: DocumentQuery = {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'post',
         where: [['$id', 'in', postIds]],
         limit: postIds.length
-      } as any);
+      };
+      const response = await sdk.documents.query(query);
 
       const documents = normalizeSDKResponse(response);
 

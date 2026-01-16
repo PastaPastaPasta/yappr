@@ -37,7 +37,16 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
 
-const getNavigation = (isLoggedIn: boolean, userId?: string) => {
+type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>
+
+interface NavigationItem {
+  name: string
+  href: string
+  icon: IconComponent
+  activeIcon: IconComponent
+}
+
+function getNavigation(isLoggedIn: boolean, userId?: string): NavigationItem[] {
   if (!isLoggedIn) {
     return [
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
@@ -58,6 +67,17 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
 }
 
 const NOTIFICATION_POLL_INTERVAL = 30000 // 30 seconds
+
+function formatIdentityId(id: string): string {
+  if (id.length <= 10) return id
+  return `${id.slice(0, 6)}...${id.slice(-4)}`
+}
+
+function formatDashBalance(balance: number): string {
+  // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
+  const dashBalance = balance / 100000000000
+  return `${dashBalance.toFixed(4)} DASH`
+}
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -124,15 +144,9 @@ export function Sidebar() {
       if (timeoutId) clearTimeout(timeoutId)
     }
   }, [user?.identityId])
-  
+
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
-  
-  // Format identity ID for display (show first 6 and last 4 chars)
-  const formatIdentityId = (id: string) => {
-    if (id.length <= 10) return id
-    return `${id.slice(0, 6)}...${id.slice(-4)}`
-  }
 
   return (
     <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
@@ -245,12 +259,7 @@ export function Sidebar() {
                     <div>
                       <div className="text-xs text-gray-500">Balance</div>
                       <div className="font-mono">
-                        {(() => {
-                          const balance = user.balance || 0;
-                          // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
-                          const dashBalance = balance / 100000000000;
-                          return `${dashBalance.toFixed(4)} DASH`;
-                        })()}
+                        {formatDashBalance(user.balance || 0)}
                       </div>
                     </div>
                     <button

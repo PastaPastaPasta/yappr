@@ -14,9 +14,7 @@ import { withAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
-import { Notification } from '@/lib/types'
-
-type NotificationFilter = 'all' | 'follow' | 'mention'
+import { Notification, NotificationFilter } from '@/lib/types'
 
 const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
   { key: 'all', label: 'All' },
