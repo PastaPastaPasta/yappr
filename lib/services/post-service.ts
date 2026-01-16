@@ -1225,7 +1225,7 @@ class PostService extends BaseDocumentService<Post> {
    * Get post counts per author
    * Returns a Map of authorId -> post count
    */
-  async getAuthorPostCounts(_limit: number = 50): Promise<Map<string, number>> {
+  async getAuthorPostCounts(): Promise<Map<string, number>> {
     const authorCounts = new Map<string, number>();
 
     try {
