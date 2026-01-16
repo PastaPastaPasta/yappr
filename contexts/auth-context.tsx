@@ -10,9 +10,12 @@ export interface AuthUser {
   dpnsUsername?: string
   publicKeys: Array<{
     id: number
-    type: string
-    purpose: string
-    securityLevel: string
+    type: number
+    purpose: number
+    securityLevel: number
+    security_level?: number
+    disabledAt?: number
+    data?: string | Uint8Array
   }>
 }
 

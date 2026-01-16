@@ -3,6 +3,7 @@ import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
 import { dpnsService } from './dpns-service'
 import { unifiedProfileService } from './unified-profile-service'
+import type { DocumentWhereClause } from './sdk-helpers'
 import {
   DirectMessage,
   Conversation
@@ -121,7 +122,7 @@ class DirectMessageService {
       return {
         success: true,
         message: {
-          id: result.document?.$id || `temp-${Date.now()}`,
+          id: (result.document?.$id as string) || `temp-${Date.now()}`,
           senderId,
           recipientId,
           conversationId,
@@ -176,14 +177,15 @@ class DirectMessageService {
 
       // Process received invites (they sent to me)
       for (const invite of receivedInvites) {
-        const convIdBytes = this.extractByteArray(invite.conversationId || invite.data?.conversationId)
+        const inviteData = invite.data as Record<string, unknown> | undefined
+        const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
         const convId = bs58.encode(Buffer.from(convIdBytes))
         const senderId = invite.$ownerId
 
         const existingConv = conversationMap.get(convId)
         if (!existingConv) {
           conversationMap.set(convId, {
-            participantId: senderId,
+            participantId: senderId as string,
             invites: [invite]
           })
         } else {
@@ -193,9 +195,10 @@ class DirectMessageService {
 
       // Process sent invites (I sent to them)
       for (const invite of sentInvites) {
-        const convIdBytes = this.extractByteArray(invite.conversationId || invite.data?.conversationId)
+        const inviteData = invite.data as Record<string, unknown> | undefined
+        const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
         const convId = bs58.encode(Buffer.from(convIdBytes))
-        const recipientIdBytes = this.extractByteArray(invite.recipientId || invite.data?.recipientId)
+        const recipientIdBytes = this.extractByteArray(invite.recipientId || inviteData?.recipientId)
         const recipientId = bs58.encode(Buffer.from(recipientIdBytes))
 
         const existingSentConv = conversationMap.get(convId)
@@ -222,9 +225,9 @@ class DirectMessageService {
           const myReceipt = await this.getMyReadReceipt(userId, convId)
 
           // Count unread messages (v3: use $updatedAt as last-read timestamp)
-          const lastReadAt = myReceipt?.$updatedAt || 0
+          const lastReadAt = (myReceipt?.$updatedAt as number) || 0
           const unreadCount = allMessages.filter(
-            m => m.$ownerId !== userId && m.$createdAt > lastReadAt
+            m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt
           ).length
 
           // Get participant username and display name
@@ -249,12 +252,12 @@ class DirectMessageService {
               lastMessage = await this.decryptMessage(latestDoc, userId, data.participantId)
             } catch {
               lastMessage = {
-                id: latestDoc.$id,
-                senderId: latestDoc.$ownerId,
+                id: latestDoc.$id as string,
+                senderId: latestDoc.$ownerId as string,
                 recipientId: latestDoc.$ownerId === userId ? data.participantId : userId,
                 conversationId: convId,
                 content: '[Encrypted message]',
-                createdAt: new Date(latestDoc.$createdAt)
+                createdAt: new Date(latestDoc.$createdAt as number)
               }
             }
           }
@@ -266,7 +269,7 @@ class DirectMessageService {
             participantDisplayName,
             lastMessage,
             unreadCount,
-            updatedAt: latestDoc ? new Date(latestDoc.$createdAt) : new Date()
+            updatedAt: latestDoc ? new Date(latestDoc.$createdAt as number) : new Date()
           })
         } catch (err) {
           console.error(`Error processing conversation ${convId}:`, err)
@@ -299,7 +302,7 @@ class DirectMessageService {
       if (!otherPartyId) {
         // Find a message from someone other than userId
         const otherMsg = rawMessages.find(m => m.$ownerId !== userId)
-        otherPartyId = otherMsg?.$ownerId
+        otherPartyId = otherMsg?.$ownerId as string | undefined
       }
 
       // Decrypt each message
@@ -311,12 +314,12 @@ class DirectMessageService {
         } catch (err) {
           console.error('Error decrypting message:', err)
           messages.push({
-            id: doc.$id,
-            senderId: doc.$ownerId,
+            id: doc.$id as string,
+            senderId: doc.$ownerId as string,
             recipientId: doc.$ownerId === userId ? (otherPartyId || '') : userId,
             conversationId,
             content: '[Could not decrypt message]',
-            createdAt: new Date(doc.$createdAt)
+            createdAt: new Date(doc.$createdAt as number)
           })
         }
       }
@@ -376,8 +379,7 @@ class DirectMessageService {
       const convIdBase64 = Buffer.from(convIdBytes).toString('base64')
 
       // Build where clause - add timestamp filter if provided
-      type WhereClause = [string, string, string | number]
-      const where: WhereClause[] = [['conversationId', '==', convIdBase64]]
+      const where: DocumentWhereClause[] = [['conversationId', '==', convIdBase64]]
       if (sinceTimestamp) {
         where.push(['$createdAt', '>', sinceTimestamp])
       }
@@ -467,7 +469,7 @@ class DirectMessageService {
       return null
     }
 
-    const senderId = doc.$ownerId
+    const senderId = doc.$ownerId as string
     const isSender = senderId === currentUserId
 
     // Get the other party's public key
@@ -482,11 +484,12 @@ class DirectMessageService {
     }
 
     // Extract encrypted content
+    const docData = doc.data as Record<string, unknown> | undefined
     const encryptedContent = this.extractByteArray(
-      doc.encryptedContent || doc.data?.encryptedContent
+      doc.encryptedContent || docData?.encryptedContent
     )
     const convIdBytes = this.extractByteArray(
-      doc.conversationId || doc.data?.conversationId
+      doc.conversationId || docData?.conversationId
     )
     const conversationId = bs58.encode(Buffer.from(convIdBytes))
 
@@ -498,12 +501,12 @@ class DirectMessageService {
     )
 
     return {
-      id: doc.$id,
+      id: doc.$id as string,
       senderId,
       recipientId: isSender ? otherPartyId : currentUserId,
       conversationId,
       content,
-      createdAt: new Date(doc.$createdAt)
+      createdAt: new Date(doc.$createdAt as number)
     }
   }
 
@@ -522,8 +525,9 @@ class DirectMessageService {
     // Check if they sent us an invite with their public key
     const theirInvite = await this.getInviteFromUser(userId, currentUserId)
     if (theirInvite) {
+      const inviteData = theirInvite.data as Record<string, unknown> | undefined
       const senderPubKey = this.extractByteArray(
-        theirInvite.senderPubKey || theirInvite.data?.senderPubKey
+        theirInvite.senderPubKey || inviteData?.senderPubKey
       )
       if (senderPubKey && senderPubKey.length === 33) {
         this.publicKeyCache.set(userId, senderPubKey)
@@ -694,11 +698,11 @@ class DirectMessageService {
 
       const doc = docs[0]
       return {
-        $id: doc.$id,
-        $ownerId: doc.$ownerId,
-        $createdAt: doc.$createdAt,
-        $updatedAt: doc.$updatedAt,
-        $revision: doc.$revision,
+        $id: doc.$id as string,
+        $ownerId: doc.$ownerId as string,
+        $createdAt: doc.$createdAt as number,
+        $updatedAt: doc.$updatedAt as number,
+        $revision: doc.$revision as number,
         conversationId
       }
     } catch {
@@ -757,8 +761,9 @@ class DirectMessageService {
         return new Uint8Array(Buffer.from(value, 'base64'))
       }
     }
-    if (value.buffer && value.byteLength !== undefined) {
-      return new Uint8Array(value)
+    const typedValue = value as { buffer?: ArrayBuffer; byteLength?: number }
+    if (typedValue.buffer && typedValue.byteLength !== undefined) {
+      return new Uint8Array(value as ArrayBuffer)
     }
     return new Uint8Array(0)
   }
@@ -771,39 +776,40 @@ class DirectMessageService {
     if (Array.isArray(publicKey)) return new Uint8Array(publicKey)
 
     if (publicKey && typeof publicKey === 'object') {
+      const pkObj = publicKey as Record<string, unknown>
       // Try 'data' field (common in Dash Platform)
-      if (publicKey.data) {
-        if (Array.isArray(publicKey.data)) return new Uint8Array(publicKey.data)
-        if (typeof publicKey.data === 'string') {
+      if (pkObj.data) {
+        if (Array.isArray(pkObj.data)) return new Uint8Array(pkObj.data)
+        if (typeof pkObj.data === 'string') {
           try {
-            return bs58.decode(publicKey.data)
+            return bs58.decode(pkObj.data)
           } catch {
-            return new Uint8Array(Buffer.from(publicKey.data, 'base64'))
+            return new Uint8Array(Buffer.from(pkObj.data, 'base64'))
           }
         }
-        if (publicKey.data instanceof Uint8Array) return publicKey.data
+        if (pkObj.data instanceof Uint8Array) return pkObj.data
       }
 
       // Try 'publicKey' field
-      if (publicKey.publicKey) {
-        if (Array.isArray(publicKey.publicKey)) return new Uint8Array(publicKey.publicKey)
-        if (typeof publicKey.publicKey === 'string') {
+      if (pkObj.publicKey) {
+        if (Array.isArray(pkObj.publicKey)) return new Uint8Array(pkObj.publicKey)
+        if (typeof pkObj.publicKey === 'string') {
           try {
-            return bs58.decode(publicKey.publicKey)
+            return bs58.decode(pkObj.publicKey)
           } catch {
-            return new Uint8Array(Buffer.from(publicKey.publicKey, 'base64'))
+            return new Uint8Array(Buffer.from(pkObj.publicKey, 'base64'))
           }
         }
       }
 
       // Try 'key' field
-      if (publicKey.key) {
-        if (Array.isArray(publicKey.key)) return new Uint8Array(publicKey.key)
-        if (typeof publicKey.key === 'string') {
+      if (pkObj.key) {
+        if (Array.isArray(pkObj.key)) return new Uint8Array(pkObj.key)
+        if (typeof pkObj.key === 'string') {
           try {
-            return bs58.decode(publicKey.key)
+            return bs58.decode(pkObj.key)
           } catch {
-            return new Uint8Array(Buffer.from(publicKey.key, 'base64'))
+            return new Uint8Array(Buffer.from(pkObj.key, 'base64'))
           }
         }
       }

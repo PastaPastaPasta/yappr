@@ -211,7 +211,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
       return {
         success: true,
-        documentId: result.document?.$id
+        documentId: result.document?.$id as string | undefined
       };
     } catch (error) {
       console.error('Error creating backup:', error);

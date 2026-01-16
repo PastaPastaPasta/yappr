@@ -75,7 +75,7 @@ export interface UnifiedProfileDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
-  $updatedAt: number;
+  $updatedAt?: number;
   $revision?: number;
   displayName: string;
   bio?: string;

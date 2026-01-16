@@ -164,7 +164,8 @@ export const storePrivateKey = (identityId: string, privateKey: string) => {
 }
 
 export const getPrivateKey = (identityId: string): string | null => {
-  return secureStorage.get(`pk_${identityId}`) || null
+  const value = secureStorage.get(`pk_${identityId}`)
+  return typeof value === 'string' ? value : null
 }
 
 export const clearPrivateKey = (identityId: string): boolean => {

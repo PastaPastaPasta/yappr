@@ -153,8 +153,9 @@ class DpnsService {
 
       const documents = extractDocuments(response);
       for (const doc of documents) {
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId;
         // Convert base64 identity to base58 for consistent map keys
         const identityId = identifierToBase58(rawId);
         const label = data.label || data.normalizedLabel;
@@ -252,8 +253,9 @@ class DpnsService {
       const documents = extractDocuments(response);
       if (documents.length > 0) {
         const doc = documents[0];
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId || data.records?.dashAliasIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId || records?.dashAliasIdentityId;
         const identityId = identifierToBase58(rawId);
 
         if (identityId) {
@@ -377,7 +379,7 @@ class DpnsService {
 
       // Register the name using EvoSDK facade
       console.log(`Registering DPNS name: ${label}`);
-      const result = await sdk.dpns.registerName({
+      await sdk.dpns.registerName({
         label,
         identityId,
         publicKeyId,
@@ -388,7 +390,7 @@ class DpnsService {
       // Clear cache for this identity
       this.clearCache(undefined, identityId);
 
-      return result;
+      return { success: true };
     } catch (error) {
       console.error('Error registering username:', error);
       throw error;

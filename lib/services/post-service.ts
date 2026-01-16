@@ -62,13 +62,13 @@ class PostService extends BaseDocumentService<Post> {
     // - System fields ($id, $ownerId, $createdAt): base58 strings
     // - Byte array fields (replyToPostId, etc): base64 strings (need conversion)
     // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
-    const id = doc.$id || doc.id;
-    const ownerId = doc.$ownerId || doc.ownerId;
-    const createdAt = doc.$createdAt || doc.createdAt;
+    const id = (doc.$id || doc.id) as string;
+    const ownerId = (doc.$ownerId || doc.ownerId) as string;
+    const createdAt = (doc.$createdAt || doc.createdAt) as number;
 
     // Content and other fields may be in data or at root level
-    const content = data.content || doc.content || '';
-    const mediaUrl = data.mediaUrl || doc.mediaUrl;
+    const content = (data.content || doc.content || '') as string;
+    const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
     // Convert replyToPostId from base64 to base58 for consistent storage
     const rawReplyToId = data.replyToPostId || doc.replyToPostId;
@@ -266,7 +266,7 @@ class PostService extends BaseDocumentService<Post> {
       // Build profile map for quick lookup
       const profileMap = new Map<string, Record<string, unknown>>();
       profiles.forEach((profile) => {
-        const profileRec = profile as Record<string, unknown>;
+        const profileRec = profile as unknown as Record<string, unknown>;
         if (profileRec.$ownerId) {
           profileMap.set(profileRec.$ownerId as string, profileRec);
         }
@@ -277,7 +277,7 @@ class PostService extends BaseDocumentService<Post> {
         const interactions = interactionsMap.get(post.id);
         const username = usernameMap.get(post.author.id);
         const profile = profileMap.get(post.author.id);
-        const profileData = profile?.data || profile;
+        const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
 
         // Get pre-fetched block/follow/avatar data
         const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
@@ -325,7 +325,7 @@ class PostService extends BaseDocumentService<Post> {
           author: {
             ...post.author,
             username: username || post.author.username,
-            displayName: profileData?.displayName || post.author.displayName,
+            displayName: (profileData?.displayName as string) || post.author.displayName,
             avatar: authorAvatarUrl || post.author.avatar,
             hasDpns: Boolean(username)
           },

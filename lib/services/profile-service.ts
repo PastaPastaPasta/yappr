@@ -1,4 +1,5 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
+import type { DocumentWhereClause, DocumentOrderByClause } from './sdk-helpers';
 import { User } from '../types';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
@@ -35,8 +36,8 @@ class ProfileService extends BaseDocumentService<User> {
       const queryParams: {
         dataContractId: string;
         documentTypeName: string;
-        where?: unknown;
-        orderBy?: unknown;
+        where?: DocumentWhereClause[];
+        orderBy?: DocumentOrderByClause[];
         limit?: number;
         startAfter?: string;
         startAt?: string;

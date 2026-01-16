@@ -72,6 +72,8 @@ function extractPublicKeyBytes(data: unknown): Uint8Array | null {
 interface SDKPublicKey {
   id?: number;
   keyId?: number;
+  type?: number;
+  keyType?: number;
   purpose?: number;
   securityLevel?: number;
   data?: unknown;

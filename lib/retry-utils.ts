@@ -133,9 +133,9 @@ export async function retryPostCreation<T>(
     retryCondition: (error) => {
       // Use default retry condition plus Dash Platform specific errors
       if (defaultRetryCondition(error)) return true
-      
-      const errorMessage = error.message?.toLowerCase() || ''
-      
+
+      const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
+
       // Dash Platform specific retryable errors
       const dashErrors = [
         'internal error',
@@ -144,7 +144,7 @@ export async function retryPostCreation<T>(
         'consensus error',
         'quorum not available'
       ]
-      
+
       return dashErrors.some(dashError => errorMessage.includes(dashError))
     },
     ...options

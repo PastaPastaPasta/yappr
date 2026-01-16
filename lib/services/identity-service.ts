@@ -5,6 +5,8 @@ export interface IdentityPublicKey {
   type: number;
   purpose: number;
   securityLevel: number;
+  security_level?: number;  // SDK may return snake_case variant
+  disabledAt?: number;
   data: string | Uint8Array;
 }
 
