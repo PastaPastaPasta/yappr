@@ -761,9 +761,9 @@ class DirectMessageService {
         return new Uint8Array(Buffer.from(value, 'base64'))
       }
     }
-    const typedValue = value as { buffer?: ArrayBuffer; byteLength?: number }
+    const typedValue = value as { buffer?: ArrayBuffer; byteOffset?: number; byteLength?: number }
     if (typedValue.buffer && typedValue.byteLength !== undefined) {
-      return new Uint8Array(value as ArrayBuffer)
+      return new Uint8Array(typedValue.buffer, typedValue.byteOffset ?? 0, typedValue.byteLength)
     }
     return new Uint8Array(0)
   }

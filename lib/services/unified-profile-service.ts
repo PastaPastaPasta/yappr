@@ -431,7 +431,12 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         });
     }
     if (Array.isArray(response)) {
-      return response as Record<string, unknown>[];
+      return response
+        .filter(Boolean)
+        .map((doc: unknown) => {
+          const d = doc as { toJSON?: () => unknown };
+          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+        });
     }
     if (response && typeof response === 'object' && 'documents' in response) {
       return (response as { documents: Record<string, unknown>[] }).documents;
