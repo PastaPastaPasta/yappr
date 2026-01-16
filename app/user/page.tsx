@@ -320,9 +320,17 @@ function UserProfileContent() {
                 hasDpns: true
               } as any
             })))
+          } else {
+            // Reset DPNS state when no usernames found
+            setAllUsernames([])
+            setUsername(null)
+            setHasDpns(false)
           }
         } catch (e) {
-          // DPNS resolution is optional
+          // Reset DPNS state on error to avoid stale data
+          setAllUsernames([])
+          setUsername(null)
+          setHasDpns(false)
         }
 
       } catch (error) {

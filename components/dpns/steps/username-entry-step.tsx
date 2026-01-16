@@ -26,21 +26,33 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
   // This only checks format validity - availability is checked separately
   const validateUsername = useCallback(
     (id: string, label: string) => {
-      if (!label.trim()) {
-        updateUsernameStatus(id, 'pending')
+      const trimmedLabel = label.trim()
+      const currentEntry = usernames.find((u) => u.id === id)
+      const currentStatus = currentEntry?.status
+
+      if (!trimmedLabel) {
+        // Only update if status would actually change
+        if (currentStatus !== 'pending') {
+          updateUsernameStatus(id, 'pending')
+        }
         return
       }
 
       // Only do client-side format validation
-      const validationError = dpnsService.getUsernameValidationError(label)
+      const validationError = dpnsService.getUsernameValidationError(trimmedLabel)
       if (validationError) {
-        updateUsernameStatus(id, 'invalid', validationError)
+        // Only update if status would change or error message differs
+        if (currentStatus !== 'invalid' || currentEntry?.error !== validationError) {
+          updateUsernameStatus(id, 'invalid', validationError)
+        }
       } else {
         // Valid format - keep as pending until availability check
-        updateUsernameStatus(id, 'pending')
+        if (currentStatus !== 'pending') {
+          updateUsernameStatus(id, 'pending')
+        }
       }
     },
-    [updateUsernameStatus]
+    [usernames, updateUsernameStatus]
   )
 
   // Debounce validation

@@ -11,13 +11,17 @@ export function RegisteringStep() {
     (u) => u.status === 'available' || u.status === 'contested'
   )
 
+  // Clamp display values to avoid showing "N+1 of N" or "1 of 0"
+  const total = availableUsernames.length
+  const displayIndex = total === 0 ? 0 : Math.min(currentRegistrationIndex + 1, total)
+
   return (
     <div className="space-y-6">
       <div className="text-center">
         <Loader2 className="w-12 h-12 animate-spin text-purple-600 mx-auto mb-4" />
         <h2 className="text-xl font-semibold mb-2">Registering Usernames</h2>
         <p className="text-gray-600 dark:text-gray-400">
-          Registering {currentRegistrationIndex + 1} of {availableUsernames.length}...
+          Registering {displayIndex} of {total}...
         </p>
       </div>
 
