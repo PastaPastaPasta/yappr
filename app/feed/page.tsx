@@ -36,6 +36,9 @@ function FeedPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
   const [followingNextWindow, setFollowingNextWindow] = useState<{ start: Date; end: Date; windowHours: number } | null>(null)
+  // State for auto-refresh: pending new posts and the timestamp of the newest displayed post
+  const [pendingNewPosts, setPendingNewPosts] = useState<FeedItem[]>([])
+  const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null)
   // Initialize tab from localStorage synchronously to avoid double-loading
   const [activeTab, setActiveTab] = useState<'forYou' | 'following'>(() => {
     // Only access localStorage on client side
@@ -605,6 +608,24 @@ function FeedPage() {
         })
       } else {
         setData(sortedFeedItems)
+        // Track the newest post timestamp for auto-refresh feature
+        if (sortedFeedItems.length > 0) {
+          const getItemTimestamp = (item: FeedItem): number => {
+            if (isFeedReplyContext(item)) {
+              return item.reply.createdAt instanceof Date
+                ? item.reply.createdAt.getTime()
+                : new Date(item.reply.createdAt).getTime()
+            }
+            const post = item as any
+            return post.createdAt instanceof Date
+              ? post.createdAt.getTime()
+              : new Date(post.createdAt).getTime()
+          }
+          const newestTimestamp = Math.max(...sortedFeedItems.map(getItemTimestamp))
+          setNewestPostTimestamp(newestTimestamp)
+          // Clear any pending new posts when doing a fresh load
+          setPendingNewPosts([])
+        }
       }
 
       // Start progressive enrichment (non-blocking)
@@ -664,6 +685,182 @@ function FeedPage() {
     }
   }, [activeTab, lastPostId, followingNextWindow, isLoadingMore, hasMore, loadPosts])
 
+  // Check for new posts since the last displayed post
+  const checkForNewPosts = useCallback(async () => {
+    // Don't check if we don't have a timestamp reference yet or if we're loading
+    if (!newestPostTimestamp || postsState.loading) return
+
+    try {
+      console.log('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString())
+
+      let newPosts: any[] = []
+
+      if (activeTab === 'following' && user?.identityId) {
+        // Following feed: Query posts from followed users with $createdAt > newestPostTimestamp
+        const { followService } = await import('@/lib/services')
+        const following = await followService.getFollowing(user.identityId)
+        const followingIds = following.map((f: any) => f.followingId)
+
+        if (followingIds.length > 0) {
+          const { getEvoSdk } = await import('@/lib/services/evo-sdk-service')
+          const { normalizeSDKResponse } = await import('@/lib/services/sdk-helpers')
+          const sdk = await getEvoSdk()
+          const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
+
+          const response = await sdk.documents.query({
+            dataContractId: YAPPR_CONTRACT_ID,
+            documentTypeName: 'post',
+            where: [
+              ['$ownerId', 'in', followingIds],
+              ['$createdAt', '>', newestPostTimestamp]
+            ],
+            orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
+            limit: 50
+          } as any)
+
+          const documents = normalizeSDKResponse(response)
+          newPosts = documents
+        }
+      } else {
+        // For You feed: Query all posts with $createdAt > newestPostTimestamp
+        const { getEvoSdk } = await import('@/lib/services/evo-sdk-service')
+        const { normalizeSDKResponse } = await import('@/lib/services/sdk-helpers')
+        const sdk = await getEvoSdk()
+        const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
+
+        const response = await sdk.documents.query({
+          dataContractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'post',
+          where: [['$createdAt', '>', newestPostTimestamp]],
+          orderBy: [['$createdAt', 'desc']],
+          limit: 50
+        } as any)
+
+        const documents = normalizeSDKResponse(response)
+        newPosts = documents
+      }
+
+      if (newPosts.length > 0) {
+        console.log(`Feed: Found ${newPosts.length} new posts`)
+
+        // Transform the documents to our UI format
+        const { identifierToBase58 } = await import('@/lib/services/sdk-helpers')
+        const transformedPosts = newPosts.map((doc: any) => {
+          const data = doc.data || doc
+          const authorIdStr = doc.$ownerId || doc.ownerId || 'unknown'
+          const rawReplyToId = data.replyToPostId || doc.replyToPostId
+          const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) : undefined
+          const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
+          const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) : undefined
+
+          return {
+            id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
+            content: data.content || 'No content',
+            author: {
+              id: authorIdStr,
+              username: '',
+              handle: '',
+              displayName: '',
+              avatar: '',
+              followers: 0,
+              following: 0,
+              verified: false,
+              joinedAt: new Date(),
+              hasDpns: undefined
+            },
+            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
+            likes: 0,
+            replies: 0,
+            reposts: 0,
+            views: 0,
+            liked: false,
+            reposted: false,
+            bookmarked: false,
+            replyToId: replyToId || undefined,
+            quotedPostId: quotedPostId || undefined
+          }
+        })
+
+        // Filter out replies for For You tab
+        const filteredNewPosts = activeTab === 'forYou'
+          ? transformedPosts.filter((p: any) => !p.replyToId)
+          : transformedPosts
+
+        // Sort by createdAt descending (newest first)
+        filteredNewPosts.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())
+
+        // Deduplicate against existing posts and already pending posts
+        const existingIds = new Set([
+          ...(postsState.data || []).map(item =>
+            isFeedReplyContext(item) ? item.reply.id : item.id
+          ),
+          ...pendingNewPosts.map(item =>
+            isFeedReplyContext(item) ? item.reply.id : item.id
+          )
+        ])
+
+        const uniqueNewPosts = filteredNewPosts.filter((p: any) => !existingIds.has(p.id))
+
+        if (uniqueNewPosts.length > 0) {
+          console.log(`Feed: ${uniqueNewPosts.length} unique new posts to show`)
+          setPendingNewPosts(prev => [...uniqueNewPosts, ...prev])
+        }
+      }
+    } catch (error) {
+      console.error('Feed: Error checking for new posts:', error)
+    }
+  }, [newestPostTimestamp, activeTab, user?.identityId, postsState.loading, postsState.data, pendingNewPosts])
+
+  // Show pending new posts when user clicks the button
+  const showNewPosts = useCallback(() => {
+    if (pendingNewPosts.length === 0) return
+
+    // Get the newest timestamp from pending posts
+    const getItemTimestamp = (item: FeedItem): number => {
+      if (isFeedReplyContext(item)) {
+        return item.reply.createdAt instanceof Date
+          ? item.reply.createdAt.getTime()
+          : new Date(item.reply.createdAt).getTime()
+      }
+      const post = item as any
+      return post.createdAt instanceof Date
+        ? post.createdAt.getTime()
+        : new Date(post.createdAt).getTime()
+    }
+
+    const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getItemTimestamp))
+
+    // Prepend pending posts to current feed
+    postsState.setData((currentItems: FeedItem[] | null) => {
+      const existing = currentItems || []
+      return [...pendingNewPosts, ...existing]
+    })
+
+    // Start enrichment for the new posts
+    const postsToEnrich = pendingNewPosts.flatMap(item =>
+      isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
+    )
+    enrichProgressively(postsToEnrich)
+
+    // Update the newest timestamp
+    setNewestPostTimestamp(newestPendingTimestamp)
+
+    // Clear pending posts
+    setPendingNewPosts([])
+  }, [pendingNewPosts, postsState, enrichProgressively])
+
+  // Periodically check for new posts (every 15 seconds)
+  useEffect(() => {
+    // Only start checking after initial posts are loaded
+    if (!newestPostTimestamp) return
+
+    const intervalId = setInterval(() => {
+      checkForNewPosts().catch(err => console.error('Failed to check for new posts:', err))
+    }, 15000) // 15 seconds
+
+    return () => clearInterval(intervalId)
+  }, [newestPostTimestamp, checkForNewPosts])
+
   // Listen for new posts created
   useEffect(() => {
     const handlePostCreated = () => {
@@ -687,6 +884,9 @@ function FeedPage() {
     setLastPostId(null)
     setFollowingNextWindow(null)
     setHasMore(true)
+    // Clear auto-refresh state on tab switch
+    setPendingNewPosts([])
+    setNewestPostTimestamp(null)
     loadPosts().catch(err => console.error('Failed to load posts:', err))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab])
@@ -857,6 +1057,15 @@ function FeedPage() {
           </div>
         ) : (
         <ErrorBoundary level="component">
+          {/* New posts notification button */}
+          {pendingNewPosts.length > 0 && (
+            <button
+              onClick={showNewPosts}
+              className="w-full py-3 text-center text-yappr-500 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 font-medium transition-colors border-b border-gray-200 dark:border-gray-800"
+            >
+              Show {pendingNewPosts.length} new {pendingNewPosts.length === 1 ? 'post' : 'posts'}
+            </button>
+          )}
           <LoadingState
             loading={postsState.loading || postsState.data === null}
             error={postsState.error}
