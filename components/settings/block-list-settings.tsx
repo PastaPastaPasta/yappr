@@ -70,22 +70,22 @@ export function BlockListSettings() {
 
       // Create lookup maps
       const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Build user list
+      interface FollowDoc { followingId: string }
       const users: FollowedUserWithBlockStatus[] = follows
-        .map((follow: any) => {
+        .map((follow: FollowDoc) => {
           const followingId = follow.followingId
           if (!followingId) return null
 
           const username = dpnsMap.get(followingId)
           const profile = profileMap.get(followingId)
-          const profileData = (profile as any)?.data || profile
 
           return {
             id: followingId,
             username: username || undefined,
-            displayName: profileData?.displayName || username || `User ${followingId.slice(-6)}`,
+            displayName: profile?.displayName || username || `User ${followingId.slice(-6)}`,
             isFollowingBlocks: blockFollowSet.has(followingId),
             hasDpns: !!username
           }

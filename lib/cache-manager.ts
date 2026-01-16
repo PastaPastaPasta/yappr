@@ -16,7 +16,7 @@ export interface CacheOptions {
 }
 
 export class CacheManager {
-  private caches = new Map<string, Map<string, CacheEntry<any>>>()
+  private caches = new Map<string, Map<string, CacheEntry<unknown>>>()
   private tagIndex = new Map<string, Set<string>>()
   private cleanupInterval?: NodeJS.Timeout
 
@@ -27,7 +27,7 @@ export class CacheManager {
   /**
    * Get or create a named cache
    */
-  private getCache(cacheName: string): Map<string, CacheEntry<any>> {
+  private getCache(cacheName: string): Map<string, CacheEntry<unknown>> {
     let cache = this.caches.get(cacheName)
     if (!cache) {
       cache = new Map()
@@ -283,13 +283,13 @@ if (typeof window !== 'undefined') {
  */
 export function cached(
   cacheName: string,
-  keyGenerator?: (...args: any[]) => string,
+  keyGenerator?: (...args: unknown[]) => string,
   options: CacheOptions = {}
 ) {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+  return function (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value
 
-    descriptor.value = async function (...args: any[]) {
+    descriptor.value = async function (...args: unknown[]) {
       const key = keyGenerator ? keyGenerator(...args) : JSON.stringify(args)
       
       // Try to get from cache

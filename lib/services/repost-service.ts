@@ -190,7 +190,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
         where: [['postId', 'in', postIds]],
         orderBy: [['postId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));

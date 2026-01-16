@@ -16,10 +16,18 @@ function isLikelyIdentityId(input: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(input)
 }
 
+interface IdentityPublicKey {
+  id: number
+  type: number
+  purpose: number
+  securityLevel: number
+  data: string | Uint8Array
+}
+
 interface ResolvedIdentity {
   id: string
   balance: number
-  publicKeys: any[]
+  publicKeys: IdentityPublicKey[]
   dpnsUsername?: string
 }
 

@@ -1,5 +1,6 @@
 import { profileService } from './profile-service';
 import { unifiedProfileService } from './unified-profile-service';
+import { normalizeSDKResponse } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 
 // Legacy profile data structure (from old contract)
@@ -62,25 +63,15 @@ class ProfileMigrationService {
         documentTypeName: 'profile',
         where: [['$ownerId', '==', ownerId]],
         limit: 1
-      } as any);
+      });
 
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      }
-
+      const documents = normalizeSDKResponse(response);
       if (documents.length === 0) {
         return null;
       }
 
       const doc = documents[0];
-      const data = doc.data || doc;
+      const data = (doc.data || doc) as Record<string, unknown>;
 
       // Extract avatar ID if present (it's a 32-byte array in the old format)
       let avatarIdStr: string | undefined;
@@ -129,18 +120,9 @@ class ProfileMigrationService {
         documentTypeName: 'avatar',
         where: [['$ownerId', '==', ownerId]],
         limit: 1
-      } as any);
+      });
 
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      }
+      const documents = normalizeSDKResponse(response);
 
       if (documents.length === 0) {
         return null;

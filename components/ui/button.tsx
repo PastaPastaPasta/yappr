@@ -45,7 +45,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     }
     
     // Remove asChild from props to avoid passing it to DOM element
-    const { asChild: _, ...buttonProps } = props as any
+    const { asChild: _, ...buttonProps } = props as Omit<ButtonProps, 'asChild'>
     
     return (
       <button

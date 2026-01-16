@@ -1,9 +1,17 @@
 import { getEvoSdk } from './evo-sdk-service';
 
+export interface IdentityPublicKey {
+  id: number;
+  type: number;
+  purpose: number;
+  securityLevel: number;
+  data: string | Uint8Array;
+}
+
 export interface IdentityInfo {
   id: string;
   balance: number;
-  publicKeys: any[];
+  publicKeys: IdentityPublicKey[];
   revision: number;
 }
 
@@ -122,7 +130,7 @@ class IdentityService {
   /**
    * Get identity public keys
    */
-  async getPublicKeys(identityId: string): Promise<any[]> {
+  async getPublicKeys(identityId: string): Promise<IdentityPublicKey[]> {
     try {
       const identity = await this.getIdentity(identityId);
       return identity?.publicKeys || [];

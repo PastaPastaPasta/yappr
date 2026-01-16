@@ -63,7 +63,7 @@ class SecureStorage {
   /**
    * Store a value securely
    */
-  set(key: string, value: any): void {
+  set(key: string, value: unknown): void {
     if (!this.isAvailable()) return
     const storage = this.getStorage()
     if (!storage) return
@@ -77,7 +77,7 @@ class SecureStorage {
   /**
    * Get a value from secure storage
    */
-  get(key: string): any {
+  get(key: string): unknown {
     if (!this.isAvailable()) return null
     // Check both storages - user might have switched modes
     try {

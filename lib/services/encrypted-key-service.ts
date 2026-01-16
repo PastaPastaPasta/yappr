@@ -48,16 +48,16 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
    * Transform raw document to typed object
    * SDK v3: System fields use $ prefix
    */
-  protected transformDocument(doc: any): EncryptedKeyBackupDocument {
-    const data = doc.data || doc;
+  protected transformDocument(doc: Record<string, unknown>): EncryptedKeyBackupDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
     return {
-      $id: doc.$id,
-      $ownerId: doc.$ownerId,
-      $createdAt: doc.$createdAt,
-      encryptedKey: data.encryptedKey,
-      iv: data.iv,
-      version: data.version,
-      kdfIterations: data.kdfIterations
+      $id: doc.$id as string,
+      $ownerId: doc.$ownerId as string,
+      $createdAt: doc.$createdAt as number,
+      encryptedKey: data.encryptedKey as string,
+      iv: data.iv as string,
+      version: data.version as number,
+      kdfIterations: data.kdfIterations as number
     };
   }
 

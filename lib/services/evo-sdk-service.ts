@@ -174,8 +174,10 @@ class EvoSdkService {
   /**
    * Check if error is a "no available addresses" error that requires reconnection
    */
-  isNoAvailableAddressesError(error: any): boolean {
-    const message = error?.message || String(error);
+  isNoAvailableAddressesError(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : null) ||
+      ((error as { message?: string })?.message) ||
+      String(error);
     return message.toLowerCase().includes('no available addresses') ||
            message.toLowerCase().includes('noavailableaddressesforretry');
   }
@@ -184,7 +186,7 @@ class EvoSdkService {
    * Handle connection errors by reinitializing the SDK
    * Returns true if recovery was attempted
    */
-  async handleConnectionError(error: any): Promise<boolean> {
+  async handleConnectionError(error: unknown): Promise<boolean> {
     if (this.isNoAvailableAddressesError(error)) {
       console.log('EvoSdkService: Detected "no available addresses" error, attempting to reconnect...');
       try {

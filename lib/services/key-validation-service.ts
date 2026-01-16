@@ -33,7 +33,7 @@ export interface KeyValidationResult {
  * Convert SDK public key data to Uint8Array
  * Handles multiple formats: Uint8Array, Array, base58 string, base64 string
  */
-function extractPublicKeyBytes(data: any): Uint8Array | null {
+function extractPublicKeyBytes(data: unknown): Uint8Array | null {
   if (!data) return null
 
   // Already a Uint8Array
@@ -69,10 +69,19 @@ function extractPublicKeyBytes(data: any): Uint8Array | null {
   return null
 }
 
+interface SDKPublicKey {
+  id?: number;
+  keyId?: number;
+  purpose?: number;
+  securityLevel?: number;
+  data?: unknown;
+  publicKey?: unknown;
+}
+
 /**
  * Convert SDK public key format to our internal format
  */
-function convertPublicKeys(sdkPublicKeys: any[]): IdentityPublicKeyInfo[] {
+function convertPublicKeys(sdkPublicKeys: SDKPublicKey[]): IdentityPublicKeyInfo[] {
   const result: IdentityPublicKeyInfo[] = []
 
   for (const key of sdkPublicKeys) {

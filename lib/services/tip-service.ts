@@ -101,7 +101,8 @@ class TipService {
             console.log('Derived key pair from WIF:', keyPair);
 
             // Find transfer keys (purpose 3) on the identity
-            const transferKeys = identityJson.publicKeys.filter((k: any) => k.purpose === 3);
+            interface IdentityPublicKey { id: number; purpose: number; data?: string }
+            const transferKeys = identityJson.publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
             console.log('Transfer keys on identity:', transferKeys);
 
             if (keyPair?.publicKey) {
@@ -119,7 +120,7 @@ class TipService {
               console.log('Derived public key (base64):', pubKeyBase64);
 
               // Compare with key 3's public key
-              const key3 = identityJson.publicKeys.find((k: any) => k.id === 3);
+              const key3 = identityJson.publicKeys.find((k: IdentityPublicKey) => k.id === 3);
               if (key3) {
                 console.log('Key 3 public key (from identity):', key3.data);
                 console.log('Keys match:', pubKeyBase64 === key3.data);
@@ -179,10 +180,12 @@ class TipService {
         transactionHash: 'confirmed'
       };
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Tip transfer error:', error);
       // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
-      const errorMessage = error?.message || (typeof error === 'string' ? error : 'Unknown error');
+      const errorMessage = (error instanceof Error ? error.message : null) ||
+        ((error as { message?: string })?.message) ||
+        (typeof error === 'string' ? error : 'Unknown error');
 
       // Handle known DAPI timeout issue (like in state-transition-service)
       if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {

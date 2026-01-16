@@ -97,7 +97,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
@@ -228,7 +228,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         where: [['postId', 'in', postIds]],
         orderBy: [['postId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));

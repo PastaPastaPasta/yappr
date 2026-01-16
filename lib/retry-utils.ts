@@ -7,7 +7,7 @@ export interface RetryOptions {
   initialDelayMs?: number
   maxDelayMs?: number
   backoffMultiplier?: number
-  retryCondition?: (error: any) => boolean
+  retryCondition?: (error: unknown) => boolean
 }
 
 export interface RetryResult<T> {
@@ -20,11 +20,12 @@ export interface RetryResult<T> {
 /**
  * Default retry condition - retries on network errors and temporary failures
  */
-function defaultRetryCondition(error: any): boolean {
+function defaultRetryCondition(error: unknown): boolean {
   if (!error) return false
-  
-  const errorMessage = error.message?.toLowerCase() || ''
-  const errorString = error.toString?.()?.toLowerCase() || ''
+
+  const errObj = error as { message?: string; toString?: () => string }
+  const errorMessage = errObj.message?.toLowerCase() || ''
+  const errorString = errObj.toString?.()?.toLowerCase() || ''
   
   // Network-related errors
   const networkErrors = [
@@ -153,13 +154,13 @@ export async function retryPostCreation<T>(
 /**
  * Check if an error appears to be a network error
  */
-export function isNetworkError(error: any): boolean {
+export function isNetworkError(error: unknown): boolean {
   return defaultRetryCondition(error)
 }
 
 /**
  * Check if an error is retryable
  */
-export function isRetryableError(error: any): boolean {
+export function isRetryableError(error: unknown): boolean {
   return defaultRetryCondition(error)
 }
