@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -11,10 +11,10 @@ import { FeedItem, isFeedReplyContext } from '@/lib/types'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
-import { useAppStore } from '@/lib/store'
+import { useAppStore, useFeedStore } from '@/lib/store'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
+import { LoadingState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
 import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
@@ -30,15 +30,34 @@ function FeedPage() {
   const { setComposeOpen } = useAppStore()
   const { user } = useAuth()
   const { open: openLoginPrompt } = useLoginPromptModal()
-  const postsState = useAsyncState<any[]>(null)
+
+  // Feed state from Zustand store - persists across navigation
+  const feedStore = useFeedStore()
+  const {
+    forYouPosts,
+    followingPosts,
+    pagination,
+    scrollPositions,
+    followingUserId,
+    setForYouPosts,
+    setFollowingPosts,
+    appendForYouPosts,
+    appendFollowingPosts,
+    setForYouPagination,
+    setFollowingPagination,
+    setScrollPosition,
+    clearFeedState,
+  } = feedStore
+
+  // Local loading/error state (not persisted)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
-  const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [lastPostId, setLastPostId] = useState<string | null>(null)
-  const [followingNextWindow, setFollowingNextWindow] = useState<{ start: Date; end: Date; windowHours: number } | null>(null)
   // State for auto-refresh: pending new posts and the timestamp of the newest displayed post
   const [pendingNewPosts, setPendingNewPosts] = useState<FeedItem[]>([])
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null)
+
   // Initialize tab from localStorage synchronously to avoid double-loading
   const [activeTab, setActiveTab] = useState<'forYou' | 'following'>(() => {
     // Only access localStorage on client side
@@ -50,6 +69,12 @@ function FeedPage() {
     }
     return 'forYou'
   })
+
+  // Get current posts based on active tab
+  const currentPosts = activeTab === 'forYou' ? forYouPosts : followingPosts
+  const hasMore = activeTab === 'forYou' ? pagination.forYou.hasMore : pagination.following.hasMore
+  const lastPostId = pagination.forYou.lastPostId
+  const followingNextWindow = pagination.following.nextWindow
 
   // Progressive enrichment - renders posts immediately, fills in data as it loads
   const { enrichProgressively, enrichmentState, reset: resetEnrichment, getPostEnrichment } = useProgressiveEnrichment({
@@ -82,15 +107,13 @@ function FeedPage() {
   // Load posts function - using real WASM SDK with updated version
   const loadPosts = useCallback(async (
     forceRefresh: boolean = false,
-    pagination?: { startAfter?: string; timeWindow?: { start: Date; end: Date; windowHours?: number } }
+    paginationArg?: { startAfter?: string; timeWindow?: { start: Date; end: Date; windowHours?: number } }
   ) => {
-    // Use the setter functions directly, not the whole postsState object
-    const { setLoading, setError, setData } = postsState
-    const isPaginating = pagination?.startAfter || pagination?.timeWindow
+    const isPaginating = paginationArg?.startAfter || paginationArg?.timeWindow
 
     // Only show main loading state for initial load
     if (!isPaginating) {
-      setLoading(true)
+      setIsLoading(true)
     }
     setError(null)
 
@@ -106,13 +129,17 @@ function FeedPage() {
         const cached = cacheManager.get<any[]>('feed', cacheKey)
         if (cached) {
           console.log('Feed: Using cached data')
-          setData(cached)
-          setLoading(false)
-          // Set lastPostId from cached data
-          if (cached.length > 0) {
-            setLastPostId(cached[cached.length - 1].id)
-            setHasMore(cached.length >= 20)
+          if (activeTab === 'forYou') {
+            setForYouPosts(cached)
+            if (cached.length > 0) {
+              setForYouPagination(cached[cached.length - 1].id, cached.length >= 20)
+            }
+          } else {
+            setFollowingPosts(cached, user?.identityId || null)
+            // For following, we can't restore cursor from cache, so set hasMore based on length
+            setFollowingPagination(null, cached.length >= 20)
           }
+          setIsLoading(false)
           // Enrich cached posts (needed after back navigation when enrichment state is reset)
           // Blocked users will be filtered via enrichmentState.blockStatus in render
           enrichProgressively(cached)
@@ -132,7 +159,7 @@ function FeedPage() {
         const { postService } = await import('@/lib/services')
         const MIN_DATE = new Date('2025-01-01T00:00:00Z')
 
-        let currentWindow = pagination?.timeWindow
+        let currentWindow = paginationArg?.timeWindow
         let result: Awaited<ReturnType<typeof postService.getFollowingFeed>>
 
         do {
@@ -299,7 +326,7 @@ function FeedPage() {
         const dashClient = getDashPlatformClient()
 
         let allRawPosts: any[] = []
-        let currentStartAfter = pagination?.startAfter
+        let currentStartAfter = paginationArg?.startAfter
         let fetchIteration = 0
         let nonReplyCount = 0
 
@@ -555,15 +582,14 @@ function FeedPage() {
 
       // Update pagination state based on feed type
       if (activeTab === 'following') {
-        setFollowingNextWindow(followingCursor)
         // Has more if service returned a cursor (can search further back)
-        setHasMore(followingCursor !== null)
+        setFollowingPagination(followingCursor, followingCursor !== null)
 
         // For following feed: empty window doesn't mean done, just skip to next window
         if (sortedFeedItems.length === 0) {
           console.log('Feed: No posts in this time window, cursor points to next window')
           if (!isPaginating) {
-            setData([])
+            setFollowingPosts([], user?.identityId || null)
           }
           return
         }
@@ -576,38 +602,33 @@ function FeedPage() {
         if (nonReplyFeedItems.length === 0) {
           console.log('Feed: No non-reply posts found on platform')
           if (!isPaginating) {
-            setData([])
+            setForYouPosts([])
           }
-          setHasMore(false)
+          setForYouPagination(null, false)
           return
         }
         // For pagination, use the cursor from the fetch loop (not the last sorted item)
         // This ensures we continue from the correct chronological position
-        if (forYouNextCursor) {
-          setLastPostId(forYouNextCursor)
-        }
         // Has more based on whether the fetch loop found more data
-        setHasMore(forYouHasMore)
+        setForYouPagination(forYouNextCursor, forYouHasMore)
       }
 
       // PROGRESSIVE LOADING: Show posts IMMEDIATELY with skeleton placeholders
       // Enrichment data (usernames, avatars, stats) will fill in progressively
       if (isPaginating) {
-        setData((currentItems: FeedItem[] | null) => {
-          // Deduplicate - filter out items that already exist
-          const existingIds = new Set((currentItems || []).map(item =>
-            isFeedReplyContext(item) ? item.reply.id : item.id
-          ))
-          const newItems = sortedFeedItems.filter(item => {
-            const id = isFeedReplyContext(item) ? item.reply.id : item.id
-            return !existingIds.has(id)
-          })
-          const allItems = [...(currentItems || []), ...newItems]
-          console.log(`Feed: Appended ${newItems.length} new items (${sortedFeedItems.length - newItems.length} duplicates filtered)`)
-          return allItems
-        })
+        // Append to existing posts (deduplication handled by store)
+        if (activeTab === 'forYou') {
+          appendForYouPosts(sortedFeedItems)
+        } else {
+          appendFollowingPosts(sortedFeedItems)
+        }
+        console.log(`Feed: Appended ${sortedFeedItems.length} new items`)
       } else {
-        setData(sortedFeedItems)
+        if (activeTab === 'forYou') {
+          setForYouPosts(sortedFeedItems)
+        } else {
+          setFollowingPosts(sortedFeedItems, user?.identityId || null)
+        }
         // Track the newest post timestamp for auto-refresh feature
         if (sortedFeedItems.length > 0) {
           const getItemTimestamp = (item: FeedItem): number => {
@@ -650,7 +671,11 @@ function FeedPage() {
       console.log('Feed: Falling back to empty state due to error:', errorMessage)
 
       // Set empty data instead of showing error to user
-      setData([])
+      if (activeTab === 'forYou') {
+        setForYouPosts([])
+      } else {
+        setFollowingPosts([], user?.identityId || null)
+      }
 
       // Only show error to user if it's a critical issue
       if (errorMessage.includes('Contract ID not configured') ||
@@ -658,9 +683,9 @@ function FeedPage() {
         setError(errorMessage)
       }
     } finally {
-      setLoading(false)
+      setIsLoading(false)
     }
-  }, [enrichProgressively, activeTab, user?.identityId])
+  }, [enrichProgressively, activeTab, user?.identityId, setForYouPosts, setFollowingPosts, appendForYouPosts, appendFollowingPosts, setForYouPagination, setFollowingPagination])
 
   // Load more posts (pagination)
   const loadMore = useCallback(async () => {
@@ -688,7 +713,7 @@ function FeedPage() {
   // Check for new posts since the last displayed post
   const checkForNewPosts = useCallback(async () => {
     // Don't check if we don't have a timestamp reference yet or if we're loading
-    if (!newestPostTimestamp || postsState.loading) return
+    if (!newestPostTimestamp || isLoading) return
 
     try {
       console.log('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString())
@@ -791,7 +816,7 @@ function FeedPage() {
 
         // Deduplicate against existing posts and already pending posts
         const existingIds = new Set([
-          ...(postsState.data || []).map(item =>
+          ...(currentPosts || []).map((item: FeedItem) =>
             isFeedReplyContext(item) ? item.reply.id : item.id
           ),
           ...pendingNewPosts.map(item =>
@@ -809,7 +834,7 @@ function FeedPage() {
     } catch (error) {
       console.error('Feed: Error checking for new posts:', error)
     }
-  }, [newestPostTimestamp, activeTab, user?.identityId, postsState.loading, postsState.data, pendingNewPosts])
+  }, [newestPostTimestamp, activeTab, user?.identityId, isLoading, currentPosts, pendingNewPosts])
 
   // Show pending new posts when user clicks the button
   const showNewPosts = useCallback(() => {
@@ -831,10 +856,13 @@ function FeedPage() {
     const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getItemTimestamp))
 
     // Prepend pending posts to current feed
-    postsState.setData((currentItems: FeedItem[] | null) => {
-      const existing = currentItems || []
-      return [...pendingNewPosts, ...existing]
-    })
+    if (activeTab === 'forYou') {
+      const existing = forYouPosts || []
+      setForYouPosts([...pendingNewPosts, ...existing])
+    } else {
+      const existing = followingPosts || []
+      setFollowingPosts([...pendingNewPosts, ...existing], user?.identityId || null)
+    }
 
     // Start enrichment for the new posts
     const postsToEnrich = pendingNewPosts.flatMap(item =>
@@ -847,7 +875,7 @@ function FeedPage() {
 
     // Clear pending posts
     setPendingNewPosts([])
-  }, [pendingNewPosts, postsState, enrichProgressively])
+  }, [pendingNewPosts, activeTab, forYouPosts, followingPosts, setForYouPosts, setFollowingPosts, user?.identityId, enrichProgressively])
 
   // Periodically check for new posts (every 15 seconds)
   useEffect(() => {
@@ -876,27 +904,109 @@ function FeedPage() {
     }
   }, [loadPosts, resetEnrichment])
 
+  // Track previous tab to detect tab switches vs initial mount/back navigation
+  const previousTabRef = useRef<string | null>(null)
+  const isInitialMountRef = useRef(true)
+
   // Load posts on mount and when tab changes
-  // This single effect handles both initial load and tab switches to avoid race conditions
+  // This effect distinguishes between:
+  // 1. Initial mount / back navigation - restore from store if available
+  // 2. Tab switch - clear and reload that tab's data
   useEffect(() => {
-    resetEnrichment()
-    postsState.setData(null) // Clear current posts to show loading state
-    setLastPostId(null)
-    setFollowingNextWindow(null)
-    setHasMore(true)
-    // Clear auto-refresh state on tab switch
-    setPendingNewPosts([])
-    setNewestPostTimestamp(null)
-    loadPosts().catch(err => console.error('Failed to load posts:', err))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab])
+    const wasTabSwitch = previousTabRef.current !== null && previousTabRef.current !== activeTab
+    previousTabRef.current = activeTab
+
+    // Check if we have existing data for this tab
+    const existingPosts = activeTab === 'forYou' ? forYouPosts : followingPosts
+    const isFollowingUserChanged = activeTab === 'following' && followingUserId !== user?.identityId
+
+    if (wasTabSwitch) {
+      // Tab was switched - always load fresh data for the new tab
+      // But don't clear the store - we keep cached data for each tab
+      resetEnrichment()
+      // Clear auto-refresh state on tab switch
+      setPendingNewPosts([])
+      setNewestPostTimestamp(null)
+
+      // If we have cached data for this tab, use it; otherwise load fresh
+      if (existingPosts && existingPosts.length > 0 && !isFollowingUserChanged) {
+        // Re-enrich the existing posts (enrichment state was reset)
+        const postsToEnrich = existingPosts.flatMap(item =>
+          isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
+        )
+        enrichProgressively(postsToEnrich)
+        // Restore scroll position
+        const savedScrollPos = scrollPositions[activeTab]
+        if (savedScrollPos > 0) {
+          requestAnimationFrame(() => {
+            window.scrollTo(0, savedScrollPos)
+          })
+        }
+      } else {
+        // No cached data or user changed, load fresh
+        if (activeTab === 'forYou') {
+          clearFeedState('forYou')
+        } else {
+          clearFeedState('following')
+        }
+        loadPosts().catch(err => console.error('Failed to load posts:', err))
+      }
+    } else if (isInitialMountRef.current) {
+      // Initial mount or back navigation
+      isInitialMountRef.current = false
+
+      if (existingPosts && existingPosts.length > 0 && !isFollowingUserChanged) {
+        // We have cached data - restore it
+        console.log('Feed: Restoring cached posts from store')
+        resetEnrichment()
+        // Re-enrich the existing posts
+        const postsToEnrich = existingPosts.flatMap(item =>
+          isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
+        )
+        enrichProgressively(postsToEnrich)
+        // Restore scroll position after a short delay to let content render
+        const savedScrollPos = scrollPositions[activeTab]
+        if (savedScrollPos > 0) {
+          requestAnimationFrame(() => {
+            window.scrollTo(0, savedScrollPos)
+          })
+        }
+      } else {
+        // No cached data, load fresh
+        resetEnrichment()
+        loadPosts().catch(err => console.error('Failed to load posts:', err))
+      }
+    }
+  }, [activeTab, forYouPosts, followingPosts, followingUserId, user?.identityId, loadPosts, resetEnrichment, enrichProgressively, scrollPositions, clearFeedState])
+
+  // Save scroll position before navigating away
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrollPosition(activeTab, window.scrollY)
+    }
+
+    // Throttle scroll events
+    let ticking = false
+    const throttledScroll = () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          handleScroll()
+          ticking = false
+        })
+        ticking = true
+      }
+    }
+
+    window.addEventListener('scroll', throttledScroll, { passive: true })
+    return () => window.removeEventListener('scroll', throttledScroll)
+  }, [activeTab, setScrollPosition])
 
   // Filter posts to exclude blocked users and replies (on For You tab) using enrichment state
   // This replaces the previous async getBlockedUserIds() calls and avoids duplicate queries
   const filteredPosts = useMemo(() => {
-    if (!postsState.data) return null
+    if (!currentPosts) return null
 
-    return postsState.data.filter(item => {
+    return currentPosts.filter(item => {
       // Handle FeedReplyContext items
       if (isFeedReplyContext(item)) {
         // Filter if either the original post author or replier is blocked
@@ -919,7 +1029,7 @@ function FeedPage() {
       }
       return true
     })
-  }, [postsState.data, enrichmentState.blockStatus, activeTab])
+  }, [currentPosts, enrichmentState.blockStatus, activeTab])
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
@@ -933,12 +1043,13 @@ function FeedPage() {
             <button
               onClick={() => {
                 resetEnrichment()
+                clearFeedState(activeTab)
                 loadPosts(true).catch(err => console.error('Failed to load posts:', err))
               }}
-              disabled={postsState.loading}
+              disabled={isLoading}
               className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
             >
-              <ArrowPathIcon className={`h-5 w-5 text-gray-500 ${postsState.loading ? 'animate-spin' : ''}`} />
+              <ArrowPathIcon className={`h-5 w-5 text-gray-500 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
 
@@ -1067,10 +1178,10 @@ function FeedPage() {
             </button>
           )}
           <LoadingState
-            loading={postsState.loading || postsState.data === null}
-            error={postsState.error}
-            isEmpty={!postsState.loading && postsState.data !== null && postsState.data.length === 0}
-            onRetry={loadPosts}
+            loading={isLoading || currentPosts === null}
+            error={error}
+            isEmpty={!isLoading && currentPosts !== null && currentPosts.length === 0}
+            onRetry={() => loadPosts(true)}
             loadingText="Connecting to Dash Platform..."
             emptyText={activeTab === 'following' ? "Your following feed is empty" : "No posts yet"}
             emptyDescription={activeTab === 'following' ? "Follow some people to see their posts here!" : "Be the first to share something!"}

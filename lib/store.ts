@@ -175,3 +175,139 @@ export const useSettingsStore = create<SettingsState>()(
     }
   )
 )
+
+// Feed state store - persists feed data across navigation
+export interface FeedPagination {
+  forYou: {
+    lastPostId: string | null
+    hasMore: boolean
+  }
+  following: {
+    nextWindow: { start: Date; end: Date; windowHours: number } | null
+    hasMore: boolean
+  }
+}
+
+interface FeedState {
+  // Feed posts by tab
+  forYouPosts: any[] | null
+  followingPosts: any[] | null
+  // Pagination state
+  pagination: FeedPagination
+  // Scroll position by tab
+  scrollPositions: {
+    forYou: number
+    following: number
+  }
+  // Track which user's following feed is cached
+  followingUserId: string | null
+  // Actions
+  setForYouPosts: (posts: any[] | null) => void
+  setFollowingPosts: (posts: any[] | null, userId: string | null) => void
+  appendForYouPosts: (posts: any[]) => void
+  appendFollowingPosts: (posts: any[]) => void
+  setForYouPagination: (lastPostId: string | null, hasMore: boolean) => void
+  setFollowingPagination: (nextWindow: { start: Date; end: Date; windowHours: number } | null, hasMore: boolean) => void
+  setScrollPosition: (tab: 'forYou' | 'following', position: number) => void
+  clearFeedState: (tab?: 'forYou' | 'following') => void
+}
+
+export const useFeedStore = create<FeedState>((set) => ({
+  forYouPosts: null,
+  followingPosts: null,
+  pagination: {
+    forYou: {
+      lastPostId: null,
+      hasMore: true,
+    },
+    following: {
+      nextWindow: null,
+      hasMore: true,
+    },
+  },
+  scrollPositions: {
+    forYou: 0,
+    following: 0,
+  },
+  followingUserId: null,
+
+  setForYouPosts: (posts) =>
+    set({ forYouPosts: posts }),
+
+  setFollowingPosts: (posts, userId) =>
+    set({ followingPosts: posts, followingUserId: userId }),
+
+  appendForYouPosts: (posts) =>
+    set((state) => {
+      const existingIds = new Set((state.forYouPosts || []).map((p: any) => p.id))
+      const newPosts = posts.filter((p: any) => !existingIds.has(p.id))
+      return { forYouPosts: [...(state.forYouPosts || []), ...newPosts] }
+    }),
+
+  appendFollowingPosts: (posts) =>
+    set((state) => {
+      const existingIds = new Set((state.followingPosts || []).map((p: any) => p.id))
+      const newPosts = posts.filter((p: any) => !existingIds.has(p.id))
+      return { followingPosts: [...(state.followingPosts || []), ...newPosts] }
+    }),
+
+  setForYouPagination: (lastPostId, hasMore) =>
+    set((state) => ({
+      pagination: {
+        ...state.pagination,
+        forYou: { lastPostId, hasMore },
+      },
+    })),
+
+  setFollowingPagination: (nextWindow, hasMore) =>
+    set((state) => ({
+      pagination: {
+        ...state.pagination,
+        following: { nextWindow, hasMore },
+      },
+    })),
+
+  setScrollPosition: (tab, position) =>
+    set((state) => ({
+      scrollPositions: {
+        ...state.scrollPositions,
+        [tab]: position,
+      },
+    })),
+
+  clearFeedState: (tab) =>
+    set((state) => {
+      if (tab === 'forYou') {
+        return {
+          forYouPosts: null,
+          pagination: {
+            ...state.pagination,
+            forYou: { lastPostId: null, hasMore: true },
+          },
+          scrollPositions: { ...state.scrollPositions, forYou: 0 },
+        }
+      }
+      if (tab === 'following') {
+        return {
+          followingPosts: null,
+          followingUserId: null,
+          pagination: {
+            ...state.pagination,
+            following: { nextWindow: null, hasMore: true },
+          },
+          scrollPositions: { ...state.scrollPositions, following: 0 },
+        }
+      }
+      // Clear all if no tab specified
+      return {
+        forYouPosts: null,
+        followingPosts: null,
+        followingUserId: null,
+        pagination: {
+          forYou: { lastPostId: null, hasMore: true },
+          following: { nextWindow: null, hasMore: true },
+        },
+        scrollPositions: { forYou: 0, following: 0 },
+      }
+    }),
+}))
