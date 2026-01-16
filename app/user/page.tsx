@@ -683,9 +683,18 @@ function UserProfileContent() {
         setAllUsernames(usernames)
         setUsername(usernames[0])
         setHasDpns(true)
+      } else {
+        // No usernames found, reset state
+        setAllUsernames([])
+        setUsername('')
+        setHasDpns(false)
       }
     } catch (e) {
       console.error('Failed to refresh usernames:', e)
+      // On error, reset to safe state
+      setAllUsernames([])
+      setUsername('')
+      setHasDpns(false)
     }
   }, [userId])
 
