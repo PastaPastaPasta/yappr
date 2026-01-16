@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
 import { FeedReplyContext } from '@/components/post/feed-reply-context'
-import { FeedItem, isFeedReplyContext, getFeedItemTimestamp } from '@/lib/types'
+import { FeedItem, isFeedReplyContext, getFeedItemTimestamp, extractPostsFromFeedItems } from '@/lib/types'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
@@ -645,11 +645,7 @@ function FeedPage() {
       // Start progressive enrichment (non-blocking)
       // This will update enrichmentState as data loads, triggering re-renders
       // Blocked users will be filtered via enrichmentState.blockStatus in render
-      // Extract all posts from feed items for enrichment
-      const postsToEnrich = sortedFeedItems.flatMap(item =>
-        isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-      )
-      enrichProgressively(postsToEnrich)
+      enrichProgressively(extractPostsFromFeedItems(sortedFeedItems))
 
       // Cache the raw feed items (enrichment is progressive, not cached)
       if (!isPaginating && sortedFeedItems.length > 0) {
@@ -846,10 +842,7 @@ function FeedPage() {
     }
 
     // Start enrichment for the new posts
-    const postsToEnrich = pendingNewPosts.flatMap(item =>
-      isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-    )
-    enrichProgressively(postsToEnrich)
+    enrichProgressively(extractPostsFromFeedItems(pendingNewPosts))
 
     // Update the newest timestamp
     setNewestPostTimestamp(newestPendingTimestamp)
@@ -919,10 +912,7 @@ function FeedPage() {
       // If we have cached data for this tab, use it; otherwise load fresh
       if (existingPosts && existingPosts.length > 0 && !isFollowingUserChanged) {
         // Re-enrich the existing posts (enrichment state was reset)
-        const postsToEnrich = existingPosts.flatMap(item =>
-          isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-        )
-        enrichProgressively(postsToEnrich)
+        enrichProgressively(extractPostsFromFeedItems(existingPosts))
         lastEnrichmentUserIdRef.current = user?.identityId
         // Restore scroll position
         const savedScrollPos = scrollPositions[activeTab]
@@ -933,11 +923,7 @@ function FeedPage() {
         }
       } else {
         // No cached data or user changed, load fresh
-        if (activeTab === 'forYou') {
-          clearFeedState('forYou')
-        } else {
-          clearFeedState('following')
-        }
+        clearFeedState(activeTab)
         loadPosts().catch(err => console.error('Failed to load posts:', err))
       }
     } else if (isInitialMountRef.current) {
@@ -948,11 +934,7 @@ function FeedPage() {
         // We have cached data - restore it
         console.log('Feed: Restoring cached posts from store')
         resetEnrichment()
-        // Re-enrich the existing posts
-        const postsToEnrich = existingPosts.flatMap(item =>
-          isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-        )
-        enrichProgressively(postsToEnrich)
+        enrichProgressively(extractPostsFromFeedItems(existingPosts))
         lastEnrichmentUserIdRef.current = user?.identityId
         // Set newestPostTimestamp so auto-refresh interval works after back navigation
         setNewestPostTimestamp(Math.max(...existingPosts.map(getFeedItemTimestamp)))
@@ -974,10 +956,7 @@ function FeedPage() {
       // Re-enrich to get user-specific data (likes, interactions, etc.)
       console.log('Feed: Re-enriching posts now that user is available')
       resetEnrichment()
-      const postsToEnrich = existingPosts.flatMap(item =>
-        isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-      )
-      enrichProgressively(postsToEnrich)
+      enrichProgressively(extractPostsFromFeedItems(existingPosts))
       lastEnrichmentUserIdRef.current = user?.identityId
     }
   }, [activeTab, forYouPosts, followingPosts, followingUserId, user?.identityId, loadPosts, resetEnrichment, enrichProgressively, scrollPositions, clearFeedState])
