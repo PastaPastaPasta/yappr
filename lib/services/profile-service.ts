@@ -1,4 +1,5 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
+import type { DocumentWhereClause, DocumentOrderByClause } from './sdk-helpers';
 import { User } from '../types';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
@@ -35,8 +36,8 @@ class ProfileService extends BaseDocumentService<User> {
       const queryParams: {
         dataContractId: string;
         documentTypeName: string;
-        where?: unknown;
-        orderBy?: unknown;
+        where?: DocumentWhereClause[];
+        orderBy?: DocumentOrderByClause[];
         limit?: number;
         startAfter?: string;
         startAt?: string;
@@ -66,7 +67,7 @@ class ProfileService extends BaseDocumentService<User> {
       console.log(`Querying ${this.documentType} documents:`, queryParams);
 
       // Use EvoSDK documents facade
-      const response = await sdk.documents.query(queryParams as any);
+      const response = await sdk.documents.query(queryParams);
 
       console.log(`${this.documentType} query result:`, response);
 
@@ -76,10 +77,11 @@ class ProfileService extends BaseDocumentService<User> {
         const entries = Array.from(response.values());
         for (const doc of entries) {
           if (doc) {
-            const docData = typeof (doc as any).toJSON === 'function'
-              ? (doc as any).toJSON()
+            const d = doc as { toJSON?: () => unknown };
+            const docData = typeof d.toJSON === 'function'
+              ? d.toJSON()
               : doc;
-            documents.push(this.transformDocument(docData, { cachedUsername: this.cachedUsername }));
+            documents.push(this.transformDocument(docData as Record<string, unknown>, { cachedUsername: this.cachedUsername }));
           }
         }
         return {
@@ -90,17 +92,18 @@ class ProfileService extends BaseDocumentService<User> {
       }
 
       // Fallback: handle legacy response formats
-      let result: any = response;
+      let result: Record<string, unknown> | unknown[] = response as Record<string, unknown>;
 
       // Handle different response formats
-      if (response && typeof (response as any).toJSON === 'function') {
-        result = (response as any).toJSON();
+      const respObj = response as { toJSON?: () => unknown };
+      if (response && typeof respObj.toJSON === 'function') {
+        result = respObj.toJSON() as Record<string, unknown>;
       }
 
       // Check if result is an array (direct documents response)
       if (Array.isArray(result)) {
-        const documents = result.map((doc: any) => {
-          return this.transformDocument(doc, { cachedUsername: this.cachedUsername });
+        const documents = result.map((doc) => {
+          return this.transformDocument(doc as Record<string, unknown>, { cachedUsername: this.cachedUsername });
         });
 
         return {
@@ -111,14 +114,15 @@ class ProfileService extends BaseDocumentService<User> {
       }
 
       // Otherwise expect object with documents property
-      const documents = result?.documents?.map((doc: any) => {
-        return this.transformDocument(doc, { cachedUsername: this.cachedUsername });
+      const resultObj = result as { documents?: unknown[]; nextCursor?: string; prevCursor?: string };
+      const documents = resultObj?.documents?.map((doc) => {
+        return this.transformDocument(doc as Record<string, unknown>, { cachedUsername: this.cachedUsername });
       }) || [];
 
       return {
         documents,
-        nextCursor: result?.nextCursor,
-        prevCursor: result?.prevCursor
+        nextCursor: resultObj?.nextCursor,
+        prevCursor: resultObj?.prevCursor
       };
     } catch (error) {
       console.error(`Error querying ${this.documentType} documents:`, error);
@@ -136,11 +140,11 @@ class ProfileService extends BaseDocumentService<User> {
     const cachedUsername = options?.cachedUsername as string | undefined;
 
     // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
-    const ownerId = profileDoc.$ownerId || (doc as any).ownerId;
-    const createdAt = profileDoc.$createdAt || (doc as any).createdAt;
-    const docId = profileDoc.$id || (doc as any).id;
-    const revision = profileDoc.$revision || (doc as any).revision;
-    const data = (doc as Record<string, unknown>).data || doc;
+    const ownerId = profileDoc.$ownerId || (doc.ownerId as string);
+    const createdAt = profileDoc.$createdAt || (doc.createdAt as number);
+    const docId = profileDoc.$id || (doc.id as string);
+    const revision = profileDoc.$revision || (doc.revision as number);
+    const data = (doc.data || doc) as Record<string, unknown>;
 
     // Return a basic User object - additional data will be loaded separately
     const rawDisplayName = ((data as Record<string, unknown>).displayName as string || '').trim();
@@ -274,7 +278,7 @@ class ProfileService extends BaseDocumentService<User> {
     displayName: string,
     bio?: string
   ): Promise<User> {
-    const data: any = {
+    const data: Record<string, unknown> = {
       displayName,
       bio: bio || ''
     };
@@ -309,7 +313,7 @@ class ProfileService extends BaseDocumentService<User> {
         throw new Error('Profile not found');
       }
 
-      const data: any = {};
+      const data: Record<string, unknown> = {};
 
       if (updates.displayName !== undefined) {
         data.displayName = updates.displayName.trim();
@@ -442,25 +446,28 @@ class ProfileService extends BaseDocumentService<User> {
         where: [['$ownerId', 'in', validIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       // Handle Map response (v3 SDK)
       if (response instanceof Map) {
         const documents = Array.from(response.values())
           .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+          .map((doc: unknown) => {
+            const d = doc as { toJSON?: () => unknown };
+            return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as ProfileDocument;
+          });
         console.log(`ProfileService: Found ${documents.length} profiles`);
         return documents;
       }
 
       // Handle array response
-      const anyResponse = response as any;
-      if (Array.isArray(anyResponse)) {
-        console.log(`ProfileService: Found ${anyResponse.length} profiles`);
-        return anyResponse;
-      } else if (anyResponse?.documents) {
-        console.log(`ProfileService: Found ${anyResponse.documents.length} profiles`);
-        return anyResponse.documents;
+      const respWithDocs = response as { documents?: ProfileDocument[] };
+      if (Array.isArray(response)) {
+        console.log(`ProfileService: Found ${(response as ProfileDocument[]).length} profiles`);
+        return response as ProfileDocument[];
+      } else if (respWithDocs?.documents) {
+        console.log(`ProfileService: Found ${respWithDocs.documents.length} profiles`);
+        return respWithDocs.documents;
       }
 
       return [];

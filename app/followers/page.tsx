@@ -95,7 +95,7 @@ function FollowersPage() {
 
       // Get unique identity IDs from followers
       const identityIds = follows
-        .map(f => f.$ownerId || (f as any).ownerId)
+        .map(f => f.$ownerId)
         .filter(Boolean)
       
       if (identityIds.length === 0) {
@@ -162,29 +162,27 @@ function FollowersPage() {
       // Create maps for easy lookup
       const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
       const followerCountMap = new Map(followerCounts.map(item => [item.id, item.count]))
       const followingCountMap = new Map(followingCounts.map(item => [item.id, item.count]))
-      
+
       // Create enriched user data
-      const followers = follows.map((follow: any) => {
-        const followerId = follow.$ownerId || follow.ownerId
+      const followers = follows.map(follow => {
+        const followerId = follow.$ownerId
         if (!followerId) {
           console.warn('Follow document missing ownerId:', follow)
           return null
         }
-        
+
         const username = dpnsMap.get(followerId)
         const allUsernames = allUsernamesMap.get(followerId) || []
         const profile = profileMap.get(followerId)
-        // Handle both formats: direct properties or nested in data
-        const profileData = (profile as any)?.data || profile
 
         return {
           id: followerId,
           username: username || followerId.slice(-8),
-          displayName: profileData?.displayName || username || `User ${followerId.slice(-8)}`,
-          bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
+          displayName: profile?.displayName || username || `User ${followerId.slice(-8)}`,
+          bio: profile?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
           hasProfile: !!profile,
           hasDpnsName: !!username,
           followersCount: followerCountMap.get(followerId) || 0,

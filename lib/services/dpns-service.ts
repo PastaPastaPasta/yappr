@@ -6,23 +6,29 @@ import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
  */
-function extractDocuments(response: unknown): any[] {
+function extractDocuments(response: unknown): Record<string, unknown>[] {
   if (response instanceof Map) {
     return Array.from(response.values())
       .filter(Boolean)
-      .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      .map((doc: unknown) => {
+        const d = doc as { toJSON?: () => unknown };
+        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+      });
   }
   if (Array.isArray(response)) {
-    return response.map((doc: any) =>
-      typeof doc.toJSON === 'function' ? doc.toJSON() : doc
-    );
+    return response.map((doc: unknown) => {
+      const d = doc as { toJSON?: () => unknown };
+      return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+    });
   }
-  if ((response as any)?.documents) {
-    return (response as any).documents;
+  const respObj = response as { documents?: unknown[]; toJSON?: () => unknown };
+  if (respObj?.documents) {
+    return respObj.documents as Record<string, unknown>[];
   }
-  if ((response as any)?.toJSON) {
-    const json = (response as any).toJSON();
-    return Array.isArray(json) ? json : json.documents || [];
+  if (respObj?.toJSON) {
+    const json = respObj.toJSON() as { documents?: unknown[] } | unknown[];
+    if (Array.isArray(json)) return json as Record<string, unknown>[];
+    return (json as { documents?: unknown[] }).documents as Record<string, unknown>[] || [];
   }
   return [];
 }
@@ -64,11 +70,11 @@ class DpnsService {
         documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [['records.identity', '==', identityId]],
         limit: 20
-      } as any);
+      });
 
       const documents = extractDocuments(response);
-      return documents.map((doc: any) => {
-        const data = doc.data || doc;
+      return documents.map((doc) => {
+        const data = (doc.data || doc) as Record<string, unknown>;
         return `${data.label}.${data.normalizedParentDomainName}`;
       });
     } catch (error) {
@@ -143,12 +149,13 @@ class DpnsService {
         where: [['records.identity', 'in', uncachedIds]],
         orderBy: [['records.identity', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = extractDocuments(response);
       for (const doc of documents) {
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId;
         // Convert base64 identity to base58 for consistent map keys
         const identityId = identifierToBase58(rawId);
         const label = data.label || data.normalizedLabel;
@@ -241,13 +248,14 @@ class DpnsService {
           ['normalizedParentDomainName', '==', parentDomain.toLowerCase()]
         ],
         limit: 1
-      } as any);
+      });
 
       const documents = extractDocuments(response);
       if (documents.length > 0) {
         const doc = documents[0];
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId || data.records?.dashAliasIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId || records?.dashAliasIdentityId;
         const identityId = identifierToBase58(rawId);
 
         if (identityId) {
@@ -310,14 +318,14 @@ class DpnsService {
         ],
         orderBy: [['normalizedLabel', 'asc']],
         limit
-      } as any);
+      });
 
       const documents = extractDocuments(response);
-      return documents.map((doc: any) => {
-        const data = doc.data || doc;
-        const label = data.label || data.normalizedLabel || 'unknown';
-        const parentDomain = data.normalizedParentDomainName || 'dash';
-        const ownerId = doc.ownerId || doc.$ownerId || '';
+      return documents.map((doc) => {
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const label = (data.label || data.normalizedLabel || 'unknown') as string;
+        const parentDomain = (data.normalizedParentDomainName || 'dash') as string;
+        const ownerId = (doc.ownerId || doc.$ownerId || '') as string;
 
         return {
           username: `${label}.${parentDomain}`,
@@ -347,7 +355,7 @@ class DpnsService {
     publicKeyId: number,
     privateKeyWif: string,
     onPreorderSuccess?: () => void
-  ): Promise<any> {
+  ): Promise<{ success: boolean }> {
     try {
       const sdk = await getEvoSdk();
 
@@ -371,7 +379,7 @@ class DpnsService {
 
       // Register the name using EvoSDK facade
       console.log(`Registering DPNS name: ${label}`);
-      const result = await sdk.dpns.registerName({
+      await sdk.dpns.registerName({
         label,
         identityId,
         publicKeyId,
@@ -382,7 +390,7 @@ class DpnsService {
       // Clear cache for this identity
       this.clearCache(undefined, identityId);
 
-      return result;
+      return { success: true };
     } catch (error) {
       console.error('Error registering username:', error);
       throw error;

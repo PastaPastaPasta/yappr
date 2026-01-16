@@ -3,7 +3,7 @@ import { getEvoSdk } from './evo-sdk-service';
 export interface StateTransitionResult {
   success: boolean;
   transactionHash?: string;
-  document?: any;
+  document?: Record<string, unknown>;
   error?: string;
 }
 
@@ -49,7 +49,7 @@ class StateTransitionService {
     contractId: string,
     documentType: string,
     ownerId: string,
-    documentData: any
+    documentData: Record<string, unknown>
   ): Promise<StateTransitionResult> {
     try {
       const sdk = await getEvoSdk();
@@ -95,7 +95,7 @@ class StateTransitionService {
     documentType: string,
     documentId: string,
     ownerId: string,
-    documentData: any,
+    documentData: Record<string, unknown>,
     revision: number
   ): Promise<StateTransitionResult> {
     try {

@@ -54,14 +54,13 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
       ])
 
       // Create profile lookup map
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Transform likes with resolved user info
       const likesWithUsers: LikeWithUser[] = likes.map(like => {
         const username = usernameMap.get(like.$ownerId)
         const profile = profileMap.get(like.$ownerId)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
+        const profileDisplayName = profile?.displayName
 
         return {
           ...like,

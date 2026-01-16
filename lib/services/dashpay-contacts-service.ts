@@ -273,7 +273,7 @@ class DashPayContactsService {
       // Create profile lookup map
       const profileMap = new Map<string, UnifiedProfileDocument>();
       for (const profile of profiles) {
-        const ownerId = (profile as any).$ownerId || (profile as any).ownerId;
+        const ownerId = profile.$ownerId;
         if (ownerId) {
           profileMap.set(ownerId, profile);
         }

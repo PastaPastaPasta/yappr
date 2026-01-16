@@ -4,7 +4,8 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, type DocumentWhereClause } from './sdk-helpers';
+import type { DocumentsQuery } from '@dashevo/wasm-sdk';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 import { retryAsync } from '../retry-utils';
 import { paginateCount } from './pagination-utils';
@@ -53,21 +54,21 @@ class PostService extends BaseDocumentService<Post> {
    * Returns a Post with default placeholder values - callers should use
    * enrichPostFull() or enrichPostsBatch() to populate stats and author data.
    */
-  protected transformDocument(doc: any): Post {
+  protected transformDocument(doc: Record<string, unknown>): Post {
     // SDK may nest document fields under 'data' property
-    const data = doc.data || doc;
+    const data = (doc.data || doc) as Record<string, unknown>;
 
     // SDK v3 toJSON() returns:
     // - System fields ($id, $ownerId, $createdAt): base58 strings
     // - Byte array fields (replyToPostId, etc): base64 strings (need conversion)
     // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
-    const id = doc.$id || doc.id;
-    const ownerId = doc.$ownerId || doc.ownerId;
-    const createdAt = doc.$createdAt || doc.createdAt;
+    const id = (doc.$id || doc.id) as string;
+    const ownerId = (doc.$ownerId || doc.ownerId) as string;
+    const createdAt = (doc.$createdAt || doc.createdAt) as number;
 
     // Content and other fields may be in data or at root level
-    const content = data.content || doc.content || '';
-    const mediaUrl = data.mediaUrl || doc.mediaUrl;
+    const content = (data.content || doc.content || '') as string;
+    const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
     // Convert replyToPostId from base64 to base58 for consistent storage
     const rawReplyToId = data.replyToPostId || doc.replyToPostId;
@@ -131,7 +132,7 @@ class PostService extends BaseDocumentService<Post> {
         author: {
           ...authorToUse,
           hasDpns
-        } as any
+        } as User & { hasDpns: boolean }
       };
     } catch (error) {
       console.error('Error enriching post:', error);
@@ -185,7 +186,7 @@ class PostService extends BaseDocumentService<Post> {
         documentTypeName: 'post',
         where: [['$id', 'in', base58PostIds]],
         limit: base58PostIds.length
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
 
@@ -263,10 +264,11 @@ class PostService extends BaseDocumentService<Post> {
         : new Map<string, string>();
 
       // Build profile map for quick lookup
-      const profileMap = new Map<string, any>();
-      profiles.forEach((profile: any) => {
-        if (profile.$ownerId) {
-          profileMap.set(profile.$ownerId, profile);
+      const profileMap = new Map<string, Record<string, unknown>>();
+      profiles.forEach((profile) => {
+        const profileRec = profile as unknown as Record<string, unknown>;
+        if (profileRec.$ownerId) {
+          profileMap.set(profileRec.$ownerId as string, profileRec);
         }
       });
 
@@ -275,7 +277,7 @@ class PostService extends BaseDocumentService<Post> {
         const interactions = interactionsMap.get(post.id);
         const username = usernameMap.get(post.author.id);
         const profile = profileMap.get(post.author.id);
-        const profileData = profile?.data || profile;
+        const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
 
         // Get pre-fetched block/follow/avatar data
         const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
@@ -323,7 +325,7 @@ class PostService extends BaseDocumentService<Post> {
           author: {
             ...post.author,
             username: username || post.author.username,
-            displayName: profileData?.displayName || post.author.displayName,
+            displayName: (profileData?.displayName as string) || post.author.displayName,
             avatar: authorAvatarUrl || post.author.avatar,
             hasDpns: Boolean(username)
           },
@@ -367,7 +369,7 @@ class PostService extends BaseDocumentService<Post> {
       sensitive?: boolean;
     } = {}
   ): Promise<Post> {
-    const data: any = {
+    const data: Record<string, unknown> = {
       content
     };
 
@@ -447,8 +449,8 @@ class PostService extends BaseDocumentService<Post> {
         || (windowEndMs - windowHours * 60 * 60 * 1000);
 
       // Helper to execute query and extract documents
-      const executeQuery = async (whereClause: any[]): Promise<Post[]> => {
-        const queryParams: any = {
+      const executeQuery = async (whereClause: DocumentWhereClause[]): Promise<Post[]> => {
+        const queryParams: DocumentsQuery = {
           dataContractId: this.contractId,
           documentTypeName: 'post',
           where: whereClause,
@@ -456,14 +458,14 @@ class PostService extends BaseDocumentService<Post> {
           limit: 100,
         };
 
-        const response = await sdk.documents.query(queryParams as any);
+        const response = await sdk.documents.query(queryParams);
         const documents = normalizeSDKResponse(response);
         return documents.map(doc => this.transformDocument(doc));
       };
 
       // Build compound query using ownerAndTime index
-      const buildWhere = (startMs: number, endMs?: number): any[] => {
-        const where: any[] = [
+      const buildWhere = (startMs: number, endMs?: number): DocumentWhereClause[] => {
+        const where: DocumentWhereClause[] = [
           ['$ownerId', 'in', followingIds],
           ['$createdAt', '>=', startMs]
         ];
@@ -727,7 +729,7 @@ class PostService extends BaseDocumentService<Post> {
         where: [['replyToPostId', 'in', parentPostIds]],
         orderBy: [['replyToPostId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
 
@@ -1034,7 +1036,7 @@ class PostService extends BaseDocumentService<Post> {
         where: [['replyToPostId', 'in', postIds]],
         orderBy: [['replyToPostId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
 
@@ -1131,19 +1133,16 @@ class PostService extends BaseDocumentService<Post> {
           const PAGE_SIZE = 100;
 
           while (true) {
-            const queryParams: any = {
+            const queryParams: DocumentsQuery = {
               dataContractId: this.contractId,
               documentTypeName: 'post',
               where: [['$createdAt', '>', 0]],
               orderBy: [['$createdAt', 'asc']],
-              limit: PAGE_SIZE
+              limit: PAGE_SIZE,
+              startAfter
             };
 
-            if (startAfter) {
-              queryParams.startAfter = startAfter;
-            }
-
-            const response = await sdk.documents.query(queryParams as any);
+            const response = await sdk.documents.query(queryParams);
             const documents = normalizeSDKResponse(response);
 
             // Collect unique author IDs
@@ -1236,19 +1235,16 @@ class PostService extends BaseDocumentService<Post> {
       const MAX_POSTS = 500; // Limit to prevent excessive queries
 
       while (totalProcessed < MAX_POSTS) {
-        const queryParams: any = {
+        const queryParams: DocumentsQuery = {
           dataContractId: this.contractId,
           documentTypeName: 'post',
           where: [['$createdAt', '>', 0]],
           orderBy: [['$createdAt', 'desc']],
-          limit: PAGE_SIZE
+          limit: PAGE_SIZE,
+          startAfter
         };
 
-        if (startAfter) {
-          queryParams.startAfter = startAfter;
-        }
-
-        const response = await sdk.documents.query(queryParams as any);
+        const response = await sdk.documents.query(queryParams);
         const documents = normalizeSDKResponse(response);
 
         // Count posts per author
@@ -1301,7 +1297,7 @@ class PostService extends BaseDocumentService<Post> {
         where: [['$createdAt', '>', 0]],
         orderBy: [['$createdAt', 'desc']],
         limit: 100 // Scan recent posts
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
 

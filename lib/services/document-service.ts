@@ -120,7 +120,7 @@ export abstract class BaseDocumentService<T> {
         data
       );
 
-      if (!result.success) {
+      if (!result.success || !result.document) {
         throw new Error(result.error || 'Failed to create document');
       }
 
@@ -161,7 +161,7 @@ export abstract class BaseDocumentService<T> {
         revision
       );
 
-      if (!result.success) {
+      if (!result.success || !result.document) {
         throw new Error(result.error || 'Failed to update document');
       }
 
