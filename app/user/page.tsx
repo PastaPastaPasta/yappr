@@ -117,7 +117,7 @@ function UserProfileContent() {
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
   // Check if display name is still in loading/fallback state
-  const isDisplayNameLoading = isLoading || !profile?.displayName || displayName.startsWith('User ')
+  const isDisplayNameLoading = isLoading || !profile?.displayName
 
   useEffect(() => {
     if (!userId) return
