@@ -9,6 +9,7 @@ import { GovernanceProgressBar } from './GovernanceProgressBar'
 import { GovernanceMNVoteList } from './GovernanceMNVoteList'
 import { GovernanceProposalDiscussion } from './GovernanceProposalDiscussion'
 import { GovernanceClaimModal } from './GovernanceClaimModal'
+import { GovernanceMNVoteModal } from './GovernanceMNVoteModal'
 
 interface GovernanceProposalDetailProps {
   proposal: Proposal
@@ -18,6 +19,7 @@ interface GovernanceProposalDetailProps {
 export function GovernanceProposalDetail({ proposal, className }: GovernanceProposalDetailProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [isClaimModalOpen, setIsClaimModalOpen] = useState(false)
+  const [isVoteModalOpen, setIsVoteModalOpen] = useState(false)
   const [discussionKey, setDiscussionKey] = useState(0)
 
   // Refresh discussion after successful claim
@@ -176,6 +178,19 @@ export function GovernanceProposalDetail({ proposal, className }: GovernanceProp
             </span>
           </div>
         </div>
+
+        {/* Vote as Masternode Button */}
+        {proposal.status === 'active' && (
+          <button
+            onClick={() => setIsVoteModalOpen(true)}
+            className="w-full mt-4 py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
+            </svg>
+            Vote as Masternode
+          </button>
+        )}
       </div>
 
       {/* Masternode Votes - Expandable List */}
@@ -286,6 +301,14 @@ export function GovernanceProposalDetail({ proposal, className }: GovernanceProp
         isOpen={isClaimModalOpen}
         onClose={() => setIsClaimModalOpen(false)}
         onSuccess={handleClaimSuccess}
+      />
+
+      {/* MN Vote Modal */}
+      <GovernanceMNVoteModal
+        proposalHash={proposal.hash}
+        proposalName={proposal.name}
+        isOpen={isVoteModalOpen}
+        onClose={() => setIsVoteModalOpen(false)}
       />
     </div>
   )
