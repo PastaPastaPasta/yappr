@@ -17,6 +17,13 @@ A decentralized social media platform built on Dash Platform. All data—posts, 
 - **Explore Page**: Trending hashtags and popular posts
 - **User Search**: Find users by DPNS username or identity ID
 
+### Governance
+- **Proposal List**: Browse Dash network governance proposals
+- **Vote Tracking**: View masternode voting progress and individual votes
+- **Claim Proposals**: Link your identity to proposals you authored
+- **Discussion**: Community discussion on proposals via linked posts
+- **MN Vote Commands**: Generate vote commands for masternode owners
+
 ### User Experience
 - **Dark/Light Theme**: System-aware with manual override
 - **Mobile-First**: Responsive design with bottom navigation on mobile
@@ -67,6 +74,7 @@ yappr/
 ├── app/                    # Next.js pages (App Router)
 │   ├── feed/              # Main feed (Following / For You)
 │   ├── explore/           # Trending hashtags and posts
+│   ├── governance/        # Governance proposal list and detail
 │   ├── hashtag/           # Posts by hashtag
 │   ├── bookmarks/         # Saved posts
 │   ├── messages/          # Direct messages
@@ -81,6 +89,7 @@ yappr/
 │   ├── layout/            # Sidebar, mobile nav, right sidebar
 │   ├── post/              # Post card, content renderer, likes modal
 │   ├── compose/           # Post composition modal
+│   ├── governance/        # Governance UI (proposal list, detail, voting)
 │   ├── home/              # Homepage sections (stats, featured, top users)
 │   ├── auth/              # Key backup and password modals
 │   ├── settings/          # Settings components
@@ -99,7 +108,9 @@ yappr/
 │   │   ├── hashtag-service.ts       # Hashtag tracking & trending
 │   │   ├── direct-message-service.ts # Encrypted DMs
 │   │   ├── dpns-service.ts          # Username resolution
-│   │   └── identity-service.ts      # Identity & balance queries
+│   │   ├── identity-service.ts      # Identity & balance queries
+│   │   ├── governance-service.ts    # Governance proposal queries
+│   │   └── proposal-claim-service.ts # Proposal claim operations
 │   ├── constants.ts       # Contract IDs, network config
 │   ├── types.ts           # TypeScript interfaces
 │   ├── store.ts           # Zustand store
@@ -119,7 +130,15 @@ yappr/
 │   ├── yappr-social-contract-actual.json  # Main social contract
 │   ├── yappr-dm-contract.json             # Direct messages
 │   ├── yappr-hashtag-contract.json        # Hashtag tracking
-│   └── encrypted-key-backup-contract.json # Key backup
+│   ├── encrypted-key-backup-contract.json # Key backup
+│   └── yappr-governance-contract.json     # Governance proposals
+│
+├── oracle-daemon/         # Governance oracle (Node.js service)
+│   ├── src/               # TypeScript source
+│   │   ├── core/          # Dash Core RPC, Platform publisher
+│   │   └── sync/          # Proposal, vote, masternode sync
+│   ├── Dockerfile         # Container deployment
+│   └── README.md          # Oracle documentation
 │
 └── public/                # Static assets
 ```
@@ -147,6 +166,13 @@ Core social features with 12 document types:
 ### Encrypted Key Backup Contract
 - `encryptedKeyBackup` - Password-encrypted private keys stored on-chain
 
+### Governance Contract
+Decentralized governance for Dash network proposals:
+- `proposal` - Governance proposals synced from Dash Core (oracle-managed)
+- `proposalClaim` - Links Platform identities to proposal authorship
+- `masternodeRecord` - Masternode registry for vote verification (oracle-managed)
+- `masternodeVote` - Official masternode votes (oracle-managed)
+
 ### Important: Document Ownership
 Documents use `$ownerId` (automatic platform field) for ownership. Do not include custom `authorId` or `userId` fields when creating documents.
 
@@ -166,6 +192,8 @@ Documents use `$ownerId` (automatic platform field) for ownership. Do not includ
 | `/profile` | Current user profile (requires auth) |
 | `/user?id=xxx` | User lookup by ID |
 | `/settings` | User settings (requires auth) |
+| `/governance` | Governance proposal list |
+| `/governance/proposal?hash=xxx` | Proposal detail and discussion |
 
 ## Platform Scripts
 
@@ -193,6 +221,13 @@ All Dash Platform operations go through singleton services in `lib/services/`. T
 - Query cache: 2-minute TTL
 - Trending cache: 5-minute TTL
 - Automatic cache invalidation on writes
+
+### Governance Oracle
+The governance feature requires an oracle daemon that bridges Dash Core and Platform:
+- Reads proposals, votes, and masternode list from Dash Core RPC
+- Publishes data as documents on Dash Platform
+- Runs independently from the frontend
+- See `oracle-daemon/README.md` for deployment instructions
 
 ### Known Issues
 `wait_for_state_transition_result` often times out (504) even when transactions succeed. The app handles this by assuming success if broadcast succeeded but confirmation wait times out.
