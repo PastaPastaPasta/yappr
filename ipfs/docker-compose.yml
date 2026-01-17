@@ -3,6 +3,11 @@ services:
     image: ipfs/kubo:latest
     container_name: yappr-ipfs
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     ports:
       - "4001:4001"       # swarm
       - "4001:4001/udp"   # swarm quic
@@ -29,7 +34,6 @@ services:
       POLL_SECONDS: "300"
       IPFS_API: "/dns/ipfs/tcp/5001"
     volumes:
-      - ipfs_data:/data/ipfs
       - publisher_work:/work
 
 volumes:

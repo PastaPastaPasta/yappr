@@ -78,10 +78,10 @@ save_commit() {
 build_project() {
   log "Installing dependencies..."
   cd "$REPO_DIR"
-  npm ci --silent
+  npm ci --loglevel=warn
 
   log "Building project..."
-  npm run build --silent
+  npm run build --loglevel=warn
 
   if [ ! -d "$REPO_DIR/$BUILD_DIR_REL" ]; then
     log "ERROR: Build directory $BUILD_DIR_REL not found!"
