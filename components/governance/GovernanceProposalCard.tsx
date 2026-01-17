@@ -34,7 +34,7 @@ export function GovernanceProposalCard({ proposal, className }: GovernancePropos
 
   return (
     <Link
-      href={`/governance/${proposal.hash}`}
+      href={`/governance/proposal?hash=${proposal.hash}`}
       className={cn(
         'block p-4 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800',
         'rounded-xl hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors',
