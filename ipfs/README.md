@@ -25,15 +25,8 @@ The publisher will:
 
 ## Access Your Instance
 
-Once you see the "Published!" message in the logs, you can access Yappr via:
+Once you see the "Published!" message in the logs, you can access Yappr via public gateways:
 
-**Local gateway:**
-```
-http://localhost:8080/ipfs/<CID>/
-http://localhost:8080/ipns/<IPNS-KEY>/
-```
-
-**Public gateways:**
 ```
 https://ipfs.io/ipfs/<CID>/
 https://dweb.link/ipfs/<CID>/
@@ -81,8 +74,8 @@ Or run your own gateway and configure your web server to proxy to it.
 docker-compose.yml
 ├── ipfs (kubo)
 │   ├── Stores pinned content
-│   ├── Serves gateway on :8080
-│   └── API on :5001
+│   ├── P2P swarm on :4001
+│   └── API on :5001 (localhost only)
 │
 └── publisher
     ├── Polls GitHub for changes
@@ -96,8 +89,7 @@ docker-compose.yml
 | Port | Service | Description |
 |------|---------|-------------|
 | 4001 | IPFS Swarm | P2P connections |
-| 5001 | IPFS API | Internal API |
-| 8080 | IPFS Gateway | HTTP access to content |
+| 5001 | IPFS API | Internal API (localhost only) |
 
 ## Persistent Data
 
@@ -122,4 +114,4 @@ docker logs yappr-publisher
 Ensure port 4001 is accessible for swarm connections.
 
 **Slow gateway access:**
-The first access may be slow while content propagates through the IPFS network. Local gateway access (`localhost:8080`) will always be fast.
+The first access may be slow while content propagates through the IPFS network.

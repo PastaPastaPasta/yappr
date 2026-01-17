@@ -11,7 +11,6 @@ services:
     ports:
       - "4001:4001"       # swarm
       - "4001:4001/udp"   # swarm quic
-      - "8080:8080"       # gateway
       - "127.0.0.1:5001:5001"  # api (localhost only)
     environment:
       IPFS_PROFILE: server
