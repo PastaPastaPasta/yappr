@@ -3,6 +3,7 @@
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
+import { GovernanceProposalList } from '@/components/governance'
 import { ScaleIcon } from '@heroicons/react/24/outline'
 
 export default function GovernancePage() {
@@ -19,19 +20,7 @@ export default function GovernancePage() {
             </div>
           </header>
 
-          {/* Placeholder content - will be replaced with GovernanceProposalList */}
-          <div className="p-8 text-center">
-            <ScaleIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-            <h2 className="text-lg font-semibold mb-2">Dash Network Governance</h2>
-            <p className="text-gray-500 max-w-md mx-auto">
-              View, discuss, and vote on Dash network governance proposals.
-              This decentralized replacement for Dash Central allows masternode
-              owners and community members to participate in network governance.
-            </p>
-            <p className="text-sm text-gray-400 mt-4">
-              Coming soon: Proposal list, voting statistics, and community discussions.
-            </p>
-          </div>
+          <GovernanceProposalList />
         </main>
       </div>
 
