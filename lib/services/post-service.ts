@@ -1232,7 +1232,7 @@ class PostService extends BaseDocumentService<Post> {
       let startAfter: string | undefined = undefined;
       const PAGE_SIZE = 100;
       let totalProcessed = 0;
-      const MAX_POSTS = 500; // Limit to prevent excessive queries
+      const MAX_POSTS = 10000; // Limit to prevent excessive queries
 
       while (totalProcessed < MAX_POSTS) {
         const queryParams: DocumentsQuery = {
