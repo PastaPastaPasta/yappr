@@ -84,7 +84,7 @@ class DpnsService {
   }
 
   /**
-   * Sort usernames by contested status (contested usernames first)
+   * Sort usernames by: contested first, then shortest, then alphabetically
    */
   async sortUsernamesByContested(usernames: string[]): Promise<string[]> {
     const sdk = await getEvoSdk();
@@ -99,9 +99,14 @@ class DpnsService {
 
     return contestedStatuses
       .sort((a, b) => {
+        // 1. Contested usernames first
         if (a.contested && !b.contested) return -1;
         if (!a.contested && b.contested) return 1;
-        // If both contested or both not contested, sort alphabetically
+        // 2. Shorter usernames first
+        if (a.username.length !== b.username.length) {
+          return a.username.length - b.username.length;
+        }
+        // 3. Alphabetically
         return a.username.localeCompare(b.username);
       })
       .map(item => item.username);
@@ -110,6 +115,7 @@ class DpnsService {
   /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
+   * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
    *
    * TODO: This query uses 'in' clause which doesn't support reliable pagination.
    * The SDK returns incomplete results when subtrees are empty but still count against the limit.
@@ -152,6 +158,9 @@ class DpnsService {
       });
 
       const documents = extractDocuments(response);
+
+      // Collect ALL usernames per identity (some users have multiple)
+      const usernamesByIdentity = new Map<string, string[]>();
       for (const doc of documents) {
         const data = (doc.data || doc) as Record<string, unknown>;
         const records = data.records as Record<string, unknown> | undefined;
@@ -163,9 +172,36 @@ class DpnsService {
         const username = `${label}.${parentDomain}`;
 
         if (identityId && label) {
-          results.set(identityId, username);
-          this._cacheEntry(username, identityId);
+          const existing = usernamesByIdentity.get(identityId) || [];
+          existing.push(username);
+          usernamesByIdentity.set(identityId, existing);
         }
+      }
+
+      // For identities with multiple usernames, sort and pick the best one
+      // For identities with one username, use it directly
+      for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
+        let bestUsername: string;
+        if (usernames.length === 1) {
+          bestUsername = usernames[0];
+        } else {
+          // Sort: contested first, then shortest, then alphabetically
+          // Wrap in try-catch so one failed contested lookup doesn't break the batch
+          try {
+            const sortedUsernames = await this.sortUsernamesByContested(usernames);
+            bestUsername = sortedUsernames[0];
+          } catch (err) {
+            console.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
+            // Fallback: sort by length then alphabetically (skip contested check)
+            const sorted = [...usernames].sort((a, b) => {
+              if (a.length !== b.length) return a.length - b.length;
+              return a.localeCompare(b);
+            });
+            bestUsername = sorted[0];
+          }
+        }
+        results.set(identityId, bestUsername);
+        this._cacheEntry(bestUsername, identityId);
       }
     } catch (error) {
       console.error('DPNS: Batch resolution error:', error);
