@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import type { Proposal } from '@/lib/types'
 import { GovernanceStatusBadge } from './GovernanceStatusBadge'
 import { GovernanceProgressBar } from './GovernanceProgressBar'
+import { GovernanceMNVoteList } from './GovernanceMNVoteList'
 import { GovernanceProposalDiscussion } from './GovernanceProposalDiscussion'
 import { GovernanceClaimModal } from './GovernanceClaimModal'
 
@@ -176,6 +177,15 @@ export function GovernanceProposalDetail({ proposal, className }: GovernanceProp
           </div>
         </div>
       </div>
+
+      {/* Masternode Votes - Expandable List */}
+      <GovernanceMNVoteList
+        proposalHash={proposal.hash}
+        yesCount={proposal.yesCount}
+        noCount={proposal.noCount}
+        abstainCount={proposal.abstainCount}
+        totalMasternodes={proposal.totalMasternodes}
+      />
 
       {/* Epoch & Timeline Info */}
       <div className="p-4">
