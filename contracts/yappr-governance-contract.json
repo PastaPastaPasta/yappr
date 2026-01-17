@@ -1,0 +1,395 @@
+{
+  "proposal": {
+    "type": "object",
+    "description": "Governance proposal synced from Dash Core by the oracle daemon",
+    "indices": [
+      {
+        "name": "byHash",
+        "unique": true,
+        "properties": [
+          { "proposalHash": "asc" }
+        ]
+      },
+      {
+        "name": "byStatus",
+        "properties": [
+          { "status": "asc" },
+          { "endEpoch": "asc" }
+        ]
+      },
+      {
+        "name": "byEndEpoch",
+        "properties": [
+          { "endEpoch": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "timeline",
+        "properties": [
+          { "$createdAt": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "proposalHash",
+      "gobjectType",
+      "name",
+      "url",
+      "paymentAddress",
+      "paymentAmount",
+      "startEpoch",
+      "endEpoch",
+      "status",
+      "yesCount",
+      "noCount",
+      "abstainCount",
+      "totalMasternodes",
+      "fundingThreshold",
+      "lastUpdatedAt"
+    ],
+    "properties": {
+      "proposalHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "description": "Governance object hash from Dash Core (32 bytes)"
+      },
+      "gobjectType": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3,
+        "position": 1,
+        "description": "Governance object type: 1=proposal, 2=trigger, 3=watchdog"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "position": 2,
+        "description": "Proposal name/title (from gobject DataString)"
+      },
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "position": 3,
+        "description": "Proposal URL linking to full description"
+      },
+      "paymentAddress": {
+        "type": "string",
+        "minLength": 34,
+        "maxLength": 34,
+        "position": 4,
+        "description": "Dash address for payment if proposal passes"
+      },
+      "paymentAmount": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 5,
+        "description": "Payment amount in duffs (1 DASH = 100,000,000 duffs)"
+      },
+      "startEpoch": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 6,
+        "description": "Superblock epoch when payments start"
+      },
+      "endEpoch": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 7,
+        "description": "Superblock epoch when payments end"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["active", "passed", "failed", "funded", "expired"],
+        "maxLength": 7,
+        "position": 8,
+        "description": "Current proposal status computed by oracle"
+      },
+      "yesCount": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 9,
+        "description": "Number of masternode YES votes"
+      },
+      "noCount": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 10,
+        "description": "Number of masternode NO votes"
+      },
+      "abstainCount": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 11,
+        "description": "Number of masternode ABSTAIN votes"
+      },
+      "totalMasternodes": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 12,
+        "description": "Total enabled masternodes at time of sync"
+      },
+      "fundingThreshold": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 13,
+        "description": "Net votes (yes-no) needed for funding (10% of MNs)"
+      },
+      "lastUpdatedAt": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 14,
+        "description": "Unix timestamp (ms) when oracle last updated this"
+      },
+      "createdAtBlockHeight": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 15,
+        "description": "Block height when proposal was created on-chain"
+      },
+      "collateralHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "position": 16,
+        "description": "Transaction hash of the 5 DASH collateral burn (hex string, not indexed)"
+      },
+      "collateralPubKey": {
+        "type": "string",
+        "minLength": 34,
+        "maxLength": 130,
+        "position": 17,
+        "description": "Public key or address from collateral transaction for authorship verification"
+      }
+    },
+    "additionalProperties": false
+  },
+  "proposalClaim": {
+    "type": "object",
+    "description": "User claim of proposal authorship with linked discussion post",
+    "mutable": false,
+    "indices": [
+      {
+        "name": "byProposal",
+        "properties": [
+          { "proposalHash": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "byProposalAndOwner",
+        "unique": true,
+        "properties": [
+          { "proposalHash": "asc" },
+          { "$ownerId": "asc" }
+        ]
+      },
+      {
+        "name": "byOwner",
+        "properties": [
+          { "$ownerId": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "byLinkedPost",
+        "properties": [
+          { "linkedPostId": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "proposalHash",
+      "linkedPostId"
+    ],
+    "properties": {
+      "proposalHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "description": "Hash of the proposal being claimed (32 bytes)"
+      },
+      "linkedPostId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 1,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "ID of the post created with this claim (discussion thread)"
+      },
+      "proofMessage": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 2,
+        "description": "Optional: challenge message to sign for verification"
+      },
+      "proofSignature": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 3,
+        "description": "Optional: signature of proofMessage with collateral key"
+      }
+    },
+    "additionalProperties": false
+  },
+  "masternodeRecord": {
+    "type": "object",
+    "description": "Masternode record synced from Dash Core by oracle daemon",
+    "indices": [
+      {
+        "name": "byProTxHash",
+        "unique": true,
+        "properties": [
+          { "proTxHash": "asc" }
+        ]
+      },
+      {
+        "name": "byVotingKeyHash",
+        "properties": [
+          { "votingKeyHash": "asc" }
+        ]
+      },
+      {
+        "name": "enabled",
+        "properties": [
+          { "isEnabled": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "proTxHash",
+      "votingKeyHash",
+      "isEnabled",
+      "lastUpdatedAt"
+    ],
+    "properties": {
+      "proTxHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "description": "Masternode ProRegTx hash (32 bytes)"
+      },
+      "votingKeyHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 20,
+        "maxItems": 20,
+        "position": 1,
+        "description": "Hash160 of the voting public key (20 bytes)"
+      },
+      "ownerKeyHash": {
+        "type": "string",
+        "minLength": 40,
+        "maxLength": 40,
+        "position": 2,
+        "description": "Hash160 of owner key as hex string (optional, not indexed)"
+      },
+      "payoutAddress": {
+        "type": "string",
+        "maxLength": 34,
+        "position": 3,
+        "description": "Payout address (optional, for display)"
+      },
+      "isEnabled": {
+        "type": "boolean",
+        "position": 4,
+        "description": "Whether MN is currently enabled for voting"
+      },
+      "lastUpdatedAt": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 5,
+        "description": "Unix timestamp (ms) when oracle last synced this"
+      }
+    },
+    "additionalProperties": false
+  },
+  "masternodeVote": {
+    "type": "object",
+    "description": "Official masternode vote on a proposal synced from Dash Core",
+    "indices": [
+      {
+        "name": "proposalAndMn",
+        "unique": true,
+        "properties": [
+          { "proposalHash": "asc" },
+          { "proTxHash": "asc" }
+        ]
+      },
+      {
+        "name": "byProposal",
+        "properties": [
+          { "proposalHash": "asc" },
+          { "outcome": "asc" },
+          { "timestamp": "asc" }
+        ]
+      },
+      {
+        "name": "byMasternode",
+        "properties": [
+          { "proTxHash": "asc" },
+          { "timestamp": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "proposalHash",
+      "proTxHash",
+      "outcome",
+      "timestamp"
+    ],
+    "properties": {
+      "proposalHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "description": "Governance object hash (32 bytes)"
+      },
+      "proTxHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 1,
+        "description": "Voting masternode's ProRegTx hash (32 bytes)"
+      },
+      "outcome": {
+        "type": "string",
+        "enum": ["yes", "no", "abstain"],
+        "maxLength": 7,
+        "position": 2,
+        "description": "Vote outcome"
+      },
+      "timestamp": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 3,
+        "description": "Unix timestamp when vote was cast (from Dash Core)"
+      },
+      "voteSignature": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 4,
+        "description": "Vote signature from Dash Core (for verification)"
+      }
+    },
+    "additionalProperties": false
+  }
+}

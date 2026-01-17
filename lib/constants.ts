@@ -12,6 +12,7 @@ export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55
 export const HASHTAG_CONTRACT_ID = '82kvJWPsaMouoQjKYeqmkm6eYu5UEJquWrGzJFuiSErs' // Testnet - Hashtag tracking contract (v2 with byTime index)
 export const MENTION_CONTRACT_ID = '89MDv4NH3Zum5VZs1be7epLRTfkZgVTG1Bj9NEVU2Cjc' // Testnet - Mention tracking contract
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
+export const YAPPR_GOVERNANCE_CONTRACT_ID = '26eDcG6TkT49JWF9iLfCvpqNX24659Ad2AHpzVoC3cJD' // Testnet - Governance proposals contract
 
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
@@ -35,7 +36,12 @@ export const DOCUMENT_TYPES = {
   NOTIFICATION: 'notification',
   ENCRYPTED_KEY_BACKUP: 'encryptedKeyBackup',
   POST_HASHTAG: 'postHashtag',
-  POST_MENTION: 'postMention'
+  POST_MENTION: 'postMention',
+  // Governance document types
+  PROPOSAL: 'proposal',
+  PROPOSAL_CLAIM: 'proposalClaim',
+  MASTERNODE_RECORD: 'masternodeRecord',
+  MASTERNODE_VOTE: 'masternodeVote'
 } as const
 
 // DPNS
