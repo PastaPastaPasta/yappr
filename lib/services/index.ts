@@ -14,6 +14,7 @@ export { directMessageService } from './direct-message-service';
 export { hashtagService } from './hashtag-service';
 export { notificationService } from './notification-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
+export { governanceService } from './governance-service';
 
 // New unified profile services
 export {
@@ -55,3 +56,17 @@ export type {
   DiceBearStyle,
 } from './unified-profile-service';
 export type { LegacyProfileData, LegacyAvatarData, MigrationStatus } from './profile-migration-service';
+export type {
+  ProposalDocument,
+  ProposalClaimDocument,
+  MasternodeRecordDocument,
+  MasternodeVoteDocument,
+} from './governance-service';
+export type {
+  Proposal,
+  ProposalClaim,
+  MasternodeRecord,
+  MasternodeVote,
+  ProposalStatus,
+  VoteOutcome,
+} from '../types';

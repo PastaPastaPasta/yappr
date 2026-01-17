@@ -254,3 +254,68 @@ export interface UsernameRegistrationResult {
   isContested: boolean
   error?: string
 }
+
+// Governance types
+export type ProposalStatus = 'active' | 'passed' | 'failed' | 'funded' | 'expired'
+export type VoteOutcome = 'yes' | 'no' | 'abstain'
+
+// Governance proposal (display-friendly format)
+export interface Proposal {
+  id: string
+  hash: string // 64-char hex string (governance object hash from Dash Core)
+  gobjectType: number // 1=proposal, 2=trigger, 3=watchdog
+  name: string
+  url: string
+  paymentAddress: string
+  paymentAmount: number // In duffs (1 DASH = 100,000,000 duffs)
+  paymentAmountDash: number // Computed: paymentAmount / 100,000,000
+  startEpoch: number
+  endEpoch: number
+  status: ProposalStatus
+  yesCount: number
+  noCount: number
+  abstainCount: number
+  netVotes: number // Computed: yesCount - noCount
+  totalMasternodes: number
+  fundingThreshold: number
+  votesNeeded: number // Computed: fundingThreshold - netVotes (clamped to 0)
+  voteProgress: number // Computed: netVotes / fundingThreshold as percentage (0-100+)
+  lastUpdatedAt: Date
+  createdAt: Date
+  createdAtBlockHeight?: number
+  collateralHash?: string
+  collateralPubKey?: string
+}
+
+// Proposal claim linking Platform identity to proposal authorship
+export interface ProposalClaim {
+  id: string
+  ownerId: string // Platform identity ID of claimer
+  proposalHash: string // 64-char hex string
+  linkedPostId: string // ID of the linked discussion post
+  proofMessage?: string
+  proofSignature?: string
+  createdAt: Date
+  verified?: boolean // Computed client-side based on signature verification
+}
+
+// Masternode record from oracle
+export interface MasternodeRecord {
+  id: string
+  proTxHash: string // 64-char hex string
+  votingKeyHash: string // 40-char hex string (Hash160)
+  ownerKeyHash?: string // 40-char hex string
+  payoutAddress?: string
+  isEnabled: boolean
+  lastUpdatedAt: Date
+}
+
+// Masternode vote on a proposal
+export interface MasternodeVote {
+  id: string
+  proposalHash: string // 64-char hex string
+  proTxHash: string // 64-char hex string
+  outcome: VoteOutcome
+  timestamp: Date
+  voteSignature?: string
+}

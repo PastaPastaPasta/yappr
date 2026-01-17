@@ -157,12 +157,22 @@ export function base58ArrayToBytes(values: string[]): Uint8Array[] {
 /**
  * Convert hex string to bytes
  */
-function hexToBytes(hex: string): Uint8Array {
+export function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
     bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
   }
   return bytes;
+}
+
+/**
+ * Convert bytes to hex string (lowercase)
+ */
+export function bytesToHex(bytes: Uint8Array | number[]): string {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  return Array.from(arr)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /**
