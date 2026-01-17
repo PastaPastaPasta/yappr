@@ -1,0 +1,1 @@
+{"version":3,"file":"proposal-sync.d.ts","sourceRoot":"","sources":["../../src/sync/proposal-sync.ts"],"names":[],"mappings":"AAIA,OAAO,EAIL,UAAU,EACX,MAAM,UAAU,CAAC;AASlB,qBAAa,YAAY;IACvB,OAAO,CAAC,QAAQ,CAAuB;IACvC,OAAO,CAAC,SAAS,CAA0B;IAE3C;;OAEG;IACG,IAAI,IAAI,OAAO,CAAC,UAAU,CAAC;IAgGjC;;OAEG;YACW,iBAAiB;IAsE/B;;;OAGG;YACW,uBAAuB;CAuCtC;AAKD,wBAAgB,eAAe,IAAI,YAAY,CAK9C"}

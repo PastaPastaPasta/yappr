@@ -1,0 +1,1 @@
+{"version":3,"file":"vote-sync.d.ts","sourceRoot":"","sources":["../../src/sync/vote-sync.ts"],"names":[],"mappings":"AAIA,OAAO,EAAE,UAAU,EAAY,MAAM,UAAU,CAAC;AAIhD,qBAAa,QAAQ;IACnB,OAAO,CAAC,QAAQ,CAAuB;IACvC,OAAO,CAAC,SAAS,CAA0B;IAE3C;;OAEG;IACG,IAAI,IAAI,OAAO,CAAC,UAAU,CAAC;IAgDjC;;OAEG;YACW,oBAAoB;CAoDnC;AAKD,wBAAgB,WAAW,IAAI,QAAQ,CAKtC"}

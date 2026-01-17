@@ -1,0 +1,1 @@
+{"version":3,"file":"masternode-sync.d.ts","sourceRoot":"","sources":["../../src/sync/masternode-sync.ts"],"names":[],"mappings":"AAIA,OAAO,EAAE,UAAU,EAAkB,MAAM,UAAU,CAAC;AAiBtD,qBAAa,cAAc;IACzB,OAAO,CAAC,QAAQ,CAAuB;IACvC,OAAO,CAAC,SAAS,CAA0B;IAE3C;;OAEG;IACG,IAAI,IAAI,OAAO,CAAC,UAAU,CAAC;CA8DlC;AAKD,wBAAgB,iBAAiB,IAAI,cAAc,CAKlD"}

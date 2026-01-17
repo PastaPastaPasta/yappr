@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  governance-oracle:
+    build: .
+    environment:
+      - DASH_CORE_HOST=dashd
+      - DASH_CORE_PORT=9998
+      - DASH_CORE_USERNAME=${RPC_USER}
+      - DASH_CORE_PASSWORD=${RPC_PASS}
+      - PLATFORM_NETWORK=mainnet
+      - PLATFORM_IDENTITY_ID=${ORACLE_IDENTITY}
+      - PLATFORM_PRIVATE_KEY=${ORACLE_KEY}
+      - GOVERNANCE_CONTRACT_ID=${CONTRACT_ID}
+      - SYNC_PROPOSAL_INTERVAL_MS=300000
+      - SYNC_VOTE_INTERVAL_MS=300000
+      - SYNC_MASTERNODE_INTERVAL_MS=3600000
+      - HEALTH_PORT=8080
+      - LOG_LEVEL=info
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      - dashd
+
+  dashd:
+    image: dashpay/dashd:latest
+    volumes:
+      - dashdata:/dash/.dashcore
+    command: >
+      -server=1
+      -rpcuser=${RPC_USER}
+      -rpcpassword=${RPC_PASS}
+      -rpcallowip=governance-oracle
+    restart: unless-stopped
+
+volumes:
+  dashdata:
