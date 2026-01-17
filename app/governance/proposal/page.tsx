@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { ArrowLeftIcon, ScaleIcon } from '@heroicons/react/24/outline'
@@ -69,33 +69,33 @@ function ProposalDetailContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadProposal = useCallback(async () => {
     if (!hash) {
       setIsLoading(false)
       setError('No proposal hash provided')
       return
     }
 
-    const loadProposal = async () => {
-      setIsLoading(true)
-      setError(null)
+    setIsLoading(true)
+    setError(null)
 
-      try {
-        const data = await governanceService.getProposalByHash(hash)
-        setProposal(data)
-        if (!data) {
-          setError('Proposal not found')
-        }
-      } catch (err) {
-        console.error('Failed to load proposal:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load proposal')
-      } finally {
-        setIsLoading(false)
+    try {
+      const data = await governanceService.getProposalByHash(hash)
+      setProposal(data)
+      if (!data) {
+        setError('Proposal not found')
       }
+    } catch (err) {
+      console.error('Failed to load proposal:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load proposal')
+    } finally {
+      setIsLoading(false)
     }
-
-    void loadProposal()
   }, [hash])
+
+  useEffect(() => {
+    void loadProposal()
+  }, [loadProposal])
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
@@ -137,12 +137,23 @@ function ProposalDetailContent() {
                     ? 'Please navigate to a proposal from the governance list.'
                     : error}
               </p>
-              <button
-                onClick={() => router.push('/governance')}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              >
-                View all proposals
-              </button>
+              <div className="flex items-center justify-center gap-3">
+                {/* Retry button for network errors (not for "not found" or "no hash") */}
+                {error !== 'Proposal not found' && error !== 'No proposal hash provided' && (
+                  <button
+                    onClick={() => void loadProposal()}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+                  >
+                    Retry
+                  </button>
+                )}
+                <button
+                  onClick={() => router.push('/governance')}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  View all proposals
+                </button>
+              </div>
             </div>
           ) : proposal ? (
             <GovernanceProposalDetail proposal={proposal} />
