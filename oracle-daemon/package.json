@@ -2,9 +2,10 @@
   "name": "yappr-governance-oracle",
   "version": "1.0.0",
   "description": "Oracle daemon that syncs Dash Core governance data to Dash Platform",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "node --loader ts-node/esm src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",

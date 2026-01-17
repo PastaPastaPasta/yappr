@@ -1,18 +1,18 @@
-import { getDashCoreClient } from '../core/dash-core-client';
-import { getPlatformPublisher } from '../core/platform-publisher';
-import { createLogger } from '../utils/logger';
-import { normalizeHash } from '../utils/hash-utils';
+import { getDashCoreClient } from '../core/dash-core-client.js';
+import { getPlatformPublisher } from '../core/platform-publisher.js';
+import { createLogger } from '../utils/logger.js';
+import { normalizeHash } from '../utils/hash-utils.js';
 import {
   GovernanceObject,
   ProposalData,
   ProposalDataString,
   SyncResult,
-} from '../types';
+} from '../types.js';
 import {
   blockHeightToEpoch,
   calculateProposalStatus,
   calculateFundingThreshold,
-} from './status-calculator';
+} from './status-calculator.js';
 
 const logger = createLogger('ProposalSync');
 

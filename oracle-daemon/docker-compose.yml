@@ -27,12 +27,13 @@ services:
     image: dashpay/dashd:latest
     volumes:
       - dashdata:/dash/.dashcore
-    command: >
-      -server=1
-      -rpcuser=${DASH_CORE_USERNAME:-dashrpc}
-      -rpcpassword=${DASH_CORE_PASSWORD}
-      -rpcallowip=governance-oracle
-      -txindex=1
+    command:
+      - "-server=1"
+      - "-rpcuser=${DASH_CORE_USERNAME:-dashrpc}"
+      - "-rpcpassword=${DASH_CORE_PASSWORD}"
+      - "-rpcallowip=0.0.0.0/0"
+      - "-rpcbind=0.0.0.0"
+      - "-txindex=1"
     restart: unless-stopped
 
 volumes:

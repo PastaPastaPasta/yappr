@@ -1,9 +1,9 @@
 import express from 'express';
-import { getDashCoreClient } from '../core/dash-core-client';
-import { getScheduler } from '../core/scheduler';
-import { getConfig } from '../config';
-import { createLogger } from '../utils/logger';
-import { HealthStatus } from '../types';
+import { getDashCoreClient } from '../core/dash-core-client.js';
+import { getScheduler } from '../core/scheduler.js';
+import { getConfig } from '../config.js';
+import { createLogger } from '../utils/logger.js';
+import { HealthStatus } from '../types.js';
 
 const logger = createLogger('HealthCheck');
 

@@ -1,12 +1,12 @@
-import { getConfig } from './config';
-import { getDashCoreClient } from './core/dash-core-client';
-import { getPlatformPublisher } from './core/platform-publisher';
-import { getScheduler } from './core/scheduler';
-import { getProposalSync } from './sync/proposal-sync';
-import { getVoteSync } from './sync/vote-sync';
-import { getMasternodeSync } from './sync/masternode-sync';
-import { getHealthChecker } from './health/health-check';
-import { createLogger } from './utils/logger';
+import { getConfig } from './config.js';
+import { getDashCoreClient } from './core/dash-core-client.js';
+import { getPlatformPublisher } from './core/platform-publisher.js';
+import { getScheduler } from './core/scheduler.js';
+import { getProposalSync } from './sync/proposal-sync.js';
+import { getVoteSync } from './sync/vote-sync.js';
+import { getMasternodeSync } from './sync/masternode-sync.js';
+import { getHealthChecker } from './health/health-check.js';
+import { createLogger } from './utils/logger.js';
 
 const logger = createLogger('Main');
 

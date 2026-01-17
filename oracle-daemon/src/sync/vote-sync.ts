@@ -1,8 +1,8 @@
-import { getDashCoreClient } from '../core/dash-core-client';
-import { getPlatformPublisher } from '../core/platform-publisher';
-import { createLogger } from '../utils/logger';
-import { normalizeHash, bytesToHex } from '../utils/hash-utils';
-import { SyncResult, VoteData } from '../types';
+import { getDashCoreClient } from '../core/dash-core-client.js';
+import { getPlatformPublisher } from '../core/platform-publisher.js';
+import { createLogger } from '../utils/logger.js';
+import { normalizeHash, bytesToHex } from '../utils/hash-utils.js';
+import { SyncResult, VoteData } from '../types.js';
 
 const logger = createLogger('VoteSync');
 

@@ -1,6 +1,6 @@
-import { getConfig } from '../config';
-import { createLogger } from '../utils/logger';
-import { withRetry } from '../utils/retry';
+import { getConfig } from '../config.js';
+import { createLogger } from '../utils/logger.js';
+import { withRetry } from '../utils/retry.js';
 import {
   GovernanceObject,
   MasternodeListEntry,
@@ -8,7 +8,7 @@ import {
   RawTransaction,
   VoteOutcome,
   VoteRecord,
-} from '../types';
+} from '../types.js';
 
 const logger = createLogger('DashCoreClient');
 

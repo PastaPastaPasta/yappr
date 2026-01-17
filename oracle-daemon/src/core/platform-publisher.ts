@@ -1,14 +1,14 @@
 import { EvoSDK } from '@dashevo/evo-sdk';
-import { getConfig } from '../config';
-import { createLogger } from '../utils/logger';
-import { withRetry } from '../utils/retry';
-import { hexToBytes, bytesToHex } from '../utils/hash-utils';
+import { getConfig } from '../config.js';
+import { createLogger } from '../utils/logger.js';
+import { withRetry } from '../utils/retry.js';
+import { hexToBytes, bytesToHex } from '../utils/hash-utils.js';
 import {
   ProposalData,
   MasternodeData,
   VoteData,
   PlatformDocument,
-} from '../types';
+} from '../types.js';
 import { randomBytes } from 'crypto';
 
 const logger = createLogger('PlatformPublisher');
@@ -127,7 +127,8 @@ export class PlatformPublisher {
           query.orderBy = options.orderBy;
         }
 
-        const response = await this.sdk!.documents.query(query);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response = await this.sdk!.documents.query(query as any);
 
         // Convert Map response to array
         const documents: PlatformDocument[] = [];
@@ -169,14 +170,15 @@ export class PlatformPublisher {
 
     return withRetry(
       async () => {
-        const result = await this.sdk!.documents.create({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (this.sdk!.documents.create as any)({
           contractId: this.contractId,
           type: documentType,
           ownerId: this.identityId,
           data,
           entropyHex: this.generateEntropy(),
           privateKeyWif: this.privateKey,
-        }) as unknown as { document?: { $id: string }; $id?: string };
+        }) as { document?: { $id: string }; $id?: string };
 
         const docId = result.document?.$id || result.$id || 'unknown';
         logger.debug(`Created document: ${docId}`);
@@ -203,7 +205,8 @@ export class PlatformPublisher {
 
     await withRetry(
       async () => {
-        await this.sdk!.documents.replace({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (this.sdk!.documents.replace as any)({
           contractId: this.contractId,
           type: documentType,
           documentId,
@@ -234,7 +237,8 @@ export class PlatformPublisher {
 
     await withRetry(
       async () => {
-        await this.sdk!.documents.delete({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (this.sdk!.documents.delete as any)({
           contractId: this.contractId,
           type: documentType,
           documentId,

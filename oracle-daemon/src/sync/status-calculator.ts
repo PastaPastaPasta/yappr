@@ -1,4 +1,4 @@
-import { ProposalStatus } from '../types';
+import { ProposalStatus } from '../types.js';
 
 // Dash mainnet superblock interval is 16616 blocks
 // Testnet may vary

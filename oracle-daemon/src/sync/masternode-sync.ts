@@ -1,8 +1,8 @@
-import { getDashCoreClient } from '../core/dash-core-client';
-import { getPlatformPublisher } from '../core/platform-publisher';
-import { createLogger } from '../utils/logger';
-import { normalizeHash } from '../utils/hash-utils';
-import { SyncResult, MasternodeData } from '../types';
+import { getDashCoreClient } from '../core/dash-core-client.js';
+import { getPlatformPublisher } from '../core/platform-publisher.js';
+import { createLogger } from '../utils/logger.js';
+import { normalizeHash } from '../utils/hash-utils.js';
+import { SyncResult, MasternodeData } from '../types.js';
 import { createHash } from 'crypto';
 
 const logger = createLogger('MasternodeSync');
