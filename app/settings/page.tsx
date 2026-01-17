@@ -513,8 +513,6 @@ function SettingsPage() {
     const commitHash = process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'
     const commitDate = process.env.NEXT_PUBLIC_GIT_COMMIT_DATE
     const branch = process.env.NEXT_PUBLIC_GIT_BRANCH || 'unknown'
-    const buildTime = process.env.NEXT_PUBLIC_BUILD_TIME
-
     const formatDate = (dateStr: string | undefined) => {
       if (!dateStr) return ''
       try {
@@ -560,12 +558,6 @@ function SettingsPage() {
             </>
           )}
 
-          {buildTime && (
-            <>
-              <span className="text-gray-500">Build Time:</span>
-              <span className="text-gray-700 dark:text-gray-300">{formatDate(buildTime)}</span>
-            </>
-          )}
         </div>
       </div>
 

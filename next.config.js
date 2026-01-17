@@ -17,11 +17,11 @@ const gitInfo = getGitInfo()
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   trailingSlash: true,
+  generateBuildId: async () => gitInfo.commitHash,
   env: {
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
     NEXT_PUBLIC_GIT_COMMIT_DATE: gitInfo.commitDate,
     NEXT_PUBLIC_GIT_BRANCH: gitInfo.branch,
-    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
   },
   reactStrictMode: true,
   output: 'export',
