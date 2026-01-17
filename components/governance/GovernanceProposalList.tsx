@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion } from 'framer-motion'
+import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import { useAsyncState, LoadingState } from '@/components/ui/loading-state'
 import { governanceService, type Proposal, type ProposalStatus } from '@/lib/services/governance-service'
 import { GovernanceProposalCard } from './GovernanceProposalCard'
 
-type TabType = 'all' | 'active' | 'passed' | 'funded' | 'failed'
+type TabType = 'all' | 'active' | 'passed' | 'funded' | 'failed' | 'expired'
+type SortType = 'ending' | 'newest' | 'amount' | 'votes'
 
 const TABS: { id: TabType; label: string; status: ProposalStatus | null }[] = [
   { id: 'all', label: 'All', status: null },
@@ -15,6 +17,14 @@ const TABS: { id: TabType; label: string; status: ProposalStatus | null }[] = [
   { id: 'passed', label: 'Passed', status: 'passed' },
   { id: 'funded', label: 'Funded', status: 'funded' },
   { id: 'failed', label: 'Failed', status: 'failed' },
+  { id: 'expired', label: 'Expired', status: 'expired' },
+]
+
+const SORT_OPTIONS: { id: SortType; label: string; description: string }[] = [
+  { id: 'ending', label: 'Ending Soon', description: 'By voting deadline' },
+  { id: 'newest', label: 'Newest', description: 'By creation date' },
+  { id: 'amount', label: 'Highest Amount', description: 'By payment amount' },
+  { id: 'votes', label: 'Most Votes', description: 'By net votes' },
 ]
 
 // Skeleton component matching ProposalCard layout
@@ -57,13 +67,37 @@ function LoadingSkeletons() {
   )
 }
 
+// Sort proposals by user-selected criteria
+function sortProposals(proposals: Proposal[], sortBy: SortType): Proposal[] {
+  return [...proposals].sort((a, b) => {
+    switch (sortBy) {
+      case 'ending':
+        // Soonest deadline first
+        return a.endEpoch - b.endEpoch
+      case 'newest':
+        // Newest first
+        return b.createdAt.getTime() - a.createdAt.getTime()
+      case 'amount':
+        // Highest amount first
+        return b.paymentAmount - a.paymentAmount
+      case 'votes':
+        // Highest net votes first
+        return b.netVotes - a.netVotes
+      default:
+        return 0
+    }
+  })
+}
+
 interface GovernanceProposalListProps {
   className?: string
 }
 
 export function GovernanceProposalList({ className }: GovernanceProposalListProps) {
-  // Simple state for active tab
+  // Simple state for active tab and sort
   const [activeTab, setActiveTab] = useState<TabType>('active')
+  const [sortBy, setSortBy] = useState<SortType>('ending')
+  const [showSortMenu, setShowSortMenu] = useState(false)
 
   // Separate state for each tab - null means "not yet loaded"
   const allState = useAsyncState<Proposal[]>(null)
@@ -71,6 +105,7 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
   const passedState = useAsyncState<Proposal[]>(null)
   const fundedState = useAsyncState<Proposal[]>(null)
   const failedState = useAsyncState<Proposal[]>(null)
+  const expiredState = useAsyncState<Proposal[]>(null)
 
   // Map tabs to their state
   const stateMap = useMemo(() => ({
@@ -79,19 +114,41 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
     passed: passedState,
     funded: fundedState,
     failed: failedState,
-  }), [allState, activeState, passedState, fundedState, failedState])
+    expired: expiredState,
+  }), [allState, activeState, passedState, fundedState, failedState, expiredState])
+
+  // Update URL with tab and sort state
+  const updateUrl = useCallback((tab: TabType, sort: SortType) => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams()
+      params.set('tab', tab)
+      params.set('sort', sort)
+      window.history.replaceState(null, '', `?${params.toString()}`)
+    }
+  }, [])
 
   // Handle tab change
   const handleTabChange = useCallback((tab: TabType) => {
     setActiveTab(tab)
-    // Update URL hash without triggering navigation
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', `#${tab}`)
+    updateUrl(tab, sortBy)
+  }, [sortBy, updateUrl])
+
+  // Handle sort change
+  const handleSortChange = useCallback((sort: SortType) => {
+    setSortBy(sort)
+    setShowSortMenu(false)
+    updateUrl(activeTab, sort)
+    // Clear cached data so it re-sorts on next load
+    const state = stateMap[activeTab]
+    if (state.data) {
+      // Re-sort existing data immediately
+      const sorted = sortProposals([...state.data], sort)
+      state.setData(sorted)
     }
-  }, [])
+  }, [activeTab, stateMap, updateUrl])
 
   // Load data for a tab
-  const loadTab = useCallback(async (tab: TabType, state: ReturnType<typeof useAsyncState<Proposal[]>>) => {
+  const loadTab = useCallback(async (tab: TabType, state: ReturnType<typeof useAsyncState<Proposal[]>>, sort: SortType) => {
     const tabConfig = TABS.find(t => t.id === tab)
 
     state.setLoading(true)
@@ -112,13 +169,8 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
         proposals = result.documents
       }
 
-      // Sort by endEpoch descending for active, by createdAt for others
-      proposals.sort((a, b) => {
-        if (tab === 'active') {
-          return a.endEpoch - b.endEpoch // Soonest deadline first
-        }
-        return b.createdAt.getTime() - a.createdAt.getTime() // Newest first
-      })
+      // Sort by user-selected criteria
+      proposals = sortProposals(proposals, sort)
 
       state.setData(proposals)
     } catch (error) {
@@ -129,12 +181,18 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
     }
   }, [])
 
-  // Set initial tab from URL hash on mount
+  // Set initial tab and sort from URL params on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const hash = window.location.hash.slice(1) as TabType
-      if (TABS.some(t => t.id === hash)) {
-        setActiveTab(hash)
+      const params = new URLSearchParams(window.location.search)
+      const tabParam = params.get('tab') as TabType | null
+      const sortParam = params.get('sort') as SortType | null
+
+      if (tabParam && TABS.some(t => t.id === tabParam)) {
+        setActiveTab(tabParam)
+      }
+      if (sortParam && SORT_OPTIONS.some(s => s.id === sortParam)) {
+        setSortBy(sortParam)
       }
     }
   }, [])
@@ -143,9 +201,9 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
   useEffect(() => {
     const state = stateMap[activeTab]
     if (state.data === null && !state.loading) {
-      void loadTab(activeTab, state)
+      void loadTab(activeTab, state, sortBy)
     }
-  }, [activeTab, stateMap, loadTab])
+  }, [activeTab, stateMap, loadTab, sortBy])
 
   const currentState = stateMap[activeTab]
   const proposals = currentState.data || []
@@ -158,6 +216,7 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
       case 'passed': return 'No passed proposals'
       case 'funded': return 'No funded proposals'
       case 'failed': return 'No failed proposals'
+      case 'expired': return 'No expired proposals'
     }
   }
 
@@ -168,34 +227,87 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
       case 'passed': return 'No proposals have passed the funding threshold yet.'
       case 'funded': return 'No proposals have been funded yet.'
       case 'failed': return 'No proposals have failed to meet the funding threshold.'
+      case 'expired': return 'No proposals have expired past their voting deadline.'
     }
   }
+
+  // Get the current sort option label
+  const currentSortOption = SORT_OPTIONS.find(s => s.id === sortBy) ?? SORT_OPTIONS[0]
 
   return (
     <div className={cn('flex flex-col', className)}>
       {/* Tab Navigation */}
       <div className="sticky top-[104px] z-30 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
-        <div className="flex overflow-x-auto">
-          {TABS.map((tab) => (
+        <div className="flex items-center justify-between px-2">
+          <div className="flex overflow-x-auto flex-1">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => handleTabChange(tab.id)}
+                className={cn(
+                  'flex-1 min-w-[60px] py-3 px-3 text-sm font-medium transition-colors relative whitespace-nowrap',
+                  activeTab === tab.id
+                    ? 'text-gray-900 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                )}
+              >
+                {tab.label}
+                {activeTab === tab.id && (
+                  <motion.div
+                    layoutId="activeTab"
+                    className="absolute bottom-0 left-1/2 -translate-x-1/2 w-10 h-1 bg-yappr-500 rounded-full"
+                  />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Sort Dropdown */}
+          <div className="relative shrink-0">
             <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              className={cn(
-                'flex-1 min-w-[80px] py-3 px-4 text-sm font-medium transition-colors relative whitespace-nowrap',
-                activeTab === tab.id
-                  ? 'text-gray-900 dark:text-white'
-                  : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-              )}
+              onClick={() => setShowSortMenu(!showSortMenu)}
+              className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
             >
-              {tab.label}
-              {activeTab === tab.id && (
-                <motion.div
-                  layoutId="activeTab"
-                  className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-yappr-500 rounded-full"
-                />
-              )}
+              <span className="hidden sm:inline">Sort:</span>
+              <span>{currentSortOption.label}</span>
+              <ChevronDownIcon className={cn(
+                'w-3 h-3 transition-transform',
+                showSortMenu && 'rotate-180'
+              )} />
             </button>
-          ))}
+
+            {/* Sort Menu */}
+            {showSortMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowSortMenu(false)}
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-gray-900 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50 overflow-hidden"
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => handleSortChange(option.id)}
+                      className={cn(
+                        'w-full text-left px-4 py-2.5 text-sm transition-colors',
+                        sortBy === option.id
+                          ? 'bg-yappr-50 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300'
+                          : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                      )}
+                    >
+                      <div className="font-medium">{option.label}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{option.description}</div>
+                    </button>
+                  ))}
+                </motion.div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -207,7 +319,7 @@ export function GovernanceProposalList({ className }: GovernanceProposalListProp
           loading={false}
           error={currentState.error}
           isEmpty={proposals.length === 0}
-          onRetry={() => void loadTab(activeTab, currentState)}
+          onRetry={() => void loadTab(activeTab, currentState, sortBy)}
           emptyText={getEmptyMessage(activeTab)}
           emptyDescription={getEmptyDescription(activeTab)}
         >
