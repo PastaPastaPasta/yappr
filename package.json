@@ -7,7 +7,7 @@
     "build": "next build",
     "build:gh-pages": "GITHUB_PAGES=true next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@dashevo/evo-sdk": "^3.0.0-dev.9",
@@ -33,7 +33,7 @@
     "date-fns": "^3.3.1",
     "framer-motion": "^11.0.3",
     "lucide-react": "^0.525.0",
-    "next": "14.1.0",
+    "next": "14.2.28",
     "next-themes": "^0.4.6",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
@@ -43,14 +43,17 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.3",
+    "@eslint/js": "^9.39.2",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
     "autoprefixer": "^10.0.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.1.0",
+    "eslint": "^9",
+    "eslint-config-next": "^15",
+    "globals": "^17.0.0",
     "postcss": "^8",
     "tailwindcss": "^3.3.0",
     "typescript": "^5"
