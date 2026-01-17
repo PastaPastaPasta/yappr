@@ -15,6 +15,7 @@ export { hashtagService } from './hashtag-service';
 export { notificationService } from './notification-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
 export { governanceService } from './governance-service';
+export { proposalClaimService } from './proposal-claim-service';
 
 // New unified profile services
 export {
@@ -70,3 +71,8 @@ export type {
   ProposalStatus,
   VoteOutcome,
 } from '../types';
+export type {
+  CreateClaimOptions,
+  CreateClaimResult,
+  ClaimValidation,
+} from './proposal-claim-service';

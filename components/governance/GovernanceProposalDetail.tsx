@@ -1,11 +1,13 @@
 'use client'
 
 import { ArrowTopRightOnSquareIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline'
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import type { Proposal } from '@/lib/types'
 import { GovernanceStatusBadge } from './GovernanceStatusBadge'
 import { GovernanceProgressBar } from './GovernanceProgressBar'
+import { GovernanceProposalDiscussion } from './GovernanceProposalDiscussion'
+import { GovernanceClaimModal } from './GovernanceClaimModal'
 
 interface GovernanceProposalDetailProps {
   proposal: Proposal
@@ -14,6 +16,13 @@ interface GovernanceProposalDetailProps {
 
 export function GovernanceProposalDetail({ proposal, className }: GovernanceProposalDetailProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null)
+  const [isClaimModalOpen, setIsClaimModalOpen] = useState(false)
+  const [discussionKey, setDiscussionKey] = useState(0)
+
+  // Refresh discussion after successful claim
+  const handleClaimSuccess = useCallback(() => {
+    setDiscussionKey(prev => prev + 1)
+  }, [])
 
   const copyToClipboard = async (text: string, field: string) => {
     try {
@@ -254,25 +263,20 @@ export function GovernanceProposalDetail({ proposal, className }: GovernanceProp
         </div>
       </div>
 
-      {/* Placeholder: Community Support (Phase 3) */}
-      <div className="p-4">
-        <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-          Community Support
-        </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 italic">
-          Community sentiment will be available once proposal claims are implemented.
-        </p>
-      </div>
+      {/* Claims and Discussion */}
+      <GovernanceProposalDiscussion
+        key={discussionKey}
+        proposal={proposal}
+        onClaimClick={() => setIsClaimModalOpen(true)}
+      />
 
-      {/* Placeholder: Discussion (Phase 3) */}
-      <div className="p-4">
-        <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-          Discussion
-        </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 italic">
-          Proposal discussion will be available once claims and linked posts are implemented.
-        </p>
-      </div>
+      {/* Claim Modal */}
+      <GovernanceClaimModal
+        proposal={proposal}
+        isOpen={isClaimModalOpen}
+        onClose={() => setIsClaimModalOpen(false)}
+        onSuccess={handleClaimSuccess}
+      />
     </div>
   )
 }
