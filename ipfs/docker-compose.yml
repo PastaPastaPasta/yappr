@@ -1,0 +1,38 @@
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: yappr-ipfs
+    restart: unless-stopped
+    ports:
+      - "4001:4001"       # swarm
+      - "4001:4001/udp"   # swarm quic
+      - "8080:8080"       # gateway
+      - "127.0.0.1:5001:5001"  # api (localhost only)
+    environment:
+      IPFS_PROFILE: server
+    volumes:
+      - ipfs_staging:/export
+      - ipfs_data:/data/ipfs
+      - ./configure-ipfs.sh:/container-init.d/001-configure-ipfs.sh
+
+  publisher:
+    build: .
+    container_name: yappr-publisher
+    restart: unless-stopped
+    depends_on:
+      - ipfs
+    environment:
+      REPO_URL: "https://github.com/PastaPastaPasta/yappr.git"
+      BRANCH: "master"
+      BUILD_DIR_REL: "out"
+      IPNS_KEY: "yappr-latest"
+      POLL_SECONDS: "300"
+      IPFS_API: "/dns/ipfs/tcp/5001"
+    volumes:
+      - ipfs_data:/data/ipfs
+      - publisher_work:/work
+
+volumes:
+  ipfs_data:
+  ipfs_staging:
+  publisher_work:

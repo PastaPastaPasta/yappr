@@ -16,6 +16,7 @@ const gitInfo = getGitInfo()
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  trailingSlash: true,
   env: {
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
     NEXT_PUBLIC_GIT_COMMIT_DATE: gitInfo.commitDate,
