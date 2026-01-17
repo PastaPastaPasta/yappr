@@ -6,16 +6,16 @@ import { useAuth } from '@/contexts/auth-context'
 import { useAppStore } from '@/lib/store'
 import {
   HomeIcon,
-  MagnifyingGlassIcon,
   EnvelopeIcon,
   UserIcon,
   PlusIcon,
+  ScaleIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeIconSolid,
-  MagnifyingGlassIcon as SearchIconSolid,
   EnvelopeIcon as EnvelopeIconSolid,
   UserIcon as UserIconSolid,
+  ScaleIcon as ScaleIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 
@@ -33,11 +33,11 @@ export function MobileBottomNav() {
       match: (path: string) => path === '/feed' || path === '/'
     },
     {
-      name: 'Explore',
-      href: '/explore',
-      icon: MagnifyingGlassIcon,
-      activeIcon: SearchIconSolid,
-      match: (path: string) => path === '/explore'
+      name: 'Governance',
+      href: '/governance',
+      icon: ScaleIcon,
+      activeIcon: ScaleIconSolid,
+      match: (path: string) => path.startsWith('/governance')
     },
     {
       name: 'Messages',
