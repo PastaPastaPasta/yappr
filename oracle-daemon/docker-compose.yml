@@ -4,21 +4,21 @@ services:
   governance-oracle:
     build: .
     environment:
-      - DASH_CORE_HOST=dashd
-      - DASH_CORE_PORT=9998
-      - DASH_CORE_USERNAME=${RPC_USER}
-      - DASH_CORE_PASSWORD=${RPC_PASS}
-      - PLATFORM_NETWORK=mainnet
-      - PLATFORM_IDENTITY_ID=${ORACLE_IDENTITY}
-      - PLATFORM_PRIVATE_KEY=${ORACLE_KEY}
-      - GOVERNANCE_CONTRACT_ID=${CONTRACT_ID}
-      - SYNC_PROPOSAL_INTERVAL_MS=300000
-      - SYNC_VOTE_INTERVAL_MS=300000
-      - SYNC_MASTERNODE_INTERVAL_MS=3600000
-      - HEALTH_PORT=8080
-      - LOG_LEVEL=info
+      - DASH_CORE_HOST=${DASH_CORE_HOST:-dashd}
+      - DASH_CORE_PORT=${DASH_CORE_PORT:-9998}
+      - DASH_CORE_USERNAME=${DASH_CORE_USERNAME:-dashrpc}
+      - DASH_CORE_PASSWORD=${DASH_CORE_PASSWORD}
+      - PLATFORM_NETWORK=${PLATFORM_NETWORK:-testnet}
+      - PLATFORM_IDENTITY_ID=${PLATFORM_IDENTITY_ID}
+      - PLATFORM_PRIVATE_KEY=${PLATFORM_PRIVATE_KEY}
+      - GOVERNANCE_CONTRACT_ID=${GOVERNANCE_CONTRACT_ID}
+      - SYNC_PROPOSAL_INTERVAL_MS=${SYNC_PROPOSAL_INTERVAL_MS:-300000}
+      - SYNC_VOTE_INTERVAL_MS=${SYNC_VOTE_INTERVAL_MS:-300000}
+      - SYNC_MASTERNODE_INTERVAL_MS=${SYNC_MASTERNODE_INTERVAL_MS:-3600000}
+      - HEALTH_PORT=${HEALTH_PORT:-8080}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
-      - "8080:8080"
+      - "${HEALTH_PORT:-8080}:8080"
     restart: unless-stopped
     depends_on:
       - dashd
@@ -29,9 +29,10 @@ services:
       - dashdata:/dash/.dashcore
     command: >
       -server=1
-      -rpcuser=${RPC_USER}
-      -rpcpassword=${RPC_PASS}
+      -rpcuser=${DASH_CORE_USERNAME:-dashrpc}
+      -rpcpassword=${DASH_CORE_PASSWORD}
       -rpcallowip=governance-oracle
+      -txindex=1
     restart: unless-stopped
 
 volumes:

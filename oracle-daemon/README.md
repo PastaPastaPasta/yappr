@@ -41,7 +41,7 @@ Copy `.env.example` to `.env` and configure:
 cp .env.example .env
 ```
 
-Required environment variables:
+### Required Environment Variables
 
 | Variable | Description |
 |----------|-------------|
@@ -51,10 +51,10 @@ Required environment variables:
 | `DASH_CORE_PASSWORD` | RPC password |
 | `PLATFORM_NETWORK` | Network: mainnet or testnet |
 | `PLATFORM_IDENTITY_ID` | Oracle's Platform identity ID |
-| `PLATFORM_PRIVATE_KEY` | Private key for signing state transitions |
+| `PLATFORM_PRIVATE_KEY` | Private key for signing state transitions (WIF format) |
 | `GOVERNANCE_CONTRACT_ID` | Deployed governance contract ID |
 
-Optional configuration:
+### Optional Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -63,6 +63,50 @@ Optional configuration:
 | `SYNC_MASTERNODE_INTERVAL_MS` | MN sync interval | 3600000 (1 hour) |
 | `HEALTH_PORT` | Health check server port | 8080 |
 | `LOG_LEVEL` | Logging level | info |
+
+## Platform Identity Setup
+
+The oracle requires a Dash Platform identity with credits to publish documents.
+
+### Creating an Oracle Identity (Testnet)
+
+1. **Get testnet Dash**: Use the [Dash Testnet Faucet](https://testnet-faucet.dash.org/)
+
+2. **Create an identity**: Use the Platform SDK or a tool like `dashmate`:
+   ```bash
+   # Using dashmate (if available)
+   dashmate wallet:create-identity
+   ```
+
+3. **Top up credits**: Convert Dash to Platform credits:
+   ```bash
+   dashmate identity:topup <identity-id> <amount-in-dash>
+   ```
+
+4. **Export the private key**: The private key should be in WIF (Wallet Import Format)
+
+### Creating an Oracle Identity (Mainnet)
+
+For mainnet, you'll need real Dash. The process is similar:
+
+1. Fund a wallet with Dash
+2. Create an identity using the Platform SDK
+3. Top up the identity with credits
+4. Use the private key that controls the identity
+
+### Credit Requirements
+
+Each sync operation uses credits for state transitions:
+- **Proposal sync**: ~0.0001 credits per proposal created/updated
+- **Vote sync**: ~0.0001 credits per vote recorded
+- **Masternode sync**: ~0.0001 credits per MN record
+
+Estimate your credit needs based on:
+- Number of active proposals (typically 10-50)
+- Number of votes per proposal (can be 100s)
+- Number of masternodes (currently ~3500)
+
+**Recommendation**: Start with 1 DASH worth of credits for testnet testing.
 
 ## Development
 
@@ -82,26 +126,72 @@ npm run lint
 
 ## Production Deployment
 
-### Using Docker Compose
+### Using Docker Compose (Recommended)
 
-1. Configure environment variables in a `.env` file or export them
+This method starts both the oracle daemon and a Dash Core full node:
+
+1. Create a `.env` file with your configuration:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your values
+   ```
+
 2. Build and start:
+   ```bash
+   docker-compose up -d
+   ```
 
-```bash
-docker-compose up -d
-```
+3. Monitor logs:
+   ```bash
+   docker-compose logs -f governance-oracle
+   ```
 
-### Manual Deployment
+4. Check health:
+   ```bash
+   curl http://localhost:8080/health
+   ```
+
+**Note**: The Dash Core node will need to sync before the oracle can function. This can take several hours for testnet, or days for mainnet.
+
+### Using External Dash Core Node
+
+If you already have a Dash Core node running:
+
+1. Configure `.env` to point to your existing node:
+   ```bash
+   DASH_CORE_HOST=your-dashd-host
+   DASH_CORE_PORT=9998  # or 19998 for testnet
+   ```
+
+2. Comment out or remove the `dashd` service in `docker-compose.yml`
+
+3. Start only the oracle:
+   ```bash
+   docker-compose up -d governance-oracle
+   ```
+
+### Manual Deployment (Without Docker)
 
 1. Build the TypeScript:
-```bash
-npm run build
-```
+   ```bash
+   npm run build
+   ```
 
 2. Run:
-```bash
-NODE_ENV=production node dist/index.js
-```
+   ```bash
+   NODE_ENV=production node dist/index.js
+   ```
+
+### Testnet vs Mainnet
+
+| Setting | Testnet | Mainnet |
+|---------|---------|---------|
+| `PLATFORM_NETWORK` | testnet | mainnet |
+| `DASH_CORE_PORT` | 19998 | 9998 |
+| Contract ID | Test contract | Production contract |
+| Credits | Test credits (free) | Real credits (costs Dash) |
+
+**Recommendation**: Always test thoroughly on testnet before deploying to mainnet.
 
 ## Health Check Endpoints
 
@@ -168,21 +258,54 @@ User-created documents (`proposalClaim`) are managed by the frontend, not the or
 
 ### Connection Issues
 
+**Cannot connect to Dash Core:**
 - Ensure Dash Core is running and RPC is enabled
 - Verify RPC credentials are correct
 - Check firewall rules allow connection from the oracle
+- For Docker: ensure services are on the same network
 
-### Platform Issues
-
-- Verify the identity has sufficient credits
-- Check the contract ID is correct
-- Ensure the private key matches the identity
+**Platform connection errors:**
+- Verify network setting (testnet vs mainnet)
+- Check that the identity exists and has credits
+- Ensure the contract ID is correct
 
 ### Sync Issues
 
+**No proposals appearing:**
+- Check if Dash Core has governance objects: `dash-cli gobject list all`
+- Verify the oracle has credits for state transitions
 - Check logs for specific error messages
-- Verify the health endpoint shows connected status
-- Increase log level to debug for more details
+
+**Votes not syncing:**
+- Votes only sync for active proposals
+- Check if proposals exist first
+- Verify the proposal hash format matches
+
+### Credit Issues
+
+**Out of credits error:**
+- Top up the oracle identity with more credits
+- Consider reducing sync frequency to conserve credits
+- Monitor credit usage via Platform explorer
+
+### Debug Mode
+
+Enable verbose logging:
+```bash
+LOG_LEVEL=debug npm run dev
+```
+
+## Monitoring
+
+For production deployments, consider:
+
+1. **Health check monitoring**: Configure your monitoring system to poll `/health`
+2. **Log aggregation**: Ship logs to a centralized logging service
+3. **Alerting**: Alert on:
+   - Health check failures
+   - Sync errors
+   - Low credit balance
+   - High error rates
 
 ## License
 
