@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 
 interface MentionLinkProps {
   username: string
@@ -18,6 +19,7 @@ interface MentionLinkProps {
  * Renders a clickable mention (@username) that resolves to a user profile.
  * Handles DPNS resolution to get the identity ID from the username.
  * Shows a warning icon if the mention document was not registered on-chain.
+ * Includes a profile hover card preview with DM functionality.
  */
 export function MentionLink({ username, displayText, isFailed, onFailedClick }: MentionLinkProps) {
   const [identityId, setIdentityId] = useState<string | null>(null)
@@ -50,17 +52,22 @@ export function MentionLink({ username, displayText, isFailed, onFailedClick }: 
     return () => { cancelled = true }
   }, [username])
 
-  // If resolved successfully, link to user profile
+  // If resolved successfully, link to user profile with hover card
   if (identityId) {
     return (
       <span className="inline-flex items-center">
-        <Link
-          href={`/user?id=${encodeURIComponent(identityId)}`}
-          onClick={(e) => e.stopPropagation()}
-          className={`text-yappr-500 hover:underline ${isFailed ? 'opacity-70' : ''}`}
+        <ProfileHoverCard
+          userId={identityId}
+          username={username}
         >
-          {displayText}
-        </Link>
+          <Link
+            href={`/user?id=${encodeURIComponent(identityId)}`}
+            onClick={(e) => e.stopPropagation()}
+            className={`text-yappr-500 hover:underline ${isFailed ? 'opacity-70' : ''}`}
+          >
+            {displayText}
+          </Link>
+        </ProfileHoverCard>
         {isFailed && onFailedClick && (
           <button
             onClick={(e) => {
