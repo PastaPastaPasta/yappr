@@ -440,13 +440,6 @@ function SettingsPage() {
               <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
             </Switch.Root>
           </div>
-          {!allowDirectMessages && (
-            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-              <p className="text-sm text-amber-800 dark:text-amber-200">
-                Direct messages are disabled. You won&apos;t receive new messages and won&apos;t be able to access your messages page.
-              </p>
-            </div>
-          )}
           <div className="flex items-center justify-between">
             <div>
               <p className="font-medium">Read Receipts</p>
