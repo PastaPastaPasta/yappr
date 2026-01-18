@@ -245,10 +245,20 @@ export function MentionAutocomplete({
   // Handle keyboard navigation
   useEffect(() => {
     const textarea = textareaRef.current
-    if (!textarea || suggestions.length === 0) return
+    // Attach handler whenever we have an active mention with sufficient length
+    if (!textarea || !activeMention || activeMention.mention.length < MIN_SEARCH_LENGTH) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!activeMention || suggestions.length === 0) return
+      // Always handle Escape to dismiss autocomplete (even while loading)
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSuggestions([])
+        setActiveMention(null)
+        return
+      }
+
+      // Gate navigation/selection on having suggestions
+      if (suggestions.length === 0) return
 
       switch (e.key) {
         case 'ArrowDown':
@@ -260,20 +270,14 @@ export function MentionAutocomplete({
           setSelectedIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length)
           break
         case 'Enter':
-        case 'Tab':
-          if (suggestions.length > 0) {
-            e.preventDefault()
-            const selected = suggestions[selectedIndex]
-            onSelect(selected.username, activeMention.start, activeMention.end)
-            setSuggestions([])
-            setActiveMention(null)
-          }
-          break
-        case 'Escape':
+        case 'Tab': {
           e.preventDefault()
+          const selected = suggestions[selectedIndex]
+          onSelect(selected.username, activeMention.start, activeMention.end)
           setSuggestions([])
           setActiveMention(null)
           break
+        }
       }
     }
 

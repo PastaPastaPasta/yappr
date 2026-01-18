@@ -164,7 +164,7 @@ export function SearchInput() {
           e.preventDefault()
           setSelectedIndex((prev) => (prev - 1 + results.length) % results.length)
           return
-        case 'Enter':
+        case 'Enter': {
           e.preventDefault()
           const selected = results[selectedIndex]
           if (selected) {
@@ -172,6 +172,7 @@ export function SearchInput() {
             return
           }
           break
+        }
         case 'Escape':
           setShowDropdown(false)
           return
