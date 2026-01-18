@@ -111,7 +111,12 @@ export function MentionAutocomplete({
 
     // Calculate position relative to textarea
     const relativeLeft = markerRect.left - mirrorRect.left
-    const relativeTop = markerRect.top - mirrorRect.top + parseInt(computedStyle.lineHeight)
+    // Parse lineHeight robustly - fall back to fontSize * 1.2 if "normal" or unparseable
+    const parsedLineHeight = parseFloat(computedStyle.lineHeight)
+    const lineHeight = Number.isNaN(parsedLineHeight)
+      ? parseFloat(computedStyle.fontSize) * 1.2
+      : parsedLineHeight
+    const relativeTop = markerRect.top - mirrorRect.top + lineHeight
 
     // Account for scroll
     const scrollTop = textarea.scrollTop

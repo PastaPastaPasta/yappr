@@ -52,8 +52,11 @@ export function SearchInput() {
 
     // Clear results if query is too short
     if (trimmedQuery.length < MIN_SEARCH_LENGTH) {
+      // Invalidate any in-flight searches
+      ++searchIdRef.current
       setResults([])
       setIsSearching(false)
+      setShowDropdown(false)
       return
     }
 
