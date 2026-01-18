@@ -35,6 +35,7 @@ import {
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
+import { MentionAutocomplete } from './mention-autocomplete'
 
 const CHARACTER_LIMIT = 500
 
@@ -372,29 +373,53 @@ function ThreadPostEditor({
               )}
             </div>
           ) : (
-            <textarea
-              ref={ref}
-              value={post.content}
-              onChange={(e) => onContentChange(e.target.value)}
-              onFocus={onActivate}
-              onKeyDown={(e) => {
-                // Formatting shortcuts
-                if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-                  e.preventDefault()
-                  handleInsertFormat('**')
-                } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
-                  e.preventDefault()
-                  handleInsertFormat('*')
+            <div className="relative">
+              <textarea
+                ref={ref}
+                value={post.content}
+                onChange={(e) => onContentChange(e.target.value)}
+                onFocus={onActivate}
+                onKeyDown={(e) => {
+                  // Formatting shortcuts
+                  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+                    e.preventDefault()
+                    handleInsertFormat('**')
+                  } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+                    e.preventDefault()
+                    handleInsertFormat('*')
+                  }
+                }}
+                placeholder={
+                  index === 0
+                    ? "What's on your mind?"
+                    : 'Continue your thread...'
                 }
-              }}
-              placeholder={
-                index === 0
-                  ? "What's on your mind?"
-                  : 'Continue your thread...'
-              }
-              className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
-              style={{ height: 'auto' }}
-            />
+                className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                style={{ height: 'auto' }}
+              />
+              <MentionAutocomplete
+                textareaRef={ref}
+                content={post.content}
+                onSelect={(username, start, end) => {
+                  // Replace @partial with @username (keep the @, add space after)
+                  const newContent =
+                    post.content.substring(0, start) +
+                    '@' + username + ' ' +
+                    post.content.substring(end)
+                  onContentChange(newContent)
+
+                  // Restore focus and position cursor after the mention
+                  requestAnimationFrame(() => {
+                    const textarea = ref.current
+                    if (textarea) {
+                      textarea.focus()
+                      const newPos = start + 1 + username.length + 1 // @username + space
+                      textarea.setSelectionRange(newPos, newPos)
+                    }
+                  })
+                }}
+              />
+            </div>
           )}
 
           {/* Footer with formatting hints and character count - hide for posted */}

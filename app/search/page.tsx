@@ -78,6 +78,12 @@ function SearchPageContent() {
     try {
       console.log(`Search: searchUsers called with: "${searchQuery}"`)
 
+      // Require at least 3 characters to search (like DashPay)
+      if (searchQuery.length < 3) {
+        console.log('Search: Query too short, need at least 3 characters')
+        return []
+      }
+
       // Search DPNS usernames by prefix
       const dpnsResults = await dpnsService.searchUsernamesWithDetails(searchQuery, 10)
       console.log(`Search: DPNS prefix search returned ${dpnsResults.length} results`)

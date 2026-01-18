@@ -272,8 +272,8 @@ function MessagesPage() {
       return
     }
 
-    // Only search if at least 2 characters
-    if (query.length < 2) {
+    // Only search if at least 3 characters (like DashPay)
+    if (query.length < 3) {
       setUserSearchResults([])
       return
     }
