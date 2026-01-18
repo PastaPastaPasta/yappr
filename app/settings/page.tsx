@@ -127,7 +127,14 @@ function SettingsPage() {
       try {
         const { dpnsService } = await import('@/lib/services/dpns-service')
         const usernames = await dpnsService.getAllUsernames(user.identityId)
-        setDpnsUsernames(usernames)
+        if (usernames.length > 0) {
+          // Sort usernames: contested first, then shortest, then alphabetically
+          // This matches the selection logic used across the app
+          const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+          setDpnsUsernames(sortedUsernames)
+        } else {
+          setDpnsUsernames([])
+        }
       } catch (error) {
         console.error('Failed to fetch DPNS usernames:', error)
       }
@@ -141,9 +148,16 @@ function SettingsPage() {
     if (!user?.identityId) return
     try {
       const { dpnsService } = await import('@/lib/services/dpns-service')
-      dpnsService.clearCache(user.identityId)
+      // Clear cache to get fresh data (pass undefined for username, identityId second)
+      dpnsService.clearCache(undefined, user.identityId)
       const usernames = await dpnsService.getAllUsernames(user.identityId)
-      setDpnsUsernames(usernames)
+      if (usernames.length > 0) {
+        // Sort usernames: contested first, then shortest, then alphabetically
+        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+        setDpnsUsernames(sortedUsernames)
+      } else {
+        setDpnsUsernames([])
+      }
     } catch (error) {
       console.error('Failed to refresh usernames:', error)
     }

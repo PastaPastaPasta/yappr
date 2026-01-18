@@ -679,12 +679,15 @@ function UserProfileContent() {
     if (!userId) return
     try {
       const { dpnsService } = await import('@/lib/services/dpns-service')
-      // Clear cache to get fresh data
-      dpnsService.clearCache(userId)
+      // Clear cache to get fresh data (pass undefined for username, userId for identityId)
+      dpnsService.clearCache(undefined, userId)
       const usernames = await dpnsService.getAllUsernames(userId)
       if (usernames.length > 0) {
-        setAllUsernames(usernames)
-        setUsername(usernames[0])
+        // Sort usernames: contested first, then shortest, then alphabetically
+        // This matches the selection logic used in loadProfileData and resolveUsernamesBatch
+        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+        setAllUsernames(sortedUsernames)
+        setUsername(sortedUsernames[0])
         setHasDpns(true)
       } else {
         // No usernames found, reset state

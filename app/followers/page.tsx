@@ -116,10 +116,15 @@ function FollowersPage() {
             return { id, username: null }
           }
         })),
-        // Fetch all usernames for each identity
+        // Fetch all usernames for each identity (sorted consistently)
         Promise.all(identityIds.map(async (id) => {
           try {
             const usernames = await dpnsService.getAllUsernames(id)
+            if (usernames.length > 1) {
+              // Sort usernames: contested first, then shortest, then alphabetically
+              const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+              return { id, usernames: sortedUsernames }
+            }
             return { id, usernames }
           } catch (error) {
             console.error(`Failed to get all usernames for ${id}:`, error)
