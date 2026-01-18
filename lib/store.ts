@@ -160,6 +160,9 @@ interface SettingsState {
   /** Send read receipts in direct messages */
   sendReadReceipts: boolean
   setSendReadReceipts: (enabled: boolean) => void
+  /** Allow direct messages from other users */
+  allowDirectMessages: boolean
+  setAllowDirectMessages: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -169,6 +172,8 @@ export const useSettingsStore = create<SettingsState>()(
       setLinkPreviews: (enabled) => set({ linkPreviews: enabled }),
       sendReadReceipts: true, // Enabled by default
       setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
+      allowDirectMessages: true, // Enabled by default
+      setAllowDirectMessages: (enabled) => set({ allowDirectMessages: enabled }),
     }),
     {
       name: 'yappr-settings',

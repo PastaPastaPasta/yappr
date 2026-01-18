@@ -8,8 +8,10 @@ import {
   PaperAirplaneIcon,
   InformationCircleIcon,
   EllipsisHorizontalIcon,
-  PlusIcon
+  PlusIcon,
+  NoSymbolIcon
 } from '@heroicons/react/24/outline'
+import Link from 'next/link'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +49,7 @@ function MessagesPage() {
   const [isResolvingUser, setIsResolvingUser] = useState(false)
   const [participantLastRead, setParticipantLastRead] = useState<number | null>(null)
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
+  const allowDirectMessages = useSettingsStore((s) => s.allowDirectMessages)
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const searchIdRef = useRef(0)
@@ -536,6 +539,29 @@ function MessagesPage() {
     } finally {
       setIsResolvingUser(false)
     }
+  }
+
+  // Show disabled state when DMs are turned off
+  if (!allowDirectMessages) {
+    return (
+      <div className="h-[calc(100vh-40px)] flex overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+          <div className="text-center max-w-sm p-8">
+            <NoSymbolIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+            <h2 className="text-2xl font-semibold mb-2">Direct Messages Disabled</h2>
+            <p className="text-gray-500 mb-6">
+              You have turned off direct messages. Enable them in settings to send and receive messages.
+            </p>
+            <Button asChild>
+              <Link href="/settings?section=privacy">
+                Go to Settings
+              </Link>
+            </Button>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   return (
