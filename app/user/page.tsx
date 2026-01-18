@@ -311,20 +311,23 @@ function UserProfileContent() {
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
 
-        // Try to resolve DPNS usernames (fetch all, use first as primary)
+        // Try to resolve DPNS usernames (fetch all, sort, use best as primary)
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
           const usernames = await dpnsService.getAllUsernames(userId)
           if (usernames.length > 0) {
-            setAllUsernames(usernames)
-            setUsername(usernames[0])
+            // Sort usernames: contested first, then shortest, then alphabetically
+            // This matches the selection logic used in other pages (resolveUsername, resolveUsernamesBatch)
+            const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+            setAllUsernames(sortedUsernames)
+            setUsername(sortedUsernames[0])
             setHasDpns(true)
             // Update posts with hasDpns flag
             setPosts(currentPosts => currentPosts.map(post => ({
               ...post,
               author: {
                 ...post.author,
-                username: usernames[0],
+                username: sortedUsernames[0],
                 hasDpns: true
               } as any
             })))
