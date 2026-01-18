@@ -231,30 +231,32 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           displayName={displayName}
           avatarUrl={avatarUrl}
         >
-          <Tooltip.Provider>
-            <Tooltip.Root>
-              <Tooltip.Trigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    navigator.clipboard.writeText(post.author.id).catch(console.error)
-                    toast.success('Identity ID copied')
-                  }}
-                  className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
-                >
-                  {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
-                </button>
-              </Tooltip.Trigger>
-              <Tooltip.Portal>
-                <Tooltip.Content
-                  className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                  sideOffset={5}
-                >
-                  Click to copy full identity ID
-                </Tooltip.Content>
-              </Tooltip.Portal>
-            </Tooltip.Root>
-          </Tooltip.Provider>
+          <span className="inline-flex">
+            <Tooltip.Provider>
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigator.clipboard.writeText(post.author.id).catch(console.error)
+                      toast.success('Identity ID copied')
+                    }}
+                    className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
+                  >
+                    {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
+                  </button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content
+                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                    sideOffset={5}
+                  >
+                    Click to copy full identity ID
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
+            </Tooltip.Provider>
+          </span>
         </ProfileHoverCard>
       )
     }

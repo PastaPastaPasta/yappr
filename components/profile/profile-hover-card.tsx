@@ -65,6 +65,15 @@ export function ProfileHoverCard({
   const [followLoading, setFollowLoading] = useState(false)
   const [hasLoadedFollowStatus, setHasLoadedFollowStatus] = useState(false)
 
+  // Reset cached state when userId changes to avoid showing stale data
+  useEffect(() => {
+    setProfileData(null)
+    setIsLoading(false)
+    setIsFollowing(false)
+    setFollowLoading(false)
+    setHasLoadedFollowStatus(false)
+  }, [userId])
+
   // Don't show hover card for own profile
   const isOwnProfile = user?.identityId === userId
 
