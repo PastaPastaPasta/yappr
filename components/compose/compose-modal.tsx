@@ -9,7 +9,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
 } from '@heroicons/react/24/outline'
-import { useAppStore, ThreadPost } from '@/lib/store'
+import { useAppStore, useSettingsStore, ThreadPost } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -435,6 +435,7 @@ export function ComposeModal() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const isMac = usePlatformDetection()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -759,7 +760,7 @@ export function ComposeModal() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12"
+                className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
               >
                 <Dialog.Content asChild>
                   <motion.div
