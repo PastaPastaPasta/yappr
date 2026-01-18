@@ -160,6 +160,8 @@ export function MentionAutocomplete({
   // Search for usernames when mention text changes
   useEffect(() => {
     if (!activeMention || activeMention.mention.length < MIN_SEARCH_LENGTH) {
+      // Invalidate any in-flight searches before clearing
+      ++searchIdRef.current
       setSuggestions([])
       setIsLoading(false)
       return
@@ -268,6 +270,7 @@ export function MentionAutocomplete({
           }
           break
         case 'Escape':
+          e.preventDefault()
           setSuggestions([])
           setActiveMention(null)
           break

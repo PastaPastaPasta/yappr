@@ -31,7 +31,7 @@ function SearchPageContent() {
 
   const [users, setUsers] = useState<UserResult[]>([])
   const [hashtags, setHashtags] = useState<HashtagResult[]>([])
-  const [isLoading, setIsLoading] = useState(!!query.trim())
+  const [isLoading, setIsLoading] = useState(query.trim().length >= 3)
   const searchIdRef = useRef(0)
 
   useEffect(() => {
@@ -39,9 +39,21 @@ function SearchPageContent() {
     console.log(`Search: Starting search #${currentSearchId} for query: "${query}"`)
 
     const performSearch = async () => {
-      if (!query.trim()) {
+      const trimmedQuery = query.trim()
+
+      if (!trimmedQuery) {
         setUsers([])
         setHashtags([])
+        setIsLoading(false)
+        return
+      }
+
+      // Require at least 3 characters to search (like DashPay)
+      if (trimmedQuery.length < 3) {
+        console.log('Search: Query too short, need at least 3 characters')
+        setUsers([])
+        setHashtags([])
+        setIsLoading(false)
         return
       }
 
@@ -50,8 +62,8 @@ function SearchPageContent() {
       try {
         // Search in parallel
         const [userResults, hashtagResults] = await Promise.all([
-          searchUsers(query),
-          searchHashtags(query)
+          searchUsers(trimmedQuery),
+          searchHashtags(trimmedQuery)
         ])
 
         // Only update state if this is still the current search
@@ -76,26 +88,27 @@ function SearchPageContent() {
 
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
     try {
-      console.log(`Search: searchUsers called with: "${searchQuery}"`)
+      const trimmedQuery = searchQuery.trim()
+      console.log(`Search: searchUsers called with: "${trimmedQuery}"`)
 
       // Require at least 3 characters to search (like DashPay)
-      if (searchQuery.length < 3) {
+      if (trimmedQuery.length < 3) {
         console.log('Search: Query too short, need at least 3 characters')
         return []
       }
 
       // Search DPNS usernames by prefix
-      const dpnsResults = await dpnsService.searchUsernamesWithDetails(searchQuery, 10)
+      const dpnsResults = await dpnsService.searchUsernamesWithDetails(trimmedQuery, 10)
       console.log(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
 
       // If prefix search returns nothing, try exact name resolution as fallback
       if (dpnsResults.length === 0) {
-        console.log(`Search: Trying exact name resolution for "${searchQuery}"`)
-        const exactIdentity = await dpnsService.resolveIdentity(searchQuery)
+        console.log(`Search: Trying exact name resolution for "${trimmedQuery}"`)
+        const exactIdentity = await dpnsService.resolveIdentity(trimmedQuery)
         if (exactIdentity) {
-          console.log(`Search: Found exact match for "${searchQuery}"`)
+          console.log(`Search: Found exact match for "${trimmedQuery}"`)
           dpnsResults.push({
-            username: `${searchQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
+            username: `${trimmedQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
             ownerId: exactIdentity
           })
         }
