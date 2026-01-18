@@ -106,28 +106,30 @@ export function MentionAutocomplete({
 
     document.body.appendChild(mirror)
 
-    const markerRect = marker.getBoundingClientRect()
-    const mirrorRect = mirror.getBoundingClientRect()
+    try {
+      const markerRect = marker.getBoundingClientRect()
+      const mirrorRect = mirror.getBoundingClientRect()
 
-    // Calculate position relative to textarea
-    const relativeLeft = markerRect.left - mirrorRect.left
-    // Parse lineHeight robustly - fall back to fontSize * 1.2 if "normal" or unparseable
-    const parsedLineHeight = parseFloat(computedStyle.lineHeight)
-    const lineHeight = Number.isNaN(parsedLineHeight)
-      ? parseFloat(computedStyle.fontSize) * 1.2
-      : parsedLineHeight
-    const relativeTop = markerRect.top - mirrorRect.top + lineHeight
+      // Calculate position relative to textarea
+      const relativeLeft = markerRect.left - mirrorRect.left
+      // Parse lineHeight robustly - fall back to fontSize * 1.2 if "normal" or unparseable
+      const parsedLineHeight = parseFloat(computedStyle.lineHeight)
+      const lineHeight = Number.isNaN(parsedLineHeight)
+        ? parseFloat(computedStyle.fontSize) * 1.2
+        : parsedLineHeight
+      const relativeTop = markerRect.top - mirrorRect.top + lineHeight
 
-    // Account for scroll
-    const scrollTop = textarea.scrollTop
+      // Account for scroll
+      const scrollTop = textarea.scrollTop
 
-    // Position dropdown below the @ symbol
-    setDropdownPosition({
-      top: relativeTop - scrollTop,
-      left: Math.min(relativeLeft, textarea.clientWidth - 250) // Prevent overflow
-    })
-
-    document.body.removeChild(mirror)
+      // Position dropdown below the @ symbol
+      setDropdownPosition({
+        top: relativeTop - scrollTop,
+        left: Math.min(relativeLeft, textarea.clientWidth - 250) // Prevent overflow
+      })
+    } finally {
+      document.body.removeChild(mirror)
+    }
   }, [textareaRef, activeMention, content])
 
   // Detect active mention on content/cursor change
