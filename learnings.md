@@ -98,3 +98,21 @@
 
 **No blockers encountered** - the UI follows established patterns and integrates cleanly with the existing private feed services.
 
+## 2026-01-19: Compose Private Post UI Implementation
+
+**Key observations:**
+
+1. **Local state as fast path for private feed detection**: When checking if a user has a private feed enabled, first check local `privateFeedKeyStore.hasFeedSeed()` (synchronous, fast) before querying the platform (async, slower). If local keys exist, the user definitely has a private feed enabled locally, so we can skip the network call.
+
+2. **Visibility selector only shows when private feed is enabled**: Per PRD, the visibility toggle only appears when the user has enabled their private feed. Users without a private feed see the normal compose modal without the selector.
+
+3. **Private posts disable threading**: Threads are only for public posts. When a private visibility is selected, the "Add to thread" button is hidden and `canAddThread` is set to false. Private posts are single posts only.
+
+4. **Teaser and content have separate character limits**: Per PRD §4.2, teaser is limited to 280 characters (same as public posts) while encrypted content can be up to 500 characters. The teaser input has its own character counter separate from the main content counter.
+
+5. **Store extensions for visibility state**: Added `visibility` and `teaser` fields to `ThreadPost` interface and corresponding store actions. Visibility applies only to the first post in a thread (since threads are disabled for private posts anyway).
+
+6. **Private post result format differs from public**: The `privateFeedService.createPrivatePost()` returns `{ success: boolean, postId?: string }` while `dashClient.createPost()` returns the full document. Updated the post ID extraction logic to handle both formats: `result.data?.postId || result.data?.documentId || ...`
+
+**No blockers encountered** - the implementation follows established modal patterns and integrates with existing private feed services.
+

@@ -265,3 +265,45 @@
 - `screenshots/private-feed-enable-ui.png` (not enabled state)
 - `screenshots/private-feed-key-input.png` (key input state)
 - `screenshots/settings-private-feed-nav.png` (settings navigation with Private Feed)
+
+## 2026-01-19: Compose Private Post UI (Phase 3 Feed Integration)
+
+**Task:** Add visibility selector to compose modal for private posts (PRD §4.2)
+
+**Changes made:**
+1. Updated `lib/store.ts` with new types and actions:
+   - Added `PostVisibility` type: `'public' | 'private' | 'private-with-teaser'`
+   - Extended `ThreadPost` interface with `visibility` and `teaser` fields
+   - Added `updateThreadPostVisibility()` and `updateThreadPostTeaser()` actions
+
+2. Created `components/compose/visibility-selector.tsx`:
+   - Dropdown selector with three options: Public, Private, Private with Teaser
+   - Visual indicators: globe icon for public, lock icon for private options
+   - Shows warning when no private followers exist
+   - Displays follower count in footer when private is selected
+   - Handles loading state while checking private feed status
+
+3. Updated `components/compose/compose-modal.tsx`:
+   - Integrated VisibilitySelector component
+   - Added private feed state checking (uses local keys as fast path)
+   - Added private post banner explaining encryption behavior
+   - Added teaser input field for "Private with Teaser" mode
+   - Added "Private Content (encrypted)" label above main content
+   - Updated footer to show private follower visibility info
+   - Modified post creation to use `privateFeedService.createPrivatePost()` for private posts
+   - Disabled thread composition for private posts (single post only)
+
+**Key features per PRD §4.2:**
+- Visibility selector below content input (default: Public)
+- Visual indicator with lock icon when private selected
+- Two text areas for Private with Teaser mode:
+  - Teaser: 280 character limit
+  - Full content: 500 character limit (encrypted)
+- Validation: Requires private feed to be enabled
+- Warning when no private followers
+
+**Screenshots:**
+- `screenshots/compose-with-visibility-selector.png` (public mode with selector)
+- `screenshots/compose-visibility-dropdown.png` (expanded dropdown)
+- `screenshots/compose-private-mode.png` (private mode with banner)
+- `screenshots/compose-private-with-teaser.png` (teaser input visible)

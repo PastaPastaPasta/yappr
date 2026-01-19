@@ -9,7 +9,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
 } from '@heroicons/react/24/outline'
-import { useAppStore, ThreadPost } from '@/lib/store'
+import { useAppStore, ThreadPost, PostVisibility } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -35,6 +35,8 @@ import {
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
+import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
+import { LockClosedIcon } from '@heroicons/react/24/solid'
 
 const CHARACTER_LIMIT = 500
 
@@ -427,6 +429,8 @@ export function ComposeModal() {
     addThreadPost,
     removeThreadPost,
     updateThreadPost,
+    updateThreadPostVisibility,
+    updateThreadPostTeaser,
     markThreadPostAsPosted,
     setActiveThreadPost,
     resetThreadPosts,
@@ -439,6 +443,52 @@ export function ComposeModal() {
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const teaserTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Private feed state
+  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const [privateFeedLoading, setPrivateFeedLoading] = useState(true)
+  const [privateFollowerCount, setPrivateFollowerCount] = useState(0)
+
+  // Get visibility from first post (visibility only applies to first post)
+  const firstPost = threadPosts[0]
+  const visibility: PostVisibility = firstPost?.visibility || 'public'
+  const isPrivatePost = visibility === 'private' || visibility === 'private-with-teaser'
+
+  // Check private feed status when modal opens
+  useEffect(() => {
+    if (isComposeOpen && user) {
+      setPrivateFeedLoading(true)
+      const checkPrivateFeed = async () => {
+        try {
+          const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
+
+          // First check local state (fast) - if local keys exist, user has private feed
+          const hasLocalKeys = privateFeedKeyStore.hasFeedSeed()
+
+          // Then verify with platform (authoritative) if local keys don't exist
+          let hasPrivate = hasLocalKeys
+          if (!hasLocalKeys) {
+            hasPrivate = await privateFeedService.hasPrivateFeed(user.identityId)
+          }
+
+          setHasPrivateFeed(hasPrivate)
+
+          if (hasPrivate) {
+            // Get follower count from recipient map
+            const recipientMap = privateFeedKeyStore.getRecipientMap()
+            setPrivateFollowerCount(Object.keys(recipientMap).length)
+          }
+        } catch (error) {
+          console.error('Failed to check private feed status:', error)
+          setHasPrivateFeed(false)
+        } finally {
+          setPrivateFeedLoading(false)
+        }
+      }
+      checkPrivateFeed()
+    }
+  }, [isComposeOpen, user])
 
   // Focus first textarea when modal opens
   useEffect(() => {
@@ -455,9 +505,15 @@ export function ComposeModal() {
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
   const totalCharacters = threadPosts.reduce((sum, p) => sum + p.content.length, 0)
   const hasValidContent = unpostedPosts.some((p) => p.content.trim().length > 0)
-  const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT)
+
+  // For private-with-teaser, also check teaser limit
+  const hasTeaserOverLimit = visibility === 'private-with-teaser' &&
+    firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
+  const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT) || hasTeaserOverLimit
+
   const canPost = hasValidContent && !hasOverLimit && !isPosting
-  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost
+  // Disable thread for private posts (private posts are single posts only)
+  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !isPrivatePost
 
   // Get the last posted post ID for chaining retries
   const lastPostedId = postedPosts.length > 0
@@ -487,10 +543,18 @@ export function ComposeModal() {
       const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
       const { retryPostCreation } = await import('@/lib/retry-utils')
 
+      // Check if this is a private post
+      const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
+
       // Filter to only unposted posts with content, preserving their IDs
       const postsToCreate = threadPosts
         .filter((p) => p.content.trim().length > 0 && !p.postedPostId)
-        .map((p) => ({ threadPostId: p.id, content: p.content.trim() }))
+        .map((p) => ({
+          threadPostId: p.id,
+          content: p.content.trim(),
+          teaser: p.teaser?.trim(),
+          visibility: p.visibility,
+        }))
 
       setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
 
@@ -498,27 +562,56 @@ export function ComposeModal() {
       let previousPostId: string | null = lastPostedId || replyingTo?.id || null
 
       for (let i = 0; i < postsToCreate.length; i++) {
-        const { threadPostId, content: postContent } = postsToCreate[i]
+        const { threadPostId, content: postContent, teaser, visibility: postVisibility } = postsToCreate[i]
+        const isThisPostPrivate = i === 0 && isPrivate
 
         setPostingProgress({
           current: i + 1,
           total: postsToCreate.length,
-          status: `Creating post ${i + 1} of ${postsToCreate.length}...`
+          status: isThisPostPrivate
+            ? `Encrypting and creating private post ${i + 1}...`
+            : `Creating post ${i + 1} of ${postsToCreate.length}...`
         })
 
-        console.log(`Creating post ${i + 1}/${postsToCreate.length}...`)
+        console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate})`)
 
-        const result = await retryPostCreation(async () => {
-          const dashClient = getDashPlatformClient()
-          return await dashClient.createPost(postContent, {
-            replyToPostId: previousPostId || undefined,
-            quotedPostId: i === 0 ? quotingPost?.id : undefined,
+        let result
+        if (isThisPostPrivate) {
+          // Create private post using privateFeedService
+          const { privateFeedService } = await import('@/lib/services')
+          const privateResult = await privateFeedService.createPrivatePost(
+            authedUser.identityId,
+            postContent,
+            postVisibility === 'private-with-teaser' ? teaser : undefined
+          )
+
+          // Convert to the expected result format
+          if (privateResult.success) {
+            result = {
+              success: true,
+              data: { postId: privateResult.postId },
+            }
+          } else {
+            result = {
+              success: false,
+              error: new Error(privateResult.error || 'Failed to create private post'),
+            }
+          }
+        } else {
+          // Create public post using dashClient
+          result = await retryPostCreation(async () => {
+            const dashClient = getDashPlatformClient()
+            return await dashClient.createPost(postContent, {
+              replyToPostId: previousPostId || undefined,
+              quotedPostId: i === 0 ? quotingPost?.id : undefined,
+            })
           })
-        })
+        }
 
         if (result.success) {
           // Get the post ID for threading
           const postId =
+            result.data?.postId || // Private post result format
             result.data?.documentId ||
             result.data?.document?.$id ||
             result.data?.document?.id ||
@@ -529,13 +622,17 @@ export function ComposeModal() {
             // Track successful post with its original threadPost ID
             successfulPosts.push({ index: i, postId, content: postContent, threadPostId })
 
-            // Update previousPostId for thread chaining
-            previousPostId = postId
+            // Update previousPostId for thread chaining (only for public posts)
+            if (!isThisPostPrivate) {
+              previousPostId = postId
+            }
 
             setPostingProgress({
               current: i + 1,
               total: postsToCreate.length,
-              status: `Post ${i + 1} created, processing hashtags...`
+              status: isThisPostPrivate
+                ? `Private post created!`
+                : `Post ${i + 1} created, processing hashtags...`
             })
 
             // Create hashtag documents for this successful post
@@ -858,6 +955,91 @@ export function ComposeModal() {
 
                         {/* Thread posts */}
                         <div className="flex-1 space-y-4">
+                          {/* Visibility selector - only show for first post when not replying */}
+                          {!replyingTo && hasPrivateFeed && (
+                            <div className="flex items-center gap-3 mb-2">
+                              <VisibilitySelector
+                                visibility={visibility}
+                                onVisibilityChange={(v) => {
+                                  if (firstPost) {
+                                    updateThreadPostVisibility(firstPost.id, v)
+                                  }
+                                }}
+                                hasPrivateFeed={hasPrivateFeed}
+                                privateFeedLoading={privateFeedLoading}
+                                privateFollowerCount={privateFollowerCount}
+                                disabled={isPosting}
+                              />
+                            </div>
+                          )}
+
+                          {/* Private post banner */}
+                          {isPrivatePost && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"
+                            >
+                              <LockClosedIcon className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                              <span className="text-sm text-amber-700 dark:text-amber-300">
+                                {visibility === 'private'
+                                  ? 'This post will be encrypted and only visible to your private followers'
+                                  : 'The main content will be encrypted. Teaser will be visible to everyone.'}
+                              </span>
+                            </motion.div>
+                          )}
+
+                          {/* Teaser input for private-with-teaser posts */}
+                          {visibility === 'private-with-teaser' && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
+                            >
+                              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  Public Teaser (visible to everyone)
+                                </span>
+                              </div>
+                              <div className="p-4">
+                                <textarea
+                                  ref={teaserTextareaRef}
+                                  value={firstPost?.teaser || ''}
+                                  onChange={(e) => {
+                                    if (firstPost) {
+                                      updateThreadPostTeaser(firstPost.id, e.target.value)
+                                    }
+                                  }}
+                                  placeholder="Write a teaser to entice others to request access..."
+                                  className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                                  maxLength={TEASER_LIMIT + 50}
+                                />
+                                <div className="flex items-center justify-end mt-2">
+                                  <span className={`text-xs ${
+                                    (firstPost?.teaser?.length || 0) > TEASER_LIMIT
+                                      ? 'text-red-500'
+                                      : (firstPost?.teaser?.length || 0) > TEASER_LIMIT - 20
+                                      ? 'text-amber-500'
+                                      : 'text-gray-400'
+                                  }`}>
+                                    {firstPost?.teaser?.length || 0}/{TEASER_LIMIT}
+                                  </span>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+
+                          {/* Private content label for private-with-teaser */}
+                          {visibility === 'private-with-teaser' && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <LockClosedIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                Private Content (encrypted)
+                              </span>
+                            </div>
+                          )}
+
                           <AnimatePresence mode="popLayout">
                             {threadPosts.map((post, index) => (
                               <ThreadPostEditor
@@ -896,7 +1078,19 @@ export function ComposeModal() {
 
                     {/* Footer - minimal with keyboard hint */}
                     <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
-                      <div className="flex items-center justify-end">
+                      <div className="flex items-center justify-between">
+                        {/* Private post indicator */}
+                        {isPrivatePost && (
+                          <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                            <LockClosedIcon className="w-3 h-3" />
+                            <span>
+                              {privateFollowerCount > 0
+                                ? `Visible to ${privateFollowerCount} private follower${privateFollowerCount !== 1 ? 's' : ''}`
+                                : 'Only visible to you (no followers yet)'}
+                            </span>
+                          </div>
+                        )}
+                        {!isPrivatePost && <div />}
                         <span className="text-xs text-gray-400">
                           {threadPosts.length > 1
                             ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`

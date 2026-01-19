@@ -4,10 +4,14 @@ import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
+export type PostVisibility = 'public' | 'private' | 'private-with-teaser'
+
 export interface ThreadPost {
   id: string
   content: string
   postedPostId?: string // Platform post ID if successfully posted
+  visibility?: PostVisibility // Post visibility (only applies to first post in thread)
+  teaser?: string // Teaser content for private-with-teaser posts
 }
 
 // Pending navigation data for instant feed -> post detail transitions
@@ -36,6 +40,8 @@ interface AppState {
   addThreadPost: () => void
   removeThreadPost: (id: string) => void
   updateThreadPost: (id: string, content: string) => void
+  updateThreadPostVisibility: (id: string, visibility: PostVisibility) => void
+  updateThreadPostTeaser: (id: string, teaser: string) => void
   markThreadPostAsPosted: (id: string, postedPostId: string) => void
   setActiveThreadPost: (id: string | null) => void
   resetThreadPosts: () => void
@@ -47,6 +53,8 @@ interface AppState {
 const createInitialThreadPost = (): ThreadPost => ({
   id: crypto.randomUUID(),
   content: '',
+  visibility: 'public',
+  teaser: '',
 })
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -112,6 +120,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateThreadPost: (id, content) => set((state) => ({
     threadPosts: state.threadPosts.map(p =>
       p.id === id ? { ...p, content } : p
+    ),
+  })),
+
+  updateThreadPostVisibility: (id, visibility) => set((state) => ({
+    threadPosts: state.threadPosts.map(p =>
+      p.id === id ? { ...p, visibility } : p
+    ),
+  })),
+
+  updateThreadPostTeaser: (id, teaser) => set((state) => ({
+    threadPosts: state.threadPosts.map(p =>
+      p.id === id ? { ...p, teaser } : p
     ),
   })),
 
