@@ -1,5 +1,4 @@
 import { getEvoSdk } from './evo-sdk-service';
-import { signerService } from './signer-service';
 // WASM SDK imports with dynamic initialization
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
 
@@ -377,16 +376,73 @@ class IdentityService {
 
       console.log(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
 
-      // Create signer from private key
-      const signer = await signerService.createSigner(signingPrivateKeyWif);
+      // Log identity revision for debugging
+      const identityJson = identity.toJSON();
+      console.log('Identity revision before update:', identityJson.revision);
 
-      // Update the identity using dev.11+ typed API
-      await sdk.identities.update({
-        identity,
-        addPublicKeys: [newKey],
-        signer
-      });
-      console.log('sdk.identities.update completed');
+      // The evo-sdk facade's update method expects:
+      // - identityId: string
+      // - addPublicKeys: array of key objects (will be JSON stringified)
+      // - disablePublicKeyIds: array of key IDs to disable (optional)
+      // - privateKeyWif: the WIF-encoded private key for signing
+      //
+      // IMPORTANT: The WASM SDK's parse_keys_for_identity_update expects string values for:
+      // - keyType (e.g., "ECDSA_SECP256K1")
+      // - purpose (e.g., "ENCRYPTION")
+      // - securityLevel (e.g., "MEDIUM")
+      //
+      // But IdentityPublicKeyInCreation.toJSON() outputs numeric values (type: 0, purpose: 1, etc.).
+      // We need to transform these to string format manually.
+      const keyToAdd = newKey.toJSON() as Record<string, unknown>;
+      // Override with string values that the WASM SDK expects
+      keyToAdd.keyType = 'ECDSA_SECP256K1';
+      keyToAdd.purpose = 'ENCRYPTION';
+      keyToAdd.securityLevel = 'MEDIUM';
+      // The WASM SDK requires privateKeyHex for ECDSA_SECP256K1 keys - it derives the public key from it
+      // Convert the encryption private key to hex string
+      keyToAdd.privateKeyHex = Array.from(encryptionPrivateKey)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      console.log('Key to add (JSON):', JSON.stringify(keyToAdd, null, 2));
+
+      // Update the identity using evo-sdk facade API
+      console.log('Calling sdk.identities.update...');
+      try {
+        await sdk.identities.update({
+          identityId,
+          addPublicKeys: [keyToAdd],
+          privateKeyWif: signingPrivateKeyWif
+        });
+        console.log('sdk.identities.update completed successfully');
+      } catch (updateError) {
+        console.error('sdk.identities.update failed:', updateError);
+        // Try to extract WasmSdkError properties (they are getters in WASM)
+        if (updateError && typeof updateError === 'object') {
+          const wasmErr = updateError as Record<string, unknown>;
+          // WasmSdkError has getters: kind, name, message, code, retriable
+          console.error('WasmSdkError properties:');
+          try {
+            console.error('  - kind:', wasmErr.kind);
+            console.error('  - name:', wasmErr.name);
+            console.error('  - message:', wasmErr.message);
+            console.error('  - code:', wasmErr.code);
+            console.error('  - retriable:', wasmErr.retriable);
+          } catch (e) {
+            console.error('  - Could not read properties:', e);
+          }
+          // List all own property names
+          console.error('  - All properties:', Object.getOwnPropertyNames(wasmErr));
+          // List all properties including inherited
+          const allProps: string[] = [];
+          let obj = wasmErr;
+          while (obj && obj !== Object.prototype) {
+            allProps.push(...Object.getOwnPropertyNames(obj));
+            obj = Object.getPrototypeOf(obj);
+          }
+          console.error('  - All props (incl. prototype):', Array.from(new Set(allProps)));
+        }
+        throw updateError;
+      }
 
       console.log('Encryption key added successfully');
 

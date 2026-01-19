@@ -1,7 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { postService } from './post-service';
-import { signerService } from './signer-service';
 import { wallet } from '@dashevo/evo-sdk';
 import { TipInfo } from '../types';
 
@@ -145,9 +144,6 @@ class TipService {
         };
       }
 
-      // Create signer from transfer key
-      const signer = await signerService.createSigner(transferKeyWif.trim());
-
       // Log transfer details
       console.log('Transfer args:', JSON.stringify({
         senderId,
@@ -156,13 +152,14 @@ class TipService {
         keyId: keyId ?? 'auto-select transfer key'
       }, null, 2));
 
-      console.log('Calling sdk.identities.creditTransfer with dev.11+ typed API...');
+      console.log('Calling sdk.identities.creditTransfer...');
+      // The SDK API expects: senderId, recipientId, amount, privateKeyWif, keyId (optional)
       const result = await sdk.identities.creditTransfer({
-        identity,
+        senderId,
         recipientId,
         amount: BigInt(amountCredits),
-        signer
-        // signingKey is optional - SDK will auto-select transfer key if not provided
+        privateKeyWif: transferKeyWif.trim(),
+        keyId
       });
 
       // Clear sender's balance cache so it refreshes

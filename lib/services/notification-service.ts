@@ -142,7 +142,7 @@ class NotificationService {
       const documents = normalizeSDKResponse(response);
 
       return documents.map((doc: any) => {
-        const rawPostId = doc.postId || (doc.data && doc.data.postId);
+        const rawPostId = doc.postId || (doc.data?.postId);
         const postId = rawPostId ? identifierToBase58(rawPostId) : undefined;
 
         return {

@@ -1,6 +1,5 @@
 import { getEvoSdk } from './evo-sdk-service';
-import { signerService, SecurityLevel, KeyPurpose } from './signer-service';
-import { documentBuilderService } from './document-builder-service';
+import { SecurityLevel, KeyPurpose } from './signer-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
@@ -143,7 +142,24 @@ class StateTransitionService {
   }
 
   /**
-   * Create a document using the dev.11+ typed API
+   * Generate random entropy hex string for document creation
+   */
+  private generateEntropyHex(): string {
+    // Use Web Crypto API for secure random bytes
+    const entropy = new Uint8Array(32);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(entropy);
+    } else {
+      // Fallback for non-browser environments (shouldn't happen for state transitions)
+      for (let i = 0; i < 32; i++) {
+        entropy[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    return Array.from(entropy).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Create a document using the dev.11+ SDK API
    */
   async createDocument(
     contractId: string,
@@ -159,18 +175,16 @@ class StateTransitionService {
       console.log(`Contract ID: ${contractId}`);
       console.log(`Owner ID: ${ownerId}`);
 
-      // Fetch identity WASM object to get actual WASM public keys
+      // Validate that the private key belongs to the identity and is suitable for document ops
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
-      // Get WASM public keys directly (not from JSON)
       const wasmPublicKeys = identity.getPublicKeys();
       console.log(`Identity has ${wasmPublicKeys.length} public keys`);
 
-      // Find the signing key that matches our stored private key
-      // This is critical: we must use the key that corresponds to our signer's private key
+      // Validate key matches and is suitable for document operations
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
@@ -178,34 +192,29 @@ class StateTransitionService {
 
       console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Create signer from private key
-      const signer = await signerService.createSigner(privateKey);
+      // Generate random entropy for document ID generation
+      const entropyHex = this.generateEntropyHex();
+      console.log('Generated entropy for document creation');
 
-      // Build the document (with auto-generated entropy and ID)
-      const document = await documentBuilderService.buildDocumentForCreate(
+      // Create document using the correct SDK API
+      // The SDK expects: contractId, type, ownerId, data (JSON), entropyHex, privateKeyWif
+      const result = await sdk.documents.create({
         contractId,
-        documentType,
+        type: documentType,
         ownerId,
-        documentData
-      );
-
-      console.log('Built document for creation, ID:', documentBuilderService.getDocumentId(document));
-
-      // Create document using new typed API with WASM objects
-      await sdk.documents.create({
-        document,
-        identityKey,
-        signer
+        data: documentData,
+        entropyHex,
+        privateKeyWif: privateKey
       });
 
       console.log('Document creation submitted successfully');
 
-      // Get the document ID for the response
-      const documentId = documentBuilderService.getDocumentId(document);
+      // The result may contain the document ID or transaction info
+      const documentId = result?.documentId || result?.id || 'pending';
 
       return {
         success: true,
-        transactionHash: documentId, // Use document ID as reference
+        transactionHash: documentId,
         document: {
           $id: documentId,
           $ownerId: ownerId,
@@ -223,7 +232,7 @@ class StateTransitionService {
   }
 
   /**
-   * Update a document using the dev.11+ typed API
+   * Update a document using the dev.11+ SDK API
    */
   async updateDocument(
     contractId: string,
@@ -239,40 +248,34 @@ class StateTransitionService {
 
       console.log(`Updating ${documentType} document ${documentId}...`);
 
-      // Fetch identity WASM object to get actual WASM public keys
+      // Validate that the private key belongs to the identity
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
-      // Get WASM public keys directly (not from JSON)
       const wasmPublicKeys = identity.getPublicKeys();
 
-      // Find the signing key that matches our stored private key
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      // Create signer from private key
-      const signer = await signerService.createSigner(privateKey);
+      console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Build the document for replacement (increment revision)
+      // Increment revision for the update
       const newRevision = revision + 1;
-      const document = await documentBuilderService.buildDocumentForReplace(
+
+      // Replace document using the correct SDK API
+      // The SDK expects: contractId, type, documentId, ownerId, data (any), revision (bigint), privateKeyWif
+      await sdk.documents.replace({
         contractId,
-        documentType,
+        type: documentType,
         documentId,
         ownerId,
-        documentData,
-        newRevision
-      );
-
-      // Replace document using new typed API with WASM objects
-      await sdk.documents.replace({
-        document,
-        identityKey,
-        signer
+        data: documentData,
+        revision: newRevision,
+        privateKeyWif: privateKey
       });
 
       console.log('Document update submitted successfully');
@@ -298,7 +301,7 @@ class StateTransitionService {
   }
 
   /**
-   * Delete a document using the dev.11+ typed API
+   * Delete a document using the dev.11+ SDK API
    */
   async deleteDocument(
     contractId: string,
@@ -312,37 +315,29 @@ class StateTransitionService {
 
       console.log(`Deleting ${documentType} document ${documentId}...`);
 
-      // Fetch identity WASM object to get actual WASM public keys
+      // Validate that the private key belongs to the identity
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
-      // Get WASM public keys directly (not from JSON)
       const wasmPublicKeys = identity.getPublicKeys();
 
-      // Find the signing key that matches our stored private key
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      // Create signer from private key
-      const signer = await signerService.createSigner(privateKey);
+      console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Build document identifiers for deletion
-      const documentIdentifiers = documentBuilderService.buildDocumentForDelete(
-        contractId,
-        documentType,
-        documentId,
-        ownerId
-      );
-
-      // Delete document using new typed API with WASM objects
+      // Delete document using the correct SDK API
+      // The SDK expects: contractId, type, documentId, ownerId, privateKeyWif
       await sdk.documents.delete({
-        document: documentIdentifiers,
-        identityKey,
-        signer
+        contractId,
+        type: documentType,
+        documentId,
+        ownerId,
+        privateKeyWif: privateKey
       });
 
       console.log('Document deletion submitted successfully');

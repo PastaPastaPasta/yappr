@@ -10,7 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@dashevo/evo-sdk": "^3.0.0-dev.11",
+    "@dashevo/evo-sdk": "3.0.0-dev.11",
     "@dicebear/collection": "^9.2.4",
     "@dicebear/core": "^9.2.4",
     "@headlessui/react": "^1.7.18",

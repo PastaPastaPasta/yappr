@@ -1,5 +1,5 @@
 import { getEvoSdk } from './evo-sdk-service';
-import { signerService, SecurityLevel, KeyPurpose } from './signer-service';
+import { SecurityLevel, KeyPurpose } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
@@ -454,7 +454,7 @@ class DpnsService {
   }
 
   /**
-   * Register a new username using dev.11+ typed API
+   * Register a new username using the SDK API
    */
   async registerUsername(
     label: string,
@@ -483,13 +483,13 @@ class DpnsService {
         throw new Error(`Username ${label} is already taken`);
       }
 
-      // Fetch identity WASM object to get actual WASM public keys
+      // Fetch identity to validate and get public key info
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
-      // Get WASM public keys directly
+      // Get WASM public keys to find the matching signing key
       const wasmPublicKeys = identity.getPublicKeys();
 
       // Find a signing key that matches the provided private key
@@ -501,21 +501,20 @@ class DpnsService {
 
       console.log(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Create signer from private key
-      const signer = await signerService.createSigner(privateKeyWif);
-
       // Call onPreorder callback if provided (for UI feedback)
       if (onPreorderSuccess) {
         onPreorderSuccess();
       }
 
-      // Register the name using dev.11+ typed API
+      // Register the name using the correct SDK API
+      // The SDK expects: label, identityId, publicKeyId, privateKeyWif, onPreorder
       console.log(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
-        identity,
-        identityKey,
-        signer
+        identityId,
+        publicKeyId: identityKey.keyId,
+        privateKeyWif,
+        onPreorder: onPreorderSuccess
       });
 
       // Clear cache for this identity
