@@ -1,9 +1,8 @@
 # Bug Reports
 
 ## Active Bugs
-### BUG-008: private feed notifications do not work
 
-as a user, I submitted a private feed follow request. The person I was trying to follow should've gotten a notification, but didn't
+(none)
 
 ### BUG-007: getPrivateFollowers query fails with WasmSdkError (RESOLVED)
 
@@ -41,6 +40,25 @@ After the fix:
 **Date Resolved:** 2026-01-19
 
 ## Resolved Bugs
+
+### BUG-008: Private feed notifications do not work (RESOLVED)
+
+**Resolution:** Changed the notification discovery architecture from trying to create `notification` documents (which was impossible) to querying `followRequest` documents directly.
+
+**Root Cause:** The original implementation in `private-feed-notification-service.ts` tried to create notification documents owned by the recipient (feed owner), but signed by the requester. This is impossible in Dash Platform - you cannot create a document owned by another identity. The `stateTransitionService.createDocument()` call would fail because the requester doesn't have the feed owner's private key.
+
+**Architectural Fix:** Instead of creating separate notification documents, the `notification-service.ts` now queries `followRequest` documents where the user is the `targetId` (the feed owner). This follows the same pattern as follower notifications, which query `follow` documents directly. This is more robust and doesn't require any new document types or contract changes.
+
+**Files Modified:**
+- `lib/services/notification-service.ts` - Changed `getPrivateFeedNotifications()` to query `followRequest` documents with `[targetId, $createdAt]` index instead of `notification` documents
+- `lib/services/private-feed-follower-service.ts` - Removed the (broken) notification creation call from `requestAccess()` and added a comment explaining the new architecture
+
+**Verification:**
+- Feed owner (identity 9qRC7aPC...) now sees "Test Follower User requested access to your private feed" notification
+- Notification appears in both "All" and "Private Feed" filter tabs
+- Screenshot: `screenshots/bug008-fix-notifications.png`
+
+**Date Resolved:** 2026-01-19
 
 ### BUG-009: private follower not showing after acceptance (RESOLVED)
 

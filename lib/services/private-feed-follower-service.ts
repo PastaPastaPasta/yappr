@@ -25,7 +25,6 @@ import { privateFeedCryptoService } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { privateFeedService } from './private-feed-service';
 import type { PrivateFeedRekeyDocument } from './private-feed-service';
-import { privateFeedNotificationService } from './private-feed-notification-service';
 import type { NodeKey } from './private-feed-crypto-service';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { queryDocuments } from './sdk-helpers';
@@ -176,13 +175,10 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to create follow request' };
       }
 
-      // 5. Create notification for the feed owner (best effort - don't fail if notification fails)
-      try {
-        await privateFeedNotificationService.createRequestNotification(myId, ownerId);
-      } catch (notifError) {
-        console.error('Failed to create request notification:', notifError);
-        // Don't fail the main operation
-      }
+      // Note: Notifications are now discovered by querying followRequest documents directly
+      // (see notification-service.ts getPrivateFeedNotifications). No need to create
+      // separate notification documents, which would fail anyway due to ownership constraints.
+      // The feed owner's client will find this request when polling for notifications.
 
       console.log('Follow request created successfully');
       return { success: true };

@@ -662,3 +662,57 @@ setFollowerCount(followers.length)
 2. On-chain data is the source of truth for blockchain-backed features
 3. Local storage should only be used as a fallback/cache, not primary source
 4. Add fallback with clear logging to help debug query failures
+
+---
+
+## 2026-01-19: BUG-008 Fix - Notification Architecture
+
+### Issue 43: Cannot Create Documents Owned by Another Identity (BUG-008 - FIXED)
+**Problem:** Private feed request notifications were not being created. The feed owner never received a notification when someone requested access.
+
+**Root Cause:** The `private-feed-notification-service.ts` was attempting to create `notification` documents owned by the **recipient** (feed owner), but signed by the **requester**. This is fundamentally impossible in Dash Platform:
+1. `stateTransitionService.createDocument(contractId, docType, ownerId, data)` requires the private key for `ownerId`
+2. The requester only has their own private key in session, not the feed owner's
+3. Result: `getPrivateKey(ownerId)` fails with "No private key found"
+
+**Key Insight:** In Dash Platform, you can ONLY create documents where `$ownerId` is your own identity. You cannot create documents on behalf of another user.
+
+**Architectural Problem:** The notification schema has indices on `$ownerId` (the recipient), implying notifications should be owned by the recipient. But the sender can't create those documents.
+
+**Solution:** Changed from "push" (create notification documents) to "pull" (discover via queries):
+- Instead of creating `notification` documents (impossible)
+- Query `followRequest` documents where `targetId == userId` (the feed owner)
+- This follows the same pattern as follower notifications, which query `follow` documents directly
+
+**Code Pattern:**
+```typescript
+// Before (broken): Query notification docs (can never exist)
+const response = await sdk.documents.query({
+  documentTypeName: 'notification',
+  where: [['$ownerId', '==', userId], ...]
+});
+
+// After (working): Query the source documents directly
+const response = await sdk.documents.query({
+  documentTypeName: 'followRequest',
+  where: [['targetId', '==', userId], ...]
+});
+```
+
+**Lesson:** When designing decentralized notification systems:
+1. You cannot create documents owned by someone else
+2. "Push" notification models (sender creates notification for recipient) don't work
+3. "Pull" models work well - recipient's client discovers events by querying relevant documents
+4. Index your documents appropriately for the "pull" queries (e.g., `followRequest` has `[targetId, $createdAt]` index)
+
+### Issue 44: Existing Pattern for Derived Notifications
+**Observation:** The `notification-service.ts` already had a working pattern for follower notifications:
+```typescript
+// For new followers: query 'follow' documents, not 'notification' documents
+await sdk.documents.query({
+  documentTypeName: 'follow',
+  where: [['followingId', '==', userId], ['$createdAt', '>', sinceTimestamp]]
+});
+```
+
+**Lesson:** Before implementing a new notification type, check how existing notification types are implemented. The follower notification pattern (querying the source document directly) was already working and could be applied to private feed requests.

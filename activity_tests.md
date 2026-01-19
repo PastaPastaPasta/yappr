@@ -1251,3 +1251,67 @@ After the fix, all three UI sections show consistent follower counts:
 
 ### Result
 **BUG-009 FIXED** - Follower counts are now consistent across all UI components
+
+---
+
+## 2026-01-19: BUG-008 Fix - Private Feed Notifications Not Working
+
+### Bug
+BUG-008: When a user requests access to a private feed, the feed owner should receive a notification, but no notification was being created.
+
+### Root Cause
+The `private-feed-notification-service.ts` was attempting to create `notification` documents owned by the **recipient** (feed owner), but signed by the **requester**. This is fundamentally impossible in Dash Platform - you cannot create a document owned by another identity because you don't have their private key to sign it.
+
+The call path was:
+1. User clicks "Request Access" on a profile
+2. `privateFeedFollowerService.requestAccess()` creates a `followRequest` document
+3. Then calls `privateFeedNotificationService.createRequestNotification(myId, ownerId)`
+4. Which calls `stateTransitionService.createDocument(..., toUserId, ...)` with `toUserId = ownerId`
+5. `createDocument()` tries to get the private key for `ownerId` but fails because only the requester's key is in session
+
+### Solution Applied
+Changed the notification architecture from "push" (create notification documents) to "pull" (discover via queries):
+
+**1. Modified `notification-service.ts` - `getPrivateFeedNotifications()`:**
+- Changed from querying `notification` documents (which could never be created)
+- To querying `followRequest` documents where `targetId == userId`
+- This follows the same pattern as follower notifications, which query `follow` documents directly
+
+```typescript
+// Before (broken):
+const response = await sdk.documents.query({
+  documentTypeName: 'notification',
+  where: [['$ownerId', '==', userId], ...],  // Can never find any - docs can't be created
+});
+
+// After (working):
+const response = await sdk.documents.query({
+  documentTypeName: 'followRequest',
+  where: [['targetId', '==', userId], ...],  // Finds incoming requests
+});
+```
+
+**2. Modified `private-feed-follower-service.ts` - `requestAccess()`:**
+- Removed the broken notification creation attempt
+- Added comment explaining that notifications are now discovered via queries
+
+### Files Modified
+- `lib/services/notification-service.ts` - Changed `getPrivateFeedNotifications()` to query `followRequest` documents
+- `lib/services/private-feed-follower-service.ts` - Removed notification creation call and unused import
+
+### Verification
+1. Logged in as feed owner (identity 9qRC7aPC...)
+2. Navigated to Notifications page
+3. Clicked "Private Feed" filter tab
+4. **Notification now shows**: "Test Follower User requested access to your private feed 28m"
+5. Notification also appears in "All" tab
+
+### Screenshot
+- `screenshots/bug008-fix-notifications.png` - Notifications page showing private feed request
+
+### Result
+**BUG-008 FIXED** - Private feed access request notifications now work correctly
+
+### Re-test Note
+This fix should be re-verified during the next full E2E testing run. Specifically:
+- E2E Test 11.1: Notification on Follow Request should now pass

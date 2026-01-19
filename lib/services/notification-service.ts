@@ -75,46 +75,44 @@ class NotificationService {
   }
 
   /**
-   * Get private feed notifications since timestamp
-   * Queries the notification document type for privateFeedRequest, privateFeedApproved, privateFeedRevoked
-   * Uses the ownerNotifications index: [$ownerId, $createdAt]
+   * Get private feed request notifications since timestamp
+   *
+   * BUG-008 Fix: Changed from querying 'notification' documents to querying 'followRequest' documents directly.
+   *
+   * The previous implementation tried to query notification documents owned by the recipient,
+   * but notification documents could never be created because you can't create documents
+   * owned by another identity (the requester can't sign a doc owned by the feed owner).
+   *
+   * This fix follows the same pattern as getNewFollowers() - query the source documents directly.
+   * Uses the followRequest target index: [targetId, $createdAt]
    */
   async getPrivateFeedNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     try {
       const sdk = await getEvoSdk();
 
-      // Query notification documents owned by this user
+      // Query followRequest documents where this user is the target (feed owner)
+      // This discovers incoming private feed access requests
       const response = await sdk.documents.query({
         dataContractId: YAPPR_CONTRACT_ID,
-        documentTypeName: 'notification',
+        documentTypeName: 'followRequest',
         where: [
-          ['$ownerId', '==', userId],
+          ['targetId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [['targetId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
       } as any);
 
       const documents = normalizeSDKResponse(response);
 
-      // Filter to only private feed notification types
-      const privateFeedTypes = ['privateFeedRequest', 'privateFeedApproved', 'privateFeedRevoked'];
-
-      return documents
-        .filter((doc: any) => privateFeedTypes.includes(doc.type))
-        .map((doc: any) => {
-          const fromUserId = identifierToBase58(doc.fromUserId);
-
-          return {
-            id: doc.$id,
-            type: doc.type as PrivateFeedNotificationType,
-            fromUserId: fromUserId || '', // Fallback to empty string if null
-            createdAt: doc.$createdAt
-          };
-        })
-        .filter((n) => n.fromUserId !== ''); // Filter out entries with missing fromUserId
+      return documents.map((doc: any) => ({
+        id: doc.$id,
+        type: 'privateFeedRequest' as const,
+        fromUserId: doc.$ownerId, // The requester
+        createdAt: doc.$createdAt
+      }));
     } catch (error) {
-      console.error('Error fetching private feed notifications:', error);
+      console.error('Error fetching private feed request notifications:', error);
       return [];
     }
   }
