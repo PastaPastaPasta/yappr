@@ -822,3 +822,61 @@ Test E2E 2.5: Compose Validation - Character Limits (PRD §4.2)
 
 ### Test Result
 **PASSED** - E2E Test 2.5 completed successfully
+
+---
+
+## 2026-01-19: E2E Test 2.6 - Default Visibility Not Sticky (COMPLETED)
+
+### Task
+Test E2E 2.6: Default Visibility Not Sticky (PRD §4.2)
+
+### Status
+**PASSED** - Visibility correctly resets to "Public" after creating a private post
+
+### Prerequisites Met
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 logged in
+- Private feed already enabled (from Test 1.1)
+
+### Test Steps Executed
+1. **Open compose modal** - ✅
+   - Clicked compose button in navigation bar
+   - Modal opened with visibility selector showing "Public" as default
+
+2. **Select "Private" visibility** - ✅
+   - Clicked visibility dropdown
+   - Selected "Private" option
+   - Visibility changed to show lock icon with "Private" text
+   - Encryption info banner shown: "This post will be encrypted and only visible to your private followers"
+   - Warning shown: "Only visible to you (no followers yet)"
+
+3. **Enter content and post** - ✅
+   - Entered test content: "E2E Test 2.6 - Testing visibility not sticky. This private post should NOT cause the next compose to default to Private."
+   - Clicked Post button
+   - Loading state shown: "Encrypting and creating private post 1..."
+   - Console logged: `Private post created successfully: 5h13by6zgqokABaxhUrazt3vcFMRQtoLbmhJS2cZ8PDs`
+   - Modal closed after success
+
+4. **Open compose modal again** - ✅
+   - Clicked compose button in navigation bar
+   - Modal opened
+
+5. **Verify visibility defaults to "Public"** - ✅
+   - Visibility selector shows "Public" (NOT "Private")
+   - Globe icon displayed next to "Public" text
+   - No encryption warning banners shown
+   - Textbox empty and ready for new content
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Visibility defaults to "Public" (not sticky from previous post) | Visibility shows "Public" with globe icon | ✅ |
+| No private post UI elements (lock icons, encryption warnings) | Standard public compose UI displayed | ✅ |
+
+### Key Observation
+The compose modal correctly resets to "Public" visibility each time it opens, regardless of what visibility was used for the previous post. This is the expected behavior per PRD §4.2 - visibility should NOT be "sticky".
+
+### Screenshots
+- `screenshots/e2e-test2.6-visibility-not-sticky.png` - Compose modal showing "Public" default after creating a private post
+
+### Test Result
+**PASSED** - E2E Test 2.6 completed successfully

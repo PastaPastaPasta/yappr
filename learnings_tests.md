@@ -469,3 +469,24 @@ pkill -f "next dev"; rm -rf .next && npm run dev
 - Private content: 500 characters max (matches the post contract's content maxLength)
 
 **Lesson:** These limits match the data contract constraints, ensuring posts won't fail at the protocol level due to content length.
+
+---
+
+## 2026-01-19: E2E Test 2.6 - Default Visibility Not Sticky
+
+### Issue 29: Compose Modal State Management
+**Observation:** The compose modal correctly resets its state (including visibility selection) each time it opens. After creating a private post with "Private" visibility, opening the compose modal again shows "Public" as the default.
+
+**Key Details:**
+- The compose modal does not persist visibility state between uses
+- This is intentional UX design - users should consciously choose private visibility each time
+- Prevents accidental private posts or accidental public posts
+
+**Implementation Insight:** The compose modal likely initializes its state fresh on each open, rather than persisting previous selections in localStorage or component state that survives unmounting.
+
+**Lesson:** For sensitive features like private posts, defaulting to the "safer" option (public) on each use is good UX practice. Users must explicitly choose to make a post private, reducing the risk of accidentally posting private content publicly or vice versa.
+
+### Issue 30: Test Simplicity
+**Observation:** This test (2.6) was straightforward and required no code changes - it simply verified existing expected behavior.
+
+**Lesson:** Some E2E tests are pure verification of existing functionality. These tests are valuable for regression testing and documentation purposes, even though they don't uncover bugs.
