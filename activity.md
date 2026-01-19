@@ -888,3 +888,29 @@
 - State properly resets when navigating between different profiles
 
 **Screenshot:** `screenshots/private-follower-badge-profile.png` (profile page showing "Private Feed" badge area where "Private Follower ✓" badge would appear when conditions are met)
+
+## 2026-01-19: Automatic FollowRequest Cleanup After Approval (PRD §4.5)
+
+**Task:** Implement automatic cleanup of stale FollowRequest documents after a user has been approved for private feed access
+
+**Changes made:**
+1. Updated `lib/services/private-feed-follower-service.ts`:
+   - Extended `getAccessStatus()` method with optional `autoCleanup` parameter (default: true)
+   - When access status is 'approved' and autoCleanup is enabled, automatically triggers cleanup in background
+   - Added new `cleanupStaleFollowRequest(ownerId, myId)` method that:
+     - Checks if a FollowRequest document still exists for the approved user
+     - Deletes the stale request document if found
+     - Returns success even if no request exists (no cleanup needed)
+     - Best-effort operation that doesn't fail the main flow if cleanup fails
+   - Extended `recoverFollowerKeys()` to call cleanup after successful key recovery (step 7)
+   - All cleanup operations are fire-and-forget with error catching to avoid disrupting main operations
+
+**Key features per PRD §4.5:**
+- "After approval, the requester's client should detect the grant and delete their FollowRequest"
+- Cleanup happens automatically when:
+  - User checks their access status and is 'approved'
+  - User recovers their follower keys from a grant document
+- Best-effort cleanup: failure doesn't affect access (grant is what matters)
+- Stale requests are harmless but cleaned up for tidiness
+
+**Screenshot:** `screenshots/follow-request-cleanup-settings.png` (Private Feed settings page showing the private follower management UI where approved users would have their FollowRequests cleaned up)

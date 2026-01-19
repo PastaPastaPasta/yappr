@@ -868,6 +868,11 @@ class PrivateFeedFollowerService {
         console.warn('Failed to catch up after recovery:', catchUpResult.error);
       }
 
+      // 7. Clean up stale FollowRequest if it exists (PRD §4.5)
+      this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
+        console.warn('Failed to cleanup stale follow request after recovery:', err);
+      });
+
       console.log(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
       return { success: true };
     } catch (error) {
@@ -888,10 +893,12 @@ class PrivateFeedFollowerService {
    *
    * @param ownerId - The feed owner's identity ID
    * @param myId - The requester's identity ID
+   * @param autoCleanup - If true, automatically clean up stale FollowRequest when approved (default: true)
    */
   async getAccessStatus(
     ownerId: string,
-    myId: string
+    myId: string,
+    autoCleanup: boolean = true
   ): Promise<'none' | 'pending' | 'approved' | 'revoked'> {
     try {
       // Check if we have an active grant
@@ -903,6 +910,12 @@ class PrivateFeedFollowerService {
         // If we have a grant but can't decrypt, we're revoked
         const canDecrypt = await this.canDecrypt(ownerId);
         if (canDecrypt) {
+          // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
+          if (autoCleanup) {
+            this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
+              console.warn('Failed to cleanup stale follow request:', err);
+            });
+          }
           return 'approved';
         }
         // Grant exists but can't decrypt - likely revoked (orphaned grant)
@@ -919,6 +932,52 @@ class PrivateFeedFollowerService {
     } catch (error) {
       console.error('Error getting access status:', error);
       return 'none';
+    }
+  }
+
+  /**
+   * Clean up stale FollowRequest after approval (PRD §4.5)
+   *
+   * After a user is approved for private feed access, their FollowRequest document
+   * should be deleted since it's no longer needed. This is a best-effort cleanup
+   * that doesn't affect the user's access (the grant is what matters).
+   *
+   * @param ownerId - The feed owner's identity ID
+   * @param myId - The requester's identity ID
+   */
+  async cleanupStaleFollowRequest(
+    ownerId: string,
+    myId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Check if a follow request still exists
+      const request = await this.getFollowRequest(ownerId, myId);
+      if (!request) {
+        // No stale request - nothing to clean up
+        return { success: true };
+      }
+
+      // Delete the stale request
+      console.log('Cleaning up stale FollowRequest for approved user:', myId);
+      const result = await stateTransitionService.deleteDocument(
+        this.contractId,
+        DOCUMENT_TYPES.FOLLOW_REQUEST,
+        request.$id,
+        myId
+      );
+
+      if (!result.success) {
+        return { success: false, error: result.error || 'Failed to delete stale follow request' };
+      }
+
+      console.log('Successfully cleaned up stale FollowRequest');
+      return { success: true };
+    } catch (error) {
+      console.error('Error cleaning up stale follow request:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Cleanup failed',
+      };
     }
   }
 

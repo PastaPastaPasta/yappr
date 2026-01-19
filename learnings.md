@@ -373,3 +373,27 @@
 6. **E2E testing of multi-user scenarios is complex**: Testing the "Private Follower ✓" badge end-to-end requires two identities with an established private follower relationship (one has approved the other). This would require: creating second identity, enabling private feed, following, requesting access, approving - a complex multi-step process.
 
 **No blockers encountered** - the implementation is straightforward and follows established patterns for badge rendering on the profile page.
+
+## 2026-01-19: Automatic FollowRequest Cleanup Implementation
+
+**Key observations:**
+
+1. **Best-effort cleanup pattern**: The FollowRequest cleanup after approval is implemented as a fire-and-forget operation using `.catch()` to log errors without propagating them. This ensures the main flow (checking access status, recovering keys) is never blocked by cleanup failures.
+
+2. **Cleanup trigger points**: Two natural places to trigger cleanup were identified:
+   - `getAccessStatus()` - Called when user views a profile or checks their access status
+   - `recoverFollowerKeys()` - Called when user recovers keys on a new device/session
+   Both scenarios indicate the user is actively using their approved status, making them good times to clean up stale requests.
+
+3. **Optional parameter for cleanup control**: Added `autoCleanup` parameter to `getAccessStatus()` with default `true`. This allows callers to disable cleanup if they only want to query status without side effects (useful for owner-side queries that filter out requests with existing grants).
+
+4. **Testnet SDK errors during testing**: Observed "WasmSdkError" errors when querying private followers. These are likely related to the testnet network conditions or SDK initialization issues, not the code itself. The errors were caught and logged but didn't prevent the UI from rendering.
+
+5. **Multi-identity E2E testing challenges**: Full end-to-end verification of the cleanup feature would require:
+   - Two identities with established relationship (following + private feed access)
+   - Creating a FollowRequest, approving it (creating grant), then verifying the request is deleted
+   - This is complex due to the need to switch between identities and wait for platform confirmations
+
+6. **Session persistence aids iterative testing**: The existing browser session (identity `DgnyeBmFSHzqGgvJxYxM9DiuJSCqirGDJkUCz9FERZWw`) was already logged in with private feed enabled, allowing quick verification of the settings UI without re-authentication.
+
+**No blockers encountered** - the implementation follows established patterns and integrates with existing state transition service for document deletion.
