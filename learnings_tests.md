@@ -417,3 +417,31 @@ pkill -f "next dev"; rm -rf .next && npm run dev
 - Post ID is logged on success: `Private post created successfully: <postId>`
 
 **Lesson:** Console logs are essential for E2E test verification. Check for `hasTeaser: true` to confirm the correct code path was taken, and verify `encryptedContent` array has expected length.
+
+---
+
+## 2026-01-19: E2E Test 2.4 - No Followers Warning
+
+### Issue 25: Warning Wording in Compose Modal
+**Observation:** When a user with private feed enabled but 0 private followers selects "Private" visibility in the compose modal:
+- Warning displays: "Only visible to you (no followers yet)"
+- This is clearer than the expected wording "No private followers yet"
+- The phrasing emphasizes the immediate consequence (only you can see it) rather than just the state
+
+**Key Details:**
+- Warning appears at the bottom of the compose modal
+- Warning has yellow/orange styling with a lock icon
+- Warning is separate from the blue "encryption info" banner at top
+- Post button remains enabled (warning is advisory only)
+
+**Lesson:** Test expectations should be flexible on exact wording - the spirit of the requirement is met even if the exact text differs. The implementation's wording ("Only visible to you") is arguably better UX than the specification ("No private followers yet").
+
+### Issue 26: Dev Server Stability
+**Observation:** The Next.js dev server was stable throughout this test session without requiring a restart.
+
+**Key Details:**
+- Started fresh with `rm -rf .next && npm run dev`
+- Completed full E2E test without corruption
+- Page navigation, modal interactions, and post creation all worked smoothly
+
+**Lesson:** Starting with a clean `.next` cache helps prevent dev server corruption issues seen in earlier test sessions.

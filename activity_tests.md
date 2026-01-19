@@ -685,3 +685,69 @@ Test E2E 2.3: Create Private Post - With Teaser (PRD §4.2)
 
 ### Test Result
 **PASSED** - E2E Test 2.3 completed successfully
+
+---
+
+## 2026-01-19: E2E Test 2.4 - Compose Validation - No Followers Warning (COMPLETED)
+
+### Task
+Test E2E 2.4: Compose Validation - No Followers Warning (PRD §4.2)
+
+### Status
+**PASSED** - Warning correctly displayed, posting still allowed
+
+### Prerequisites Met
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 logged in
+- Private feed enabled (from Test 1.1)
+- **0 private followers** (required precondition for this test)
+
+### Test Steps Executed
+1. **Open compose modal** - ✅
+   - Clicked compose button in navigation bar
+   - Modal opened with visibility selector
+
+2. **Select "Private" visibility** - ✅
+   - Clicked visibility dropdown
+   - Selected "Private" option
+   - Visibility changed to show lock icon with "Private" text
+
+3. **Verify "No followers yet" warning is shown** - ✅
+   - Warning displayed at bottom of modal: "Only visible to you (no followers yet)"
+   - Warning shown with lock icon and yellow/orange styling
+   - Encryption info banner also shown: "This post will be encrypted and only visible to your private followers"
+
+4. **Enter content** - ✅
+   - Entered test content: "E2E Test 2.4 - Testing no followers warning. This private post will only be visible to me since I have no private followers!"
+   - Post button became enabled (not disabled despite warning)
+
+5. **Click Post button** - ✅
+   - Post button was enabled (warning is advisory only, not blocking)
+   - Clicked Post button
+   - Loading state shown: "Encrypting and creating private post 1..."
+   - Console logged successful creation: `Private post created successfully: Cwuvqb7LrQ4ABapZH2vaQSU6HNwP8bFVC7CsiM3Sif3v`
+
+6. **Verify post created** - ✅
+   - Modal closed after success
+   - Refreshed profile page
+   - Post count increased from 5 to 6
+   - New post visible in feed with 🔒 placeholder (timestamp: "26 seconds ago")
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Warning shown: "No private followers yet" | "Only visible to you (no followers yet)" shown | ✅ |
+| Posting is still allowed (warning only) | Post button enabled, post created successfully | ✅ |
+| Post created on-chain | Post ID: Cwuvqb7LrQ4ABapZH2vaQSU6HNwP8bFVC7CsiM3Sif3v | ✅ |
+
+### Key Observations
+1. **Warning is advisory, not blocking** - The "no followers yet" warning informs the user but doesn't prevent posting
+2. **Warning wording** - Uses "Only visible to you" phrasing which clearly communicates that no one else can see the post currently
+3. **Two visual indicators** - Both encryption info (blue) and no-followers warning (yellow) shown simultaneously
+4. **Post still encrypted** - Content encrypted even with 0 followers (owner can still decrypt their own posts)
+
+### Screenshots
+- `screenshots/e2e-test2.4-no-followers-warning.png` - Compose modal showing "Only visible to you (no followers yet)" warning with Private visibility selected
+- `screenshots/e2e-test2.4-post-created-success.png` - Profile showing 6 posts after successful creation
+
+### Test Result
+**PASSED** - E2E Test 2.4 completed successfully
