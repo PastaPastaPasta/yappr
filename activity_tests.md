@@ -337,3 +337,51 @@ Test E2E 1.3: Enable Private Feed - Already Enabled (PRD §4.1)
 
 ### Test Result
 **PASSED** - E2E Test 1.3 completed successfully
+
+---
+
+## 2026-01-19: E2E Test 2.1 - Visibility Selector Default State (COMPLETED)
+
+### Task
+Test E2E 2.1: Visibility Selector Default State (PRD §4.2, §4.11)
+
+### Status
+**PASSED** - Compose modal visibility selector working correctly
+
+### Prerequisites Met
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 logged in
+- Private feed already enabled (from Test 1.1)
+
+### Test Steps Executed
+1. **Open compose modal** - ✅
+   - Clicked compose button in navigation bar
+   - Modal opened with "New Post" header
+
+2. **Verify visibility selector default state** - ✅
+   - Visibility selector shows "Public" as default selected option
+   - Button displays globe icon with "Public" text
+
+3. **Verify visibility options available** - ✅
+   - Clicked visibility selector dropdown
+   - Three options displayed:
+     - "Public" - "Visible to everyone" (with globe icon, checkmark indicating selected)
+     - "Private" - "Only private followers" (with lock icon)
+     - "Private with Teaser" - "Teaser public, full content private" (with lock icon)
+
+4. **Verify lock icons on private options** - ✅
+   - Lock icons visible next to both private options
+   - Clear visual differentiation between public and private options
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| "Public" shown as default | "Public" selected with checkmark | ✅ |
+| "Private" option available | "Private" with lock icon shown | ✅ |
+| "Private with Teaser" option available | "Private with Teaser" with description shown | ✅ |
+| Lock icon visible next to private options | Lock icons displayed for both private options | ✅ |
+
+### Screenshots
+- `screenshots/e2e-test2.1-visibility-selector.png` - Compose modal with visibility dropdown open
+
+### Test Result
+**PASSED** - E2E Test 2.1 completed successfully

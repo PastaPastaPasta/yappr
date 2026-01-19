@@ -206,3 +206,27 @@ yappr_secure_ek_<identityId>
 **Impact:** Non-blocking - the UI gracefully handles the error and shows empty state.
 
 **Lesson:** Some console errors are non-blocking and the UI handles them gracefully. Focus on visual/functional testing rather than expecting zero console errors.
+
+---
+
+## 2026-01-19: E2E Test 2.1 - Compose Modal Testing
+
+### Issue 12: Compose Modal Navigation
+**Observation:** The compose button in the navigation bar opens a modal dialog overlay, not a separate page.
+
+**Implementation Detail:** The compose modal is implemented as a dialog component that overlays the current page content. This allows users to compose posts from any page without losing their place.
+
+**Lesson:** When testing the compose flow, the modal can be opened from any page in the app via the navigation bar.
+
+### Issue 13: Visibility Selector Implementation
+**Observation:** The visibility selector is implemented as a dropdown button that shows all three options:
+- Public (globe icon) - default
+- Private (lock icon) - requires private feed enabled
+- Private with Teaser (lock icon) - requires private feed enabled
+
+**Key Details:**
+- The currently selected option shows a checkmark
+- Each option has an icon and descriptive text
+- The dropdown is a custom component, not a native HTML select
+
+**Lesson:** The visibility options are properly gated based on whether the user has private feed enabled. For users without private feed, only "Public" would be available (not tested in this scenario since our test identity has private feed enabled).
