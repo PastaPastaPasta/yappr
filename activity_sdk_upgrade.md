@@ -195,3 +195,52 @@ Tested via Playwright:
 
 1. Phase 4: DPNS Service updates
 2. Phase 5: Final verification and testing
+
+---
+
+## 2026-01-19: Phase 4 Complete - DPNS Service Updates
+
+### Changes Made
+
+1. **Updated `lib/services/dpns-service.ts`**:
+   - Added import for `findMatchingKeyIndex`, `getSecurityLevelName`, and `IdentityPublicKeyInfo` from `@/lib/crypto/keys`
+   - Replaced `findSigningKey()` method with `findMatchingSigningKey()` that:
+     - Takes the private key WIF and WASM public keys
+     - Derives the public key from the private key and matches against identity keys
+     - Verifies the matched key has AUTHENTICATION purpose and CRITICAL or HIGH security level
+     - Returns the matching WASM public key object
+   - Updated `registerUsername()` to use `findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH)` instead of the old `findSigningKey(wasmPublicKeys, SecurityLevel.CRITICAL)`
+   - Added logging for matched key info
+
+### Why This Change Was Necessary
+
+The same bug fixed in Phase 2 (BUG-SDK-001) also affected the DPNS service. The old `findSigningKey()` method:
+1. Selected keys based on security level alone without verifying the key matches the stored private key
+2. Could select a key the user doesn't have the private key for, causing signing failures
+
+The new `findMatchingSigningKey()` method ensures the selected identity key corresponds to the private key in the signer.
+
+### Build Status
+
+- **Build succeeds** with no errors
+- **Lint passes** with only pre-existing warnings
+
+### Testing
+
+Tested via Playwright:
+1. Logged in with test identity using HIGH security key
+2. Created a new post: "Testing Phase 4 DPNS update with findMatchingSigningKey!"
+3. Console shows: "Matched private key to identity key: id=1, securityLevel=HIGH, purpose=0"
+4. Post created successfully and visible on profile page
+5. User profile shows "2 posts" (1 from earlier, 1 new)
+
+Document creation continues to work correctly with the updated key matching logic.
+
+### Screenshots
+
+- `screenshots/sdk-upgrade-phase4-dpns-service.png` - Shows user profile with 2 posts
+- `screenshots/sdk-upgrade-phase4-new-post.png` - Shows the new post in the feed
+
+### Next Steps
+
+1. Phase 5: Final verification and comprehensive testing

@@ -266,3 +266,49 @@ const newKey = new wasm.IdentityPublicKeyInCreation(
 ```
 
 **Note**: The `data` parameter must be a `Uint8Array`, not a hex or base64 string.
+
+---
+
+## 2026-01-19: Phase 4 Learnings - DPNS Service Updates
+
+### Key Matching Required for All State Transitions
+
+**Critical Pattern**: The `findMatchingSigningKey()` pattern implemented in Phase 2 must be applied consistently across ALL services that perform state transitions, not just document operations.
+
+The DPNS service had the same vulnerability as the state-transition-service:
+- Old `findSigningKey()` selected keys based on security level alone
+- This could select a key the user doesn't have the private key for
+- The WASM signer matches private keys to identity keys via public key hash
+
+**Fix Applied**: Updated `dpns-service.ts` to use the same `findMatchingSigningKey()` pattern:
+1. Import `findMatchingKeyIndex` from `@/lib/crypto/keys`
+2. Convert WASM keys to `IdentityPublicKeyInfo[]` format
+3. Match private key to identity key
+4. Verify security level is allowed (CRITICAL or HIGH for DPNS)
+5. Return the matched WASM key
+
+### DPNS Registration Security Level Requirements
+
+DPNS registration operations (`sdk.dpns.registerName()`) require:
+- **Purpose**: AUTHENTICATION (0)
+- **Security Level**: CRITICAL (1) or HIGH (2)
+
+MASTER (0) keys are NOT allowed for DPNS registration - they're reserved for identity operations only.
+
+### Consistent Error Messages Across Services
+
+Updated error messages to be consistent:
+- State Transition Service: "No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key."
+- DPNS Service: "No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key."
+
+### Reusable Key Matching Logic
+
+The `findMatchingKeyIndex()` function in `lib/crypto/keys.ts` is now the canonical way to match private keys to identity keys. It:
+1. Decodes WIF to get private key bytes
+2. Validates network prefix
+3. Derives compressed public key
+4. Computes hash160 of public key
+5. Matches against identity keys (handles both ECDSA_SECP256K1 and ECDSA_HASH160 types)
+6. Returns key info including id, securityLevel, and purpose
+
+This function should be used whenever matching a private key to identity keys is needed.
