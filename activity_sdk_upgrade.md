@@ -97,3 +97,44 @@ See `bugs_sdk_upgrade.md` for BUG-SDK-001 details. Investigation needed into Ide
 1. **Fix BUG-SDK-001** before proceeding (blocking)
 2. Phase 3: Identity Service updates
 3. Phase 4: DPNS Service updates
+
+---
+
+## 2026-01-19: BUG-SDK-001 Fixed - Document Creation Working
+
+### Root Cause Analysis
+
+The bug had two underlying issues:
+
+1. **Security Level Selection**: The `findSigningKey()` method selected keys based on security level alone, preferring lower values (more secure). It picked MASTER (0) keys, but document operations only allow CRITICAL (1) or HIGH (2) keys.
+
+2. **Private Key Mismatch**: After fixing #1, the code would select a CRITICAL key, but the user might have logged in with a HIGH key. The WASM signer stores private keys by their public key hash - if the selected identity key doesn't match the private key hash in the signer, signing fails.
+
+### Solution Implemented
+
+Added new `findMatchingSigningKey()` method in `state-transition-service.ts`:
+
+1. Takes the stored private key WIF and identity's WASM public keys
+2. Uses `@/lib/crypto/keys.findMatchingKeyIndex()` to derive the public key from private key and match against identity keys
+3. Verifies the matched key has:
+   - Purpose: AUTHENTICATION (0)
+   - Security Level: CRITICAL (1) or HIGH (2) - NOT MASTER (0)
+4. Returns the matching WASM public key object
+
+Updated `createDocument()`, `updateDocument()`, and `deleteDocument()` to use this new method.
+
+### Testing
+
+- Created a test post successfully
+- Console shows: "Matched private key to identity key: id=1, securityLevel=HIGH, purpose=0"
+- Document creation, signing, and broadcast all work correctly
+
+### Screenshot
+
+`screenshots/sdk-upgrade-bug-fix-document-creation.png` - Shows user profile after successful post creation
+
+### Next Steps
+
+1. Phase 3: Identity Service updates
+2. Phase 4: DPNS Service updates
+3. Phase 5: Final verification and testing

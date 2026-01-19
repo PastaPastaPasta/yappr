@@ -5,21 +5,20 @@
  * for use with the new typed state transition APIs in @dashevo/evo-sdk@^3.0.0-dev.11
  *
  * The new API requires Document WASM objects instead of plain data objects.
+ *
+ * IMPORTANT: We import the Document class from @dashevo/evo-sdk which re-exports
+ * from the shared @dashevo/wasm-sdk module. By calling getEvoSdk() first, we ensure
+ * the WASM module is initialized before creating any Document objects.
  */
-import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
-
-// Track WASM initialization
-let wasmInitialized = false;
+import { getEvoSdk } from './evo-sdk-service';
+import { Document } from '@dashevo/evo-sdk';
 
 /**
- * Ensure WASM module is initialized
+ * Ensure WASM module is initialized by connecting SDK
+ * This guarantees the shared WASM module is ready before creating objects
  */
-async function ensureWasmInitialized(): Promise<typeof wasmSdk> {
-  if (!wasmInitialized) {
-    await initWasm();
-    wasmInitialized = true;
-  }
-  return wasmSdk;
+async function ensureWasmReady(): Promise<void> {
+  await getEvoSdk();
 }
 
 class DocumentBuilderService {
@@ -40,14 +39,15 @@ class DocumentBuilderService {
     documentTypeName: string,
     ownerId: string,
     data: Record<string, unknown>
-  ): Promise<wasmSdk.Document> {
-    const wasm = await ensureWasmInitialized();
+  ): Promise<InstanceType<typeof Document>> {
+    // Ensure WASM is initialized before creating objects
+    await ensureWasmReady();
 
     // Create document with revision 1 for new documents
     // Document ID is undefined to let the SDK generate it based on entropy
     // Note: TypeScript types are stricter than the actual WASM API - undefined is valid
     // and causes the SDK to auto-generate the document ID from entropy
-    const document = new wasm.Document(
+    const document = new Document(
       data,              // Document data fields
       documentTypeName,  // Document type name
       BigInt(1),         // Revision (must be BigInt, 1 for new documents)
@@ -80,11 +80,12 @@ class DocumentBuilderService {
     ownerId: string,
     data: Record<string, unknown>,
     newRevision: number
-  ): Promise<wasmSdk.Document> {
-    const wasm = await ensureWasmInitialized();
+  ): Promise<InstanceType<typeof Document>> {
+    // Ensure WASM is initialized before creating objects
+    await ensureWasmReady();
 
     // Create document with the incremented revision
-    const document = new wasm.Document(
+    const document = new Document(
       data,              // Updated document data fields
       documentTypeName,  // Document type name
       BigInt(newRevision), // New revision (must be BigInt)
@@ -136,10 +137,10 @@ class DocumentBuilderService {
    * @param document - A WASM Document or document-like object
    * @returns Normalized document data with $ prefixed fields
    */
-  normalizeDocumentResponse(document: wasmSdk.Document | Record<string, unknown>): Record<string, unknown> {
+  normalizeDocumentResponse(document: Document | Record<string, unknown>): Record<string, unknown> {
     // Check if it's a WASM Document with toJSON method
-    if (document && typeof (document as wasmSdk.Document).toJSON === 'function') {
-      return (document as wasmSdk.Document).toJSON();
+    if (document && typeof (document as Document).toJSON === 'function') {
+      return (document as Document).toJSON();
     }
 
     // Handle raw objects - normalize field names
@@ -171,7 +172,7 @@ class DocumentBuilderService {
    * @param document - The WASM Document after creation
    * @returns The document ID as a string
    */
-  getDocumentId(document: wasmSdk.Document): string {
+  getDocumentId(document: Document): string {
     // The document.id property returns an Identifier which can be converted to string
     const id = document.id;
     if (typeof id === 'string') {

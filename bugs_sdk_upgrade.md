@@ -5,47 +5,36 @@ Track bugs discovered during the SDK upgrade from dev.9 to dev.11.
 
 ---
 
-## BUG-SDK-001: WASM Memory Access Out of Bounds During Document Creation
+<!-- No open bugs currently -->
 
-**Status**: OPEN
+---
+
+## RESOLVED BUGS
+
+### BUG-SDK-001: Key Selection Mismatch During Document Creation (FIXED)
+
+**Status**: RESOLVED
+**Resolution Date**: 2026-01-19
 **Severity**: CRITICAL
 **Phase**: Phase 2 (State Transition Service)
 
-### Description
-When calling `sdk.documents.create()` with the new typed API, a WASM runtime error occurs:
-```
-RuntimeError: memory access out of bounds
-    at wasm://wasm/03a2373e:wasm-function[14753]:0xa5efc6
-```
+#### Root Cause
+The bug manifested in two ways:
+1. **Security Level Error**: When selecting a signing key, the code picked MASTER (0) security level keys, but document operations only allow CRITICAL (1) or HIGH (2) keys.
+2. **Key Mismatch Error**: After fixing #1, the code selected CRITICAL keys based on security level alone, but the stored private key might correspond to a different identity key (e.g., HIGH key).
 
-### Steps to Reproduce
-1. Build a Document using `new wasm.Document(data, typeName, revision, contractId, ownerId, undefined)`
-2. Create an IdentitySigner using `signer.addKeyFromWif(privateKeyWif)`
-3. Create an IdentityPublicKey using `wasm.IdentityPublicKey.fromJSON(keyData)`
-4. Call `sdk.documents.create({ document, identityKey, signer })`
+The WASM signer uses the public key hash to look up private keys. If the selected identity key doesn't match the private key in the signer, signing fails with "No private key found for public key hash".
 
-### Observations
-- Document builds successfully (ID is generated)
-- Signer initialization succeeds
-- Error occurs during `sdk.documents.create()` call
-- The error is at the WASM level, not JavaScript
+#### Solution
+1. Added new `findMatchingSigningKey()` method that:
+   - Derives the public key from the stored private key WIF
+   - Computes the hash160 of the public key
+   - Matches it against each identity public key's data
+   - Verifies the matched key has appropriate security level (CRITICAL or HIGH) and purpose (AUTHENTICATION)
+2. Updated all document operations (create, update, delete) to use this method instead of selecting keys by security level alone.
 
-### Suspected Cause
-The `IdentityPublicKey.fromJSON()` method may not be producing a correctly structured object that the `documents.create()` method expects. Alternatively, there may be an issue with how the signer's private key hash is being matched to the identity public key.
-
-### Workaround
-None currently. The old API still works but requires updating to use the new typed APIs per PRD.
-
-### Investigation Needed
-1. Check if `IdentityPublicKey` constructor vs `fromJSON` produces different internal structures
-2. Verify the identity public key data format (should be base64 encoded)
-3. Check if the signer's key hash matches the identity public key hash
-4. Consider using the SDK's internal identity fetching rather than manual key construction
-
-### Files Affected
-- `lib/services/state-transition-service.ts`
-- `lib/services/signer-service.ts`
-- `lib/services/document-builder-service.ts`
+#### Files Modified
+- `lib/services/state-transition-service.ts` - Added `findMatchingSigningKey()` method and updated all document operations
 
 ---
 
