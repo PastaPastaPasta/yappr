@@ -6,6 +6,8 @@ import { X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/contexts/auth-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
+import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
+import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
 
@@ -30,14 +32,42 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
     }
   }, [isOpen, reset])
 
-  const handleSkip = () => {
+  const handleSkip = async () => {
     sessionStorage.setItem('yappr_skip_dpns', 'true')
     onClose()
+
+    // Prompt for key backup if the feature is configured (same as after registration)
+    if (encryptedKeyService.isConfigured()) {
+      const hasBackup = await encryptedKeyService.hasBackup(currentIdentityId)
+      if (!hasBackup) {
+        const { getPrivateKey } = await import('@/lib/secure-storage')
+        const privateKey = getPrivateKey(currentIdentityId)
+        if (privateKey) {
+          useKeyBackupModal.getState().open(currentIdentityId, '', privateKey)
+          return // Don't redirect yet - let the backup modal handle it
+        }
+      }
+    }
+
     router.push('/profile/create')
   }
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
     onClose()
+
+    // Prompt for key backup if the feature is configured
+    if (encryptedKeyService.isConfigured()) {
+      const hasBackup = await encryptedKeyService.hasBackup(currentIdentityId)
+      if (!hasBackup) {
+        const { getPrivateKey } = await import('@/lib/secure-storage')
+        const privateKey = getPrivateKey(currentIdentityId)
+        if (privateKey) {
+          // Note: redirectOnClose=true by default, so modal will redirect to /profile/create
+          // The wizard also redirects there, but that's fine - it's a no-op
+          useKeyBackupModal.getState().open(currentIdentityId, user?.dpnsUsername || '', privateKey)
+        }
+      }
+    }
   }
 
   return (

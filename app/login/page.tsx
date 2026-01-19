@@ -205,11 +205,13 @@ export default function LoginPage() {
         await login(identityId, credential, { rememberMe })
 
         // Prompt for on-chain backup if none exists (and not already prompted this session)
-        if (encryptedKeyService.isConfigured() && !sessionStorage.getItem('yappr_backup_prompt_shown')) {
+        // Only show for users who already have a DPNS username - new users without a username
+        // will be prompted after completing DPNS registration in the username modal
+        if (resolvedIdentity?.dpnsUsername && encryptedKeyService.isConfigured() && !sessionStorage.getItem('yappr_backup_prompt_shown')) {
           const hasBackup = await encryptedKeyService.hasBackup(identityId)
           if (!hasBackup) {
             sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
-            openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', credential, false)
+            openBackupModal(identityId, resolvedIdentity.dpnsUsername, credential, false)
           }
         }
       } else {
