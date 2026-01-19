@@ -312,8 +312,17 @@ function FollowingPage() {
 
   // Search for DPNS users
   const searchUsers = useCallback(async () => {
-    if (!searchQuery.trim()) {
+    const trimmedQuery = searchQuery.trim()
+    if (!trimmedQuery) {
       setSearchResults([])
+      setSearchError(null)
+      return
+    }
+
+    // Require at least 3 characters to search (like DashPay)
+    if (trimmedQuery.length < 3) {
+      setSearchResults([])
+      setSearchError(null)
       return
     }
 

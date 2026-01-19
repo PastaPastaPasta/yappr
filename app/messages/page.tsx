@@ -272,8 +272,8 @@ function MessagesPage() {
       return
     }
 
-    // Only search if at least 2 characters
-    if (query.length < 2) {
+    // Only search if at least 3 characters (like DashPay)
+    if (query.length < 3) {
       setUserSearchResults([])
       return
     }
@@ -846,7 +846,7 @@ function MessagesPage() {
                   />
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Type a username to search, or paste a full identity ID
+                  Type at least 3 characters to search, or paste a full identity ID
                 </p>
               </div>
 
@@ -886,7 +886,7 @@ function MessagesPage() {
               )}
 
               {/* Show no results message */}
-              {!isSearchingUsers && userSearchResults.length === 0 && newConversationInput.trim().length >= 2 && newConversationInput.trim().length <= 30 && (
+              {!isSearchingUsers && userSearchResults.length === 0 && newConversationInput.trim().length >= 3 && newConversationInput.trim().length <= 30 && (
                 <div className="mb-4 p-3 text-center text-sm text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl">
                   No users found matching &quot;{newConversationInput.trim()}&quot;
                 </div>
