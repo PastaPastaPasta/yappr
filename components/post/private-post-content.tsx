@@ -172,9 +172,46 @@ export function PrivatePostContent({
 
       if (isEncryptionSourceOwner) {
         // User is the encryption source owner - decrypt using their feed keys
-        const feedSeed = privateFeedKeyStore.getFeedSeed()
+        let feedSeed = privateFeedKeyStore.getFeedSeed()
+
+        // BUG-011 fix: If owner has no local keys but has encryption key, attempt auto-recovery
         if (!feedSeed) {
-          // Owner doesn't have local keys - needs to recover
+          const encryptionKeyHex = getEncryptionKey(user.identityId)
+          if (encryptionKeyHex) {
+            console.log('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
+            setState({ status: 'recovering' })
+
+            // Convert hex to bytes
+            const encryptionPrivateKey = new Uint8Array(
+              encryptionKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+            )
+
+            // Attempt to recover owner state from chain
+            const { privateFeedService } = await import('@/lib/services')
+            const recoveryResult = await privateFeedService.recoverOwnerState(
+              encryptionSourceOwnerId,
+              encryptionPrivateKey
+            )
+
+            if (recoveryResult.success) {
+              console.log('Owner auto-recovery: successfully recovered feed seed')
+              feedSeed = privateFeedKeyStore.getFeedSeed()
+            } else {
+              console.log('Owner auto-recovery failed:', recoveryResult.error)
+              // Recovery failed - show locked state with no-keys reason
+              setState({ status: 'locked', reason: 'no-keys' })
+              return
+            }
+          } else {
+            // Owner doesn't have encryption key - needs to enter it
+            console.log('Owner cannot decrypt: no feed seed and no encryption key')
+            setState({ status: 'locked', reason: 'no-keys' })
+            return
+          }
+        }
+
+        // Double-check we have feedSeed after potential recovery
+        if (!feedSeed) {
           setState({ status: 'locked', reason: 'no-keys' })
           return
         }

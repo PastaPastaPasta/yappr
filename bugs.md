@@ -2,86 +2,7 @@
 
 ## Active Bugs
 
-### BUG-011: Owner cannot decrypt their own private posts when local feed keys are missing
-
-**Severity:** HIGH - Blocks Test 5.5 (View as Owner)
-
-**Description:** When a feed owner views their own private post but has no local `yappr:pf:*` keys stored (e.g., fresh session, cleared localStorage, new device), the post shows "Private Content - Only approved followers can see this content" with a "Request Access" button. The owner should always be able to decrypt and view their own private posts.
-
-**Steps to Reproduce:**
-1. Clear localStorage/sessionStorage
-2. Log in as the feed owner (identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2)
-3. Store encryption key in session (yappr_secure_ek_*)
-4. Navigate to owner's profile and click on a private post
-5. Post shows locked state with "Request Access" button instead of decrypted content
-
-**Expected Behavior:**
-- Owner views their own private post
-- `PrivatePostContent` component detects owner has encryption key but no feed seed
-- Auto-recovery triggers using `recoverOwnerState()` with the encryption key
-- Post decrypts and displays normally with "Visible to X private followers" indicator
-
-**Actual Behavior:**
-- `PrivatePostContent.attemptDecryption()` checks `privateFeedKeyStore.getFeedSeed()` which returns null
-- Component sets state to `{ status: 'locked', reason: 'no-keys' }`
-- Owner sees "Request Access" button for their own post
-
-**Root Cause Analysis:**
-In `components/post/private-post-content.tsx`, lines 173-179:
-```typescript
-if (isEncryptionSourceOwner) {
-  const feedSeed = privateFeedKeyStore.getFeedSeed()
-  if (!feedSeed) {
-    // Owner doesn't have local keys - needs to recover
-    setState({ status: 'locked', reason: 'no-keys' })
-    return
-  }
-  // ... decryption logic
-}
-```
-
-The code correctly identifies that feed keys are missing, but instead of triggering auto-recovery (like BUG-010 fix did for `createPrivatePost()`), it just shows the locked state.
-
-**Proposed Fix:**
-Similar to BUG-010 fix, when the owner has no feed seed but has an encryption key available, trigger `recoverOwnerState()` automatically:
-
-```typescript
-if (isEncryptionSourceOwner) {
-  let feedSeed = privateFeedKeyStore.getFeedSeed()
-
-  // BUG-011 fix: If owner has no local keys but has encryption key, attempt recovery
-  if (!feedSeed) {
-    const encryptionKeyHex = getEncryptionKey(user.identityId)
-    if (encryptionKeyHex) {
-      setState({ status: 'recovering' })
-      const { privateFeedService } = await import('@/lib/services')
-      const encryptionPrivateKey = new Uint8Array(
-        encryptionKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
-      )
-      const recoveryResult = await privateFeedService.recoverOwnerState(
-        encryptionSourceOwnerId,
-        encryptionPrivateKey
-      )
-      if (recoveryResult.success) {
-        feedSeed = privateFeedKeyStore.getFeedSeed()
-      }
-    }
-  }
-
-  if (!feedSeed) {
-    setState({ status: 'locked', reason: 'no-keys' })
-    return
-  }
-  // ... continue with decryption
-}
-```
-
-**Files to Modify:**
-- `components/post/private-post-content.tsx` - Add auto-recovery for owner when encryption key is available
-
-**Screenshot:** `screenshots/e2e-test5.5-owner-cannot-decrypt-BUG.png`
-
-**Date Reported:** 2026-01-19
+*No active bugs*
 
 ### BUG-010: Failed to create post: Private feed not enabled (RESOLVED)
 
@@ -152,6 +73,24 @@ After the fix:
 **Date Resolved:** 2026-01-19
 
 ## Resolved Bugs
+
+### BUG-011: Owner cannot decrypt their own private posts when local feed keys are missing (RESOLVED)
+
+**Resolution:** Added auto-recovery logic to `PrivatePostContent.attemptDecryption()`. When the owner has no feed seed but has an encryption key available, the code now automatically triggers `recoverOwnerState()` to restore local keys from chain before attempting decryption.
+
+**Root Cause:** The `attemptDecryption()` function immediately showed a locked state when `getFeedSeed()` returned null, without checking if the encryption key was available for auto-recovery. This was inconsistent with the BUG-010 fix that added auto-recovery to `createPrivatePost()`.
+
+**Files Modified:**
+- `components/post/private-post-content.tsx` - Added auto-recovery logic when owner has encryption key but no feed seed
+
+**Verification:**
+- Cleared localStorage, stored only encryption key
+- Logged in as owner and clicked on a private post
+- Console showed: "Owner auto-recovery: no local feed seed, attempting recovery with encryption key"
+- Post decrypted successfully showing content and "Visible to 2 private followers"
+- Screenshot: `screenshots/bug011-fix-owner-decryption-success.png`
+
+**Date Resolved:** 2026-01-19
 
 ### BUG-008: Private feed notifications do not work (RESOLVED)
 

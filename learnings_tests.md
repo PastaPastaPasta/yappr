@@ -965,3 +965,61 @@ if (!hasLocalKeys && encryptionPrivateKey) {
 - After recovery, `getFeedSeed()` will return the recovered value
 
 **Lesson:** Don't treat missing feed seed as a permanent "no access" state. If the encryption key is available, trigger recovery before giving up.
+
+---
+
+## 2026-01-19: BUG-011 Fix - Owner Auto-Recovery Consistency
+
+### Issue 61: Consistent Auto-Recovery Across All Code Paths (BUG-011 - FIXED)
+**Problem:** The BUG-010 fix added auto-recovery to `createPrivatePost()` when local keys were missing, but the same pattern wasn't applied to `PrivatePostContent.attemptDecryption()`. This meant owners could create private posts but couldn't view existing ones after clearing localStorage.
+
+**Key Insight:** The auto-recovery pattern needs to be applied consistently across all operations that require the feed seed:
+1. `createPrivatePost()` - FIXED in BUG-010
+2. `PrivatePostContent.attemptDecryption()` - FIXED in BUG-011
+3. `createInheritedPrivateReply()` - Uses same flow as createPrivatePost, should work
+
+**Code Pattern Applied:**
+```typescript
+let feedSeed = privateFeedKeyStore.getFeedSeed()
+
+// Auto-recovery when no feed seed but encryption key is available
+if (!feedSeed) {
+  const encryptionKeyHex = getEncryptionKey(user.identityId)
+  if (encryptionKeyHex) {
+    setState({ status: 'recovering' })
+    const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey)
+    if (recoveryResult.success) {
+      feedSeed = privateFeedKeyStore.getFeedSeed()
+    }
+  }
+}
+
+if (!feedSeed) {
+  // Only now show locked state
+  setState({ status: 'locked', reason: 'no-keys' })
+  return
+}
+```
+
+**Lesson:** When implementing a fix that involves "fallback to recovery when local state is missing", audit all code paths that depend on that local state. A feature like private posts may have multiple entry points (create, view, reply) and all need consistent recovery behavior.
+
+### Issue 62: UI State During Recovery
+**Observation:** The recovery process can take several seconds (involves chain queries). The UI needs to show appropriate feedback during this time.
+
+**Solution Applied:** The `PrivatePostContent` component sets `setState({ status: 'recovering' })` which triggers a blue loading UI with "Recovering access keys..." message and a key icon animation. This provides visual feedback that something is happening.
+
+**Key States:**
+- `idle` / `loading` - Initial decryption attempt
+- `recovering` - Fetching keys from chain (new state used for auto-recovery)
+- `decrypted` - Success, show content
+- `locked` - No access, show locked UI
+
+**Lesson:** Long-running operations like chain recovery need distinct UI states. Don't just show a generic "loading" - tell the user specifically what's happening ("Recovering access keys" vs "Decrypting").
+
+### Best Practices Updates
+
+13. **Apply auto-recovery consistently** - When adding recovery logic to one code path, audit all related paths that might need the same fix.
+
+14. **Use distinct UI states for recovery** - Differentiate between "decrypting locally" and "recovering from chain" so users understand why it might take longer.
+
+15. **Test fresh session scenarios** - Always test features both with existing state AND with cleared localStorage to ensure recovery paths work correctly.
