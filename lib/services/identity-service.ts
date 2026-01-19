@@ -1,7 +1,15 @@
 import { getEvoSdk } from './evo-sdk-service';
-import {
-  IdentityPublicKeyInCreation,
-} from '@dashevo/wasm-sdk';
+// WASM SDK imports with dynamic initialization
+import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
+
+let wasmInitialized = false;
+async function ensureWasmInitialized() {
+  if (!wasmInitialized) {
+    await initWasm();
+    wasmInitialized = true;
+  }
+  return wasmSdk;
+}
 
 export interface IdentityPublicKey {
   id: number;
@@ -214,6 +222,9 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
+      // Ensure WASM module is initialized
+      const wasm = await ensureWasmInitialized();
+
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -238,6 +249,9 @@ class IdentityService {
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
       // Create the new key object for IdentityPublicKeyInCreation.fromObject()
+      // The SDK expects data as base64-encoded string (matching how keys are returned from identity.toJSON())
+      const publicKeyBase64 = btoa(String.fromCharCode.apply(null, Array.from(publicKeyBytes)));
+
       const newKeyObj: Record<string, unknown> = {
         $version: 0,
         id: newKeyId,
@@ -245,21 +259,22 @@ class IdentityService {
         securityLevel: 2,    // MEDIUM
         type: 0,             // ECDSA_SECP256K1
         readOnly: false,
-        data: Array.from(publicKeyBytes),
+        data: publicKeyBase64,
+        contractBounds: null,
+        disabledAt: null,
       };
 
-      // Add contract bounds if specified
-      if (contractId) {
-        newKeyObj.contractBounds = {
-          type: 0,  // singleContract
-          id: contractId
-        };
-      }
+      // Skip contract bounds for now - testing without it
+      // Contract-bound keys may require specific SDK handling
+      console.log('NOTE: Skipping contractBounds for encryption key (testing)');
 
-      // Create IdentityPublicKeyInCreation from object
-      const newKey = IdentityPublicKeyInCreation.fromObject(newKeyObj);
+      // Create IdentityPublicKeyInCreation from WASM module
+      console.log('Creating IdentityPublicKeyInCreation with object:', JSON.stringify(newKeyObj));
+      const newKey = wasm.IdentityPublicKeyInCreation.fromObject(newKeyObj);
+      console.log('IdentityPublicKeyInCreation created successfully');
 
       console.log(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
+      console.log('Calling sdk.identities.update with privateKeyWif length:', authPrivateKeyWif?.length);
 
       // Update the identity
       await sdk.identities.update({
@@ -267,6 +282,7 @@ class IdentityService {
         addPublicKeys: [newKey],
         privateKeyWif: authPrivateKeyWif,
       });
+      console.log('sdk.identities.update completed');
 
       console.log('Encryption key added successfully');
 
@@ -276,9 +292,19 @@ class IdentityService {
       return { success: true, keyId: newKeyId };
     } catch (error) {
       console.error('Error adding encryption key:', error);
+      // Extract more detailed error info
+      let errorMessage = 'Unknown error';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        console.error('Error stack:', error.stack);
+        // Check for WASM error properties
+        const wasmError = error as { code?: string; data?: unknown };
+        if (wasmError.code) console.error('Error code:', wasmError.code);
+        if (wasmError.data) console.error('Error data:', wasmError.data);
+      }
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage
       };
     }
   }
