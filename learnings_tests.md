@@ -327,3 +327,42 @@ The contract (`contracts/yappr-social-contract-actual.json`) defines:
 - Using different browsers/profiles
 
 **Lesson:** Design test identities upfront with all required capabilities (encryption keys, DPNS names, following relationships). Document the setup so tests can assume prerequisites are met.
+
+---
+
+## 2026-01-19: BUG-004 Fix - Empty Content Field Validation
+
+### Issue 20: Data Contract Constraint on Empty String (BUG-004 - FIXED)
+**Problem:** Private posts without teaser failed because the `content` field was set to empty string `''`, but the data contract enforces `minLength: 1`.
+
+**Root Cause:** The implementation assumed empty string was valid for posts where all content is encrypted. The contract defines:
+```json
+"content": {
+  "type": "string",
+  "minLength": 1,
+  "maxLength": 500
+}
+```
+
+**Solution:** Use a placeholder character `🔒` for the `content` field when no teaser is provided. This:
+1. Satisfies the contract constraint (length = 1)
+2. Visually indicates to users that the post is private
+3. Keeps the actual content encrypted in `encryptedContent`
+
+**Key Insight:** When a data contract field is required with constraints, you cannot simply pass empty/null values even if the "real" data is stored elsewhere. The placeholder approach is a clean solution that maintains contract compatibility.
+
+**Lesson:** Always verify data contract constraints before implementing features that interact with on-chain documents. Constraints like `minLength`, `maxLength`, and `required` are enforced at the protocol level and will reject state transitions that violate them.
+
+### Issue 21: Testing Private Post Creation E2E
+**Observation:** The E2E test for private post creation (Test 2.2) requires:
+1. User with private feed enabled
+2. Encryption keys stored in localStorage
+3. Dev server running with fresh state
+
+**Verification Steps:**
+1. Check console for `Creating post document with data: {content: 🔒, ...}`
+2. Verify "Document creation submitted successfully" log
+3. Refresh page to see post in feed with 🔒 placeholder
+4. Confirm post count increased
+
+**Lesson:** When fixing bugs related to on-chain operations, verify the fix by checking both console logs (for the data being sent) and the UI (for the result after refresh).

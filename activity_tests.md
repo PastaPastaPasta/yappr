@@ -540,3 +540,67 @@ await privateFeedFollowerService.requestAccess(ownerId, currentUserId, encryptio
 - [ ] E2E Test 3.1: Request Access - Happy Path (verify encryption key is included in request)
 - [ ] E2E Test 3.4: Request Access - Missing Encryption Key (verify error message shown)
 - [ ] E2E Test 4.2: Approve Request - Happy Path (verify approval succeeds with new flow)
+
+---
+
+## 2026-01-19: BUG-004 Fix - Private Posts Without Teaser
+
+### Task
+Fix BUG-004: Private posts without teaser fail with JsonSchemaError
+
+### Status
+**FIXED** - E2E Test 2.2 now passes
+
+### Root Cause
+In `lib/services/private-feed-service.ts`, two methods set `content` to an empty string when no teaser is provided:
+- `createPrivatePost()` line 407: `content: teaser || ''`
+- `createInheritedPrivateReply()` line 508: `content: ''`
+
+The data contract requires `content.minLength >= 1`, so empty strings fail validation with:
+```
+WasmSdkError: Failed to broadcast transition: Protocol error: JsonSchemaError: "" is shorter than 1 character, path: /content
+```
+
+### Solution Applied
+Used a placeholder character `🔒` for the `content` field when no teaser is provided:
+
+```typescript
+// Note: Data contract requires content.minLength >= 1, so use placeholder if no teaser
+const PRIVATE_POST_PLACEHOLDER = '🔒';
+const postData: Record<string, unknown> = {
+  content: teaser || PRIVATE_POST_PLACEHOLDER,
+  encryptedContent: Array.from(encrypted.ciphertext),
+  epoch: localEpoch,
+  nonce: Array.from(encrypted.nonce),
+};
+```
+
+The actual post content remains encrypted in `encryptedContent` - the `content` field is just the public-facing placeholder that satisfies the contract constraint.
+
+### Verification
+1. Started dev server and logged in as test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2
+2. Opened compose modal and selected "Private" visibility (no teaser)
+3. Entered test content: "BUG-004 Fix Test: This is a private post WITHOUT a teaser..."
+4. Clicked Post button
+5. Console showed: `Creating post document with data: {content: 🔒, encryptedContent: Array(140)...}`
+6. Post created successfully with ID: 3JaTDNCSpfFdpYMXcEneCeuziXwdRrMxaGgr8jit8gvi
+7. Refreshed page - post appears in feed showing "🔒" as content
+8. Post count increased from 3 to 4
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Post created without JsonSchemaError | Post created successfully | ✅ |
+| encryptedContent contains encrypted post | 140 bytes encrypted content | ✅ |
+| Post visible in user's feed | Post appears with 🔒 placeholder | ✅ |
+
+### Files Modified
+- `lib/services/private-feed-service.ts` - Added placeholder for empty content in both `createPrivatePost()` and `createInheritedPrivateReply()`
+
+### Screenshots
+- `screenshots/bug004-fix-compose-private-post.png` - Compose modal with Private visibility selected
+- `screenshots/bug004-fix-post-success.png` - After successful post creation
+- `screenshots/bug004-fix-private-post-visible.png` - Profile showing new private post with 🔒 placeholder
+
+### Test Result
+**PASSED** - E2E Test 2.2: Create Private Post - No Teaser now works correctly

@@ -403,8 +403,10 @@ class PrivateFeedService {
       );
 
       // 9. Create Post document (SPEC §8.2 step 9)
+      // Note: Data contract requires content.minLength >= 1, so use placeholder if no teaser
+      const PRIVATE_POST_PLACEHOLDER = '🔒';
       const postData: Record<string, unknown> = {
-        content: teaser || '', // Teaser or empty string for private-only posts
+        content: teaser || PRIVATE_POST_PLACEHOLDER,
         encryptedContent: Array.from(encrypted.ciphertext),
         epoch: localEpoch,
         nonce: Array.from(encrypted.nonce),
@@ -504,8 +506,10 @@ class PrivateFeedService {
       );
 
       // 5. Create Post document with inherited encryption
+      // Note: Data contract requires content.minLength >= 1, so use placeholder
+      const PRIVATE_POST_PLACEHOLDER = '🔒';
       const postData: Record<string, unknown> = {
-        content: '', // No teaser for replies - all content is encrypted
+        content: PRIVATE_POST_PLACEHOLDER, // No teaser for replies - all content is encrypted
         encryptedContent: Array.from(encrypted.ciphertext),
         epoch: encryptionSource.epoch,
         nonce: Array.from(encrypted.nonce),
