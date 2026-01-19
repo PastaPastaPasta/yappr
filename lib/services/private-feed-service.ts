@@ -335,6 +335,33 @@ class PrivateFeedService {
     encryptionPrivateKey?: Uint8Array
   ): Promise<PrivatePostResult> {
     try {
+      // 0. Check if local keys exist at all (BUG-010 fix)
+      // This handles the case where the user enabled private feed on another device/session
+      // and hasn't yet synced to this device
+      const hasLocalKeys = privateFeedKeyStore.hasFeedSeed();
+
+      if (!hasLocalKeys) {
+        console.log('No local private feed keys found, need full recovery');
+
+        if (encryptionPrivateKey) {
+          // Run full recovery to restore local state from chain
+          const recoveryResult = await this.recoverOwnerState(ownerId, encryptionPrivateKey);
+          if (!recoveryResult.success) {
+            return {
+              success: false,
+              error: `Recovery failed: ${recoveryResult.error}`,
+            };
+          }
+          console.log('Full recovery completed, continuing with post creation');
+        } else {
+          // No key provided - return a specific error that UI can detect
+          return {
+            success: false,
+            error: 'SYNC_REQUIRED:No local keys found. Please enter your encryption key to sync.',
+          };
+        }
+      }
+
       // 1. SYNC CHECK (SPEC §8.2 step 1)
       // Fetch latest epoch from chain and compare with local
       const chainEpoch = await this.getLatestEpoch(ownerId);
