@@ -490,3 +490,33 @@ pkill -f "next dev"; rm -rf .next && npm run dev
 **Observation:** This test (2.6) was straightforward and required no code changes - it simply verified existing expected behavior.
 
 **Lesson:** Some E2E tests are pure verification of existing functionality. These tests are valuable for regression testing and documentation purposes, even though they don't uncover bugs.
+
+---
+
+## BUG-006 Fix Session (2026-01-19)
+
+### Issue 31: Inherited Encryption Requires Different Decryption Logic
+**Bug:** BUG-006 - Encrypted replies fail to decrypt for the reply author, showing "Private Content - Only approved followers can see this content"
+
+**Root Cause:** When replying to a private post, the reply is encrypted with the **parent thread owner's CEK** (per PRD §5.5 inherited encryption), not the reply author's CEK. The decryption code assumed `post.author.id` was always the encryption owner, but for replies:
+- `post.author.id` = The person who wrote the reply
+- Encryption owner = The person who owns the private feed (root post author)
+
+**Key Insight:** In a reply chain to a private post, all replies inherit encryption from the root private post. This means:
+1. User A creates private post (encrypted with A's CEK)
+2. User B replies to A's private post (encrypted with A's CEK, not B's)
+3. When User B views their own reply, they need A's CEK to decrypt it
+
+**Solution:** For posts with `replyToId` and encrypted content, use `getEncryptionSource()` to trace back to the root private post and use that owner's keys for decryption.
+
+**Lesson:** When implementing inherited/cascading encryption, always consider the decryption path. The entity that performs encryption (author) may be different from the entity whose keys were used (encryption source owner). Both composition AND decryption must be aware of this distinction.
+
+### Issue 32: Existing Utility Functions Can Be Reused
+**Observation:** The `getEncryptionSource()` function was already implemented for the compose modal to detect when replies need inherited encryption. The same function works perfectly for the decryption path.
+
+**Lesson:** When fixing bugs, look for existing utility functions that solve part of the problem. `getEncryptionSource()` walks the reply chain to find the root private post - exactly what the decryption code needed. Reusing it ensured consistency between encryption and decryption logic.
+
+### Issue 33: Console Logging for Debugging Complex Flows
+**Observation:** Adding `console.log('Reply decryption: inherited encryption from', encryptionSourceOwnerId)` immediately revealed when the fix was working correctly in the browser.
+
+**Lesson:** For complex cryptographic flows like private feed decryption, strategic console logs showing key state transitions (e.g., "using X's keys instead of Y's") make debugging much easier without cluttering the codebase.

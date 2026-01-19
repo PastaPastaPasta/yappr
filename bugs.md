@@ -2,9 +2,24 @@
 
 ## Active Bugs
 
-*No active bugs at this time.*
+(No active bugs)
 
 ## Resolved Bugs
+
+### BUG-006: Encrypted replies fail to decrypt (RESOLVED)
+
+**Resolution:** Modified `private-post-content.tsx` to detect inherited encryption for replies. When a post has `replyToId` and encrypted content, the code now uses `getEncryptionSource()` to trace back to the root private post and use that owner's CEK for decryption, instead of assuming `post.author.id` is the encryption owner.
+
+**Root Cause:** Replies to private posts use inherited encryption (PRD §5.5), meaning they're encrypted with the parent thread owner's CEK, not the reply author's CEK. The decryption code was using `post.author.id` (reply author) instead of the encryption source owner for key lookups.
+
+**Files Modified:**
+- `components/post/private-post-content.tsx` - Updated `attemptDecryption()` and `attemptRecovery()` to detect inherited encryption
+
+**Verification:**
+- Reply by @maybetestprivfeed3.dash now decrypts correctly showing "test reply to private"
+- Console logs confirm: "Reply decryption: inherited encryption from 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2"
+
+**Date Resolved:** 2026-01-19
 
 ### BUG-004: Private posts without teaser fail with JsonSchemaError (RESOLVED)
 

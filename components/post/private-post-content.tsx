@@ -73,10 +73,20 @@ export function PrivatePostContent({
         encryptionKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
       )
 
+      // For replies, determine the encryption source owner (PRD §5.5)
+      let encryptionSourceOwnerId = post.author.id
+      if (post.replyToId) {
+        const { getEncryptionSource } = await import('@/lib/services/post-service')
+        const encryptionSource = await getEncryptionSource(post.replyToId)
+        if (encryptionSource) {
+          encryptionSourceOwnerId = encryptionSource.ownerId
+        }
+      }
+
       // Attempt to recover follower keys from grant
       const { privateFeedFollowerService } = await import('@/lib/services')
       const result = await privateFeedFollowerService.recoverFollowerKeys(
-        post.author.id,
+        encryptionSourceOwnerId,
         user.identityId,
         encryptionPrivateKey
       )
@@ -87,7 +97,7 @@ export function PrivatePostContent({
           encryptedContent: post.encryptedContent!,
           epoch: post.epoch!,
           nonce: post.nonce!,
-          $ownerId: post.author.id,
+          $ownerId: encryptionSourceOwnerId,
         })
 
         if (decryptResult.success && decryptResult.content) {
@@ -140,9 +150,28 @@ export function PrivatePostContent({
       const { privateFeedFollowerService } = await import('@/lib/services')
       const { privateFeedKeyStore } = await import('@/lib/services')
 
-      // Check if user is the owner
-      if (isOwner) {
-        // Owner can always decrypt their own posts using their cached CEK
+      // For replies to private posts, we need to find the encryption source owner
+      // (PRD §5.5 - inherited encryption)
+      // The post.author.id is the reply author, but encryption may have been done
+      // with a different user's CEK (the root private post owner)
+      let encryptionSourceOwnerId = post.author.id
+
+      if (post.replyToId) {
+        // This is a reply - check if encryption was inherited from parent
+        const { getEncryptionSource } = await import('@/lib/services/post-service')
+        const encryptionSource = await getEncryptionSource(post.replyToId)
+        if (encryptionSource) {
+          // Encryption is inherited from parent thread
+          encryptionSourceOwnerId = encryptionSource.ownerId
+          console.log('Reply decryption: inherited encryption from', encryptionSourceOwnerId)
+        }
+      }
+
+      // Check if user is the encryption source owner (can decrypt with their own feed keys)
+      const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
+
+      if (isEncryptionSourceOwner) {
+        // User is the encryption source owner - decrypt using their feed keys
         const feedSeed = privateFeedKeyStore.getFeedSeed()
         if (!feedSeed) {
           // Owner doesn't have local keys - needs to recover
@@ -154,7 +183,7 @@ export function PrivatePostContent({
         const { privateFeedCryptoService, MAX_EPOCH } = await import('@/lib/services')
 
         // Get CEK for the post's epoch
-        const cached = privateFeedKeyStore.getCachedCEK(post.author.id)
+        const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
         let cek: Uint8Array
 
         if (cached && cached.epoch === post.epoch) {
@@ -167,8 +196,8 @@ export function PrivatePostContent({
           cek = chain[post.epoch!]
         }
 
-        // Convert owner ID to bytes for AAD
-        const ownerIdBytes = identifierToBytes(post.author.id)
+        // Convert encryption source owner ID to bytes for AAD
+        const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
 
         const decryptedContent = privateFeedCryptoService.decryptPostContent(
           cek,
@@ -181,26 +210,30 @@ export function PrivatePostContent({
         )
 
         // Fetch follower count for owner's own posts (PRD §4.8)
+        // Only show follower count if this is the author's own post (not inherited reply)
         let followerCount: number | undefined
-        try {
-          const { privateFeedService } = await import('@/lib/services')
-          followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
-        } catch (err) {
-          console.warn('Failed to fetch private follower count:', err)
-          // Continue without follower count - it's not critical
+        if (isOwner) {
+          try {
+            const { privateFeedService } = await import('@/lib/services')
+            followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
+          } catch (err) {
+            console.warn('Failed to fetch private follower count:', err)
+            // Continue without follower count - it's not critical
+          }
         }
 
         setState({ status: 'decrypted', content: decryptedContent, followerCount })
         return
       }
 
-      // Check if follower can decrypt
-      const canDecrypt = await privateFeedFollowerService.canDecrypt(post.author.id)
+      // User is not the encryption source owner - try to decrypt as follower
+      // Check if follower can decrypt using the encryption source owner's keys
+      const canDecrypt = await privateFeedFollowerService.canDecrypt(encryptionSourceOwnerId)
 
       if (!canDecrypt) {
         // Check access status to determine why
         const accessStatus = await privateFeedFollowerService.getAccessStatus(
-          post.author.id,
+          encryptionSourceOwnerId,
           user.identityId
         )
 
@@ -223,12 +256,12 @@ export function PrivatePostContent({
         return
       }
 
-      // Attempt to decrypt
+      // Attempt to decrypt using encryption source owner's keys
       const result = await privateFeedFollowerService.decryptPost({
         encryptedContent: post.encryptedContent,
         epoch: post.epoch!,
         nonce: post.nonce!,
-        $ownerId: post.author.id,
+        $ownerId: encryptionSourceOwnerId,
       })
 
       if (result.success && result.content) {

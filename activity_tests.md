@@ -880,3 +880,85 @@ The compose modal correctly resets to "Public" visibility each time it opens, re
 
 ### Test Result
 **PASSED** - E2E Test 2.6 completed successfully
+
+---
+
+## 2026-01-19: BUG-006 Fix - Encrypted Replies Fail to Decrypt
+
+### Task
+Fix BUG-006: Encrypted replies to private posts fail to decrypt for the reply author
+
+### Status
+**FIXED** - Encrypted replies now correctly decrypt using inherited encryption source
+
+### Root Cause Analysis
+When a user replies to someone else's private post, the reply is encrypted using **inherited encryption** per PRD §5.5. This means the reply is encrypted with the **root private post owner's CEK**, not the reply author's CEK.
+
+However, the decryption code in `private-post-content.tsx` was checking:
+```typescript
+const isOwner = user?.identityId === post.author.id
+```
+
+This checks if the current user is the **reply author**, not the **encryption source owner**. For replies:
+- `post.author.id` = reply author (e.g., Testing User 1)
+- Encryption source owner = root private post owner (e.g., Test User 1)
+
+When the reply author tried to view their own reply, the code tried to decrypt using the reply author's keys, but the content was encrypted with the private feed owner's keys. Result: "Private Content - Only approved followers can see this content"
+
+### Solution Applied
+Modified `private-post-content.tsx` to:
+1. **Detect inherited encryption for replies**: When a post has `replyToId` and encrypted content, call `getEncryptionSource()` to find the root private post
+2. **Use correct owner for decryption**: Use `encryptionSourceOwnerId` instead of `post.author.id` for key lookups
+3. **Update both functions**: Applied fix to both `attemptDecryption()` and `attemptRecovery()`
+
+### Key Code Changes
+
+**Before (BUG-006):**
+```typescript
+const isOwner = user?.identityId === post.author.id
+// Always used post.author.id for decryption
+```
+
+**After (Fixed):**
+```typescript
+// For replies to private posts, find the encryption source owner
+let encryptionSourceOwnerId = post.author.id
+
+if (post.replyToId) {
+  const { getEncryptionSource } = await import('@/lib/services/post-service')
+  const encryptionSource = await getEncryptionSource(post.replyToId)
+  if (encryptionSource) {
+    encryptionSourceOwnerId = encryptionSource.ownerId
+    console.log('Reply decryption: inherited encryption from', encryptionSourceOwnerId)
+  }
+}
+
+const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
+// Now uses encryptionSourceOwnerId for all key lookups
+```
+
+### Verification
+1. Started dev server and navigated to post with encrypted reply
+2. Console showed: `Reply decryption: inherited encryption from 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2`
+3. Reply content "test reply to private" is now visible (decrypted)
+4. Main post also decrypts correctly
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Reply decrypts for reply author | "test reply to private" visible | ✅ |
+| Reply decrypts for private feed owner | Content visible | ✅ |
+| Console logs encryption source | "Reply decryption: inherited encryption from..." | ✅ |
+
+### Files Modified
+- `components/post/private-post-content.tsx` - Added encryption source detection for replies
+
+### Screenshots
+- `screenshots/bug006-fix-encrypted-reply-decrypted.png` - Post page showing decrypted reply
+- `screenshots/bug006-fix-reply-decrypted-full.png` - Close-up of decrypted reply content
+
+### Test Result
+**FIXED** - BUG-006 resolved
+
+### Re-test Required
+- [ ] E2E Test 10.2: Private Reply to Private Post - Inherited Encryption (should now pass)
