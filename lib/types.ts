@@ -19,6 +19,7 @@ export interface User {
   nsfw?: boolean
   socialLinks?: SocialLink[]
   hasUnifiedProfile?: boolean  // true if migrated to new contract
+  hasDpns?: boolean  // DPNS resolution state: undefined = loading, true = has DPNS, false = no DPNS
 }
 
 // Payment URI parsed from profile
@@ -104,7 +105,7 @@ export interface Comment {
 
 export interface Notification {
   id: string
-  type: 'like' | 'repost' | 'follow' | 'reply' | 'mention'
+  type: 'follow' | 'mention'  // Currently implemented types
   from: User
   post?: Post
   createdAt: Date
@@ -225,4 +226,31 @@ export type FeedItem = Post | FeedReplyContext
 // Type guard to check if a feed item is a reply context
 export function isFeedReplyContext(item: FeedItem): item is FeedReplyContext {
   return 'type' in item && item.type === 'reply_context'
+}
+
+// DPNS Multi-Username Registration Types
+export type UsernameStatus = 'pending' | 'checking' | 'available' | 'contested' | 'taken' | 'invalid'
+export type RegistrationStep = 'username-entry' | 'checking' | 'review' | 'registering' | 'complete'
+
+export interface UsernameEntry {
+  id: string
+  label: string
+  status: UsernameStatus
+  isContested: boolean
+  validationError?: string
+  registrationError?: string
+  registered?: boolean
+}
+
+export interface UsernameCheckResult {
+  available: boolean
+  contested: boolean
+  error?: string
+}
+
+export interface UsernameRegistrationResult {
+  label: string
+  success: boolean
+  isContested: boolean
+  error?: string
 }

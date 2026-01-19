@@ -16,7 +16,7 @@ export interface CacheOptions {
 }
 
 export class CacheManager {
-  private caches = new Map<string, Map<string, CacheEntry<any>>>()
+  private caches = new Map<string, Map<string, CacheEntry<unknown>>>()
   private tagIndex = new Map<string, Set<string>>()
   private cleanupInterval?: NodeJS.Timeout
 
@@ -27,11 +27,13 @@ export class CacheManager {
   /**
    * Get or create a named cache
    */
-  private getCache(cacheName: string): Map<string, CacheEntry<any>> {
-    if (!this.caches.has(cacheName)) {
-      this.caches.set(cacheName, new Map())
+  private getCache(cacheName: string): Map<string, CacheEntry<unknown>> {
+    let cache = this.caches.get(cacheName)
+    if (!cache) {
+      cache = new Map()
+      this.caches.set(cacheName, cache)
     }
-    return this.caches.get(cacheName)!
+    return cache
   }
 
   /**
@@ -58,10 +60,12 @@ export class CacheManager {
     // Update tag index
     const cacheKey = `${cacheName}:${key}`
     tags.forEach(tag => {
-      if (!this.tagIndex.has(tag)) {
-        this.tagIndex.set(tag, new Set())
+      let tagSet = this.tagIndex.get(tag)
+      if (!tagSet) {
+        tagSet = new Set()
+        this.tagIndex.set(tag, tagSet)
       }
-      this.tagIndex.get(tag)!.add(cacheKey)
+      tagSet.add(cacheKey)
     })
   }
 
@@ -82,7 +86,7 @@ export class CacheManager {
       return null
     }
 
-    return entry.data
+    return entry.data as T
   }
 
   /**
@@ -279,13 +283,13 @@ if (typeof window !== 'undefined') {
  */
 export function cached(
   cacheName: string,
-  keyGenerator?: (...args: any[]) => string,
+  keyGenerator?: (...args: unknown[]) => string,
   options: CacheOptions = {}
 ) {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+  return function (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value
 
-    descriptor.value = async function (...args: any[]) {
+    descriptor.value = async function (...args: unknown[]) {
       const key = keyGenerator ? keyGenerator(...args) : JSON.stringify(args)
       
       // Try to get from cache

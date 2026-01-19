@@ -29,10 +29,10 @@ export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
   /**
-   * Send a tip (credit transfer) to another user and create a tip post
+   * Send a tip (credit transfer) to another user and optionally create a tip post
    * @param senderId - The sender's identity ID
-   * @param recipientId - The recipient's identity ID (post author)
-   * @param postId - The post being tipped
+   * @param recipientId - The recipient's identity ID (post author or user being tipped)
+   * @param postId - The post being tipped (optional - when null, no tip post is created)
    * @param amountCredits - Amount in credits
    * @param transferKeyWif - The sender's transfer private key in WIF format
    * @param message - Optional tip message
@@ -41,7 +41,7 @@ class TipService {
   async sendTip(
     senderId: string,
     recipientId: string,
-    postId: string,
+    postId: string | null,
     amountCredits: number,
     transferKeyWif: string,
     message?: string,
@@ -101,10 +101,11 @@ class TipService {
             console.log('Derived key pair from WIF:', keyPair);
 
             // Find transfer keys (purpose 3) on the identity
-            const transferKeys = identityJson.publicKeys.filter((k: any) => k.purpose === 3);
+            interface IdentityPublicKey { id: number; purpose: number; data?: string }
+            const transferKeys = identityJson.publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
             console.log('Transfer keys on identity:', transferKeys);
 
-            if (keyPair && keyPair.publicKey) {
+            if (keyPair?.publicKey) {
               // public_key is a hex string, convert to base64 for comparison
               const hexToBytes = (hex: string) => {
                 const bytes = [];
@@ -119,7 +120,7 @@ class TipService {
               console.log('Derived public key (base64):', pubKeyBase64);
 
               // Compare with key 3's public key
-              const key3 = identityJson.publicKeys.find((k: any) => k.id === 3);
+              const key3 = identityJson.publicKeys.find((k: IdentityPublicKey) => k.id === 3);
               if (key3) {
                 console.log('Key 3 public key (from identity):', key3.data);
                 console.log('Keys match:', pubKeyBase64 === key3.data);
@@ -169,9 +170,11 @@ class TipService {
 
       console.log('Tip transfer result:', result);
 
-      // Create tip post as a reply to the tipped post
+      // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
-      await this.createTipPost(senderId, postId, amountCredits, message);
+      if (postId) {
+        await this.createTipPost(senderId, postId, amountCredits, message);
+      }
 
       return {
         success: true,
@@ -179,10 +182,12 @@ class TipService {
         transactionHash: 'confirmed'
       };
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Tip transfer error:', error);
       // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
-      const errorMessage = error?.message || (typeof error === 'string' ? error : 'Unknown error');
+      const errorMessage = (error instanceof Error ? error.message : null) ||
+        ((error as { message?: string })?.message) ||
+        (typeof error === 'string' ? error : 'Unknown error');
 
       // Handle known DAPI timeout issue (like in state-transition-service)
       if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
@@ -190,7 +195,9 @@ class TipService {
         identityService.clearCache(senderId);
 
         // Create tip post (amount is known even if confirmation timed out)
-        await this.createTipPost(senderId, postId, amountCredits, message);
+        if (postId) {
+          await this.createTipPost(senderId, postId, amountCredits, message);
+        }
 
         return {
           success: true,

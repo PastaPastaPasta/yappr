@@ -40,7 +40,7 @@ export function BlockListSettings() {
 
       // Load following list and block follows in parallel
       const [follows, blockFollows] = await Promise.all([
-        followService.getFollowing(user.identityId, { limit: 100 }),
+        followService.getFollowing(user.identityId),
         blockService.getBlockFollows(user.identityId)
       ])
 
@@ -70,22 +70,22 @@ export function BlockListSettings() {
 
       // Create lookup maps
       const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Build user list
+      interface FollowDoc { followingId: string }
       const users: FollowedUserWithBlockStatus[] = follows
-        .map((follow: any) => {
+        .map((follow: FollowDoc) => {
           const followingId = follow.followingId
           if (!followingId) return null
 
           const username = dpnsMap.get(followingId)
           const profile = profileMap.get(followingId)
-          const profileData = (profile as any)?.data || profile
 
           return {
             id: followingId,
             username: username || undefined,
-            displayName: profileData?.displayName || username || `User ${followingId.slice(-6)}`,
+            displayName: profile?.displayName || username || `User ${followingId.slice(-6)}`,
             isFollowingBlocks: blockFollowSet.has(followingId),
             hasDpns: !!username
           }
@@ -109,7 +109,7 @@ export function BlockListSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadData()
+    loadData().catch(err => console.error('Failed to load block list data:', err))
   }, [loadData])
 
   const handleToggle = async (targetUserId: string, currentlyFollowing: boolean) => {

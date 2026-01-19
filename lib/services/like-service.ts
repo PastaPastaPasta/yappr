@@ -1,4 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
@@ -97,7 +97,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
@@ -111,7 +111,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Get likes for a post.
    * Paginates through all results to return complete list.
    */
-  async getPostLikes(postId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
+  async getPostLikes(postId: string): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -140,7 +140,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Get user's likes.
    * Paginates through all results to return complete list.
    */
-  async getUserLikes(userId: string, options: QueryOptions = {}): Promise<LikeDocument[]> {
+  async getUserLikes(userId: string): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -228,7 +228,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         where: [['postId', 'in', postIds]],
         orderBy: [['postId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));

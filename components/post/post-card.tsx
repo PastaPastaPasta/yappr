@@ -29,6 +29,7 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
+import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
@@ -47,7 +48,7 @@ type UsernameState = string | null | undefined
  */
 function resolveUsernameState(
   progressiveUsername: UsernameState,
-  postAuthor: Post['author'] & { hasDpns?: boolean }
+  postAuthor: Post['author']
 ): UsernameState {
   // Progressive enrichment takes priority when defined
   if (progressiveUsername !== undefined) {
@@ -94,9 +95,11 @@ interface PostCardProps {
   isOwnPost?: boolean
   /** Progressive enrichment data - use this when available for faster rendering */
   enrichment?: ProgressiveEnrichment
+  /** Hide the "Replying to" annotation (used on post detail pages where structure makes it clear) */
+  hideReplyTo?: boolean
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, hideReplyTo = false }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
@@ -114,7 +117,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Resolve username state using helper (replaces nested ternary)
   const usernameState = resolveUsernameState(
     progressiveEnrichment?.username,
-    post.author as Post['author'] & { hasDpns?: boolean }
+    post.author
   )
 
   // Check if user has a real profile (not a placeholder)
@@ -177,28 +180,40 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     return { text: `${id.slice(0, 8)}...${id.slice(-6)}`, showAt: false }
   }, [replyTo])
 
-  // Memoize enriched post for use in compose/tip modals
+  // Memoize enriched post for use in compose/tip modals and caching
+  // Includes all resolved values so cached posts display correctly
   const enrichedPost = useMemo(() => ({
     ...post,
     author: {
       ...post.author,
       username: usernameState || post.author.username,
-      displayName: displayName || post.author.displayName
+      displayName: displayName || post.author.displayName,
+      avatar: avatarUrl || post.author.avatar,
+      // Set hasDpns based on resolved username state to prevent loading skeletons
+      // undefined = still loading, true = has DPNS, false = no DPNS
+      hasDpns: usernameState !== undefined ? (usernameState !== null) : post.author.hasDpns
     }
-  }), [post, usernameState, displayName])
+  }), [post, usernameState, displayName, avatarUrl])
 
   // Render username/identity display based on state
   const renderUsernameOrIdentity = useCallback(() => {
     // Has DPNS username
     if (usernameState) {
       return (
-        <Link
-          href={`/user?id=${post.author.id}`}
-          onClick={(e) => e.stopPropagation()}
-          className="text-gray-500 hover:underline truncate"
+        <ProfileHoverCard
+          userId={post.author.id}
+          username={usernameState}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
         >
-          @{usernameState}
-        </Link>
+          <Link
+            href={`/user?id=${post.author.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-gray-500 hover:underline truncate"
+          >
+            @{usernameState}
+          </Link>
+        </ProfileHoverCard>
       )
     }
 
@@ -210,36 +225,45 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     // No DPNS and no profile - show identity ID with copy tooltip
     if (!hasProfile) {
       return (
-        <Tooltip.Provider>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  navigator.clipboard.writeText(post.author.id)
-                  toast.success('Identity ID copied')
-                }}
-                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
-              >
-                {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
-              </button>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                sideOffset={5}
-              >
-                Click to copy full identity ID
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        </Tooltip.Provider>
+        <ProfileHoverCard
+          userId={post.author.id}
+          username={null}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
+        >
+          <span className="inline-flex">
+            <Tooltip.Provider>
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigator.clipboard.writeText(post.author.id).catch(console.error)
+                      toast.success('Identity ID copied')
+                    }}
+                    className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
+                  >
+                    {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
+                  </button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content
+                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                    sideOffset={5}
+                  >
+                    Click to copy full identity ID
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
+            </Tooltip.Provider>
+          </span>
+        </ProfileHoverCard>
       )
     }
 
     // Has profile but no DPNS - display name is sufficient
     return null
-  }, [usernameState, hasProfile, post.author.id])
+  }, [usernameState, hasProfile, post.author.id, displayName, avatarUrl])
 
   const [liked, setLiked] = useState(initialLiked)
   const [likes, setLikes] = useState(statsLikes)
@@ -425,7 +449,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleShare = () => {
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`)
+    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`).catch(console.error)
     toast.success('Link copied to clipboard')
   }
 
@@ -444,6 +468,33 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleCardClick = (e: React.MouseEvent) => {
     const url = `/post?id=${post.id}`
+
+    // Set pending navigation data for instant display on post detail page
+    // This is consumed immediately when the detail page mounts - no TTL needed
+    const { setPendingPostNavigation } = useAppStore.getState()
+    const resolvedEnrichment: ProgressiveEnrichment = {
+      // Use resolved values (what's currently displayed) instead of raw progressive state
+      username: usernameState,
+      displayName: displayName,
+      avatarUrl: avatarUrl,
+      // Preserve stats and interactions from progressive enrichment
+      stats: progressiveEnrichment?.stats ?? {
+        likes: statsLikes,
+        reposts: statsReposts,
+        replies: statsReplies,
+        views: post.views
+      },
+      interactions: progressiveEnrichment?.interactions ?? {
+        liked: liked,
+        reposted: reposted,
+        bookmarked: bookmarked
+      },
+      isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
+      isFollowing: progressiveEnrichment?.isFollowing ?? isFollowing,
+      replyTo: progressiveEnrichment?.replyTo
+    }
+    setPendingPostNavigation(enrichedPost, resolvedEnrichment)
+
     // Handle Ctrl/Cmd+click to open in new tab (standard browser behavior)
     if (e.ctrlKey || e.metaKey) {
       window.open(url, '_blank')
@@ -476,13 +527,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       )}
       <div className="flex gap-3">
         {!hideAvatar && (
-          <Link
-            href={`/user?id=${post.author.id}`}
-            onClick={(e) => e.stopPropagation()}
-            className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+          <ProfileHoverCard
+            userId={post.author.id}
+            username={usernameState}
+            displayName={displayName}
+            avatarUrl={avatarUrl}
           >
-            <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
-          </Link>
+            <Link
+              href={`/user?id=${post.author.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+            >
+              <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
+            </Link>
+          </ProfileHoverCard>
         )}
 
         <div className="flex-1 min-w-0">
@@ -494,13 +552,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     // Still loading - show skeleton for display name
                     <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                   ) : (
-                    <Link
-                      href={`/user?id=${post.author.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-semibold hover:underline truncate"
+                    <ProfileHoverCard
+                      userId={post.author.id}
+                      username={usernameState}
+                      displayName={displayName}
+                      avatarUrl={avatarUrl}
                     >
-                      {displayName}
-                    </Link>
+                      <Link
+                        href={`/user?id=${post.author.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-semibold hover:underline truncate"
+                      >
+                        {displayName}
+                      </Link>
+                    </ProfileHoverCard>
                   )}
                   {post.author.verified && (
                     <svg className="h-4 w-4 text-yappr-500 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -527,7 +592,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); toggleFollow(); }}
+                    onClick={(e) => { e.stopPropagation(); toggleFollow().catch(console.error); }}
                     disabled={followLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
                   >
@@ -543,7 +608,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     View post engagements
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); toggleBlock(); }}
+                    onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
                     disabled={blockLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
                   >
@@ -555,7 +620,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             </div>
           </div>
 
-          {replyTo && !isTipPost && (
+          {replyTo && !isTipPost && !hideReplyTo && (
             <Link
               href={`/post?id=${replyTo.id}`}
               onClick={(e) => e.stopPropagation()}
@@ -653,7 +718,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   key={media.id}
                   className={cn(
                     'relative aspect-video bg-gray-100 dark:bg-gray-900',
-                    post.media!.length === 3 && index === 0 && 'row-span-2'
+                    post.media && post.media.length === 3 && index === 0 && 'row-span-2'
                   )}
                 >
                   <Image
@@ -724,7 +789,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     onClick={(e) => e.stopPropagation()}
                   >
                     <DropdownMenu.Item
-                      onClick={(e) => { e.stopPropagation(); handleRepost(); }}
+                      onClick={(e) => { e.stopPropagation(); handleRepost().catch(console.error); }}
                       className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
                     >
                       <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
@@ -744,7 +809,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <Tooltip.Root>
                 <Tooltip.Trigger asChild>
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleLike(); }}
+                    onClick={(e) => { e.stopPropagation(); handleLike().catch(console.error); }}
                     disabled={likeLoading}
                     className={cn(
                       'group flex items-center gap-1 p-2 rounded-full transition-colors',
@@ -815,7 +880,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <Tooltip.Root>
                   <Tooltip.Trigger asChild>
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleBookmark(); }}
+                      onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
                       disabled={bookmarkLoading}
                       className={cn(
                         'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',

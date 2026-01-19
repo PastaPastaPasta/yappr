@@ -1,34 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { ReplyThread, Post } from '@/lib/types'
+import { ReplyThread } from '@/lib/types'
 import { PostCard } from './post-card'
-
-/**
- * Get the display identifier for a post author.
- * Priority: DPNS username > Profile display name > Truncated identity ID
- */
-function getDisplayUsername(author: Post['author']): { display: string; type: 'dpns' | 'profile' | 'id' } {
-  const hasDpns = (author as { hasDpns?: boolean }).hasDpns
-  const username = author.username
-  const displayName = author.displayName
-
-  // If we have a confirmed DPNS name, use it
-  if (hasDpns && username && !username.startsWith('user_')) {
-    return { display: `@${username}`, type: 'dpns' }
-  }
-
-  // If we have a profile display name (not a placeholder), use it
-  if (displayName && displayName !== 'Unknown User' && !displayName.startsWith('User ')) {
-    return { display: displayName, type: 'profile' }
-  }
-
-  // Otherwise show truncated identity ID
-  return {
-    display: `${author.id.slice(0, 8)}...${author.id.slice(-6)}`,
-    type: 'id'
-  }
-}
 
 interface ReplyThreadItemProps {
   thread: ReplyThread
@@ -63,7 +37,7 @@ export function ReplyThreadItem({ thread }: ReplyThreadItemProps) {
         </div>
       )}
 
-      <PostCard post={post} />
+      <PostCard post={post} hideReplyTo />
 
       {/* Nested replies (2nd level) - indented */}
       {nestedReplies.length > 0 && (
@@ -72,7 +46,6 @@ export function ReplyThreadItem({ thread }: ReplyThreadItemProps) {
             <NestedReply
               key={nested.post.id}
               reply={nested}
-              parentPost={post}
             />
           ))}
         </div>
@@ -83,40 +56,18 @@ export function ReplyThreadItem({ thread }: ReplyThreadItemProps) {
 
 interface NestedReplyProps {
   reply: ReplyThread
-  parentPost: Post
 }
 
 /**
- * Renders a nested (2nd level) reply with context about who it's replying to.
+ * Renders a nested (2nd level) reply. The indentation and left border
+ * visually indicate the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ reply, parentPost }: NestedReplyProps) {
+function NestedReply({ reply }: NestedReplyProps) {
   const { post } = reply
-  const parentAuthorDisplay = getDisplayUsername(parentPost.author)
-
-  // Style based on display type: DPNS gets blue, profile gets normal, ID gets monospace
-  const linkClassName = parentAuthorDisplay.type === 'dpns'
-    ? 'text-yappr-500 hover:underline'
-    : parentAuthorDisplay.type === 'id'
-      ? 'text-gray-500 font-mono text-xs hover:underline'
-      : 'text-yappr-500 hover:underline'  // Profile gets same style as DPNS
 
   return (
     <div className="relative">
-      {/* Context: who this is replying to */}
-      <div className="px-4 pt-2 pb-0">
-        <span className="text-sm text-gray-500">
-          Replying to{' '}
-          <Link
-            href={`/user?id=${parentPost.author.id}`}
-            className={linkClassName}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {parentAuthorDisplay.display}
-          </Link>
-        </span>
-      </div>
-
-      <PostCard post={post} />
+      <PostCard post={post} hideReplyTo />
 
       {/* Show "View more replies" if this reply has replies (3+ level) */}
       {post.replies > 0 && (

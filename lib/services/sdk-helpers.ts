@@ -402,7 +402,7 @@ export class RequestDeduplicator<K, V> {
 
     promise.finally(() => {
       setTimeout(() => this.inFlight.delete(key), this.cleanupDelayMs);
-    });
+    }).catch(() => {/* Errors are handled by the consumer */});
 
     return promise;
   }

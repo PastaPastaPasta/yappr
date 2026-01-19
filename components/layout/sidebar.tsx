@@ -16,6 +16,7 @@ import {
   UsersIcon,
   HashtagIcon,
   ArrowPathIcon,
+  BellIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeIconSolid,
@@ -25,13 +26,16 @@ import {
   UserGroupIcon as UserGroupIconSolid,
   UsersIcon as UsersIconSolid,
   HashtagIcon as HashtagIconSolid,
+  BellIcon as BellIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
+import { useNotificationStore } from '@/lib/stores/notification-store'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { useAuth } from '@/contexts/auth-context'
+import { notificationService } from '@/lib/services'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
@@ -46,23 +50,80 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     { name: 'Following', href: '/following', icon: UserGroupIcon, activeIcon: UserGroupIconSolid },
     { name: 'Followers', href: '/followers', icon: UsersIcon, activeIcon: UsersIconSolid },
     { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
+    { name: 'Notifications', href: '/notifications', icon: BellIcon, activeIcon: BellIconSolid },
     { name: 'Messages', href: '/messages', icon: EnvelopeIcon, activeIcon: EnvelopeIconSolid },
     { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon, activeIcon: BookmarkIconSolid },
     { name: 'Profile', href: `/user?id=${userId}`, icon: UserIcon, activeIcon: UserIconSolid },
   ]
 }
 
+const NOTIFICATION_POLL_INTERVAL = 30000 // 30 seconds
+
 export function Sidebar() {
   const pathname = usePathname()
   const { setComposeOpen } = useAppStore()
   const { user, logout, refreshBalance } = useAuth()
+
+  // Notification store - only subscribe to unread count for badge display
+  const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
-  
+
   // Prevent hydration mismatches
   useEffect(() => {
     setIsHydrated(true)
   }, [])
+
+  // Initial notification fetch and polling
+  useEffect(() => {
+    if (!user?.identityId) return
+
+    const userId = user.identityId
+    let timeoutId: NodeJS.Timeout | null = null
+    let cancelled = false
+
+    async function fetchAndSchedule(isInitial: boolean): Promise<void> {
+      if (cancelled) return
+
+      // Skip poll if page is hidden (but still schedule next poll)
+      if (!isInitial && document.hidden) {
+        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
+        return
+      }
+
+      const store = useNotificationStore.getState()
+
+      try {
+        const readIds = store.getReadIdsSet()
+        const result = isInitial
+          ? await notificationService.getInitialNotifications(userId, readIds)
+          : await notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds)
+
+        if (cancelled) return
+
+        if (isInitial) {
+          store.setNotifications(result.notifications)
+        } else if (result.notifications.length > 0) {
+          store.addNotifications(result.notifications)
+        }
+        store.setLastFetchTimestamp(result.latestTimestamp)
+      } catch (error) {
+        console.error('Notification fetch error:', error)
+      }
+
+      if (!cancelled) {
+        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
+      }
+    }
+
+    fetchAndSchedule(true)
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [user?.identityId])
   
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
@@ -84,7 +145,8 @@ export function Sidebar() {
           {navigation.map((item) => {
             const isActive = pathname === item.href
             const Icon = isActive ? item.activeIcon : item.icon
-            
+            const showBadge = item.name === 'Notifications' && isHydrated && unreadNotificationCount > 0
+
             return (
               <Link
                 key={item.name}
@@ -95,7 +157,14 @@ export function Sidebar() {
                   isActive && 'font-bold'
                 )}
               >
-                <Icon className="h-7 w-7" />
+                <div className="relative">
+                  <Icon className="h-7 w-7" />
+                  {showBadge && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
+                      {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                    </span>
+                  )}
+                </div>
                 <span>{item.name}</span>
               </Link>
             )

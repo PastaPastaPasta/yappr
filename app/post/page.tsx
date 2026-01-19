@@ -21,11 +21,14 @@ function PostDetailContent() {
   const { setReplyingTo, setComposeOpen } = useAppStore()
 
   // All post loading and enrichment handled by hook
+  // Uses cached post data for instant navigation when available
   const {
     post,
     parentPost,
     replyThreads,
-    isLoading
+    isLoading,
+    isLoadingReplies,
+    postEnrichment
   } = usePostDetail({
     postId,
     enabled: !!postId
@@ -71,7 +74,7 @@ function PostDetailContent() {
           </div>
         </header>
 
-        {isLoading ? (
+        {isLoading && !post ? (
           <div className="p-8 text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
             <p className="text-gray-500">Loading post...</p>
@@ -80,15 +83,12 @@ function PostDetailContent() {
           <>
             {parentPost && (
               <div className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
-                <div className="px-4 pt-3 pb-1">
-                  <span className="text-sm text-gray-500">Replying to:</span>
-                </div>
-                <PostCard post={parentPost} />
+                <PostCard post={parentPost} hideReplyTo />
               </div>
             )}
 
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} />
+              <PostCard post={post} enrichment={postEnrichment} hideReplyTo />
             </div>
 
             {user ? (
@@ -110,7 +110,12 @@ function PostDetailContent() {
             )}
 
             <div className="divide-y divide-gray-200 dark:divide-gray-800">
-              {replyThreads.length === 0 ? (
+              {isLoadingReplies ? (
+                <div className="p-6 text-center">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600 mx-auto mb-2"></div>
+                  <p className="text-gray-500 text-sm">Loading replies...</p>
+                </div>
+              ) : replyThreads.length === 0 ? (
                 <div className="p-8 text-center">
                   <p className="text-gray-500">No replies yet. Be the first to reply!</p>
                 </div>

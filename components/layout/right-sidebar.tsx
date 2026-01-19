@@ -19,6 +19,7 @@ interface UserStats {
 
 interface GlobalStats {
   totalPosts: number
+  activeUsers: number
 }
 
 export function RightSidebar() {
@@ -63,7 +64,7 @@ export function RightSidebar() {
       }
     }
 
-    fetchStats()
+    fetchStats().catch(err => console.error('Failed to fetch stats:', err))
   }, [user?.identityId])
 
   // Fetch global stats (independent of user login)
@@ -79,20 +80,23 @@ export function RightSidebar() {
 
       setGlobalLoading(true)
       try {
-        const totalPosts = await postService.countAllPosts()
-        const newGlobalStats = { totalPosts }
+        const [totalPosts, activeUsers] = await Promise.all([
+          postService.countAllPosts(),
+          postService.countUniqueAuthors()
+        ])
+        const newGlobalStats = { totalPosts, activeUsers }
         setGlobalStats(newGlobalStats)
         // Cache for 5 minutes since global stats change slowly
         cacheManager.set('sidebar', cacheKey, newGlobalStats, { ttl: 300000 })
       } catch (error) {
         console.error('Error fetching global stats:', error)
-        setGlobalStats({ totalPosts: 0 })
+        setGlobalStats({ totalPosts: 0, activeUsers: 0 })
       } finally {
         setGlobalLoading(false)
       }
     }
 
-    fetchGlobalStats()
+    fetchGlobalStats().catch(err => console.error('Failed to fetch global stats:', err))
   }, [])
 
   return (
@@ -131,15 +135,25 @@ export function RightSidebar() {
         </h2>
         <div className="px-4 py-3 space-y-2">
           {globalLoading ? (
-            <div className="flex justify-between">
-              <div className="h-4 w-20 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-              <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+            <div className="space-y-2">
+              {[...Array(2)].map((_, i) => (
+                <div key={i} className="flex justify-between">
+                  <div className="h-4 w-20 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+                  <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+                </div>
+              ))}
             </div>
           ) : globalStats ? (
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
-              <span className="font-medium">{formatNumber(globalStats.totalPosts)}</span>
-            </div>
+            <>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
+                <span className="font-medium">{formatNumber(globalStats.totalPosts)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600 dark:text-gray-400">Active Users</span>
+                <span className="font-medium">{formatNumber(globalStats.activeUsers)}</span>
+              </div>
+            </>
           ) : (
             <p className="text-sm text-gray-500">No stats available</p>
           )}

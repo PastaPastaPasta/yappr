@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   MagnifyingGlassIcon,
@@ -16,14 +17,25 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
 import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
+import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 
+interface UserSearchResult {
+  id: string
+  username: string
+  displayName: string
+  bio?: string
+}
+
 function MessagesPage() {
   const { user } = useAuth()
+  const searchParams = useSearchParams()
+  const startConversationWith = searchParams.get('startConversation')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
+  const [pendingStartConversation, setPendingStartConversation] = useState<string | null>(startConversationWith)
   const [messages, setMessages] = useState<DirectMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -34,6 +46,10 @@ function MessagesPage() {
   const [newConversationInput, setNewConversationInput] = useState('')
   const [isResolvingUser, setIsResolvingUser] = useState(false)
   const [participantLastRead, setParticipantLastRead] = useState<number | null>(null)
+  const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
+  const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false)
+  const searchIdRef = useRef(0)
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -61,6 +77,67 @@ function MessagesPage() {
     loadConversations().catch(err => console.error('Failed to load conversations:', err))
   }, [user])
 
+  // Handle auto-starting a conversation from URL parameter
+  useEffect(() => {
+    const handleStartConversation = async () => {
+      if (!pendingStartConversation || !user || isLoading) return
+
+      // Clear the pending state so we don't run this again
+      setPendingStartConversation(null)
+
+      const participantId = pendingStartConversation
+
+      // Don't start conversation with yourself
+      if (participantId === user.identityId) {
+        toast.error("You can't message yourself")
+        return
+      }
+
+      // Check if conversation already exists
+      const existingConv = conversations.find(c => c.participantId === participantId)
+      if (existingConv) {
+        setSelectedConversation(existingConv)
+        return
+      }
+
+      // Need to create a new conversation - fetch user info first
+      setIsResolvingUser(true)
+      try {
+        // Get username and profile for the participant
+        const [username, profile] = await Promise.all([
+          dpnsService.resolveUsername(participantId),
+          unifiedProfileService.getProfile(participantId).catch(() => null)
+        ])
+
+        // Create new conversation entry
+        const { conversationId } = await directMessageService.getOrCreateConversation(
+          user.identityId,
+          participantId
+        )
+
+        const newConv: Conversation = {
+          id: conversationId,
+          participantId,
+          participantUsername: username || undefined,
+          participantDisplayName: profile?.displayName,
+          unreadCount: 0,
+          updatedAt: new Date()
+        }
+
+        setConversations(prev => [newConv, ...prev])
+        setSelectedConversation(newConv)
+        setMessages([])
+      } catch (error) {
+        console.error('Failed to start conversation from URL:', error)
+        toast.error('Failed to start conversation')
+      } finally {
+        setIsResolvingUser(false)
+      }
+    }
+
+    handleStartConversation().catch(err => console.error('Failed to handle start conversation:', err))
+  }, [pendingStartConversation, user, isLoading, conversations])
+
   // Load messages when conversation is selected
   useEffect(() => {
     const loadMessages = async () => {
@@ -82,8 +159,8 @@ function MessagesPage() {
         )
         setParticipantLastRead(lastRead)
 
-        // Only mark as read if there are unread messages
-        if (selectedConversation.unreadCount > 0) {
+        // Only mark as read if there are unread messages and read receipts are enabled
+        if (selectedConversation.unreadCount > 0 && sendReadReceipts) {
           await directMessageService.markAsRead(selectedConversation.id, user.identityId)
         }
 
@@ -101,7 +178,7 @@ function MessagesPage() {
       }
     }
     loadMessages().catch(err => console.error('Failed to load messages:', err))
-  }, [selectedConversation, user])
+  }, [selectedConversation, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
   useEffect(() => {
@@ -184,6 +261,95 @@ function MessagesPage() {
     }
   }, [selectedConversation?.id, user?.identityId])
 
+  // Debounced user search for new conversation modal
+  useEffect(() => {
+    const query = newConversationInput.trim()
+
+    // Clear results if query is empty or looks like an identity ID
+    if (!query || query.length > 30) {
+      setUserSearchResults([])
+      setIsSearchingUsers(false)
+      return
+    }
+
+    // Only search if at least 3 characters (like DashPay)
+    if (query.length < 3) {
+      setUserSearchResults([])
+      return
+    }
+
+    const currentSearchId = ++searchIdRef.current
+    setIsSearchingUsers(true)
+
+    const debounceTimer = setTimeout(async () => {
+      try {
+        // Search DPNS usernames by prefix
+        const dpnsResults = await dpnsService.searchUsernamesWithDetails(query, 5)
+
+        // Ignore stale results
+        if (currentSearchId !== searchIdRef.current) return
+
+        if (dpnsResults.length === 0) {
+          setUserSearchResults([])
+          setIsSearchingUsers(false)
+          return
+        }
+
+        // Get unique owner IDs (excluding self)
+        const ownerIds = Array.from(
+          new Set(dpnsResults.map(r => r.ownerId).filter(id => id && id !== user?.identityId))
+        )
+
+        // Fetch profiles for display names
+        let profiles: { $ownerId?: string; ownerId?: string; displayName?: string; bio?: string }[] = []
+        if (ownerIds.length > 0) {
+          try {
+            profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
+          } catch (error) {
+            console.error('Failed to fetch profiles for search:', error)
+          }
+        }
+
+        // Ignore stale results
+        if (currentSearchId !== searchIdRef.current) return
+
+        // Create profile map
+        const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
+
+        // Build results, grouping by owner
+        const seenOwners = new Set<string>()
+        const results: UserSearchResult[] = []
+
+        for (const dpnsResult of dpnsResults) {
+          if (!dpnsResult.ownerId || dpnsResult.ownerId === user?.identityId) continue
+          if (seenOwners.has(dpnsResult.ownerId)) continue
+          seenOwners.add(dpnsResult.ownerId)
+
+          const profile = profileMap.get(dpnsResult.ownerId)
+          const username = dpnsResult.username.replace(/\.dash$/, '')
+
+          results.push({
+            id: dpnsResult.ownerId,
+            username,
+            displayName: profile?.displayName || username,
+            bio: profile?.bio
+          })
+        }
+
+        setUserSearchResults(results)
+      } catch (error) {
+        console.error('User search failed:', error)
+        setUserSearchResults([])
+      } finally {
+        if (currentSearchId === searchIdRef.current) {
+          setIsSearchingUsers(false)
+        }
+      }
+    }, 300)
+
+    return () => clearTimeout(debounceTimer)
+  }, [newConversationInput, user?.identityId])
+
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !user || isSending) return
 
@@ -199,23 +365,23 @@ function MessagesPage() {
       )
 
       if (result.success && result.message) {
+        const sentMessage = result.message
         // Add message to UI (with deduplication in case poll already added it)
         setMessages(prev => {
-          const msg = result.message!
           // Check if poll already added this message (with real ID while we have temp)
           const alreadyExists = prev.some(m =>
-            m.id === msg.id ||
-            (m.senderId === msg.senderId &&
-             m.content === msg.content &&
-             Math.abs(m.createdAt.getTime() - msg.createdAt.getTime()) < 60000)
+            m.id === sentMessage.id ||
+            (m.senderId === sentMessage.senderId &&
+             m.content === sentMessage.content &&
+             Math.abs(m.createdAt.getTime() - sentMessage.createdAt.getTime()) < 60000)
           )
-          return alreadyExists ? prev : [...prev, msg]
+          return alreadyExists ? prev : [...prev, sentMessage]
         })
 
         // Update conversation's last message
         setConversations(prev => prev.map(conv =>
           conv.id === selectedConversation.id
-            ? { ...conv, lastMessage: result.message!, updatedAt: new Date() }
+            ? { ...conv, lastMessage: sentMessage, updatedAt: new Date() }
             : conv
         ))
       } else {
@@ -327,6 +493,51 @@ function MessagesPage() {
     }
   }
 
+  const selectUserFromSearch = async (selectedUser: UserSearchResult) => {
+    if (!user || isResolvingUser) return
+
+    setIsResolvingUser(true)
+
+    try {
+      // Check if conversation already exists
+      const existingConv = conversations.find(c => c.participantId === selectedUser.id)
+      if (existingConv) {
+        setSelectedConversation(existingConv)
+        setShowNewConversation(false)
+        setNewConversationInput('')
+        setUserSearchResults([])
+        return
+      }
+
+      // Create new conversation entry
+      const { conversationId } = await directMessageService.getOrCreateConversation(
+        user.identityId,
+        selectedUser.id
+      )
+
+      const newConv: Conversation = {
+        id: conversationId,
+        participantId: selectedUser.id,
+        participantUsername: selectedUser.username,
+        participantDisplayName: selectedUser.displayName,
+        unreadCount: 0,
+        updatedAt: new Date()
+      }
+
+      setConversations(prev => [newConv, ...prev])
+      setSelectedConversation(newConv)
+      setShowNewConversation(false)
+      setNewConversationInput('')
+      setUserSearchResults([])
+      setMessages([])
+    } catch (error) {
+      console.error('Failed to start conversation:', error)
+      toast.error('Failed to start conversation')
+    } finally {
+      setIsResolvingUser(false)
+    }
+  }
+
   return (
     <div className="h-[calc(100vh-40px)] flex overflow-hidden">
       <Sidebar />
@@ -364,11 +575,16 @@ function MessagesPage() {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
               <p className="text-gray-500">Loading conversations...</p>
             </div>
+          ) : conversations.length === 0 ? (
+            /* When no conversations exist, show minimal state - main empty state is in right panel */
+            <div className="p-6 text-center text-gray-500 text-sm">
+              <p>Your conversations will appear here</p>
+            </div>
           ) : filteredConversations.length === 0 ? (
             <div className="p-8 text-center flex-1 flex flex-col items-center justify-center">
-              <PaperAirplaneIcon className="h-12 w-12 text-gray-300 mb-4" />
-              <h2 className="text-xl font-semibold mb-2">No messages yet</h2>
-              <p className="text-gray-500 text-sm">When someone messages you, it&apos;ll show up here</p>
+              <MagnifyingGlassIcon className="h-12 w-12 text-gray-300 mb-4" />
+              <h2 className="text-xl font-semibold mb-2">No results</h2>
+              <p className="text-gray-500 text-sm">No conversations match your search</p>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
@@ -513,7 +729,7 @@ function MessagesPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  sendMessage()
+                  sendMessage().catch(err => console.error('Failed to send message:', err))
                 }}
                 className="flex items-center gap-1 sm:gap-2"
               >
@@ -541,12 +757,41 @@ function MessagesPage() {
               </form>
             </div>
           </div>
+        ) : conversations.length === 0 ? (
+          /* Primary empty state when user has no conversations */
+          <div className="flex flex-1 items-center justify-center p-8">
+            <div className="text-center max-w-sm">
+              <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+              <h2 className="text-2xl font-semibold mb-2">Welcome to Messages</h2>
+              <p className="text-gray-500 mb-2">
+                Have private 1-on-1 conversations with other users.
+              </p>
+              <p className="text-gray-400 text-sm mb-6">
+                Messages are stored securely on Dash Platform.
+              </p>
+              <Button
+                onClick={() => setShowNewConversation(true)}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                New message
+              </Button>
+            </div>
+          </div>
         ) : (
+          /* Secondary empty state when conversations exist but none selected */
           <div className="hidden md:flex flex-1 items-center justify-center p-8">
             <div className="text-center">
               <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-2xl font-semibold mb-2">Select a message</h2>
-              <p className="text-gray-500">Choose from your existing conversations or start a new one</p>
+              <h2 className="text-2xl font-semibold mb-2">Select a conversation</h2>
+              <p className="text-gray-500 mb-6">Choose from your existing conversations or start a new one</p>
+              <Button
+                onClick={() => setShowNewConversation(true)}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                New message
+              </Button>
             </div>
           </div>
         )}
@@ -557,13 +802,21 @@ function MessagesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/50"
-            onClick={() => setShowNewConversation(false)}
+            onClick={() => {
+              setShowNewConversation(false)
+              setNewConversationInput('')
+              setUserSearchResults([])
+            }}
           />
           <div className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-4 p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">New Message</h2>
               <button
-                onClick={() => setShowNewConversation(false)}
+                onClick={() => {
+                  setShowNewConversation(false)
+                  setNewConversationInput('')
+                  setUserSearchResults([])
+                }}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -573,32 +826,82 @@ function MessagesPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                startNewConversation()
+                startNewConversation().catch(err => console.error('Failed to start conversation:', err))
               }}
             >
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                  Username or Identity ID
+                  Search for a user
                 </label>
-                <Input
-                  type="text"
-                  placeholder="Enter username (e.g., alice) or identity ID"
-                  value={newConversationInput}
-                  onChange={(e) => setNewConversationInput(e.target.value)}
-                  disabled={isResolvingUser}
-                  autoFocus
-                />
+                <div className="relative">
+                  <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <Input
+                    type="text"
+                    placeholder="Search by username..."
+                    value={newConversationInput}
+                    onChange={(e) => setNewConversationInput(e.target.value)}
+                    disabled={isResolvingUser}
+                    autoFocus
+                    className="pl-10"
+                  />
+                </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Enter a DPNS username or paste a full identity ID
+                  Type at least 3 characters to search, or paste a full identity ID
                 </p>
               </div>
+
+              {/* Search Results */}
+              {(isSearchingUsers || userSearchResults.length > 0) && (
+                <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                  {isSearchingUsers ? (
+                    <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500"></div>
+                      <span className="text-sm">Searching...</span>
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto">
+                      {userSearchResults.map((result) => (
+                        <button
+                          key={result.id}
+                          type="button"
+                          onClick={() => selectUserFromSearch(result)}
+                          disabled={isResolvingUser}
+                          className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left border-b border-gray-100 dark:border-gray-800 last:border-b-0"
+                        >
+                          <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 flex-shrink-0">
+                            <UserAvatar userId={result.id} size="md" alt={result.displayName} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold truncate">{result.displayName}</p>
+                            <p className="text-sm text-gray-500 truncate">@{result.username}</p>
+                            {result.bio && (
+                              <p className="text-xs text-gray-400 truncate mt-0.5">{result.bio}</p>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Show no results message */}
+              {!isSearchingUsers && userSearchResults.length === 0 && newConversationInput.trim().length >= 3 && newConversationInput.trim().length <= 30 && (
+                <div className="mb-4 p-3 text-center text-sm text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl">
+                  No users found matching &quot;{newConversationInput.trim()}&quot;
+                </div>
+              )}
 
               <div className="flex gap-3">
                 <Button
                   type="button"
                   variant="outline"
                   className="flex-1"
-                  onClick={() => setShowNewConversation(false)}
+                  onClick={() => {
+                    setShowNewConversation(false)
+                    setNewConversationInput('')
+                    setUserSearchResults([])
+                  }}
                 >
                   Cancel
                 </Button>

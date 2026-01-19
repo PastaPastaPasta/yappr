@@ -1,7 +1,7 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
-import { HASHTAG_CONTRACT_ID, YAPPR_CONTRACT_ID } from '../constants';
+import { HASHTAG_CONTRACT_ID } from '../constants';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
@@ -32,10 +32,10 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    * Transform document from SDK response to typed object
    * SDK v3: System fields ($id, $ownerId) are base58, byte array fields (postId) are base64
    */
-  protected transformDocument(doc: any): PostHashtagDocument {
-    const data = doc.data || doc;
+  protected transformDocument(doc: Record<string, unknown>): PostHashtagDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
-    const hashtag = data.hashtag || doc.hashtag;
+    const hashtag = (data.hashtag || doc.hashtag) as string;
 
     // Convert postId from base64 to base58 (byte array field)
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
@@ -44,9 +44,9 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     }
 
     return {
-      $id: doc.$id,
-      $ownerId: doc.$ownerId,
-      $createdAt: doc.$createdAt,
+      $id: doc.$id as string,
+      $ownerId: doc.$ownerId as string,
+      $createdAt: doc.$createdAt as number,
       postId: postId || '',
       hashtag
     };
@@ -136,25 +136,9 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
           ['hashtag', '==', normalizedTag]
         ],
         limit: 1
-      } as any);
+      });
 
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
-      }
-
+      const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
       console.error('Error getting hashtag for post:', error);
@@ -178,24 +162,10 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         ],
         orderBy: [['postId', 'asc'], ['hashtag', 'asc']],
         limit: 20
-      } as any);
+      });
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting hashtags for post:', error);
       return [];
@@ -238,7 +208,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    * Paginates through all results to return complete list.
    * Returns postHashtag documents - caller should fetch actual posts and filter by ownership.
    */
-  async getPostIdsByHashtag(hashtag: string, options: QueryOptions = {}): Promise<PostHashtagDocument[]> {
+  async getPostIdsByHashtag(hashtag: string): Promise<PostHashtagDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const normalizedTag = this.normalizeHashtag(hashtag);

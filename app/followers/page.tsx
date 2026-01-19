@@ -38,6 +38,8 @@ function FollowersPage() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const followersState = useAsyncState<Follower[]>(null)
+  // Extract stable setter functions to avoid infinite loop in useCallback dependencies
+  const { setLoading, setError, setData } = followersState
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
 
@@ -47,8 +49,6 @@ function FollowersPage() {
 
   // Load followers list
   const loadFollowers = useCallback(async (forceRefresh: boolean = false) => {
-    const { setLoading, setError, setData } = followersState
-
     setLoading(true)
     setError(null)
 
@@ -89,13 +89,13 @@ function FollowersPage() {
       }
 
       // Use followService to get followers list
-      const follows = await followService.getFollowers(userIdToLoad, { limit: 50 })
+      const follows = await followService.getFollowers(userIdToLoad)
       
       console.log('Followers: Raw follows from platform:', follows)
 
       // Get unique identity IDs from followers
       const identityIds = follows
-        .map(f => f.$ownerId || (f as any).ownerId)
+        .map(f => f.$ownerId)
         .filter(Boolean)
       
       if (identityIds.length === 0) {
@@ -116,10 +116,15 @@ function FollowersPage() {
             return { id, username: null }
           }
         })),
-        // Fetch all usernames for each identity
+        // Fetch all usernames for each identity (sorted consistently)
         Promise.all(identityIds.map(async (id) => {
           try {
             const usernames = await dpnsService.getAllUsernames(id)
+            if (usernames.length > 1) {
+              // Sort usernames: contested first, then shortest, then alphabetically
+              const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+              return { id, usernames: sortedUsernames }
+            }
             return { id, usernames }
           } catch (error) {
             console.error(`Failed to get all usernames for ${id}:`, error)
@@ -162,29 +167,27 @@ function FollowersPage() {
       // Create maps for easy lookup
       const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
       const followerCountMap = new Map(followerCounts.map(item => [item.id, item.count]))
       const followingCountMap = new Map(followingCounts.map(item => [item.id, item.count]))
-      
+
       // Create enriched user data
-      const followers = follows.map((follow: any) => {
-        const followerId = follow.$ownerId || follow.ownerId
+      const followers = follows.map(follow => {
+        const followerId = follow.$ownerId
         if (!followerId) {
           console.warn('Follow document missing ownerId:', follow)
           return null
         }
-        
+
         const username = dpnsMap.get(followerId)
         const allUsernames = allUsernamesMap.get(followerId) || []
         const profile = profileMap.get(followerId)
-        // Handle both formats: direct properties or nested in data
-        const profileData = (profile as any)?.data || profile
 
         return {
           id: followerId,
           username: username || followerId.slice(-8),
-          displayName: profileData?.displayName || username || `User ${followerId.slice(-8)}`,
-          bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
+          displayName: profile?.displayName || username || `User ${followerId.slice(-8)}`,
+          bio: profile?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
           hasProfile: !!profile,
           hasDpnsName: !!username,
           followersCount: followerCountMap.get(followerId) || 0,
@@ -207,12 +210,12 @@ function FollowersPage() {
     } finally {
       setLoading(false)
     }
-  }, [followersState.setLoading, followersState.setError, followersState.setData, user?.identityId, targetUserId])
+  }, [setLoading, setError, setData, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      loadFollowers()
+      loadFollowers().catch(err => console.error('Failed to load followers:', err))
     }
   }, [loadFollowers, user, targetUserId])
 
@@ -375,7 +378,7 @@ function FollowersPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(follower.id)
+                                        navigator.clipboard.writeText(follower.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

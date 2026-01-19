@@ -1,5 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
-import { stateTransitionService } from './state-transition-service';
+import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
@@ -76,7 +75,7 @@ export interface UnifiedProfileDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
-  $updatedAt: number;
+  $updatedAt?: number;
   $revision?: number;
   displayName: string;
   bio?: string;
@@ -218,7 +217,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null;
-      this.processBatch();
+      this.processBatch().catch(err => console.error('Failed to process avatar batch:', err));
     }, 5);
   }
 
@@ -297,7 +296,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         where: [['$ownerId', 'in', userIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: userIds.length
-      } as any);
+      });
 
       const documents = this.normalizeDocumentResponse(response);
       const foundUserIds = new Set<string>();
@@ -395,26 +394,26 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Extract raw document data handling SDK response formats
    */
-  private extractDocumentData(doc: any): UnifiedProfileDocument {
+  private extractDocumentData(doc: Record<string, unknown>): UnifiedProfileDocument {
     const isNestedFormat = doc.data && typeof doc.data === 'object' && !Array.isArray(doc.data);
-    const content = isNestedFormat ? doc.data : doc;
+    const content = (isNestedFormat ? doc.data : doc) as Record<string, unknown>;
 
     return {
-      $id: doc.$id || doc.id,
-      $ownerId: doc.$ownerId || doc.ownerId,
-      $createdAt: doc.$createdAt || doc.createdAt,
-      $updatedAt: doc.$updatedAt || doc.updatedAt,
-      $revision: doc.$revision || doc.revision,
-      displayName: content.displayName || '',
-      bio: content.bio,
-      location: content.location,
-      website: content.website,
-      bannerUri: content.bannerUri,
-      avatar: content.avatar,
-      paymentUris: content.paymentUris,
-      pronouns: content.pronouns,
-      nsfw: content.nsfw,
-      socialLinks: content.socialLinks,
+      $id: (doc.$id || doc.id) as string,
+      $ownerId: (doc.$ownerId || doc.ownerId) as string,
+      $createdAt: (doc.$createdAt || doc.createdAt) as number,
+      $updatedAt: (doc.$updatedAt || doc.updatedAt) as number | undefined,
+      $revision: (doc.$revision || doc.revision) as number | undefined,
+      displayName: (content.displayName as string) || '',
+      bio: content.bio as string | undefined,
+      location: content.location as string | undefined,
+      website: content.website as string | undefined,
+      bannerUri: content.bannerUri as string | undefined,
+      avatar: content.avatar as string | undefined,
+      paymentUris: content.paymentUris as string | undefined,
+      pronouns: content.pronouns as string | undefined,
+      nsfw: content.nsfw as boolean | undefined,
+      socialLinks: content.socialLinks as string | undefined,
     };
   }
 
@@ -422,17 +421,25 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Normalize SDK response to array of documents
    * Handles Map, Array, and {documents: []} response formats
    */
-  private normalizeDocumentResponse(response: unknown): any[] {
+  private normalizeDocumentResponse(response: unknown): Record<string, unknown>[] {
     if (response instanceof Map) {
       return Array.from(response.values())
         .filter(Boolean)
-        .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+        .map((doc: unknown) => {
+          const d = doc as { toJSON?: () => unknown };
+          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+        });
     }
     if (Array.isArray(response)) {
-      return response;
+      return response
+        .filter(Boolean)
+        .map((doc: unknown) => {
+          const d = doc as { toJSON?: () => unknown };
+          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+        });
     }
     if (response && typeof response === 'object' && 'documents' in response) {
-      return (response as { documents: any[] }).documents;
+      return (response as { documents: Record<string, unknown>[] }).documents;
     }
     return [];
   }
@@ -481,7 +488,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     };
 
     // Queue async enrichment
-    this.enrichUser(user, !!cachedUsername);
+    this.enrichUser(user, !!cachedUsername).catch(err => console.error('Failed to enrich user:', err));
 
     return user;
   }
@@ -532,7 +539,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Get user statistics
    */
-  private async getUserStats(userId: string): Promise<{ followers: number; following: number }> {
+  private async getUserStats(_userId: string): Promise<{ followers: number; following: number }> {
     // TODO: Query follow documents for actual counts
     return { followers: 0, following: 0 };
   }
@@ -730,7 +737,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentTypeName: 'profile',
         where: [['$ownerId', '==', ownerId]],
         limit: 1
-      } as any);
+      });
 
       const documents = this.normalizeDocumentResponse(response);
       if (documents.length === 0) {
@@ -773,7 +780,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         where: [['$ownerId', 'in', validIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = this.normalizeDocumentResponse(response);
       return documents.map(doc => this.extractDocumentData(doc));

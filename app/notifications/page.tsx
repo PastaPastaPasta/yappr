@@ -1,122 +1,64 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
-  ArrowPathRoundedSquareIcon,
-  ChatBubbleLeftIcon,
   UserPlusIcon,
   BellIcon,
-  Cog6ToothIcon
+  Cog6ToothIcon,
+  AtSymbolIcon
 } from '@heroicons/react/24/outline'
-import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { withAuth, useAuth } from '@/contexts/auth-context'
+import { withAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import Link from 'next/link'
+import { useNotificationStore } from '@/lib/stores/notification-store'
+import { Notification } from '@/lib/types'
 
-type NotificationType = 'like' | 'repost' | 'reply' | 'follow' | 'mention'
+type NotificationFilter = 'all' | 'follow' | 'mention'
 
-interface Notification {
-  id: string
-  type: NotificationType
-  message: string
-  timestamp: Date
-  read: boolean
-  actorId: string
-  postId?: string
-  postContent?: string
+const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'follow', label: 'Follows' },
+  { key: 'mention', label: 'Mentions' }
+]
+
+const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
+  follow: <UserPlusIcon className="h-5 w-5 text-purple-500" />,
+  mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />
+}
+
+const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
+  follow: 'started following you',
+  mention: 'mentioned you in a post'
+}
+
+function formatTime(date: Date): string {
+  const diff = Date.now() - date.getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m`
+  if (hours < 24) return `${hours}h`
+  if (days < 7) return `${days}d`
+  return date.toLocaleDateString()
 }
 
 function NotificationsPage() {
-  useAuth()
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [filter, setFilter] = useState<NotificationType | 'all'>('all')
+  // Store - polling is handled by Sidebar, we just display data
+  const filter = useNotificationStore((s) => s.filter)
+  const isLoading = useNotificationStore((s) => s.isLoading)
+  const setFilter = useNotificationStore((s) => s.setFilter)
+  const markAsRead = useNotificationStore((s) => s.markAsRead)
+  const markAllAsRead = useNotificationStore((s) => s.markAllAsRead)
+  const getFilteredNotifications = useNotificationStore((s) => s.getFilteredNotifications)
+  const getUnreadCount = useNotificationStore((s) => s.getUnreadCount)
 
-  useEffect(() => {
-    // In a real app, this would fetch notifications from Dash Platform
-    // For now, we'll simulate some notifications
-    setTimeout(() => {
-      setNotifications([
-        {
-          id: '1',
-          type: 'like',
-          message: 'liked your post',
-          timestamp: new Date(Date.now() - 1000 * 60 * 5), // 5 minutes ago
-          read: false,
-          actorId: 'user123',
-          postContent: 'Just deployed my first dApp on Dash Platform! 🚀'
-        },
-        {
-          id: '2',
-          type: 'follow',
-          message: 'started following you',
-          timestamp: new Date(Date.now() - 1000 * 60 * 30), // 30 minutes ago
-          read: false,
-          actorId: 'user456'
-        },
-        {
-          id: '3',
-          type: 'repost',
-          message: 'reposted your post',
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 hours ago
-          read: true,
-          actorId: 'user789',
-          postContent: 'Building decentralized social media is the future'
-        },
-        {
-          id: '4',
-          type: 'reply',
-          message: 'replied to your post',
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-          read: true,
-          actorId: 'user101',
-          postContent: 'What do you think about Web3 social platforms?'
-        }
-      ])
-      setIsLoading(false)
-    }, 1000)
-  }, [])
-
-  const getIcon = (type: NotificationType) => {
-    switch (type) {
-      case 'like':
-        return <HeartIconSolid className="h-5 w-5 text-red-500" />
-      case 'repost':
-        return <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />
-      case 'reply':
-        return <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />
-      case 'follow':
-        return <UserPlusIcon className="h-5 w-5 text-purple-500" />
-      case 'mention':
-        return <BellIcon className="h-5 w-5 text-yellow-500" />
-    }
-  }
-
-  const formatTime = (date: Date) => {
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-    const days = Math.floor(diff / 86400000)
-
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes}m`
-    if (hours < 24) return `${hours}h`
-    if (days < 7) return `${days}d`
-    return date.toLocaleDateString()
-  }
-
-  const filteredNotifications = filter === 'all' 
-    ? notifications 
-    : notifications.filter(n => n.type === filter)
-
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-  }
+  const filteredNotifications = getFilteredNotifications()
+  const unreadCount = getUnreadCount()
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
@@ -126,24 +68,27 @@ function NotificationsPage() {
         <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+            <Link
+              href="/settings"
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+            >
               <Cog6ToothIcon className="h-5 w-5" />
-            </button>
+            </Link>
           </div>
-          
+
           <div className="flex border-b border-gray-200 dark:border-gray-800">
-            {['all', 'like', 'repost', 'reply', 'follow'].map((filterType) => (
+            {FILTER_TABS.map((tab) => (
               <button
-                key={filterType}
-                onClick={() => setFilter(filterType as NotificationType | 'all')}
-                className={`flex-1 py-4 text-sm font-medium capitalize transition-colors relative ${
-                  filter === filterType
+                key={tab.key}
+                onClick={() => setFilter(tab.key)}
+                className={`flex-1 py-4 text-sm font-medium transition-colors relative ${
+                  filter === tab.key
                     ? 'text-gray-900 dark:text-white'
                     : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
                 }`}
               >
-                {filterType === 'all' ? 'All' : filterType === 'repost' ? 'Reposts' : filterType + 's'}
-                {filter === filterType && (
+                {tab.label}
+                {filter === tab.key && (
                   <motion.div
                     layoutId="notificationTab"
                     className="absolute bottom-0 left-0 right-0 h-1 bg-yappr-500"
@@ -154,7 +99,7 @@ function NotificationsPage() {
           </div>
         </header>
 
-        {notifications.some(n => !n.read) && (
+        {unreadCount > 0 && (
           <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
             <Button
               variant="ghost"
@@ -177,7 +122,7 @@ function NotificationsPage() {
             <BellIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No notifications yet</p>
             <p className="text-sm text-gray-400 mt-2">
-              When someone interacts with your posts, you&apos;ll see it here
+              When someone follows you or mentions you, you&apos;ll see it here
             </p>
           </div>
         ) : (
@@ -187,43 +132,57 @@ function NotificationsPage() {
                 key={notification.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors ${
+                onClick={() => !notification.read && markAsRead(notification.id)}
+                className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
                   !notification.read ? 'bg-yappr-50/20 dark:bg-yappr-950/10' : ''
                 }`}
               >
                 <div className="flex gap-3">
-                  <div className="mt-1">{getIcon(notification.type)}</div>
-                  
+                  <div className="mt-1">
+                    {NOTIFICATION_ICONS[notification.type] || <BellIcon className="h-5 w-5 text-gray-500" />}
+                  </div>
+
                   <div className="flex-1">
                     <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900">
-                        <UserAvatar userId={notification.actorId} size="md" alt="User avatar" />
-                      </div>
-                      
-                      <div className="flex-1">
+                      <Link
+                        href={`/user?id=${notification.from?.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0"
+                      >
+                        <UserAvatar userId={notification.from?.id || ''} size="md" alt="User avatar" />
+                      </Link>
+
+                      <div className="flex-1 min-w-0">
                         <p className="text-sm">
-                          <span className="font-semibold">{notification.actorId.slice(0, 8)}...</span>
+                          <Link
+                            href={`/user?id=${notification.from?.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-semibold hover:underline"
+                          >
+                            {notification.from?.displayName || notification.from?.username || 'Unknown User'}
+                          </Link>
                           {' '}
-                          {notification.message}
+                          {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
                           <span className="text-gray-500 ml-2">
-                            {formatTime(notification.timestamp)}
+                            {formatTime(notification.createdAt)}
                           </span>
                         </p>
-                        
-                        {notification.postContent && (
+
+                        {notification.post && (
                           <Link
-                            href={`/post?id=${notification.postId}`}
-                            className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+                            href={`/post?id=${notification.post.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
                           >
-                            {notification.postContent}
+                            {notification.post.content}
                           </Link>
                         )}
                       </div>
                     </div>
                   </div>
-                  
+
                   {!notification.read && (
-                    <div className="w-2 h-2 bg-yappr-500 rounded-full mt-2" />
+                    <div className="w-2 h-2 bg-yappr-500 rounded-full mt-2 flex-shrink-0" />
                   )}
                 </div>
               </motion.div>

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, ReplyThread } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
 import { usePostEnrichment } from './use-post-enrichment'
+import { useAppStore } from '@/lib/store'
+import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
   post: Post | null
@@ -24,8 +26,12 @@ interface UsePostDetailResult {
   replies: Post[]
   /** Threaded replies with nesting and author thread info */
   replyThreads: ReplyThread[]
-  /** Whether initial load is in progress */
+  /** Whether initial load is in progress (false if using cached data) */
   isLoading: boolean
+  /** Whether replies are still loading (separate from main post) */
+  isLoadingReplies: boolean
+  /** Enrichment data for the main post (from cache or progressive loading) */
+  postEnrichment?: ProgressiveEnrichment
   /** Error message if load failed */
   error: string | null
   /** Refetch all data */
@@ -118,17 +124,52 @@ export function usePostDetail({
   postId,
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
-  const [state, setState] = useState<PostDetailState>({
-    post: null,
-    parentPost: null,
-    replies: [],
-    replyThreads: []
+  // Get initial navigation data synchronously from store (for useState initializers)
+  // This must be done outside hooks to capture the value at component mount time
+  const getInitialData = () => {
+    if (!postId || !enabled) return null
+    const pending = useAppStore.getState().pendingPostNavigation
+    if (pending && pending.post.id === postId) {
+      return pending
+    }
+    return null
+  }
+
+  const [state, setState] = useState<PostDetailState>(() => {
+    const initial = getInitialData()
+    return {
+      post: initial?.post || null,
+      parentPost: null,
+      replies: [],
+      replyThreads: []
+    }
   })
-  const [isLoading, setIsLoading] = useState(false)
+
+  const [isLoading, setIsLoading] = useState(() => {
+    // Not loading if no postId or disabled
+    if (!postId || !enabled) return false
+    const initial = getInitialData()
+    return !initial?.post
+  })
+
+  const [isLoadingReplies, setIsLoadingReplies] = useState(() => {
+    // Not loading replies if no postId or disabled
+    if (!postId || !enabled) return false
+    return true
+  })
+
+  const [postEnrichment, setPostEnrichment] = useState<ProgressiveEnrichment | undefined>(() => {
+    const initial = getInitialData()
+    return initial?.enrichment
+  })
+
   const [error, setError] = useState<string | null>(null)
 
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
+
+  // Track if we used navigation data for initial render (computed once at mount)
+  const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
 
   // Enrichment hook with callback to update state
   const { enrich, reset: resetEnrichment } = usePostEnrichment({
@@ -165,7 +206,12 @@ export function usePostDetail({
     if (loadedPostIdRef.current === postId) return
     loadedPostIdRef.current = postId
 
-    setIsLoading(true)
+    // Only show main loading if no navigation data was available
+    if (!usedNavigationDataRef.current) {
+      setIsLoading(true)
+    }
+    // Always loading replies until we fetch them
+    setIsLoadingReplies(true)
     setError(null)
 
     try {
@@ -174,6 +220,7 @@ export function usePostDetail({
 
       if (!loadedPost) {
         setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+        setIsLoadingReplies(false)
         return
       }
 
@@ -298,18 +345,62 @@ export function usePostDetail({
     } catch (err) {
       console.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
-      setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      // Only clear state if we don't have navigation data to show
+      if (!usedNavigationDataRef.current) {
+        setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      }
     } finally {
       setIsLoading(false)
+      setIsLoadingReplies(false)
     }
   }, [postId, enabled, enrich])
 
-  // Load on mount/postId change
+  // Load on mount/postId change/enabled change
   useEffect(() => {
     loadedPostIdRef.current = null // Reset on postId change
     resetEnrichment() // Reset enrichment tracking
+
+    // Handle disabled or no postId - reset all state
+    if (!postId || !enabled) {
+      setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      setPostEnrichment(undefined)
+      setIsLoading(false)
+      setIsLoadingReplies(false)
+      setError(null)
+      usedNavigationDataRef.current = false
+      return
+    }
+
+    // Check for pending navigation data for the new postId
+    const store = useAppStore.getState()
+    const pending = store.pendingPostNavigation
+    if (pending && pending.post.id === postId) {
+      // Use navigation data immediately, reset stale context
+      setState({
+        post: pending.post,
+        parentPost: null,
+        replies: [],
+        replyThreads: []
+      })
+      setPostEnrichment(pending.enrichment)
+      usedNavigationDataRef.current = true
+      setIsLoading(false)
+      setIsLoadingReplies(true) // Will load replies
+      setError(null)
+      // Clear the pending navigation
+      store.consumePendingPostNavigation(postId)
+    } else {
+      // No pending data - reset state and show loading
+      setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      setPostEnrichment(undefined)
+      usedNavigationDataRef.current = false
+      setIsLoading(true)
+      setIsLoadingReplies(true)
+      setError(null)
+    }
+
     loadPost()
-  }, [postId, loadPost, resetEnrichment])
+  }, [postId, enabled, loadPost, resetEnrichment])
 
   const refresh = useCallback(async () => {
     loadedPostIdRef.current = null
@@ -387,6 +478,8 @@ export function usePostDetail({
     replies: state.replies,
     replyThreads: state.replyThreads,
     isLoading,
+    isLoadingReplies,
+    postEnrichment,
     error,
     refresh,
     addOptimisticReply,

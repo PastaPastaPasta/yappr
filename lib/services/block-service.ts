@@ -85,7 +85,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       const blockedIdBytes = Array.from(bs58.decode(targetUserId))
       const documentData: Record<string, unknown> = { blockedId: blockedIdBytes }
-      if (message && message.trim()) {
+      if (message?.trim()) {
         documentData.message = message.trim().slice(0, 280)
       }
 
@@ -198,7 +198,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         documentTypeName: DOCUMENT_TYPES.BLOCK_FILTER,
         where: [['$ownerId', '==', userId]],
         limit: 1
-      } as any)
+      })
 
       const documents = normalizeSDKResponse(response)
       if (documents.length === 0) return null
@@ -242,7 +242,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         where: [['$ownerId', 'in', userIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: Math.min(userIds.length, 100)
-      } as any)
+      })
 
       const documents = normalizeSDKResponse(response)
 
@@ -322,7 +322,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         documentTypeName: DOCUMENT_TYPES.BLOCK_FOLLOW,
         where: [['$ownerId', '==', userId]],
         limit: 1
-      } as any)
+      })
 
       const documents = normalizeSDKResponse(response)
       if (documents.length === 0) return null
@@ -748,7 +748,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       ],
       orderBy: [['blockedId', 'asc']],
       limit: Math.min(targetIds.length, 100)
-    } as any)
+    })
 
     return normalizeSDKResponse(response).map(doc => this.transformDocument(doc))
   }
@@ -783,7 +783,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
             ],
             orderBy: [['blockedId', 'asc']],
             limit: Math.min(targetIds.length, 100)
-          } as any)
+          })
           return normalizeSDKResponse(response)
         } catch (err) {
           console.error(`Error querying blocks for blocker ${blockerId}:`, err)

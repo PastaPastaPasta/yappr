@@ -1,6 +1,6 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { queryDocuments, stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
+import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
@@ -116,7 +116,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Get followers of a user.
    * Paginates through all results to return complete list.
    */
-  async getFollowers(userId: string, options: QueryOptions = {}): Promise<FollowDocument[]> {
+  async getFollowers(userId: string): Promise<FollowDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -145,7 +145,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Get users that a user follows.
    * Paginates through all results to return complete list.
    */
-  async getFollowing(userId: string, options: QueryOptions = {}): Promise<FollowDocument[]> {
+  async getFollowing(userId: string): Promise<FollowDocument[]> {
     try {
       const sdk = await getEvoSdk();
 

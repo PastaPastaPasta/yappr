@@ -58,16 +58,17 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
   render() {
     if (this.state.hasError) {
+      const error = this.state.error ?? new Error('Unknown error')
       // Use custom fallback if provided
       if (this.props.fallback) {
         const FallbackComponent = this.props.fallback
-        return <FallbackComponent error={this.state.error!} retry={this.retry} />
+        return <FallbackComponent error={error} retry={this.retry} />
       }
 
       // Default error UI based on level
-      return <DefaultErrorFallback 
-        error={this.state.error!} 
-        retry={this.retry} 
+      return <DefaultErrorFallback
+        error={error}
+        retry={this.retry}
         level={this.props.level || 'component'}
       />
     }

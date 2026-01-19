@@ -57,6 +57,8 @@ function FollowingPage() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const followingState = useAsyncState<FollowingUser[]>(null)
+  // Extract stable setter functions to avoid infinite loop in useCallback dependencies
+  const { setLoading, setError, setData } = followingState
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<FollowingUser[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -70,8 +72,6 @@ function FollowingPage() {
 
   // Load following list
   const loadFollowing = useCallback(async (forceRefresh: boolean = false) => {
-    const { setLoading, setError, setData } = followingState
-
     setLoading(true)
     setError(null)
 
@@ -112,7 +112,7 @@ function FollowingPage() {
       }
 
       // Use followService to get following list
-      const follows = await followService.getFollowing(userIdToLoad, { limit: 50 })
+      const follows = await followService.getFollowing(userIdToLoad)
       
       console.log('Following: Raw follows from platform:', follows)
 
@@ -129,10 +129,15 @@ function FollowingPage() {
       
       // Batch fetch all usernames, best usernames, profiles, and follower/following counts
       const [allUsernamesData, bestUsernamesMap, profiles, followerCounts, followingCounts] = await Promise.all([
-        // Fetch all usernames for each identity (for "Also known as" feature)
+        // Fetch all usernames for each identity (for "Also known as" feature), sorted consistently
         Promise.all(identityIds.map(async (id) => {
           try {
             const usernames = await dpnsService.getAllUsernames(id)
+            if (usernames.length > 1) {
+              // Sort usernames: contested first, then shortest, then alphabetically
+              const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+              return { id, usernames: sortedUsernames }
+            }
             return { id, usernames }
           } catch (error) {
             console.error(`Failed to get all usernames for ${id}:`, error)
@@ -219,12 +224,12 @@ function FollowingPage() {
     } finally {
       setLoading(false)
     }
-  }, [followingState.setLoading, followingState.setError, followingState.setData, user?.identityId, targetUserId])
+  }, [setLoading, setError, setData, user?.identityId, targetUserId])
 
   useEffect(() => {
     // Load when we have a user (for own profile) or a targetUserId (for viewing others)
     if (user || targetUserId) {
-      loadFollowing()
+      loadFollowing().catch(err => console.error('Failed to load following:', err))
     }
   }, [loadFollowing, user, targetUserId])
 
@@ -307,8 +312,17 @@ function FollowingPage() {
 
   // Search for DPNS users
   const searchUsers = useCallback(async () => {
-    if (!searchQuery.trim()) {
+    const trimmedQuery = searchQuery.trim()
+    if (!trimmedQuery) {
       setSearchResults([])
+      setSearchError(null)
+      return
+    }
+
+    // Require at least 3 characters to search (like DashPay)
+    if (trimmedQuery.length < 3) {
+      setSearchResults([])
+      setSearchError(null)
       return
     }
 
@@ -421,7 +435,7 @@ function FollowingPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery) {
-        searchUsers()
+        searchUsers().catch(err => console.error('Failed to search users:', err))
       }
     }, 500)
 
@@ -664,7 +678,7 @@ function FollowingPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(followingUser.id)
+                                        navigator.clipboard.writeText(followingUser.id).catch(console.error)
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

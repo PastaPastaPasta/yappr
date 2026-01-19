@@ -1,47 +1,34 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
-
-interface DpnsDocument {
-  $id: string;
-  $ownerId: string;
-  $revision: number;
-  $createdAt?: number;
-  $updatedAt?: number;
-  label: string;
-  normalizedLabel: string;
-  normalizedParentDomainName: string;
-  preorderSalt: string;
-  records: {
-    identity?: string;
-    dashUniqueIdentityId?: string;
-    dashAliasIdentityId?: string;
-  };
-  subdomainRules?: {
-    allowSubdomains: boolean;
-  };
-}
+import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
  */
-function extractDocuments(response: unknown): any[] {
+function extractDocuments(response: unknown): Record<string, unknown>[] {
   if (response instanceof Map) {
     return Array.from(response.values())
       .filter(Boolean)
-      .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      .map((doc: unknown) => {
+        const d = doc as { toJSON?: () => unknown };
+        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+      });
   }
   if (Array.isArray(response)) {
-    return response.map((doc: any) =>
-      typeof doc.toJSON === 'function' ? doc.toJSON() : doc
-    );
+    return response.map((doc: unknown) => {
+      const d = doc as { toJSON?: () => unknown };
+      return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
+    });
   }
-  if ((response as any)?.documents) {
-    return (response as any).documents;
+  const respObj = response as { documents?: unknown[]; toJSON?: () => unknown };
+  if (respObj?.documents) {
+    return respObj.documents as Record<string, unknown>[];
   }
-  if ((response as any)?.toJSON) {
-    const json = (response as any).toJSON();
-    return Array.isArray(json) ? json : json.documents || [];
+  if (respObj?.toJSON) {
+    const json = respObj.toJSON() as { documents?: unknown[] } | unknown[];
+    if (Array.isArray(json)) return json as Record<string, unknown>[];
+    return (json as { documents?: unknown[] }).documents as Record<string, unknown>[] || [];
   }
   return [];
 }
@@ -83,11 +70,11 @@ class DpnsService {
         documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [['records.identity', '==', identityId]],
         limit: 20
-      } as any);
+      });
 
       const documents = extractDocuments(response);
-      return documents.map((doc: any) => {
-        const data = doc.data || doc;
+      return documents.map((doc) => {
+        const data = (doc.data || doc) as Record<string, unknown>;
         return `${data.label}.${data.normalizedParentDomainName}`;
       });
     } catch (error) {
@@ -97,7 +84,7 @@ class DpnsService {
   }
 
   /**
-   * Sort usernames by contested status (contested usernames first)
+   * Sort usernames by: contested first, then shortest, then alphabetically
    */
   async sortUsernamesByContested(usernames: string[]): Promise<string[]> {
     const sdk = await getEvoSdk();
@@ -112,9 +99,14 @@ class DpnsService {
 
     return contestedStatuses
       .sort((a, b) => {
+        // 1. Contested usernames first
         if (a.contested && !b.contested) return -1;
         if (!a.contested && b.contested) return 1;
-        // If both contested or both not contested, sort alphabetically
+        // 2. Shorter usernames first
+        if (a.username.length !== b.username.length) {
+          return a.username.length - b.username.length;
+        }
+        // 3. Alphabetically
         return a.username.localeCompare(b.username);
       })
       .map(item => item.username);
@@ -123,6 +115,7 @@ class DpnsService {
   /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
+   * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
    *
    * TODO: This query uses 'in' clause which doesn't support reliable pagination.
    * The SDK returns incomplete results when subtrees are empty but still count against the limit.
@@ -162,12 +155,16 @@ class DpnsService {
         where: [['records.identity', 'in', uncachedIds]],
         orderBy: [['records.identity', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = extractDocuments(response);
+
+      // Collect ALL usernames per identity (some users have multiple)
+      const usernamesByIdentity = new Map<string, string[]>();
       for (const doc of documents) {
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId;
         // Convert base64 identity to base58 for consistent map keys
         const identityId = identifierToBase58(rawId);
         const label = data.label || data.normalizedLabel;
@@ -175,9 +172,36 @@ class DpnsService {
         const username = `${label}.${parentDomain}`;
 
         if (identityId && label) {
-          results.set(identityId, username);
-          this._cacheEntry(username, identityId);
+          const existing = usernamesByIdentity.get(identityId) || [];
+          existing.push(username);
+          usernamesByIdentity.set(identityId, existing);
         }
+      }
+
+      // For identities with multiple usernames, sort and pick the best one
+      // For identities with one username, use it directly
+      for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
+        let bestUsername: string;
+        if (usernames.length === 1) {
+          bestUsername = usernames[0];
+        } else {
+          // Sort: contested first, then shortest, then alphabetically
+          // Wrap in try-catch so one failed contested lookup doesn't break the batch
+          try {
+            const sortedUsernames = await this.sortUsernamesByContested(usernames);
+            bestUsername = sortedUsernames[0];
+          } catch (err) {
+            console.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
+            // Fallback: sort by length then alphabetically (skip contested check)
+            const sorted = [...usernames].sort((a, b) => {
+              if (a.length !== b.length) return a.length - b.length;
+              return a.localeCompare(b);
+            });
+            bestUsername = sorted[0];
+          }
+        }
+        results.set(identityId, bestUsername);
+        this._cacheEntry(bestUsername, identityId);
       }
     } catch (error) {
       console.error('DPNS: Batch resolution error:', error);
@@ -260,13 +284,14 @@ class DpnsService {
           ['normalizedParentDomainName', '==', parentDomain.toLowerCase()]
         ],
         limit: 1
-      } as any);
+      });
 
       const documents = extractDocuments(response);
       if (documents.length > 0) {
         const doc = documents[0];
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId || data.records?.dashAliasIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId || records?.dashAliasIdentityId;
         const identityId = identifierToBase58(rawId);
 
         if (identityId) {
@@ -329,14 +354,14 @@ class DpnsService {
         ],
         orderBy: [['normalizedLabel', 'asc']],
         limit
-      } as any);
+      });
 
       const documents = extractDocuments(response);
-      return documents.map((doc: any) => {
-        const data = doc.data || doc;
-        const label = data.label || data.normalizedLabel || 'unknown';
-        const parentDomain = data.normalizedParentDomainName || 'dash';
-        const ownerId = doc.ownerId || doc.$ownerId || '';
+      return documents.map((doc) => {
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const label = (data.label || data.normalizedLabel || 'unknown') as string;
+        const parentDomain = (data.normalizedParentDomainName || 'dash') as string;
+        const ownerId = (doc.ownerId || doc.$ownerId || '') as string;
 
         return {
           username: `${label}.${parentDomain}`,
@@ -366,7 +391,7 @@ class DpnsService {
     publicKeyId: number,
     privateKeyWif: string,
     onPreorderSuccess?: () => void
-  ): Promise<any> {
+  ): Promise<{ success: boolean }> {
     try {
       const sdk = await getEvoSdk();
 
@@ -390,7 +415,7 @@ class DpnsService {
 
       // Register the name using EvoSDK facade
       console.log(`Registering DPNS name: ${label}`);
-      const result = await sdk.dpns.registerName({
+      await sdk.dpns.registerName({
         label,
         identityId,
         publicKeyId,
@@ -401,7 +426,7 @@ class DpnsService {
       // Clear cache for this identity
       this.clearCache(undefined, identityId);
 
-      return result;
+      return { success: true };
     } catch (error) {
       console.error('Error registering username:', error);
       throw error;
@@ -460,6 +485,92 @@ class DpnsService {
     return null;
   }
 
+
+  /**
+   * Batch check availability and contested status for multiple usernames
+   */
+  async batchCheckAvailability(labels: string[]): Promise<Map<string, UsernameCheckResult>> {
+    const results = new Map<string, UsernameCheckResult>();
+
+    // Check each username in parallel
+    const checks = await Promise.allSettled(
+      labels.map(async (label) => {
+        const normalizedLabel = label.toLowerCase().replace(/\.dash$/, '');
+        try {
+          const sdk = await getEvoSdk();
+          const [available, contested] = await Promise.all([
+            sdk.dpns.isNameAvailable(normalizedLabel),
+            sdk.dpns.isContestedUsername(normalizedLabel),
+          ]);
+          return { label: normalizedLabel, available, contested };
+        } catch (error) {
+          return {
+            label: normalizedLabel,
+            available: false,
+            contested: false,
+            error: error instanceof Error ? error.message : 'Check failed',
+          };
+        }
+      })
+    );
+
+    // Process results
+    for (const result of checks) {
+      if (result.status === 'fulfilled') {
+        const { label, available, contested, error } = result.value;
+        results.set(label, { available, contested, error });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Register multiple usernames sequentially with progress callback
+   */
+  async registerUsernamesSequentially(
+    registrations: Array<{
+      label: string;
+      identityId: string;
+      publicKeyId: number;
+      privateKeyWif: string;
+    }>,
+    onProgress?: (index: number, total: number, label: string) => void
+  ): Promise<UsernameRegistrationResult[]> {
+    const results: UsernameRegistrationResult[] = [];
+
+    for (let i = 0; i < registrations.length; i++) {
+      const reg = registrations[i];
+      onProgress?.(i, registrations.length, reg.label);
+
+      try {
+        const sdk = await getEvoSdk();
+        const isContested = await sdk.dpns.isContestedUsername(reg.label);
+
+        await this.registerUsername(
+          reg.label,
+          reg.identityId,
+          reg.publicKeyId,
+          reg.privateKeyWif
+        );
+
+        results.push({
+          label: reg.label,
+          success: true,
+          isContested,
+        });
+      } catch (error) {
+        results.push({
+          label: reg.label,
+          success: false,
+          isContested: false,
+          error: error instanceof Error ? error.message : 'Registration failed',
+        });
+      }
+    }
+
+    return results;
+  }
 
   /**
    * Clear cache entries

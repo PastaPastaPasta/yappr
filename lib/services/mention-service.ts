@@ -1,4 +1,4 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
 import { MENTION_CONTRACT_ID } from '../constants';
@@ -22,8 +22,8 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * Transform document from SDK response to typed object
    * SDK v3: System fields ($id, $ownerId) are base58, byte array fields are base64
    */
-  protected transformDocument(doc: any): PostMentionDocument {
-    const data = doc.data || doc;
+  protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
     const rawMentionedUserId = data.mentionedUserId || doc.mentionedUserId;
 
@@ -39,9 +39,9 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     }
 
     return {
-      $id: doc.$id,
-      $ownerId: doc.$ownerId,
-      $createdAt: doc.$createdAt,
+      $id: doc.$id as string,
+      $ownerId: doc.$ownerId as string,
+      $createdAt: doc.$createdAt as number,
       postId: postId || '',
       mentionedUserId: mentionedUserId || ''
     };
@@ -157,7 +157,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
           ['mentionedUserId', '==', mentionedUserId]
         ],
         limit: 1
-      } as any);
+      });
 
       // Use shared helper for response normalization
       const documents = normalizeSDKResponse(response);
@@ -184,11 +184,11 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
           ['postId', '==', postId]
         ],
         limit: 100
-      } as any);
+      });
 
       // Use shared helper for response normalization
       const documents = normalizeSDKResponse(response);
-      return documents.map((doc: any) => this.transformDocument(doc));
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting mentions for post:', error);
       return [];
@@ -200,7 +200,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * Paginates through all results to return complete list.
    * Returns mention documents - caller should fetch actual posts and filter by ownership.
    */
-  async getPostsMentioningUser(userId: string, options: QueryOptions = {}): Promise<PostMentionDocument[]> {
+  async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 

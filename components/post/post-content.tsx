@@ -6,7 +6,7 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
 import { MentionValidationStatus } from '@/hooks/use-mention-validation'
 import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt } from './link-preview'
-import { useLinkPreview, extractFirstUrl } from '@/hooks/use-link-preview'
+import { useLinkPreview, extractFirstUrl, stripTrailingPunctuation } from '@/hooks/use-link-preview'
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { MentionLink } from './mention-link'
@@ -220,9 +220,16 @@ export function PostContent({
       const href = part.value.startsWith('www.')
         ? `https://${part.value}`
         : part.value
-      const cleanHref = href.replace(/[.,;:!?)]+$/, '')
+      // Use stripTrailingPunctuation for cleanHref to match extractFirstUrl's normalization
+      const cleanHref = stripTrailingPunctuation(href)
       const cleanDisplay = part.value.replace(/[.,;:!?)]+$/, '')
       const trailingPunctuation = part.value.slice(cleanDisplay.length)
+
+      // If link previews are enabled and this URL is being previewed (loading or loaded), strip it from content
+      // Keep only trailing punctuation (if any). If preview fetch fails, the raw URL remains visible.
+      if (linkPreviews && firstUrl && cleanHref === firstUrl && (previewLoading || previewData)) {
+        return trailingPunctuation ? <Fragment key={key}>{trailingPunctuation}</Fragment> : null
+      }
 
       return (
         <Fragment key={key}>

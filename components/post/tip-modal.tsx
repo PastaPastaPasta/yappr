@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -10,19 +10,34 @@ import { useTipModal } from '@/hooks/use-tip-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { identityService } from '@/lib/services/identity-service'
-import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
-import { PaymentQRCode } from '@/components/ui/payment-qr-code'
+import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
+import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
 
 // Preset tip amounts in DASH
 const PRESET_AMOUNTS = [0.001, 0.005, 0.01, 0.05]
 
-type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error' | 'qr-view'
-type PaymentMethod = 'credits' | 'external'
+type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error'
+type PaymentTab = 'credits' | 'crypto'
 
 export function TipModal() {
-  const { isOpen, post, close } = useTipModal()
+  const { isOpen, post, recipient, close } = useTipModal()
   const { user, refreshBalance } = useAuth()
+
+  // Derive recipient info from either post.author or direct recipient
+  const recipientInfo = useMemo(() => {
+    if (post) {
+      return {
+        id: post.author.id,
+        displayName: post.author.displayName,
+        username: post.author.username,
+      }
+    }
+    if (recipient) {
+      return recipient
+    }
+    return null
+  }, [post, recipient])
 
   const [amount, setAmount] = useState('')
   const [tipMessage, setTipMessage] = useState('')
@@ -34,8 +49,9 @@ export function TipModal() {
 
   // Payment URI support
   const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[]>([])
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credits')
+  const [activeTab, setActiveTab] = useState<PaymentTab>('credits')
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
+  const [showQrDialog, setShowQrDialog] = useState(false)
 
   // Fetch user balance when modal opens
   useEffect(() => {
@@ -50,13 +66,13 @@ export function TipModal() {
 
   // Fetch recipient's payment URIs when modal opens
   useEffect(() => {
-    if (isOpen && post) {
+    if (isOpen && recipientInfo) {
       import('@/lib/services/unified-profile-service')
-        .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(post.author.id))
+        .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(recipientInfo.id))
         .then(uris => setPaymentUris(uris))
         .catch(() => setPaymentUris([]))
     }
-  }, [isOpen, post])
+  }, [isOpen, recipientInfo])
 
   // Reset state when modal closes
   useEffect(() => {
@@ -66,9 +82,10 @@ export function TipModal() {
       setTransferKey('')
       setState('input')
       setError(null)
-      setPaymentMethod('credits')
+      setActiveTab('credits')
       setPaymentUris([])
       setSelectedQrPayment(null)
+      setShowQrDialog(false)
     }
   }, [isOpen])
 
@@ -113,17 +130,18 @@ export function TipModal() {
   }
 
   const handleSendTip = async () => {
-    if (!user || !post) return
+    if (!user || !recipientInfo) return
 
     setState('processing')
 
     const dashAmount = parseFloat(amount)
     const credits = tipService.dashToCredits(dashAmount)
 
+    // postId is null for user-only tipping (no tip post will be created)
     const result = await tipService.sendTip(
       user.identityId,
-      post.author.id,
-      post.id,
+      recipientInfo.id,
+      post?.id || null,
       credits,
       transferKey,
       tipMessage.trim() || undefined
@@ -161,21 +179,22 @@ export function TipModal() {
   // Handle showing QR code for an external payment URI
   const handleShowQr = (paymentUri: ParsedPaymentUri) => {
     setSelectedQrPayment(paymentUri)
-    setState('qr-view')
+    setShowQrDialog(true)
   }
 
-  // Handle going back from QR view to input
-  const handleBackFromQr = () => {
+  // Handle closing QR dialog
+  const handleCloseQrDialog = () => {
+    setShowQrDialog(false)
     setSelectedQrPayment(null)
-    setState('input')
   }
 
-  if (!post) return null
+  if (!recipientInfo) return null
 
   const dashAmount = parseFloat(amount) || 0
-  const recipientName = post.author.displayName || post.author.username || 'this user'
+  const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
 
   return (
+    <>
     <Dialog.Root open={isOpen} onOpenChange={handleClose}>
       <AnimatePresence>
         {isOpen && (
@@ -196,12 +215,8 @@ export function TipModal() {
                     onClick={(e) => e.stopPropagation()}
                   >
                 <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
-                  {state === 'qr-view' ? (
-                    <QrCodeIcon className="h-6 w-6 text-amber-500" />
-                  ) : (
-                    <CurrencyDollarIcon className="h-6 w-6 text-amber-500" />
-                  )}
-                  {state === 'success' ? 'Tip Sent!' : state === 'error' ? 'Transfer Failed' : state === 'qr-view' ? 'Payment QR Code' : 'Send Tip'}
+                  <CurrencyDollarIcon className="h-6 w-6 text-amber-500" />
+                  {state === 'success' ? 'Tip Sent!' : state === 'error' ? 'Transfer Failed' : 'Send Tip'}
                 </Dialog.Title>
 
                 <Dialog.Description className="sr-only">
@@ -223,165 +238,176 @@ export function TipModal() {
                       Send a tip to <span className="font-semibold text-gray-900 dark:text-white">{recipientName}</span>
                     </p>
 
-                    {/* Balance display */}
-                    <div className="text-sm text-gray-500">
-                      {loadingBalance ? (
-                        'Loading balance...'
-                      ) : balance !== null ? (
-                        <>Your balance: <span className="font-medium">{tipService.formatDash(tipService.creditsToDash(balance))}</span></>
-                      ) : (
-                        'Could not load balance'
-                      )}
-                    </div>
-
-                    {/* Amount input */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Amount (DASH)
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={amount}
-                        onChange={(e) => handleAmountChange(e.target.value)}
-                        placeholder="0.001"
-                        className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-lg font-mono placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                      />
-                    </div>
-
-                    {/* Preset amounts */}
-                    <div className="flex gap-2 overflow-x-auto">
-                      {PRESET_AMOUNTS.map((preset) => (
-                        <button
-                          key={preset}
-                          onClick={() => handlePresetClick(preset)}
-                          className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
-                            amount === preset.toString()
-                              ? 'bg-amber-500 text-white'
-                              : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                          }`}
-                        >
-                          {preset} DASH
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Optional message */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Message (optional)
-                      </label>
-                      <textarea
-                        value={tipMessage}
-                        onChange={(e) => setTipMessage(e.target.value)}
-                        placeholder="Add a note with your tip..."
-                        maxLength={280}
-                        rows={2}
-                        className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                      />
-                      <p className="mt-1 text-xs text-gray-500 text-right">
-                        {tipMessage.length}/280
-                      </p>
-                    </div>
-
-                    {/* Payment method selection */}
+                    {/* Tab Navigation - only show if there are external payment options */}
                     {paymentUris.length > 0 && (
-                      <div className="space-y-2">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Payment Method
-                        </label>
-
-                        {/* Platform credits option */}
+                      <div className="flex rounded-lg bg-gray-100 dark:bg-neutral-800 p-1">
                         <button
                           type="button"
-                          onClick={() => setPaymentMethod('credits')}
-                          className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                            paymentMethod === 'credits'
-                              ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
-                              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                          onClick={() => setActiveTab('credits')}
+                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                            activeTab === 'credits'
+                              ? 'bg-white dark:bg-neutral-700 text-amber-600 dark:text-amber-400 shadow-sm'
+                              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                           }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <CurrencyDollarIcon className="w-5 h-5 text-amber-500" />
-                            <div>
-                              <span className="font-medium">Platform Credits</span>
-                              <p className="text-xs text-gray-500">Direct transfer via Dash Platform</p>
-                            </div>
-                          </div>
+                          <CurrencyDollarIcon className="w-4 h-4" />
+                          Platform Credits
                         </button>
-
-                        {/* External wallet options */}
-                        <p className="text-xs text-gray-500 pt-1">Or send directly to wallet:</p>
-                        {paymentUris.map((paymentUri, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => handleShowQr(paymentUri)}
-                            className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-left transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <PaymentSchemeIcon scheme={paymentUri.scheme} />
-                              <div className="flex-1 min-w-0">
-                                <span className="font-medium">{getPaymentLabel(paymentUri.uri)}</span>
-                                <p className="text-xs text-gray-500 font-mono truncate">
-                                  {truncateAddress(paymentUri.uri, 20)}
-                                </p>
-                              </div>
-                              <QrCodeIcon className="w-5 h-5 text-gray-400" />
-                            </div>
-                          </button>
-                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('crypto')}
+                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                            activeTab === 'crypto'
+                              ? 'bg-white dark:bg-neutral-700 text-amber-600 dark:text-amber-400 shadow-sm'
+                              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                          }`}
+                        >
+                          <WalletIcon className="w-4 h-4" />
+                          Other Crypto
+                          <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-gray-200 dark:bg-neutral-600">
+                            {paymentUris.length}
+                          </span>
+                        </button>
                       </div>
                     )}
 
-                    {/* Transfer key input - only show for platform credits */}
-                    {paymentMethod === 'credits' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Transfer Private Key (WIF)
-                      </label>
-                      <input
-                        type="password"
-                        value={transferKey}
-                        onChange={(e) => setTransferKey(e.target.value)}
-                        placeholder="Enter your transfer private key"
-                        className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                      />
-                      <p className="mt-1 text-xs text-gray-500">
-                        Your key is never stored and is cleared after the transaction.
-                      </p>
-                    </div>
+                    {/* Credits Tab Content */}
+                    {activeTab === 'credits' && (
+                      <div className="space-y-4">
+                        {/* Balance display */}
+                        <div className="text-sm text-gray-500">
+                          {loadingBalance ? (
+                            'Loading balance...'
+                          ) : balance !== null ? (
+                            <>Your balance: <span className="font-medium">{tipService.formatDash(tipService.creditsToDash(balance))}</span></>
+                          ) : (
+                            'Could not load balance'
+                          )}
+                        </div>
+
+                        {/* Amount input */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Amount (DASH)
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={amount}
+                            onChange={(e) => handleAmountChange(e.target.value)}
+                            placeholder="0.001"
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-lg font-mono placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        {/* Preset amounts */}
+                        <div className="flex gap-2 overflow-x-auto">
+                          {PRESET_AMOUNTS.map((preset) => (
+                            <button
+                              key={preset}
+                              onClick={() => handlePresetClick(preset)}
+                              className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                                amount === preset.toString()
+                                  ? 'bg-amber-500 text-white'
+                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                              }`}
+                            >
+                              {preset} DASH
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Optional message */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Message (optional)
+                          </label>
+                          <textarea
+                            value={tipMessage}
+                            onChange={(e) => setTipMessage(e.target.value)}
+                            placeholder="Add a note with your tip..."
+                            maxLength={280}
+                            rows={2}
+                            className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 text-right">
+                            {tipMessage.length}/280
+                          </p>
+                        </div>
+
+                        {/* Transfer key input */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Transfer Private Key (WIF)
+                          </label>
+                          <input
+                            type="password"
+                            value={transferKey}
+                            onChange={(e) => setTransferKey(e.target.value)}
+                            placeholder="Enter your transfer private key"
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                          />
+                          <p className="mt-1 text-xs text-gray-500">
+                            Your key is never stored and is cleared after the transaction.
+                          </p>
+                        </div>
+
+                        {/* Error message */}
+                        {error && (
+                          <p className="text-red-500 text-sm">{error}</p>
+                        )}
+
+                        {/* Continue button */}
+                        <Button
+                          onClick={handleContinue}
+                          className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                          disabled={!amount || !transferKey}
+                        >
+                          Continue
+                        </Button>
+                      </div>
                     )}
 
-                    {/* Error message */}
-                    {error && (
-                      <p className="text-red-500 text-sm">{error}</p>
-                    )}
+                    {/* Other Crypto Tab Content */}
+                    {activeTab === 'crypto' && (
+                      <div className="space-y-3">
+                        <p className="text-sm text-gray-500">
+                          Send a tip directly to {recipientName}&apos;s wallet. Click an address to see the QR code.
+                        </p>
 
-                    {/* Continue button - only for platform credits */}
-                    {paymentMethod === 'credits' && (
-                      <Button
-                        onClick={handleContinue}
-                        className="w-full bg-amber-500 hover:bg-amber-600 text-white"
-                        disabled={!amount || !transferKey}
-                      >
-                        Continue
-                      </Button>
-                    )}
-                  </div>
-                )}
+                        {/* Grid of crypto options */}
+                        <div className="grid gap-2">
+                          {paymentUris.map((paymentUri, idx) => {
+                            const label = PAYMENT_SCHEME_LABELS[paymentUri.scheme.toLowerCase()] || getPaymentLabel(paymentUri.uri)
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => handleShowQr(paymentUri)}
+                                className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/10 text-left transition-all group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <PaymentSchemeIcon scheme={paymentUri.scheme} size="lg" />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-medium text-gray-900 dark:text-gray-100">{label}</span>
+                                    <p className="text-xs text-gray-500 font-mono truncate">
+                                      {truncateAddress(paymentUri.uri, 24)}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1 text-gray-400 group-hover:text-amber-500 transition-colors">
+                                    <QrCodeIcon className="w-5 h-5" />
+                                  </div>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
 
-                {/* QR Code View State */}
-                {state === 'qr-view' && selectedQrPayment && (
-                  <div className="space-y-4">
-                    <p className="text-gray-600 dark:text-gray-400">
-                      Send a tip to <span className="font-semibold text-gray-900 dark:text-white">{recipientName}</span>
-                    </p>
-                    <PaymentQRCode
-                      paymentUri={selectedQrPayment}
-                      onBack={handleBackFromQr}
-                      size={180}
-                    />
+                        <p className="text-xs text-gray-400 text-center pt-2">
+                          Tips sent via external wallets are not tracked on Yappr
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -483,5 +509,14 @@ export function TipModal() {
         )}
       </AnimatePresence>
     </Dialog.Root>
+
+    {/* QR Code Dialog - opens on top of the tip modal */}
+    <PaymentQRCodeDialog
+      isOpen={showQrDialog}
+      onClose={handleCloseQrDialog}
+      paymentUri={selectedQrPayment}
+      recipientName={recipientName}
+    />
+  </>
   )
 }

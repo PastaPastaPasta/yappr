@@ -14,13 +14,21 @@ import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import type { Post } from '@/lib/types'
+
+interface RawPostDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  content?: string
+}
 
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
-  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchResults, setSearchResults] = useState<Post[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
@@ -49,7 +57,7 @@ export default function ExplorePage() {
       }
     }
 
-    loadTrendingHashtags()
+    loadTrendingHashtags().catch(err => console.error('Failed to load trending hashtags:', err))
   }, [])
 
   // Search posts when query changes
@@ -69,20 +77,21 @@ export default function ExplorePage() {
         const allPosts = await dashClient.queryPosts({ limit: 100 })
 
         // Get unique author IDs and check block status
-        const authorIds = Array.from(new Set(allPosts.map((p: any) => p.$ownerId).filter(Boolean))) as string[]
+        const typedPosts = allPosts as RawPostDocument[]
+        const authorIds = Array.from(new Set(typedPosts.map(p => p.$ownerId).filter(Boolean)))
         const blockedMap = user?.identityId
           ? await checkBlockedForAuthors(user.identityId, authorIds)
           : new Map<string, boolean>()
 
-        const filtered = allPosts
-          .filter((post: any) =>
+        const filtered = typedPosts
+          .filter(post =>
             post.$ownerId &&
             post.content?.toLowerCase().includes(searchQuery.toLowerCase()) &&
             !blockedMap.get(post.$ownerId)
           )
-          .map((post: any) => ({
+          .map(post => ({
             id: post.$id,
-            content: post.content,
+            content: post.content || '',
             author: {
               id: post.$ownerId,
               // Leave empty for PostCard skeleton - will be enriched progressively
@@ -114,7 +123,7 @@ export default function ExplorePage() {
 
     const debounceTimer = setTimeout(searchPosts, 300)
     return () => clearTimeout(debounceTimer)
-  }, [searchQuery])
+  }, [searchQuery, user?.identityId])
 
   const handleHashtagClick = (hashtag: string) => {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)

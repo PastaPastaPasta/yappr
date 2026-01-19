@@ -1,7 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { queryDocuments, mapToDocumentArray, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { queryDocuments, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -120,7 +120,7 @@ export abstract class BaseDocumentService<T> {
         data
       );
 
-      if (!result.success) {
+      if (!result.success || !result.document) {
         throw new Error(result.error || 'Failed to create document');
       }
 
@@ -161,7 +161,7 @@ export abstract class BaseDocumentService<T> {
         revision
       );
 
-      if (!result.success) {
+      if (!result.success || !result.document) {
         throw new Error(result.error || 'Failed to update document');
       }
 

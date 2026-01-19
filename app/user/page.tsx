@@ -14,6 +14,8 @@ import {
   ArrowPathIcon,
   CurrencyDollarIcon,
   QrCodeIcon,
+  EnvelopeIcon,
+  UserPlusIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -35,10 +37,13 @@ import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/component
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { useTipModal } from '@/hooks/use-tip-modal'
 import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import { mentionService } from '@/lib/services/mention-service'
 import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { cn } from '@/lib/utils'
+import { UsernameDropdown } from '@/components/dpns/username-dropdown'
+import { UsernameModal } from '@/components/dpns/username-modal'
 
 interface ProfileData {
   displayName: string
@@ -65,6 +70,7 @@ function UserProfileContent() {
 
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [username, setUsername] = useState<string | null>(null)
+  const [allUsernames, setAllUsernames] = useState<string[]>([])
   const [hasDpns, setHasDpns] = useState(false)
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -97,8 +103,14 @@ function UserProfileContent() {
   // QR code dialog state for tip addresses
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
 
+  // Username registration modal state
+  const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
+
   // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
+
+  // Tip modal
+  const { openForUser: openTipModal } = useTipModal()
 
   // Tab state for Posts/Mentions
   const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
@@ -113,6 +125,9 @@ function UserProfileContent() {
   })
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
+
+  // Check if display name is still in loading/fallback state
+  const isDisplayNameLoading = isLoading || !profile?.displayName
 
   useEffect(() => {
     if (!userId) return
@@ -211,7 +226,7 @@ function UserProfileContent() {
         // Fetch user's reposts and merge with their posts
         try {
           const { repostService } = await import('@/lib/services/repost-service')
-          const userReposts = await repostService.getUserReposts(userId, { limit: 50 })
+          const userReposts = await repostService.getUserReposts(userId)
 
           // Track repost pagination
           if (userReposts.length > 0) {
@@ -300,25 +315,37 @@ function UserProfileContent() {
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
 
-        // Try to resolve DPNS username
+        // Try to resolve DPNS usernames (fetch all, sort, use best as primary)
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
-          const resolvedUsername = await dpnsService.resolveUsername(userId)
-          if (resolvedUsername) {
-            setUsername(resolvedUsername)
+          const usernames = await dpnsService.getAllUsernames(userId)
+          if (usernames.length > 0) {
+            // Sort usernames: contested first, then shortest, then alphabetically
+            // This matches the selection logic used in other pages (resolveUsername, resolveUsernamesBatch)
+            const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+            setAllUsernames(sortedUsernames)
+            setUsername(sortedUsernames[0])
             setHasDpns(true)
             // Update posts with hasDpns flag
             setPosts(currentPosts => currentPosts.map(post => ({
               ...post,
               author: {
                 ...post.author,
-                username: resolvedUsername,
+                username: sortedUsernames[0],
                 hasDpns: true
               } as any
             })))
+          } else {
+            // Reset DPNS state when no usernames found
+            setAllUsernames([])
+            setUsername(null)
+            setHasDpns(false)
           }
         } catch (e) {
-          // DPNS resolution is optional
+          // Reset DPNS state on error to avoid stale data
+          setAllUsernames([])
+          setUsername(null)
+          setHasDpns(false)
         }
 
       } catch (error) {
@@ -430,10 +457,7 @@ function UserProfileContent() {
       // Fetch more reposts using cursor-based pagination
       if (canLoadMoreReposts) {
         try {
-          newRepostDocs = await repostService.getUserReposts(userId, {
-            limit: 50,
-            startAfter: lastRepostId
-          })
+          newRepostDocs = await repostService.getUserReposts(userId)
 
           if (newRepostDocs.length > 0) {
             // Get unique post IDs that this user has reposted
@@ -590,7 +614,7 @@ function UserProfileContent() {
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded && MENTION_CONTRACT_ID) {
-      loadMentions()
+      loadMentions().catch(err => console.error('Failed to load mentions:', err))
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
@@ -653,6 +677,46 @@ function UserProfileContent() {
     setEditPaymentUris([])
     setEditSocialLinks([])
   }
+
+  const handleTipUser = () => {
+    const authedUser = requireAuth('tip')
+    if (!authedUser || !userId) return
+    openTipModal({
+      id: userId,
+      displayName: profile?.displayName,
+      username: username || undefined,
+    })
+  }
+
+  // Refresh DPNS usernames after registration
+  const refreshUsernames = useCallback(async () => {
+    if (!userId) return
+    try {
+      const { dpnsService } = await import('@/lib/services/dpns-service')
+      // Clear cache to get fresh data (pass undefined for username, userId for identityId)
+      dpnsService.clearCache(undefined, userId)
+      const usernames = await dpnsService.getAllUsernames(userId)
+      if (usernames.length > 0) {
+        // Sort usernames: contested first, then shortest, then alphabetically
+        // This matches the selection logic used in loadProfileData and resolveUsernamesBatch
+        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+        setAllUsernames(sortedUsernames)
+        setUsername(sortedUsernames[0])
+        setHasDpns(true)
+      } else {
+        // No usernames found, reset state
+        setAllUsernames([])
+        setUsername('')
+        setHasDpns(false)
+      }
+    } catch (e) {
+      console.error('Failed to refresh usernames:', e)
+      // On error, reset to safe state
+      setAllUsernames([])
+      setUsername('')
+      setHasDpns(false)
+    }
+  }, [userId])
 
   const handleSaveProfile = async () => {
     if (!currentUser?.identityId) return
@@ -728,7 +792,11 @@ function UserProfileContent() {
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
             <div className="flex-1">
-              <h1 className="text-xl font-bold">{displayName}</h1>
+              {isDisplayNameLoading ? (
+                <div className="h-6 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
+              ) : (
+                <h1 className="text-xl font-bold">{displayName}</h1>
+              )}
               <p className="text-sm text-gray-500">{postCount !== null ? postCount : '–'} posts</p>
             </div>
           </div>
@@ -786,7 +854,7 @@ function UserProfileContent() {
                         <button
                           onClick={() => {
                             const profileUrl = `${window.location.origin}/user?id=${userId}`
-                            navigator.clipboard.writeText(profileUrl)
+                            navigator.clipboard.writeText(profileUrl).catch(console.error)
                             toast.success('Profile link copied!')
                           }}
                           className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -846,14 +914,58 @@ function UserProfileContent() {
                       </Button>
                     )
                   ) : (
-                    <Button
-                      variant={isFollowing ? "outline" : "default"}
-                      size="sm"
-                      onClick={handleFollow}
-                      disabled={followLoading}
-                    >
-                      {isFollowing ? 'Following' : 'Follow'}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Tooltip.Provider>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <button
+                              onClick={handleTipUser}
+                              aria-label={`Tip ${profile?.displayName || username || 'user'}`}
+                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 transition-colors group"
+                            >
+                              <CurrencyDollarIcon className="h-4 w-4 group-hover:text-amber-500" />
+                            </button>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content
+                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                              sideOffset={5}
+                            >
+                              Tip with credits
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </Tooltip.Provider>
+                      <Tooltip.Provider>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <button
+                              onClick={() => router.push(`/messages?startConversation=${userId}`)}
+                              aria-label={`Message ${profile?.displayName || username || 'user'}`}
+                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                            >
+                              <EnvelopeIcon className="h-4 w-4" />
+                            </button>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content
+                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                              sideOffset={5}
+                            >
+                              Message
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </Tooltip.Provider>
+                      <Button
+                        variant={isFollowing ? "outline" : "default"}
+                        size="sm"
+                        onClick={handleFollow}
+                        disabled={followLoading}
+                      >
+                        {isFollowing ? 'Following' : 'Follow'}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -956,36 +1068,51 @@ function UserProfileContent() {
               ) : (
                 <>
                   <div className="mb-3">
-                    <h2 className="text-xl font-bold">{displayName}</h2>
-                    {hasDpns ? (
-                      <p className="text-gray-500">@{username}</p>
+                    {isDisplayNameLoading ? (
+                      <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
                     ) : (
-                      <Tooltip.Provider>
-                        <Tooltip.Root>
-                          <Tooltip.Trigger asChild>
-                            <button
-                              onClick={() => {
-                                if (userId) {
-                                  navigator.clipboard.writeText(userId)
-                                  toast.success('Identity ID copied')
-                                }
-                              }}
-                              className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono text-sm"
-                            >
-                              {userId?.slice(0, 8)}...{userId?.slice(-6)}
-                            </button>
-                          </Tooltip.Trigger>
-                          <Tooltip.Portal>
-                            <Tooltip.Content
-                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                              sideOffset={5}
-                            >
-                              Click to copy full identity ID
-                            </Tooltip.Content>
-                          </Tooltip.Portal>
-                        </Tooltip.Root>
-                      </Tooltip.Provider>
+                      <h2 className="text-xl font-bold">{displayName}</h2>
                     )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {hasDpns && username ? (
+                        <UsernameDropdown username={username} allUsernames={allUsernames} />
+                      ) : (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <button
+                                onClick={() => {
+                                  if (userId) {
+                                    navigator.clipboard.writeText(userId).catch(console.error)
+                                    toast.success('Identity ID copied')
+                                  }
+                                }}
+                                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono text-sm"
+                              >
+                                {userId?.slice(0, 8)}...{userId?.slice(-6)}
+                              </button>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                Click to copy full identity ID
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
+                      )}
+                      {isOwnProfile && (
+                        <button
+                          onClick={() => setIsUsernameModalOpen(true)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
+                        >
+                          <UserPlusIcon className="h-3 w-3" />
+                          {hasDpns ? 'Register More' : 'Register Username'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Pronouns */}
@@ -1292,6 +1419,16 @@ function UserProfileContent() {
         }}
         paymentUri={selectedQrPayment}
         recipientName={username || displayName}
+      />
+
+      {/* Username Registration Modal */}
+      <UsernameModal
+        isOpen={isUsernameModalOpen}
+        onClose={() => {
+          setIsUsernameModalOpen(false)
+          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+        }}
+        hasExistingUsernames={hasDpns}
       />
     </div>
   )
