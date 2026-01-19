@@ -207,7 +207,8 @@ function UserProfileContent() {
           if (hasPF && currentUser?.identityId && currentUser.identityId !== userId) {
             try {
               const accessStatus = await privateFeedFollowerService.getAccessStatus(userId, currentUser.identityId)
-              setIsPrivateFollower(accessStatus === 'approved')
+              // User is a private follower if approved (with or without local keys)
+              setIsPrivateFollower(accessStatus === 'approved' || accessStatus === 'approved-no-keys')
             } catch (accessErr) {
               // Access status check is non-critical
               console.error('Failed to check private feed access status:', accessErr)

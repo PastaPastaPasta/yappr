@@ -899,7 +899,7 @@ class PrivateFeedFollowerService {
     ownerId: string,
     myId: string,
     autoCleanup: boolean = true
-  ): Promise<'none' | 'pending' | 'approved' | 'revoked'> {
+  ): Promise<'none' | 'pending' | 'approved' | 'approved-no-keys' | 'revoked'> {
     try {
       // Check if we have an active grant
       const grant = await this.getGrant(ownerId, myId);
@@ -907,7 +907,6 @@ class PrivateFeedFollowerService {
       if (grant) {
         // We have a grant - check if we can still decrypt
         // If we have keys and can decrypt current epoch, we're approved
-        // If we have a grant but can't decrypt, we're revoked
         const canDecrypt = await this.canDecrypt(ownerId);
         if (canDecrypt) {
           // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
@@ -918,8 +917,14 @@ class PrivateFeedFollowerService {
           }
           return 'approved';
         }
-        // Grant exists but can't decrypt - likely revoked (orphaned grant)
-        return 'revoked';
+
+        // Grant exists but no local keys - distinguish from revoked
+        // 'approved-no-keys' means user needs to enter encryption key to recover
+        // This happens on new device or after clearing storage
+        // True 'revoked' would mean the grant is orphaned from a previous epoch
+        // We can't easily distinguish here, so we return 'approved-no-keys'
+        // and let the recovery attempt determine if it's actually revoked
+        return 'approved-no-keys';
       }
 
       // No grant - check for pending request

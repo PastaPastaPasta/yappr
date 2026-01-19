@@ -1098,3 +1098,57 @@
 - Logging for debugging and monitoring
 
 **Screenshot:** `screenshots/background-key-sync-settings.png` (Private Feed settings page showing sync working - console shows "PrivateFeedSync: No followed private feeds to sync")
+
+## 2026-01-19: Automatic Follower Key Recovery for New Devices (PRD §6.3 / SPEC §8.9)
+
+**Task:** Implement automatic follower key recovery when viewing private posts on a new device
+
+**Changes made:**
+1. Updated `lib/services/private-feed-follower-service.ts`:
+   - Extended `getAccessStatus()` return type to include `'approved-no-keys'` status
+   - This distinguishes between:
+     - `'approved'`: User has grant AND local keys (can decrypt)
+     - `'approved-no-keys'`: User has grant but NO local keys (needs recovery)
+     - `'revoked'`: User's access has been cryptographically revoked
+   - Previously both `approved-no-keys` and `revoked` were conflated as `'revoked'`
+
+2. Updated `hooks/use-encryption-key-modal.ts`:
+   - Added `'recover_follower_keys'` to `EncryptionKeyAction` type
+   - Added description: "recover access to private feeds on this device"
+
+3. Updated `components/post/private-post-content.tsx`:
+   - Added new `'recovering'` status to `DecryptionState` type
+   - Added `'approved-no-keys'` to locked state reasons
+   - Created `attemptRecovery()` function that:
+     - Gets encryption key from session storage
+     - Calls `privateFeedFollowerService.recoverFollowerKeys()` to recover from grant
+     - Decrypts the post on successful recovery
+     - Shows 'revoked' state if recovery fails (true revocation)
+   - Created `handleRecoverAccess()` function that opens encryption key modal
+   - Added automatic recovery attempt when encryption key is already in session
+   - Added "Recovering access keys..." loading UI with blue styling
+   - Added "Key Recovery Required" locked state with:
+     - Blue styling to distinguish from other locked states
+     - Key icon instead of lock icon
+     - "Recover Access" button that triggers key entry modal
+     - Explanatory text: "You have access but need to enter your encryption key"
+
+4. Updated `components/profile/private-feed-access-button.tsx`:
+   - Extended `PrivateFeedStatus` type to include `'approved-no-keys'`
+   - Updated approved state rendering to handle both `'approved'` and `'approved-no-keys'`
+   - Blue styling for needs-recovery state with tooltip explaining situation
+
+5. Updated `app/user/page.tsx`:
+   - Extended private follower badge logic to include `'approved-no-keys'` status
+   - User is considered a private follower if status is `'approved'` OR `'approved-no-keys'`
+
+**Key features per PRD §6.3 and SPEC §8.9:**
+- Followers on new devices see "Key Recovery Required" state (blue styling)
+- "Recover Access" button prompts for encryption key entry
+- On key entry, system recovers follower keys from their PrivateFeedGrant document
+- Automatic recovery if encryption key is already in session storage
+- Post is decrypted immediately after successful recovery
+- If recovery fails, user sees "revoked" state (true revocation case)
+- Profile badge still shows "approved" status for users with grants (with/without local keys)
+
+**Screenshot:** `screenshots/follower-key-recovery-settings.png` (Private Feed settings page showing encryption key entry requirement)

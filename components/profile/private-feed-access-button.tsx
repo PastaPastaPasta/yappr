@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 
-type PrivateFeedStatus = 'none' | 'pending' | 'approved' | 'revoked' | 'loading' | 'no-private-feed'
+type PrivateFeedStatus = 'none' | 'pending' | 'approved' | 'approved-no-keys' | 'revoked' | 'loading' | 'no-private-feed'
 
 interface PrivateFeedAccessButtonProps {
   /** The profile owner's identity ID */
@@ -126,13 +126,18 @@ export function PrivateFeedAccessButton({
     return null
   }
 
-  // Approved state
-  if (status === 'approved') {
+  // Approved state (with or without local keys)
+  if (status === 'approved' || status === 'approved-no-keys') {
+    const needsRecovery = status === 'approved-no-keys'
     return (
       <Tooltip.Provider>
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 rounded-lg">
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg ${
+              needsRecovery
+                ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30'
+                : 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30'
+            }`}>
               <LockOpenIcon className="h-4 w-4" />
               <span>Private</span>
               <CheckIcon className="h-3.5 w-3.5" />
@@ -143,7 +148,9 @@ export function PrivateFeedAccessButton({
               className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
               sideOffset={5}
             >
-              You have access to this user&apos;s private feed
+              {needsRecovery
+                ? 'You have access but need to enter your encryption key to view private posts'
+                : 'You have access to this user\'s private feed'}
             </Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>

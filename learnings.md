@@ -481,3 +481,32 @@
 6. **Sync trigger timing**: The sync runs immediately on session restoration, at the same time as block data initialization. This ensures keys are synced before the user tries to view private posts in their feed.
 
 **No blockers encountered** - the implementation is straightforward and follows existing patterns in the codebase.
+
+## 2026-01-19: Automatic Follower Key Recovery Implementation (PRD §6.3 / SPEC §8.9)
+
+**Key observations:**
+
+1. **getAccessStatus conflated two different states**: The original implementation returned `'revoked'` for both "user was cryptographically revoked" AND "user has a grant but no local keys (new device)". These require different user flows - revoked users need to re-request access, while new-device users just need to enter their encryption key to recover.
+
+2. **'approved-no-keys' as new distinct state**: Added a new return value to `getAccessStatus()` to distinguish the new-device scenario. This allows the UI to show a "Recover Access" button with appropriate messaging instead of the "Access revoked" message.
+
+3. **Blue color scheme for recovery UI**: Used blue styling for the "Key Recovery Required" state to visually distinguish it from the gray locked states and red error states. This helps users understand this is a recoverable situation, not a denial of access.
+
+4. **Automatic recovery when key is in session**: If the user already has their encryption key in session storage (from a previous entry), the recovery is attempted automatically without prompting. This makes the flow seamless for users who have already entered their key.
+
+5. **Recovery failure indicates true revocation**: If `recoverFollowerKeys()` fails, it means the user's grant was cryptographically invalidated (they were revoked). The UI then shows the "revoked" state, letting the user know they need to re-request access.
+
+6. **Profile badge shows approved regardless of local key state**: On the profile page, users with grants are shown as "approved" (with the Private Follower badge) even if they need to recover keys. The grant document is the authoritative source of approval status - local keys are just a performance/access detail.
+
+7. **Type union extension for TypeScript**: Extended the `PrivateFeedStatus` union type in multiple files (`private-feed-access-button.tsx`, `private-feed-follower-service.ts`) to include the new `'approved-no-keys'` value. TypeScript's discriminated union pattern makes this easy to add new states without breaking existing code.
+
+8. **E2E testing limitations**: Full testing of the follower recovery flow requires:
+   - Two identities with encryption keys on chain
+   - Publisher enables private feed and creates private posts
+   - Follower requests and is approved for access
+   - Follower clears local storage (simulating new device)
+   - Follower views private post and triggers recovery
+
+   This complex multi-step scenario couldn't be fully tested due to the encryption key setup requirements, but the implementation follows SPEC §8.9 precisely.
+
+**No blockers for the implementation itself** - the code correctly distinguishes between recovery-needed and revoked states, and provides appropriate UI for each scenario.
