@@ -49,3 +49,51 @@ Cannot run dev server until Phases 2-4 update the consuming code. Infrastructure
 Phase 2: Refactor `state-transition-service.ts` to use new typed APIs with:
 - `signerService` for creating signers
 - `documentBuilderService` for building documents
+
+---
+
+## 2026-01-19: Phase 2 In Progress - State Transition Service Refactored
+
+### Changes Made
+
+1. **Refactored `lib/services/state-transition-service.ts`**:
+   - `createDocument()`: Now uses `documentBuilderService.buildDocumentForCreate()`, `signerService.createSignerAndKey()`, and `sdk.documents.create({ document, identityKey, signer })`
+   - `updateDocument()`: Now uses `documentBuilderService.buildDocumentForReplace()` and `sdk.documents.replace({ document, identityKey, signer })`
+   - `deleteDocument()`: Now uses `documentBuilderService.buildDocumentForDelete()` and `sdk.documents.delete({ document, identityKey, signer })`
+   - Added `extractErrorMessage()` helper for better WasmSdkError handling
+   - All methods now fetch identity, find signing key, create signer/key, build document, then call SDK
+
+2. **Updated `lib/services/signer-service.ts`**:
+   - Changed `createSigner()` to use `signer.addKeyFromWif(privateKeyWif)` directly
+   - Changed `createIdentityPublicKey()` to use `wasm.IdentityPublicKey.fromJSON(normalizedKeyData)`
+
+3. **Updated `lib/services/identity-service.ts`**:
+   - Added missing fields to `IdentityPublicKey` interface: `readOnly`, `read_only`, `disabled_at`, `contractBounds`, `contract_bounds`
+
+4. **Updated `lib/dash-platform-client.ts`**:
+   - Changed `createPost()` to delegate to `postService.createPost()` instead of using old SDK API directly
+
+### Build Status
+
+- **Lint passes** with only pre-existing warnings (no new errors)
+- **Build fails** only on `dpns-service.ts` (Phase 4) - expected
+
+### Testing
+
+- Dev server starts successfully
+- Document creation flow reaches the SDK call
+- **BUG-SDK-001 discovered**: WASM "memory access out of bounds" error during `sdk.documents.create()`
+
+### Screenshot
+
+`screenshots/sdk-upgrade-phase2-wasm-error.png` - Shows compose modal with error indicator
+
+### Bug Filed
+
+See `bugs_sdk_upgrade.md` for BUG-SDK-001 details. Investigation needed into IdentityPublicKey construction.
+
+### Next Steps
+
+1. **Fix BUG-SDK-001** before proceeding (blocking)
+2. Phase 3: Identity Service updates
+3. Phase 4: DPNS Service updates

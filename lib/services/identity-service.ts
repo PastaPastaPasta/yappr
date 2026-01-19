@@ -15,9 +15,14 @@ export interface IdentityPublicKey {
   id: number;
   type: number;
   purpose: number;
-  securityLevel: number;
+  securityLevel?: number;
   security_level?: number;  // SDK may return snake_case variant
+  readOnly?: boolean;
+  read_only?: boolean;      // SDK may return snake_case variant
   disabledAt?: number;
+  disabled_at?: number;     // SDK may return snake_case variant
+  contractBounds?: unknown;
+  contract_bounds?: unknown; // SDK may return snake_case variant
   data: string | Uint8Array;
 }
 

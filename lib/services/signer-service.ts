@@ -66,16 +66,15 @@ class SignerService {
    */
   async createSigner(
     privateKeyWif: string,
-    network: 'testnet' | 'mainnet' = 'testnet'
+    _network: 'testnet' | 'mainnet' = 'testnet'
   ): Promise<wasmSdk.IdentitySigner> {
     const wasm = await ensureWasmInitialized();
 
     // Create a new signer instance
     const signer = new wasm.IdentitySigner();
 
-    // Create PrivateKey from WIF and add to signer
-    const privateKey = wasm.PrivateKey.fromWif(privateKeyWif, network);
-    signer.addKey(privateKey);
+    // Add key directly from WIF (the signer has a convenience method for this)
+    signer.addKeyFromWif(privateKeyWif);
 
     return signer;
   }
@@ -97,6 +96,7 @@ class SignerService {
     const signer = new wasm.IdentitySigner();
 
     // Create PrivateKey from hex and add to signer
+    // Note: fromHex requires network parameter
     const privateKey = wasm.PrivateKey.fromHex(privateKeyHex, network);
     signer.addKey(privateKey);
 
@@ -117,39 +117,21 @@ class SignerService {
   ): Promise<wasmSdk.IdentityPublicKey> {
     const wasm = await ensureWasmInitialized();
 
-    // Convert data to hex string if it's a Uint8Array
-    let publicKeyHex: string;
-    if (typeof keyData.data === 'string') {
-      // Check if it's base64 or hex
-      if (keyData.data.match(/^[A-Fa-f0-9]+$/)) {
-        publicKeyHex = keyData.data;
-      } else {
-        // Assume base64, convert to hex
-        const bytes = Uint8Array.from(atob(keyData.data), c => c.charCodeAt(0));
-        publicKeyHex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
-      }
-    } else {
-      // Uint8Array, convert to hex
-      publicKeyHex = Array.from(keyData.data, b => b.toString(16).padStart(2, '0')).join('');
-    }
+    // Normalize the key data to match the expected JSON format
+    // The fromJSON method expects camelCase fields
+    const normalizedKeyData = {
+      id: keyData.id,
+      type: keyData.type,
+      purpose: keyData.purpose,
+      securityLevel: keyData.securityLevel ?? keyData.security_level ?? SecurityLevel.HIGH,
+      readOnly: keyData.readOnly ?? keyData.read_only ?? (keyData.purpose === KeyPurpose.TRANSFER),
+      data: keyData.data, // Should be base64 encoded string
+      disabledAt: keyData.disabledAt ?? keyData.disabled_at,
+      contractBounds: keyData.contractBounds ?? keyData.contract_bounds,
+    };
 
-    // Get security level (handle both camelCase and snake_case)
-    const securityLevel = keyData.securityLevel ?? keyData.security_level ?? SecurityLevel.HIGH;
-
-    // Determine if key is read-only (transfer keys are typically read-only)
-    const readOnly = keyData.purpose === KeyPurpose.TRANSFER;
-
-    // Create the WASM IdentityPublicKey
-    const identityKey = new wasm.IdentityPublicKey(
-      keyData.id,           // key id
-      keyData.purpose,      // purpose (number)
-      securityLevel,        // securityLevel (number)
-      keyData.type,         // keyType (number)
-      readOnly,             // readOnly
-      publicKeyHex,         // public key data as hex string
-      keyData.disabledAt,   // disabledAt (optional)
-      undefined             // contractBounds (optional)
-    );
+    // Use the fromJSON method which handles proper deserialization
+    const identityKey = wasm.IdentityPublicKey.fromJSON(normalizedKeyData);
 
     return identityKey;
   }

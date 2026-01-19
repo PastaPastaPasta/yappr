@@ -100,110 +100,28 @@ export class DashPlatformClient {
     
     try {
       await this.ensureInitialized()
-      
+
       console.log('Creating post for identity:', identityId)
-      
-      // Get the private key from secure storage
-      const { getPrivateKey } = await import('./secure-storage')
-      const privateKeyWIF = getPrivateKey(identityId)
 
-      if (!privateKeyWIF) {
-        throw new Error('Private key not found. Please log in again.')
-      }
-      
-      // Create the post document using WASM SDK
-      // Note: The actual contract doesn't have authorId - it uses $ownerId system field
-      const postData: any = {
-        content: content.trim()
-      }
-      
-      // Convert replyToPostId if provided
-      if (options?.replyToPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.replyToPostId = Array.from(bs58.decode(options.replyToPostId))
-        } catch (e) {
-          console.error('Failed to decode replyToPostId:', e)
-          throw new Error('Invalid reply post ID format')
-        }
-      }
+      // Use the post service which goes through the new state-transition-service
+      const { postService } = await import('./services/post-service')
 
-      // Convert quotedPostId if provided
-      if (options?.quotedPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.quotedPostId = Array.from(bs58.decode(options.quotedPostId))
-        } catch (e) {
-          console.error('Failed to decode quotedPostId:', e)
-          throw new Error('Invalid quoted post ID format')
-        }
-      }
-      
-      // Add other optional fields
-      if (options?.mediaUrl) {
-        postData.mediaUrl = options.mediaUrl
-      }
-      
-      if (options?.primaryHashtag) {
-        postData.primaryHashtag = options.primaryHashtag.replace('#', '')
-      }
-      
-      // Add language (defaults to 'en' in the contract, but let's be explicit)
-      postData.language = 'en'
-      
-      console.log('Creating post with data:', postData)
-      
-      // Generate entropy (32 bytes) 
-      const entropy = new Uint8Array(32)
-      crypto.getRandomValues(entropy)
-      const entropyHex = Array.from(entropy)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-      
-      const contractId = YAPPR_CONTRACT_ID
-      
-      // Create the document using EvoSDK facade
-      let result
-      try {
-        result = await this.sdk.documents.create({
-          contractId,
-          type: 'post',
-          ownerId: identityId,
-          data: postData,
-          entropyHex,
-          privateKeyWif: privateKeyWIF
-        })
-      } catch (sdkError) {
-        console.error('SDK documents.create error:', sdkError)
-        console.error('Error type:', typeof sdkError)
-        console.error('Error details:', {
-          message: sdkError instanceof Error ? sdkError.message : String(sdkError),
-          stack: sdkError instanceof Error ? sdkError.stack : undefined,
-          keys: sdkError && typeof sdkError === 'object' ? Object.keys(sdkError) : []
-        })
-        throw sdkError
-      }
-      
+      // Create the post using the post service
+      const post = await postService.createPost(identityId, content.trim(), {
+        replyToId: options?.replyToPostId,
+        quotedPostId: options?.quotedPostId,
+        mediaUrl: options?.mediaUrl,
+        primaryHashtag: options?.primaryHashtag?.replace('#', ''),
+        language: 'en'
+      })
+
       console.log('Post created successfully!')
-      
-      // Check if we got a valid result
-      if (!result) {
-        console.error('WASM SDK returned undefined/null result')
-        throw new Error('Post creation failed - no result returned from SDK')
-      }
-      
+
       // Invalidate posts cache since we created a new post
       this.postsCache.clear()
-      
-      // Convert result if needed
-      if (result && typeof result.toJSON === 'function') {
-        return result.toJSON()
-      }
-      
-      return result
-      
+
+      return post
+
     } catch (error) {
       console.error('Failed to create post:', error)
       throw error
