@@ -37,6 +37,7 @@ import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/component
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { useTipModal } from '@/hooks/use-tip-modal'
 import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import { mentionService } from '@/lib/services/mention-service'
 import { MENTION_CONTRACT_ID } from '@/lib/constants'
@@ -107,6 +108,9 @@ function UserProfileContent() {
 
   // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
+
+  // Tip modal
+  const { openForUser: openTipModal } = useTipModal()
 
   // Tab state for Posts/Mentions
   const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
@@ -674,6 +678,16 @@ function UserProfileContent() {
     setEditSocialLinks([])
   }
 
+  const handleTipUser = () => {
+    const authedUser = requireAuth('tip')
+    if (!authedUser || !userId) return
+    openTipModal({
+      id: userId,
+      displayName: profile?.displayName,
+      username: username || undefined,
+    })
+  }
+
   // Refresh DPNS usernames after registration
   const refreshUsernames = useCallback(async () => {
     if (!userId) return
@@ -901,6 +915,27 @@ function UserProfileContent() {
                     )
                   ) : (
                     <div className="flex gap-2">
+                      <Tooltip.Provider>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <button
+                              onClick={handleTipUser}
+                              aria-label={`Tip ${profile?.displayName || username || 'user'}`}
+                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 transition-colors group"
+                            >
+                              <CurrencyDollarIcon className="h-4 w-4 group-hover:text-amber-500" />
+                            </button>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content
+                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                              sideOffset={5}
+                            >
+                              Tip with credits
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </Tooltip.Provider>
                       <Tooltip.Provider>
                         <Tooltip.Root>
                           <Tooltip.Trigger asChild>

@@ -29,10 +29,10 @@ export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
   /**
-   * Send a tip (credit transfer) to another user and create a tip post
+   * Send a tip (credit transfer) to another user and optionally create a tip post
    * @param senderId - The sender's identity ID
-   * @param recipientId - The recipient's identity ID (post author)
-   * @param postId - The post being tipped
+   * @param recipientId - The recipient's identity ID (post author or user being tipped)
+   * @param postId - The post being tipped (optional - when null, no tip post is created)
    * @param amountCredits - Amount in credits
    * @param transferKeyWif - The sender's transfer private key in WIF format
    * @param message - Optional tip message
@@ -41,7 +41,7 @@ class TipService {
   async sendTip(
     senderId: string,
     recipientId: string,
-    postId: string,
+    postId: string | null,
     amountCredits: number,
     transferKeyWif: string,
     message?: string,
@@ -170,9 +170,11 @@ class TipService {
 
       console.log('Tip transfer result:', result);
 
-      // Create tip post as a reply to the tipped post
+      // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
-      await this.createTipPost(senderId, postId, amountCredits, message);
+      if (postId) {
+        await this.createTipPost(senderId, postId, amountCredits, message);
+      }
 
       return {
         success: true,
@@ -193,7 +195,9 @@ class TipService {
         identityService.clearCache(senderId);
 
         // Create tip post (amount is known even if confirmation timed out)
-        await this.createTipPost(senderId, postId, amountCredits, message);
+        if (postId) {
+          await this.createTipPost(senderId, postId, amountCredits, message);
+        }
 
         return {
           success: true,
