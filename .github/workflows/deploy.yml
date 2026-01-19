@@ -33,6 +33,8 @@ jobs:
       - name: Build
         run: npm run build
         env:
+          # Set BASE_PATH via GitHub repository variables
+          # Leave unset for root deployments (custom domains), set to /repo-name for subpath deployments
           BASE_PATH: ${{ vars.BASE_PATH }}
 
       - name: Upload artifact
