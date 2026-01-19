@@ -23,7 +23,7 @@ interface PrivatePostContentProps {
 type DecryptionState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'decrypted'; content: string }
+  | { status: 'decrypted'; content: string; followerCount?: number }
   | { status: 'locked'; reason: 'no-keys' | 'no-auth' | 'revoked' }
   | { status: 'error'; message: string }
 
@@ -108,7 +108,17 @@ export function PrivatePostContent({
           ownerIdBytes
         )
 
-        setState({ status: 'decrypted', content: decryptedContent })
+        // Fetch follower count for owner's own posts (PRD §4.8)
+        let followerCount: number | undefined
+        try {
+          const { privateFeedService } = await import('@/lib/services')
+          followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
+        } catch (err) {
+          console.warn('Failed to fetch private follower count:', err)
+          // Continue without follower count - it's not critical
+        }
+
+        setState({ status: 'decrypted', content: decryptedContent, followerCount })
         return
       }
 
@@ -216,6 +226,15 @@ export function PrivatePostContent({
             onFailedMentionClick={onFailedMentionClick}
           />
         </div>
+        {/* Show follower visibility count for owner (PRD §4.8) */}
+        {isOwner && state.followerCount !== undefined && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <LockClosedIcon className="h-3 w-3" />
+            <span>
+              Visible to {state.followerCount} private follower{state.followerCount !== 1 ? 's' : ''}
+            </span>
+          </div>
+        )}
       </div>
     )
   }

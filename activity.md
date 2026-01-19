@@ -731,3 +731,23 @@
 - `screenshots/reset-private-feed-dialog-full.png` (reset dialog)
 - `screenshots/reset-private-feed-form-filled.png` (form with encryption key and RESET typed)
 - `screenshots/reset-private-feed-error.png` (error handling display)
+
+## 2026-01-19: Owner Viewing Own Private Posts - Visibility Indicator (PRD §4.8)
+
+**Task:** Add "Visible to X private followers" indicator when feed owner views their own private posts
+
+**Changes made:**
+1. Updated `components/post/private-post-content.tsx`:
+   - Extended `DecryptionState` type to include optional `followerCount` field in the decrypted state
+   - Added follower count fetching in the owner decryption path using `privateFeedService.getPrivateFollowerCount()`
+   - Added visibility indicator below decrypted content for owner's posts showing "Visible to X private follower(s)"
+   - Indicator includes lock icon and proper pluralization (1 follower vs N followers)
+   - Follower count fetch is best-effort (doesn't fail decryption if count lookup fails)
+
+**Key features per PRD §4.8:**
+- Owner viewing own private posts sees "Visible to X private followers" text
+- Subtle indicator with lock icon, matching the existing private post styling
+- Only shown for the post owner (not for followers viewing the post)
+- Graceful handling if follower count fetch fails (indicator simply not shown)
+
+**Screenshot:** `screenshots/owner-visibility-settings.png` (private feed settings showing follower count integration)

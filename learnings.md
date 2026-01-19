@@ -299,3 +299,19 @@
 6. **Clearing and reinitializing local state atomically**: After successful reset, must call `privateFeedKeyStore.clearOwnerKeys()` then `privateFeedKeyStore.initializeOwnerState(newSeed, TREE_CAPACITY)` to ensure clean state. Also store the new CEK[1] for immediate use.
 
 **No blockers encountered** - the implementation follows established patterns and integrates cleanly with existing private feed infrastructure.
+
+## 2026-01-19: Owner Viewing Own Private Posts - Visibility Indicator Implementation
+
+**Key observations:**
+
+1. **DecryptionState type extension for additional context**: The discriminated union type for decryption state can be extended with optional fields in specific state variants. Adding `followerCount?: number` to the `decrypted` state variant allows passing additional context without affecting other states.
+
+2. **Best-effort secondary data fetching pattern**: When fetching follower count for the visibility indicator, the operation is wrapped in try-catch and doesn't fail the main decryption operation if it fails. This pattern (fetch additional context, but don't block primary functionality) provides graceful degradation.
+
+3. **Testnet network instability during Playwright testing**: Encountered "Unknown error" when attempting to create private posts on testnet. This is a known limitation documented in learnings - DAPI gateway timeouts are common. The code was verified through build/lint instead.
+
+4. **Pluralization in UI text**: Used simple ternary for proper pluralization: `follower${count !== 1 ? 's' : ''}`. This handles edge cases (0 followers, 1 follower, N followers) correctly.
+
+5. **Async service import inside async callback**: When fetching follower count inside the `attemptDecryption` callback, used dynamic import (`await import('@/lib/services')`) to access `privateFeedService`. This is consistent with the existing pattern for service access in components.
+
+**No blockers encountered** - the implementation is a minimal, focused change that adds the visibility indicator without affecting existing functionality.
