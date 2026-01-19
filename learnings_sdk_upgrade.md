@@ -312,3 +312,43 @@ The `findMatchingKeyIndex()` function in `lib/crypto/keys.ts` is now the canonic
 6. Returns key info including id, securityLevel, and purpose
 
 This function should be used whenever matching a private key to identity keys is needed.
+
+---
+
+## 2026-01-19: Phase 5 Learnings - Verification & Testing
+
+### Verification Checklist for SDK Upgrades
+
+When completing an SDK upgrade, verify the following:
+
+1. **Build Verification**: `npm run build` must complete without errors
+2. **Lint Verification**: `npm run lint` must pass (pre-existing warnings acceptable)
+3. **Runtime Testing**: Dev server must start and SDK must initialize
+4. **Document Operations**: Create, update, delete operations must work
+5. **Identity Operations**: Identity fetching and key validation must work
+
+### End-to-End Testing with Playwright
+
+For comprehensive SDK upgrade testing:
+1. Navigate to the application
+2. Verify SDK initialization (check console logs)
+3. Test authentication flow
+4. Test document creation (most common operation)
+5. Verify data persists and is queryable
+
+### Console Logging is Essential
+
+The logging added during the upgrade proved invaluable for debugging:
+- "Matched private key to identity key: id=X, securityLevel=Y, purpose=Z"
+- "Built document for creation, ID: ..."
+- "Document creation submitted successfully"
+
+These logs confirm the correct code path is executing and help diagnose issues.
+
+### SDK Upgrade Complete - Key Takeaways
+
+1. **Breaking API Changes**: dev.11 uses typed parameters (`{ document, identityKey, signer }`) instead of flat objects
+2. **Key Matching Critical**: Always match private key to identity key before signing
+3. **Security Level Enforcement**: Document ops require CRITICAL/HIGH; Identity ops require MASTER
+4. **WASM Objects**: Use SDK-provided WASM types (Document, IdentityPublicKey, IdentitySigner)
+5. **Error Handling**: WasmSdkError may have complex message structures - use helper functions
