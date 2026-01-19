@@ -55,3 +55,24 @@ export type {
   DiceBearStyle,
 } from './unified-profile-service';
 export type { LegacyProfileData, LegacyAvatarData, MigrationStatus } from './profile-migration-service';
+
+// Private feed crypto service
+export { privateFeedCryptoService } from './private-feed-crypto-service';
+export type {
+  NodeKey,
+  EncryptedPost,
+  RekeyPacket,
+  GrantPayload,
+} from './private-feed-crypto-service';
+export {
+  TREE_CAPACITY,
+  MAX_EPOCH,
+  LEAF_START_INDEX,
+  ROOT_NODE_ID,
+  PROTOCOL_VERSION,
+  AAD_POST,
+  AAD_CEK,
+  AAD_REKEY,
+  AAD_GRANT,
+  AAD_FEED_STATE,
+} from './private-feed-crypto-service';

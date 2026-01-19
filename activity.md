@@ -26,3 +26,56 @@
    - Added new document type constants: `FOLLOW_REQUEST`, `PRIVATE_FEED_GRANT`, `PRIVATE_FEED_REKEY`, `PRIVATE_FEED_STATE`
 
 **Screenshot:** `screenshots/contract-update-private-feeds.png`
+
+## 2026-01-18: PrivateFeedCryptoService Implementation
+
+**Task:** Create core cryptographic service for private feeds (Phase 1 Foundation)
+
+**Changes made:**
+1. Created `lib/services/private-feed-crypto-service.ts` with comprehensive cryptographic operations:
+
+   **Key Generation:**
+   - `generateFeedSeed()` - Generate 256-bit random feed seed
+   - `generateEpochChain()` - Pre-generate full CEK hash chain (2000 epochs)
+   - `deriveCEK()` - Derive CEK for older epochs via hash chain
+   - `deriveNodeKey()` - Derive LKH tree node keys using HKDF
+   - `deriveWrapNonceSalt()` - Derive salt for deterministic nonce generation
+
+   **Tree Operations (LKH binary tree with 1024 leaves):**
+   - `parent()`, `leftChild()`, `rightChild()`, `sibling()` - Tree navigation
+   - `leafToNodeId()`, `nodeIdToLeaf()` - Leaf/node index conversion
+   - `isOnPath()`, `computePath()` - Path operations
+   - `computeNodeVersion()` - Derive node version from revoked leaves history
+   - `computeCover()` - Compute minimal cover set for non-revoked users
+
+   **ECIES Encryption (secp256k1 + XChaCha20-Poly1305):**
+   - `eciesEncrypt()` - Ephemeral ECDH-based encryption
+   - `eciesDecrypt()` - ECIES decryption
+
+   **Content Encryption:**
+   - `encryptPostContent()` - Encrypt private post content with versioning
+   - `decryptPostContent()` - Decrypt and validate private post content
+
+   **Key Wrapping:**
+   - `deriveRekeyNonce()` - Deterministic nonce for rekey packets
+   - `wrapKey()`, `unwrapKey()` - XChaCha20-Poly1305 key wrapping
+   - `deriveWrapKey()` - Derive wrap key from node key
+   - `encryptCEK()`, `decryptCEK()` - CEK encryption for rekey documents
+
+   **Binary Encoding:**
+   - `encodeGrantPayload()`, `decodeGrantPayload()` - Grant payload serialization
+   - `encodeRekeyPackets()`, `decodeRekeyPackets()` - Rekey packet serialization
+   - `buildGrantAAD()`, `buildFeedStateAAD()`, `buildRekeyAAD()` - AAD construction
+
+   **Validation (per SPEC §12):**
+   - `validateGrantPayload()` - Validate grant payload structure and path integrity
+   - `validateRekeyPacket()` - Validate rekey packet bounds
+
+2. Exported service and types from `lib/services/index.ts`:
+   - `privateFeedCryptoService` singleton
+   - Types: `NodeKey`, `EncryptedPost`, `RekeyPacket`, `GrantPayload`
+   - Constants: `TREE_CAPACITY`, `MAX_EPOCH`, `LEAF_START_INDEX`, `ROOT_NODE_ID`, `PROTOCOL_VERSION`, AAD constants
+
+**Dependencies:** Uses already-installed `@noble/ciphers`, `@noble/hashes`, `@noble/secp256k1`
+
+**Screenshot:** `screenshots/private-feed-crypto-service.png`
