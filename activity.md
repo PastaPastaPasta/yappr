@@ -403,3 +403,40 @@
 - Graceful error handling with user-friendly messages
 
 **Screenshot:** `screenshots/private-post-view-ui.png`
+
+## 2026-01-19: Request Access UI on Profile Page (Phase 2 Follower Management)
+
+**Task:** Add Request Access button to user profile page for private feed access (PRD §4.7)
+
+**Changes made:**
+1. Created `components/profile/private-feed-access-button.tsx`:
+   - `PrivateFeedAccessButton` component for profile page integration
+   - Checks if profile owner has private feed enabled
+   - Shows different states based on access status:
+     - **Not shown**: When not following OR owner has no private feed
+     - **Request Access**: Button with lock icon to request access
+     - **Pending...**: Amber badge showing request is awaiting approval (click to cancel)
+     - **Private ✓**: Green badge showing approved access
+     - **Revoked**: Gray badge showing access was revoked
+   - Handles request submission via `privateFeedFollowerService.requestAccess()`
+   - Handles request cancellation via `privateFeedFollowerService.cancelRequest()`
+   - Loading states and toast notifications for all actions
+
+2. Updated `app/user/page.tsx`:
+   - Added `LockClosedIcon` import from Heroicons
+   - Added `PrivateFeedAccessButton` import
+   - Added `hasPrivateFeed` state variable
+   - Added private feed status check in profile loading effect
+   - Added Private Feed badge next to username when owner has private feed enabled:
+     - Shows "Private Feed" badge with lock icon
+     - Tooltip explaining: "This user has a private feed. Follow them to request access."
+   - Integrated `PrivateFeedAccessButton` in action buttons section (after Follow button)
+
+**Key features per PRD §4.7:**
+- Button only appears after following the user
+- Button only appears if the user has a private feed
+- Shows appropriate state: Request Access, Pending, Approved, or Revoked
+- Pending state allows canceling the request
+- Profile shows "Private Feed" badge indicator for users with private feeds
+
+**Screenshot:** `screenshots/profile-following-no-private-feed.png`

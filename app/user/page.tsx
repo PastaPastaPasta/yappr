@@ -16,9 +16,11 @@ import {
   QrCodeIcon,
   EnvelopeIcon,
   UserPlusIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
+import { PrivateFeedAccessButton } from '@/components/profile/private-feed-access-button'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
@@ -115,6 +117,9 @@ function UserProfileContent() {
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
   const [mentionCount, setMentionCount] = useState<number | null>(null)
 
+  // Private feed state
+  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+
   // Progressive enrichment for post metadata (likes, reposts, etc.)
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: currentUser?.identityId
@@ -187,6 +192,16 @@ function UserProfileContent() {
         if (currentUser?.identityId && currentUser.identityId !== userId) {
           const following = await followService.isFollowing(userId, currentUser.identityId)
           setIsFollowing(following)
+        }
+
+        // Check if user has a private feed (for profile indicator)
+        try {
+          const { privateFeedService } = await import('@/lib/services')
+          const hasPF = await privateFeedService.hasPrivateFeed(userId)
+          setHasPrivateFeed(hasPF)
+        } catch (e) {
+          // Private feed check is non-critical
+          console.error('Failed to check private feed status:', e)
         }
 
         // Process posts
@@ -894,7 +909,7 @@ function UserProfileContent() {
                       </Button>
                     )
                   ) : (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                       <Tooltip.Provider>
                         <Tooltip.Root>
                           <Tooltip.Trigger asChild>
@@ -924,6 +939,13 @@ function UserProfileContent() {
                       >
                         {isFollowing ? 'Following' : 'Follow'}
                       </Button>
+                      {/* Private Feed Access Button - only shown when following */}
+                      <PrivateFeedAccessButton
+                        ownerId={userId}
+                        currentUserId={currentUser?.identityId || null}
+                        isFollowing={isFollowing}
+                        onRequireAuth={() => requireAuth('follow')}
+                      />
                     </div>
                   )}
                 </div>
@@ -1070,6 +1092,27 @@ function UserProfileContent() {
                           <UserPlusIcon className="h-3 w-3" />
                           {hasDpns ? 'Register More' : 'Register Username'}
                         </button>
+                      )}
+                      {/* Private Feed Badge */}
+                      {hasPrivateFeed && (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-full">
+                                <LockClosedIcon className="h-3 w-3" />
+                                Private Feed
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                This user has a private feed. Follow them to request access.
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
                       )}
                     </div>
                   </div>

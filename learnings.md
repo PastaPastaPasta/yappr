@@ -161,3 +161,23 @@
 7. **Base58 identifier conversion for AAD construction**: The `identifierToBytes()` helper function is duplicated in the component to avoid adding a dependency on services that might not be available in all contexts. This could be refactored into a shared utility in the future.
 
 **No blockers encountered** - the implementation follows the established PostContent patterns and integrates cleanly with the existing private feed services infrastructure.
+
+## 2026-01-19: Request Access UI on Profile Page Implementation
+
+**Key observations:**
+
+1. **PrivateFeedAccessButton only renders when conditions are met**: The component handles all conditional logic internally - returning `null` when: (a) loading, (b) not following the user, or (c) user doesn't have a private feed. This keeps the parent component (user profile page) clean and simple.
+
+2. **Access status is a derived state from multiple sources**: The `getAccessStatus()` method in `privateFeedFollowerService` combines grant existence, follow request existence, and local key availability to determine the correct status (`none`, `pending`, `approved`, `revoked`). This avoids showing incorrect states like "Request Access" when already approved.
+
+3. **LoginPromptAction type constrains auth prompt messages**: The `requireAuth()` hook accepts a specific union type of actions (`'like' | 'repost' | 'follow' | ...`), not arbitrary strings. Reused `'follow'` for the private feed request context since it's the closest semantic match.
+
+4. **Profile badge placement for private feed indicator**: Added the "Private Feed" badge next to the username area (after the "Register Username" button) rather than in the action buttons, making it visible regardless of whether viewing own profile or another user's profile.
+
+5. **Tooltip.Provider nesting**: Each tooltip in the profile page wraps its own `Tooltip.Provider`. While this creates some nesting, it ensures tooltips work correctly without requiring a shared provider context at a higher level.
+
+6. **Service availability in async callbacks**: The dynamic `import('@/lib/services')` pattern in the `loadStatus` callback ensures services are only loaded when needed and handles SSR correctly. The callback is wrapped in `useCallback` to prevent unnecessary re-renders.
+
+7. **Test user without private feed validates conditional rendering**: During Playwright testing, following a user without a private feed correctly showed no Request Access button, validating the `status === 'no-private-feed'` rendering path.
+
+**No blockers encountered** - the implementation follows established patterns from the profile page and integrates cleanly with the private feed follower service.
