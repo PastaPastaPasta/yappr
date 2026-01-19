@@ -127,3 +127,57 @@ if (!validation.isValid) {
 
 ## Developer extra learnings
 **IMPORTANT** I was able register a new key to my identity via the evo-sdk on dev.11. I've confirmed on v2 of the sdk, it was borked. It seems likely that we will need to update to dev.11 of the sdk.
+
+---
+
+## 2026-01-19: E2E Test 1.1 Completion - Key Learnings
+
+### Issue 6: SDK dev.11 Requires MASTER Key for Identity Updates (NOT CRITICAL)
+**Problem:** When attempting to add an encryption key to identity, using CRITICAL key resulted in error:
+```
+Identity modifications require a MASTER key. You provided a CRITICAL key.
+```
+
+**Context:**
+- UI states "CRITICAL or MASTER" key is accepted
+- CRITICAL key (securityLevel=1) was validated and accepted client-side
+- SDK rejected the CRITICAL key during `sdk.identities.update()`
+
+**Discovery:** SDK dev.11 has changed the security requirements for identity modifications. Only MASTER (securityLevel=0) keys are now accepted, not CRITICAL (securityLevel=1).
+
+**Solution:** Use MASTER key instead of CRITICAL for identity modifications.
+
+**UI Consideration:** The modal UI mentions "CRITICAL or MASTER" but should perhaps emphasize MASTER is required, or update the validation to only accept MASTER keys.
+
+**Lesson:** Always verify SDK behavior changes between versions. Security level requirements may change.
+
+### Issue 7: Encryption Key Storage Location
+**Observation:** After adding encryption key to identity, the private key is stored in localStorage with the key format:
+```
+yappr_secure_ek_<identityId>
+```
+
+**Value format:** JSON-encoded hex string (with quotes): `"81661572aae449..."`
+
+**Usage:** When enabling private feed, the user must re-enter this key if it's not already in session storage. The key can be retrieved from localStorage for testing purposes.
+
+**Lesson:** For E2E testing, the encryption key can be extracted from localStorage using browser console or Playwright evaluate functions.
+
+### Issue 8: Private Feed Enable Flow Requires Key Entry
+**Observation:** Even after successfully adding an encryption key to the identity on-chain, the "Enable Private Feed" button requires the user to re-enter the encryption private key (32 bytes hex).
+
+**Flow:**
+1. Add encryption key to identity (stores in localStorage as side effect)
+2. Click "Enable Private Feed"
+3. Modal prompts for encryption private key hex
+4. Key is validated and used to create PrivateFeedState document
+
+**Lesson:** The encryption private key must be available for both adding to identity AND enabling private feed. It's stored in localStorage for convenience but must be entered again if session is lost.
+
+### Best Practices Updates
+
+7. **Check localStorage for stored encryption keys** - For testing, encryption keys are stored at `yappr_secure_ek_<identityId>` in localStorage.
+
+8. **Use MASTER key for identity updates on SDK dev.11** - CRITICAL key is no longer sufficient for identity modifications on the newer SDK version.
+
+9. **Update test identity files after successful tests** - Add encryption keys and private feed status to test identity JSON files for reuse in subsequent tests.

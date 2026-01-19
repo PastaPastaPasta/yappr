@@ -1,0 +1,14 @@
+{
+  "identityId": "9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2",
+  "keys": {
+    "masterAuth": "cP8HQZeJgQb5MgRMYtWHArCPypQAY1srijXmXuKn9Df1Q3g2NWmk",
+    "highAuth": "cPZ6229o3ZSLH6CrWk7BrDmukqPsZKXc7K1Ya1yYTeu14stWcJXx",
+    "criticalAuth": "cSDRgCCkGBwnbtDSXJ2aQWGvfdcZ1ay1Tmh3DVWFt85FHepsuUHV",
+    "transfer": "cVzSxWySfsqWbyxv8kutkZ16TGz6BbsFQ2FyEpNGBwMddwhkiF2K",
+    "encryptionKey": "81661572aae449232b8557dffc130354b7288dd7c680f30433d61da8d5fcecdb"
+  },
+  "balance": "0.9988 DASH",
+  "createdAt": "2026-01-19",
+  "privateFeedEnabled": true,
+  "privateFeedEnabledAt": "2026-01-19"
+}
