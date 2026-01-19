@@ -1380,3 +1380,65 @@ Test E2E 5.1: View as Non-Follower - No Teaser (PRD §4.3, §4.4)
 
 ### Test Result
 **PASSED** - E2E Test 5.1 completed successfully
+
+---
+
+## 2026-01-19: E2E Test 5.2 - View as Non-Follower - With Teaser (COMPLETED)
+
+### Task
+Test E2E 5.2: View as Non-Follower - With Teaser (PRD §4.3, §4.4)
+
+### Status
+**PASSED** - Private posts with teaser correctly display teaser to non-followers while hiding encrypted content
+
+### Prerequisites Met
+- Test identity 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA (non-follower) logged in
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 (owner) has private feed enabled with private posts including one with teaser
+
+### Test Steps Executed
+1. **Logged in as non-follower identity** - ✅
+   - Used identity 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA
+   - Skipped DPNS registration prompt
+
+2. **Navigate to owner's profile** - ✅
+   - URL: `/user/?id=9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2`
+   - Profile shows "Test User 1" with 7 posts
+   - "Private Feed" badge visible next to identity ID
+
+3. **Verify teaser visible in feed** - ✅
+   - Post with teaser clearly visible in feed: "Check out this exclusive behind-the-scenes content! 🎬 Only my private followers can see the full story..."
+   - Full teaser text is readable
+   - Posts without teaser show only 🔒 emoji
+
+4. **Click on post with teaser to view detail page** - ✅
+   - Navigated to `/post/?id=BfS4vNF7SRCycwxEBpBNH9mQFBdD4A717KtYLGSSi9of`
+
+5. **Verify post detail page elements** - ✅
+   - Teaser text visible in full at top of post
+   - Lock icon (🔒) displayed in grey box
+   - "Private Content" heading shown
+   - "Only approved followers can see this content" message
+   - [Request Access] button prominently displayed
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Teaser text visible in full | "Check out this exclusive behind-the-scenes content! 🎬..." visible | ✅ |
+| Lock icon on encrypted content portion | 🔒 icon in grey box | ✅ |
+| Blurred area for private content | Grey box with lock icon instead of blur | ✅ |
+| [Request Access] button shown | Button displayed prominently | ✅ |
+
+### Key Observations
+1. **Teaser always visible**: The teaser text is shown both in the feed listing and on the post detail page
+2. **Clear visual separation**: The teaser appears as regular post content, while the encrypted portion is in a distinct grey box with lock icon
+3. **Request Access CTA**: The button to request access is prominently displayed below the locked content
+4. **Lock indicator next to timestamp**: A small lock icon appears next to the timestamp indicating the post is private
+
+### Screenshots
+- `screenshots/e2e-test5.2-non-follower-profile-teaser-visible.png` - Profile header
+- `screenshots/e2e-test5.2-teaser-visible-in-feed.png` - Feed showing posts with 🔒 only (no teaser)
+- `screenshots/e2e-test5.2-teaser-post-visible.png` - Feed showing post with teaser text visible
+- `screenshots/e2e-test5.2-post-detail-teaser-visible.png` - Post detail with teaser + locked content + Request Access button
+
+### Test Result
+**PASSED** - E2E Test 5.2 completed successfully

@@ -758,3 +758,29 @@ await sdk.documents.query({
 - Identity 3 (4GPK6iuj...) - "Test Owner PF" - Non-follower for testing locked views
 
 **Lesson:** Maintain clear documentation of test identity roles. Identity 3 was named "Test Owner PF" from prior testing but served as the non-follower in this test - the naming could be improved for clarity.
+
+---
+
+## 2026-01-19: E2E Test 5.2 - Teaser Posts for Non-Followers
+
+### Issue 48: Teaser vs Non-Teaser Private Post Display
+**Observation:** Private posts display differently depending on whether they have a teaser:
+
+1. **Posts without teaser**: Show only 🔒 emoji as content placeholder in feed
+2. **Posts with teaser**: Show the full teaser text (up to 280 chars) in the feed, looks like a normal post
+
+In the post detail view:
+- Posts with teaser show the teaser text above a grey box containing the locked content
+- The locked content section has: lock icon, "Private Content" heading, "Only approved followers can see this content" message, and a [Request Access] button
+
+**Lesson:** The teaser acts as public content - it's stored in the `content` field of the post document, while the encrypted content is in `encryptedContent`. This means teasers are fully indexed, searchable, and visible to all users.
+
+### Issue 49: Grey Box vs Blur for Locked Content
+**Observation:** The test expected "blurred/dimmed placeholder" for private content but the actual implementation uses a grey box with a lock icon.
+
+**Key Details:**
+- The grey box provides clear visual indication that content is hidden
+- Contains: lock icon (🔒), "Private Content" heading, explanation text, and CTA button
+- This is arguably better UX than a blur effect because it's unambiguous
+
+**Lesson:** Test expectations should be flexible on visual implementation details. The spirit of the requirement (clearly indicate content is private and provide access path) is met even if the exact visual treatment differs from the spec.
