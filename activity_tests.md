@@ -458,3 +458,85 @@ See `bugs.md` for full bug report.
 
 ### Re-test Required
 - [ ] E2E Test 2.2: Create Private Post - No Teaser (after BUG-004 is fixed)
+
+---
+
+## 2026-01-19: BUG-005 Fix - Encryption Key Required for Private Feed Access Request
+
+### Task
+Fix BUG-005: Accepting private feed request fails with "Could not find encryption key for this user"
+
+### Status
+**FIXED** - Request access flow now requires and includes encryption public key
+
+### Root Cause Analysis
+When a user requests access to another user's private feed, the `FollowRequest` document was being created WITHOUT the requester's encryption public key. Then when the feed owner tried to approve the request:
+1. The code tried to find the encryption key from the request document (undefined)
+2. Fell back to fetching from the requester's identity
+3. If the requester had no encryption key on their identity, approval failed with "Could not find encryption key for this user"
+
+The core issue: The `requestAccess()` method was being called without the `publicKey` parameter, and users without encryption keys on their identity could still request access.
+
+### Solution Applied
+
+**1. Modified `components/profile/private-feed-access-button.tsx`**:
+- When requesting access, now retrieves the requester's encryption public key:
+  - First tries to derive from stored encryption private key (localStorage)
+  - Falls back to fetching from the requester's identity
+- If no encryption key is available, shows clear error: "You need an encryption key to request private feed access. Please enable your own private feed first."
+- Passes the public key to `requestAccess()` so it's included in the `FollowRequest` document
+
+**2. Updated `components/settings/private-feed-follow-requests.tsx`**:
+- Improved error message when approving fails due to missing key
+- Changed from "Could not find encryption key for this user" to "This user needs to set up an encryption key before you can approve their request"
+- Fixed lint warning (non-null assertion)
+
+### Key Code Changes
+
+**Request side (private-feed-access-button.tsx)**:
+```typescript
+// Get the requester's encryption public key before requesting access
+let encryptionPublicKey: Uint8Array | undefined
+
+const storedKeyHex = getEncryptionKey(currentUserId)
+if (storedKeyHex) {
+  // Derive public key from stored private key
+  const privateKeyBytes = new Uint8Array(
+    storedKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+  )
+  encryptionPublicKey = privateFeedCryptoService.getPublicKey(privateKeyBytes)
+} else {
+  // Try to get from identity
+  const identity = await identityService.getIdentity(currentUserId)
+  // ... find encryption key from identity.publicKeys
+}
+
+if (!encryptionPublicKey) {
+  toast.error('You need an encryption key to request private feed access...')
+  return
+}
+
+// Now includes the public key in the request
+await privateFeedFollowerService.requestAccess(ownerId, currentUserId, encryptionPublicKey)
+```
+
+### Impact
+- Users must have an encryption key (either stored locally or on their identity) before requesting private feed access
+- This prevents the approval failure scenario where the owner can't find the requester's encryption key
+- Clearer error messages guide users on what they need to do
+
+### Files Modified
+- `components/profile/private-feed-access-button.tsx` - Added encryption key retrieval before request
+- `components/settings/private-feed-follow-requests.tsx` - Improved error message, fixed lint
+
+### Screenshots
+- `screenshots/bug005-fix-profile-with-private-feed.png` - Profile page showing private feed badge
+
+### Verification
+- Build passes: `npm run build` ✓
+- Lint passes: `npm run lint` ✓ (for modified files)
+
+### Re-test Required
+- [ ] E2E Test 3.1: Request Access - Happy Path (verify encryption key is included in request)
+- [ ] E2E Test 3.4: Request Access - Missing Encryption Key (verify error message shown)
+- [ ] E2E Test 4.2: Approve Request - Happy Path (verify approval succeeds with new flow)

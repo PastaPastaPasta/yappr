@@ -278,3 +278,52 @@ The contract (`contracts/yappr-social-contract-actual.json`) defines:
 - `createInheritedPrivateReply()` - line 508: `content: ''`
 
 **Lesson:** When fixing a bug, search the codebase for similar patterns that may have the same issue.
+
+---
+
+## 2026-01-19: BUG-005 Fix - Private Feed Access Request Encryption Key
+
+### Issue 17: Missing Encryption Key in Follow Requests (BUG-005 - FIXED)
+**Problem:** When a user requests access to another user's private feed, the `FollowRequest` document was being created without the requester's encryption public key. This caused approval to fail with "Could not find encryption key for this user".
+
+**Root Cause:**
+1. `privateFeedFollowerService.requestAccess(ownerId, myId, publicKey?)` has an optional `publicKey` parameter
+2. `PrivateFeedAccessButton` was calling `requestAccess(ownerId, currentUserId)` WITHOUT the publicKey
+3. When owner approves, the code tried to find encryption key from request (undefined) then identity (may not have one)
+4. Result: Approval fails if requester has no encryption key on identity
+
+**Solution:**
+1. Modified `PrivateFeedAccessButton.handleRequestAccess()` to retrieve encryption public key before calling `requestAccess()`
+2. Key sources (in order): localStorage stored key -> derive from private key, identity public keys
+3. If no key available, show clear error asking user to set up encryption key first
+4. Pass the key to `requestAccess()` so it's stored in the `FollowRequest` document
+
+**Key Insight:** The `requestAccess()` API accepts an optional `publicKey` parameter specifically for cases where the key might not be on the identity (hash160-only keys). The calling code was not utilizing this parameter.
+
+**Lesson:** When debugging "missing data" errors, trace back through the entire flow to find where the data should have been populated. Optional parameters in APIs often indicate a design decision that callers should respect.
+
+### Issue 18: Dev Server Corruption After Code Changes
+**Observation:** The Next.js dev server frequently enters a corrupted state after modifying service files, resulting in 404 errors for all static assets.
+
+**Symptoms:**
+- All `_next/static/chunks/*.js` files return 404
+- Page renders but is non-functional (no JS)
+- Console shows dozens of 404 errors
+
+**Workaround:** Kill the dev server (`pkill -f "next dev"`) and restart with `npm run dev`.
+
+**Lesson:** When testing code changes, be prepared to restart the dev server if the page appears broken. Always verify the server is working correctly before assuming a bug in the code.
+
+### Issue 19: Multi-Identity E2E Testing Complexity
+**Observation:** Testing the full private feed request->approve flow requires:
+1. Two test identities (requester and owner)
+2. Both need encryption keys
+3. Requester must follow the owner
+4. Session switching between identities
+
+**Challenge:** Playwright session state is tied to localStorage, so testing multi-user flows requires either:
+- Multiple browser contexts
+- Clearing and re-logging between actions
+- Using different browsers/profiles
+
+**Lesson:** Design test identities upfront with all required capabilities (encryption keys, DPNS names, following relationships). Document the setup so tests can assume prerequisites are met.

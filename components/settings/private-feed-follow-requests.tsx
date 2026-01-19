@@ -145,8 +145,9 @@ export function PrivateFeedFollowRequests() {
             if (typeof encryptionKey.data === 'string') {
               // Base64 or hex
               if (/^[0-9a-fA-F]+$/.test(encryptionKey.data)) {
+                const hexPairs = encryptionKey.data.match(/.{1,2}/g) || []
                 publicKey = new Uint8Array(
-                  encryptionKey.data.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
+                  hexPairs.map(byte => parseInt(byte, 16))
                 )
               } else {
                 // Base64
@@ -166,7 +167,7 @@ export function PrivateFeedFollowRequests() {
       }
 
       if (!publicKey) {
-        toast.error('Could not find encryption key for this user')
+        toast.error('This user needs to set up an encryption key before you can approve their request')
         setProcessingId(null)
         return
       }

@@ -72,9 +72,60 @@ export function PrivateFeedAccessButton({
 
     setIsProcessing(true)
     try {
-      const { privateFeedFollowerService } = await import('@/lib/services')
+      const { privateFeedFollowerService, privateFeedCryptoService, identityService } = await import('@/lib/services')
+      const { getEncryptionKey } = await import('@/lib/secure-storage')
 
-      const result = await privateFeedFollowerService.requestAccess(ownerId, currentUserId)
+      // Get the requester's encryption public key
+      // First try to derive from stored private key, then fall back to identity
+      let encryptionPublicKey: Uint8Array | undefined
+
+      const storedKeyHex = getEncryptionKey(currentUserId)
+      if (storedKeyHex) {
+        // Derive public key from stored private key
+        const privateKeyBytes = new Uint8Array(
+          storedKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+        )
+        encryptionPublicKey = privateFeedCryptoService.getPublicKey(privateKeyBytes)
+      } else {
+        // Try to get from identity
+        const identity = await identityService.getIdentity(currentUserId)
+        if (identity?.publicKeys) {
+          const encryptionKey = identity.publicKeys.find(
+            (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
+          )
+          if (encryptionKey?.data) {
+            // Convert to Uint8Array
+            if (typeof encryptionKey.data === 'string') {
+              // Base64 or hex
+              if (/^[0-9a-fA-F]+$/.test(encryptionKey.data)) {
+                const hexPairs = encryptionKey.data.match(/.{1,2}/g) || []
+                encryptionPublicKey = new Uint8Array(
+                  hexPairs.map(byte => parseInt(byte, 16))
+                )
+              } else {
+                // Base64
+                const binary = atob(encryptionKey.data)
+                encryptionPublicKey = new Uint8Array(binary.length)
+                for (let i = 0; i < binary.length; i++) {
+                  encryptionPublicKey[i] = binary.charCodeAt(i)
+                }
+              }
+            } else if (encryptionKey.data instanceof Uint8Array) {
+              encryptionPublicKey = encryptionKey.data
+            } else if (Array.isArray(encryptionKey.data)) {
+              encryptionPublicKey = new Uint8Array(encryptionKey.data)
+            }
+          }
+        }
+      }
+
+      if (!encryptionPublicKey) {
+        toast.error('You need an encryption key to request private feed access. Please enable your own private feed first.')
+        setIsProcessing(false)
+        return
+      }
+
+      const result = await privateFeedFollowerService.requestAccess(ownerId, currentUserId, encryptionPublicKey)
 
       if (result.success) {
         setStatus('pending')
