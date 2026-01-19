@@ -29,6 +29,7 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
+import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
@@ -199,13 +200,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     // Has DPNS username
     if (usernameState) {
       return (
-        <Link
-          href={`/user?id=${post.author.id}`}
-          onClick={(e) => e.stopPropagation()}
-          className="text-gray-500 hover:underline truncate"
+        <ProfileHoverCard
+          userId={post.author.id}
+          username={usernameState}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
         >
-          @{usernameState}
-        </Link>
+          <Link
+            href={`/user?id=${post.author.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-gray-500 hover:underline truncate"
+          >
+            @{usernameState}
+          </Link>
+        </ProfileHoverCard>
       )
     }
 
@@ -217,36 +225,45 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     // No DPNS and no profile - show identity ID with copy tooltip
     if (!hasProfile) {
       return (
-        <Tooltip.Provider>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  navigator.clipboard.writeText(post.author.id).catch(console.error)
-                  toast.success('Identity ID copied')
-                }}
-                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
-              >
-                {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
-              </button>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                sideOffset={5}
-              >
-                Click to copy full identity ID
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        </Tooltip.Provider>
+        <ProfileHoverCard
+          userId={post.author.id}
+          username={null}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
+        >
+          <span className="inline-flex">
+            <Tooltip.Provider>
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigator.clipboard.writeText(post.author.id).catch(console.error)
+                      toast.success('Identity ID copied')
+                    }}
+                    className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
+                  >
+                    {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
+                  </button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content
+                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                    sideOffset={5}
+                  >
+                    Click to copy full identity ID
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
+            </Tooltip.Provider>
+          </span>
+        </ProfileHoverCard>
       )
     }
 
     // Has profile but no DPNS - display name is sufficient
     return null
-  }, [usernameState, hasProfile, post.author.id])
+  }, [usernameState, hasProfile, post.author.id, displayName, avatarUrl])
 
   const [liked, setLiked] = useState(initialLiked)
   const [likes, setLikes] = useState(statsLikes)
@@ -510,13 +527,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       )}
       <div className="flex gap-3">
         {!hideAvatar && (
-          <Link
-            href={`/user?id=${post.author.id}`}
-            onClick={(e) => e.stopPropagation()}
-            className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+          <ProfileHoverCard
+            userId={post.author.id}
+            username={usernameState}
+            displayName={displayName}
+            avatarUrl={avatarUrl}
           >
-            <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
-          </Link>
+            <Link
+              href={`/user?id=${post.author.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+            >
+              <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
+            </Link>
+          </ProfileHoverCard>
         )}
 
         <div className="flex-1 min-w-0">
@@ -528,13 +552,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     // Still loading - show skeleton for display name
                     <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                   ) : (
-                    <Link
-                      href={`/user?id=${post.author.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-semibold hover:underline truncate"
+                    <ProfileHoverCard
+                      userId={post.author.id}
+                      username={usernameState}
+                      displayName={displayName}
+                      avatarUrl={avatarUrl}
                     >
-                      {displayName}
-                    </Link>
+                      <Link
+                        href={`/user?id=${post.author.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-semibold hover:underline truncate"
+                      >
+                        {displayName}
+                      </Link>
+                    </ProfileHoverCard>
                   )}
                   {post.author.verified && (
                     <svg className="h-4 w-4 text-yappr-500 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
