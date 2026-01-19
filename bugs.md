@@ -1,6 +1,6 @@
 # Bug Reports
 
-## BUG-001: IdentityPublicKeyInCreation.fromObject() throws WasmDppError
+## BUG-002: sdk.identities.update() fails with WasmSdkError when adding encryption key
 
 **Date Reported:** 2026-01-19
 **Severity:** HIGH (Blocking)
@@ -8,95 +8,70 @@
 **Affects:** E2E Test 1.1 - Enable Private Feed Happy Path
 
 ### Summary
-When attempting to add an encryption key to an identity via the "Add Encryption Key to Identity" flow in Settings > Private Feed, the operation fails with a `WasmDppError` when calling `IdentityPublicKeyInCreation.fromObject()`.
+After fixing BUG-001, the `IdentityPublicKeyInCreation` is now created successfully using the constructor. However, the subsequent call to `sdk.identities.update()` fails with `WasmSdkError`. This appears to be related to the security level of the signing key.
 
 ### Steps to Reproduce
-1. Log in with an identity that does NOT have an encryption key
+1. Log in with an identity using the "High" security level key (securityLevel=2)
 2. Navigate to Settings > Private Feed
 3. Click "Add Encryption Key to Identity"
-4. Click "Generate Encryption Key"
-5. Check "I have securely saved my private key..."
-6. Click "Continue"
-7. Click "Add Encryption Key"
+4. Generate and save encryption key
+5. Click "Add Encryption Key"
 
 ### Expected Behavior
-The encryption key should be added to the identity on Dash Platform, and the user should see a success message allowing them to enable their private feed.
+The encryption key should be added to the identity on Dash Platform.
 
 ### Actual Behavior
-An error dialog appears showing "Unknown error" with console error: `Error adding encryption key: WasmDppError`
+An error dialog appears showing "Unknown error" with console error: `Error adding encryption key: WasmSdkError`
 
 ### Technical Details
 
 **Console Log:**
 ```
-Creating IdentityPublicKeyInCreation with object: {"$version":0,"id":4,"purpose":1,"securityLevel":2,"type":0,"readOnly":false,"data":"<base64-public-key>","contractBounds":null,"disabledAt":null}
-Error adding encryption key: WasmDppError
+Creating IdentityPublicKeyInCreation: id=4, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1
+Public key bytes length: 33
+IdentityPublicKeyInCreation created successfully
+Adding encryption key (id=4) to identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2...
+Calling sdk.identities.update with privateKeyWif length: 52
+Error adding encryption key: WasmSdkError
 ```
 
 **Code Location:**
-`lib/services/identity-service.ts:addEncryptionKey()` at line ~268
+`lib/services/identity-service.ts:addEncryptionKey()` at line ~279
 
-**What was tried:**
-1. Originally imported `IdentityPublicKeyInCreation` directly from `@dashevo/wasm-sdk` - resulted in `Cannot read properties of undefined (reading 'identitypublickeyincreation_fromObject')`
-2. Changed to dynamic import from `@dashevo/wasm-sdk/compressed` with `initWasm()` - WASM now loads but `fromObject()` throws `WasmDppError`
-3. Tried passing `data` as byte array instead of base64 string - same error
-4. Tried with/without `contractBounds` - same error
-5. Tried adding `disabledAt: null` to match existing key format - same error
-
-**Existing Identity Keys Format (from identity.toJSON()):**
+**Identity Keys Structure:**
 ```json
 {
-  "$version": "0",
-  "id": 0,
-  "purpose": 0,
-  "securityLevel": 0,
-  "contractBounds": null,
-  "type": 0,
-  "readOnly": false,
-  "data": "A9t7xFWBYGXjviYDSZm1jhlw6vwGdz28ITuda4gZEQTa",
-  "disabledAt": null
-}
-```
-
-**New Key Object Attempted:**
-```json
-{
-  "$version": 0,
-  "id": 4,
-  "purpose": 1,
-  "securityLevel": 2,
-  "type": 0,
-  "readOnly": false,
-  "data": "<base64-33-byte-compressed-pubkey>",
-  "contractBounds": null,
-  "disabledAt": null
+  "publicKeys": [
+    { "id": 0, "purpose": 0, "securityLevel": 0 },  // MASTER
+    { "id": 1, "purpose": 0, "securityLevel": 2 },  // HIGH (used for login)
+    { "id": 2, "purpose": 0, "securityLevel": 1 },  // CRITICAL
+    { "id": 3, "purpose": 3, "securityLevel": 1 }   // TRANSFER
+  ]
 }
 ```
 
 ### Root Cause Analysis
-The WASM SDK's `IdentityPublicKeyInCreation.fromObject()` method is throwing an error when creating an encryption key (purpose=1). This could be:
-1. WASM module initialization timing issue
-2. Data format mismatch between what WASM expects and what we're providing
-3. Validation error inside the WASM code that isn't being properly surfaced
+The user is logged in with the HIGH (securityLevel=2) authentication key, but identity updates (adding new keys) likely require CRITICAL (securityLevel=1) or MASTER (securityLevel=0) level keys according to Dash Platform protocol rules.
+
+### Potential Fix
+1. Update the login flow to require CRITICAL key for identity modifications
+2. Or request the user to provide their CRITICAL key specifically for this operation
+3. Or check available key security levels and use the appropriate one
 
 ### Impact
 - Blocks all private feed functionality for users without encryption keys
-- Users cannot enable private feeds
+- Users cannot enable private feeds unless they log in with CRITICAL level key
 - E2E Test Suite 1 (Private Feed Enablement) is blocked
-
-### Workaround
-None currently. Users would need to manually add encryption keys to their identities outside of Yappr.
 
 ### Related Files
 - `lib/services/identity-service.ts` - `addEncryptionKey()` method
 - `components/auth/add-encryption-key-modal.tsx` - UI component
-- `@dashevo/wasm-sdk` / `@dashevo/evo-sdk` - External SDK
+- `@dashevo/evo-sdk` - External SDK
 
 ### Screenshots
-- `screenshots/e2e-add-encryption-key-error.png` - Error dialog
-- `screenshots/e2e-private-feed-settings-blocked.png` - Current blocked state
+- `screenshots/e2e-bug001-fixed-new-bug002.png` - Current state after BUG-001 fix
 
 ### Notes
-- The UI flow itself works correctly (key generation, copy to clipboard, confirmation)
-- The error occurs specifically when interacting with the WASM SDK
-- This may require upstream investigation with the Dash Platform SDK team
+- BUG-001 has been fixed - IdentityPublicKeyInCreation is created successfully
+- This is a security-level authorization issue at the SDK/platform level
+- May need to investigate Dash Platform's identity update requirements

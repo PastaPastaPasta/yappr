@@ -248,29 +248,28 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
-      // Create the new key object for IdentityPublicKeyInCreation.fromObject()
-      // The SDK expects data as base64-encoded string (matching how keys are returned from identity.toJSON())
-      const publicKeyBase64 = btoa(String.fromCharCode.apply(null, Array.from(publicKeyBytes)));
+      // Create IdentityPublicKeyInCreation using the constructor directly
+      // The constructor takes: (id, purpose, securityLevel, keyType, readOnly, data, signature, contractBounds)
+      // - purpose: can be number (1 = ENCRYPTION) or string ("ENCRYPTION")
+      // - securityLevel: can be number (3 = MEDIUM) or string ("MEDIUM")
+      // - keyType: can be number (0 = ECDSA_SECP256K1) or string ("ECDSA_SECP256K1")
+      // - data: must be Uint8Array (not base64 string)
+      // - signature: null for new keys
+      // - contractBounds: null or ContractBounds object
 
-      const newKeyObj: Record<string, unknown> = {
-        $version: 0,
-        id: newKeyId,
-        purpose: 1,          // ENCRYPTION
-        securityLevel: 2,    // MEDIUM
-        type: 0,             // ECDSA_SECP256K1
-        readOnly: false,
-        data: publicKeyBase64,
-        contractBounds: null,
-        disabledAt: null,
-      };
+      console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
+      console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      // Skip contract bounds for now - testing without it
-      // Contract-bound keys may require specific SDK handling
-      console.log('NOTE: Skipping contractBounds for encryption key (testing)');
-
-      // Create IdentityPublicKeyInCreation from WASM module
-      console.log('Creating IdentityPublicKeyInCreation with object:', JSON.stringify(newKeyObj));
-      const newKey = wasm.IdentityPublicKeyInCreation.fromObject(newKeyObj);
+      const newKey = new wasm.IdentityPublicKeyInCreation(
+        newKeyId,           // id
+        'ENCRYPTION',       // purpose (string format works)
+        'MEDIUM',           // securityLevel (string format works)
+        'ECDSA_SECP256K1',  // keyType (string format works)
+        false,              // readOnly
+        publicKeyBytes,     // data as Uint8Array
+        null,               // signature (null for new keys)
+        null                // contractBounds (null = no contract binding)
+      );
       console.log('IdentityPublicKeyInCreation created successfully');
 
       console.log(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
@@ -297,10 +296,14 @@ class IdentityService {
       if (error instanceof Error) {
         errorMessage = error.message;
         console.error('Error stack:', error.stack);
+        console.error('Error name:', error.name);
         // Check for WASM error properties
-        const wasmError = error as { code?: string; data?: unknown };
+        const wasmError = error as { code?: string; data?: unknown; kind?: string | number };
         if (wasmError.code) console.error('Error code:', wasmError.code);
-        if (wasmError.data) console.error('Error data:', wasmError.data);
+        if (wasmError.data) console.error('Error data:', JSON.stringify(wasmError.data, null, 2));
+        if (wasmError.kind !== undefined) console.error('Error kind:', wasmError.kind);
+        // Log all enumerable properties
+        console.error('Error properties:', Object.keys(error));
       }
       return {
         success: false,
