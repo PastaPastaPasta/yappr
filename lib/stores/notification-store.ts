@@ -6,7 +6,7 @@ import { Notification } from '../types';
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
 const MAX_READ_IDS = 1000;
 
-type NotificationFilter = 'all' | 'follow' | 'mention';
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'privateFeed';
 
 /**
  * Add IDs to read set and prune if exceeds limit
@@ -135,6 +135,14 @@ export const useNotificationStore = create<NotificationState>()(
         const state = get();
         if (state.filter === 'all') {
           return state.notifications;
+        }
+        // Handle private feed filter - matches all private feed notification types
+        if (state.filter === 'privateFeed') {
+          return state.notifications.filter(n =>
+            n.type === 'privateFeedRequest' ||
+            n.type === 'privateFeedApproved' ||
+            n.type === 'privateFeedRevoked'
+          );
         }
         return state.notifications.filter(n => n.type === state.filter);
       },

@@ -11,11 +11,16 @@ const INITIAL_FETCH_DAYS = 7;
 const INITIAL_FETCH_MS = INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000;
 
 /**
+ * Private feed notification types
+ */
+type PrivateFeedNotificationType = 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked';
+
+/**
  * Raw notification data before enrichment
  */
 interface RawNotification {
   id: string;
-  type: 'follow' | 'mention';
+  type: 'follow' | 'mention' | PrivateFeedNotificationType;
   fromUserId: string;
   postId?: string;
   createdAt: number;
@@ -65,6 +70,51 @@ class NotificationService {
       }));
     } catch (error) {
       console.error('Error fetching new followers:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get private feed notifications since timestamp
+   * Queries the notification document type for privateFeedRequest, privateFeedApproved, privateFeedRevoked
+   * Uses the ownerNotifications index: [$ownerId, $createdAt]
+   */
+  async getPrivateFeedNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+    try {
+      const sdk = await getEvoSdk();
+
+      // Query notification documents owned by this user
+      const response = await sdk.documents.query({
+        dataContractId: YAPPR_CONTRACT_ID,
+        documentTypeName: 'notification',
+        where: [
+          ['$ownerId', '==', userId],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
+        limit: NOTIFICATION_QUERY_LIMIT
+      } as any);
+
+      const documents = normalizeSDKResponse(response);
+
+      // Filter to only private feed notification types
+      const privateFeedTypes = ['privateFeedRequest', 'privateFeedApproved', 'privateFeedRevoked'];
+
+      return documents
+        .filter((doc: any) => privateFeedTypes.includes(doc.type))
+        .map((doc: any) => {
+          const fromUserId = identifierToBase58(doc.fromUserId);
+
+          return {
+            id: doc.$id,
+            type: doc.type as PrivateFeedNotificationType,
+            fromUserId: fromUserId || '', // Fallback to empty string if null
+            createdAt: doc.$createdAt
+          };
+        })
+        .filter((n) => n.fromUserId !== ''); // Filter out entries with missing fromUserId
+    } catch (error) {
+      console.error('Error fetching private feed notifications:', error);
       return [];
     }
   }
@@ -284,12 +334,13 @@ class NotificationService {
     readIds: Set<string>,
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
-    const [followers, mentions] = await Promise.all([
+    const [followers, mentions, privateFeed] = await Promise.all([
       this.getNewFollowers(userId, sinceTimestamp),
-      this.getNewMentions(userId, sinceTimestamp)
+      this.getNewMentions(userId, sinceTimestamp),
+      this.getPrivateFeedNotifications(userId, sinceTimestamp)
     ]);
 
-    const rawNotifications = [...followers, ...mentions];
+    const rawNotifications = [...followers, ...mentions, ...privateFeed];
     rawNotifications.sort((a, b) => b.createdAt - a.createdAt);
 
     const notifications = await this.enrichNotifications(rawNotifications, readIds);

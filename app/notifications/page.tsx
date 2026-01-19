@@ -5,7 +5,10 @@ import {
   UserPlusIcon,
   BellIcon,
   Cog6ToothIcon,
-  AtSymbolIcon
+  AtSymbolIcon,
+  LockClosedIcon,
+  LockOpenIcon,
+  ShieldExclamationIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -16,22 +19,29 @@ import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { Notification } from '@/lib/types'
 
-type NotificationFilter = 'all' | 'follow' | 'mention'
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'privateFeed'
 
 const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'follow', label: 'Follows' },
-  { key: 'mention', label: 'Mentions' }
+  { key: 'mention', label: 'Mentions' },
+  { key: 'privateFeed', label: 'Private Feed' }
 ]
 
 const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   follow: <UserPlusIcon className="h-5 w-5 text-purple-500" />,
-  mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />
+  mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />,
+  privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
+  privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
+  privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
 }
 
 const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   follow: 'started following you',
-  mention: 'mentioned you in a post'
+  mention: 'mentioned you in a post',
+  privateFeedRequest: 'requested access to your private feed',
+  privateFeedApproved: 'approved your private feed request',
+  privateFeedRevoked: 'revoked your private feed access'
 }
 
 function formatTime(date: Date): string {

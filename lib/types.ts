@@ -109,7 +109,7 @@ export interface Comment {
 
 export interface Notification {
   id: string
-  type: 'follow' | 'mention'  // Currently implemented types
+  type: 'follow' | 'mention' | 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked'
   from: User
   post?: Post
   createdAt: Date

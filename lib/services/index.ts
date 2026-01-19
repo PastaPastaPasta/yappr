@@ -101,3 +101,7 @@ export type {
   DecryptResult,
   EncryptedPostFields,
 } from './private-feed-follower-service';
+
+// Private feed notification service
+export { privateFeedNotificationService } from './private-feed-notification-service';
+export type { PrivateFeedNotificationType } from './private-feed-notification-service';

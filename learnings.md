@@ -202,3 +202,28 @@
 6. **Test user session persisted across Playwright navigation**: The existing session from previous testing allowed direct navigation to the settings page after skipping DPNS registration once. This simplified the Playwright testing flow.
 
 **No blockers encountered** - the implementation follows the LKH algorithm from the SPEC precisely and integrates with existing UI patterns.
+
+## 2026-01-19: Private Feed Notifications Integration
+
+**Key observations:**
+
+1. **Notification service uses derived notifications pattern**: The existing notification service derives notifications from other document types (follows, mentions) rather than querying a separate `notification` document type directly. For private feed notifications, we do use the actual `notification` document type since private feed events need explicit document creation.
+
+2. **Best-effort notification creation pattern**: Notification creation is wrapped in try-catch blocks that don't propagate errors. This ensures that the core operation (request access, approve follower, revoke follower) succeeds even if notification creation fails. This matches the pattern used elsewhere in the codebase for non-critical side effects.
+
+3. **identifierToBase58 can return null**: The SDK helper `identifierToBase58()` returns `string | null`, so when mapping notification documents, we need to handle the null case. Used a fallback to empty string and then filtered out entries with empty `fromUserId` to ensure type safety.
+
+4. **Filter type requires store and UI coordination**: Adding a new notification filter requires updates in three places:
+   - `NotificationFilter` type in `notification-store.ts`
+   - `getFilteredNotifications()` logic to handle the new filter
+   - `FILTER_TABS` and related constants in the notifications page
+
+5. **Private feed notifications group three types under one filter**: Rather than adding three separate filter tabs, the "Private Feed" filter matches all three notification types (`privateFeedRequest`, `privateFeedApproved`, `privateFeedRevoked`). This provides cleaner UX while still allowing users to see all private feed activity in one place.
+
+6. **Notification document structure for private feed events**: Unlike follows and mentions which are derived from other documents, private feed notifications create actual `notification` documents with:
+   - `$ownerId`: The notification recipient (who should see it)
+   - `fromUserId`: The actor who triggered the notification
+   - `type`: One of the three private feed notification types
+   - `read`: Boolean tracking read state
+
+**No blockers encountered** - the integration follows existing notification patterns and required minimal changes to existing code.

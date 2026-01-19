@@ -493,3 +493,61 @@
 - Proper handling of all states (loading, not enabled, empty, with followers)
 
 **Screenshot:** `screenshots/manage-private-followers-ui.png`
+
+## 2026-01-19: Private Feed Notifications Integration (PRD §7)
+
+**Task:** Integrate private feed events with the notifications system
+
+**Changes made:**
+1. Updated `lib/types.ts`:
+   - Extended `Notification` type to include private feed notification types: `privateFeedRequest`, `privateFeedApproved`, `privateFeedRevoked`
+
+2. Created `lib/services/private-feed-notification-service.ts`:
+   - `createRequestNotification(requesterId, feedOwnerId)` - Creates notification when someone requests access
+   - `createApprovedNotification(feedOwnerId, requesterId)` - Creates notification when request is approved
+   - `createRevokedNotification(feedOwnerId, revokeeId)` - Creates notification when access is revoked
+   - All methods create notification documents owned by the recipient with `fromUserId` set to the actor
+
+3. Updated `lib/services/notification-service.ts`:
+   - Added `PrivateFeedNotificationType` type alias
+   - Added `getPrivateFeedNotifications(userId, sinceTimestamp)` method to query notification documents for private feed events
+   - Updated `fetchNotifications()` to include private feed notifications alongside follows and mentions
+
+4. Updated `lib/services/private-feed-follower-service.ts`:
+   - Integrated notification creation in `requestAccess()` - sends notification to feed owner
+
+5. Updated `lib/services/private-feed-service.ts`:
+   - Integrated notification creation in `approveFollower()` - sends notification to approved user
+   - Integrated notification creation in `revokeFollower()` - sends notification to revoked user
+   - All notification calls are best-effort (don't fail main operation if notification fails)
+
+6. Updated `lib/stores/notification-store.ts`:
+   - Extended `NotificationFilter` type to include `privateFeed` filter
+   - Updated `getFilteredNotifications()` to handle the `privateFeed` filter (matches all three private feed notification types)
+
+7. Updated `app/notifications/page.tsx`:
+   - Added imports for new Heroicons: `LockClosedIcon`, `LockOpenIcon`, `ShieldExclamationIcon`
+   - Added "Private Feed" tab to `FILTER_TABS`
+   - Extended `NOTIFICATION_ICONS` with icons for each private feed notification type:
+     - `privateFeedRequest`: Blue lock icon
+     - `privateFeedApproved`: Green unlock icon
+     - `privateFeedRevoked`: Red shield icon
+   - Extended `NOTIFICATION_MESSAGES` with messages for each type:
+     - "requested access to your private feed"
+     - "approved your private feed request"
+     - "revoked your private feed access"
+
+8. Exported new service and types from `lib/services/index.ts`:
+   - `privateFeedNotificationService` singleton
+   - `PrivateFeedNotificationType` type
+
+**Key features per PRD §7:**
+- Notification document creation for all three private feed events
+- Notifications are queried from the `notification` document type using the `ownerNotifications` index
+- UI displays appropriate icons and messages for each notification type
+- New "Private Feed" filter tab on notifications page
+- Best-effort notification creation (main operations succeed even if notification fails)
+
+**Screenshots:**
+- `screenshots/notifications-private-feed-tab.png` (notifications page with Private Feed tab)
+- `screenshots/notifications-private-feed-selected.png` (Private Feed tab selected)
