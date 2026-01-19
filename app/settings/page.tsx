@@ -515,18 +515,24 @@ function SettingsPage() {
     </div>
   )
 
-  const renderPrivateFeedSettings = () => (
-    <div className="p-6 space-y-6">
-      <PrivateFeedSettings />
-      <PrivateFeedDashboard />
-      <div id="private-feed-requests">
-        <PrivateFeedFollowRequests />
+  const renderPrivateFeedSettings = () => {
+    // Check for action=reset URL param to auto-open reset dialog
+    const actionParam = searchParams.get('action')
+    const shouldOpenReset = actionParam === 'reset'
+
+    return (
+      <div className="p-6 space-y-6">
+        <PrivateFeedSettings openReset={shouldOpenReset} />
+        <PrivateFeedDashboard />
+        <div id="private-feed-requests">
+          <PrivateFeedFollowRequests />
+        </div>
+        <div id="private-feed-followers">
+          <PrivateFeedFollowers />
+        </div>
       </div>
-      <div id="private-feed-followers">
-        <PrivateFeedFollowers />
-      </div>
-    </div>
-  )
+    )
+  }
 
   const renderAboutSettings = () => {
     const commitHash = process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'

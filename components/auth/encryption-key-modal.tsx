@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { useEncryptionKeyModal, getEncryptionKeyActionDescription } from '@/hooks/use-encryption-key-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { AddEncryptionKeyModal } from './add-encryption-key-modal'
+import { LostEncryptionKeyModal } from './lost-encryption-key-modal'
 import toast from 'react-hot-toast'
 
 /**
@@ -25,6 +26,7 @@ export function EncryptionKeyModal() {
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
+  const [showLostKeyModal, setShowLostKeyModal] = useState(false)
   const [noKeyOnIdentity, setNoKeyOnIdentity] = useState(false)
 
   const actionDescription = getEncryptionKeyActionDescription(action)
@@ -155,7 +157,23 @@ export function EncryptionKeyModal() {
     setEncryptionKeyHex('')
     setError(null)
     setNoKeyOnIdentity(false)
+    setShowLostKeyModal(false)
     close()
+  }, [close])
+
+  const handleLostKeyFoundKey = useCallback(() => {
+    // User says they found their key - close lost key modal and let them enter it
+    setShowLostKeyModal(false)
+  }, [])
+
+  const handleLostKeyResetFeed = useCallback(() => {
+    // User wants to reset their private feed - close both modals and navigate to settings
+    setShowLostKeyModal(false)
+    close()
+    // Navigate to private feed settings with reset param
+    if (typeof window !== 'undefined') {
+      window.location.href = '/settings?section=privateFeed&action=reset'
+    }
   }, [close])
 
   const handleAddKeySuccess = useCallback(() => {
@@ -282,15 +300,26 @@ export function EncryptionKeyModal() {
                       </Button>
                     </div>
 
-                    <p className="mt-4 text-center text-xs text-gray-500">
-                      Don&apos;t have an encryption key?{' '}
-                      <button
-                        onClick={() => setShowAddKeyModal(true)}
-                        className="text-yappr-500 hover:underline"
-                      >
-                        Add one to your identity
-                      </button>
-                    </p>
+                    <div className="mt-4 text-center text-xs text-gray-500 space-y-1">
+                      <p>
+                        Don&apos;t have an encryption key?{' '}
+                        <button
+                          onClick={() => setShowAddKeyModal(true)}
+                          className="text-yappr-500 hover:underline"
+                        >
+                          Add one to your identity
+                        </button>
+                      </p>
+                      <p>
+                        Lost your key?{' '}
+                        <button
+                          onClick={() => setShowLostKeyModal(true)}
+                          className="text-amber-600 dark:text-amber-400 hover:underline"
+                        >
+                          See recovery options
+                        </button>
+                      </p>
+                    </div>
                   </motion.div>
                 </Dialog.Content>
               </motion.div>
@@ -304,6 +333,14 @@ export function EncryptionKeyModal() {
         isOpen={showAddKeyModal}
         onClose={() => setShowAddKeyModal(false)}
         onSuccess={handleAddKeySuccess}
+      />
+
+      {/* Lost Encryption Key Modal */}
+      <LostEncryptionKeyModal
+        isOpen={showLostKeyModal}
+        onClose={() => setShowLostKeyModal(false)}
+        onFoundKey={handleLostKeyFoundKey}
+        onResetPrivateFeed={handleLostKeyResetFeed}
       />
     </Dialog.Root>
   )

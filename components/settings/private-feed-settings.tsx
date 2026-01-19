@@ -13,13 +13,18 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { ResetPrivateFeedDialog } from './reset-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 
+interface PrivateFeedSettingsProps {
+  /** If true, automatically open the reset dialog when component mounts */
+  openReset?: boolean
+}
+
 /**
  * PrivateFeedSettings Component
  *
  * Settings section for managing private feeds.
  * Implements PRD §4.1 - Enable Private Feed UI
  */
-export function PrivateFeedSettings() {
+export function PrivateFeedSettings({ openReset = false }: PrivateFeedSettingsProps) {
   const { user } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [isEnabled, setIsEnabled] = useState(false)
@@ -93,6 +98,13 @@ export function PrivateFeedSettings() {
   useEffect(() => {
     checkPrivateFeedStatus().catch(err => console.error('Failed to check private feed status:', err))
   }, [checkPrivateFeedStatus])
+
+  // Handle openReset prop - open reset dialog when directed from lost key flow
+  useEffect(() => {
+    if (openReset && isEnabled && !isLoading) {
+      setShowResetDialog(true)
+    }
+  }, [openReset, isEnabled, isLoading])
 
   const handleStartEnable = () => {
     setShowKeyInput(true)

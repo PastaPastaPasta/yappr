@@ -809,3 +809,59 @@
 **Screenshots:**
 - `screenshots/add-encryption-key-modal.png` (key generation step with save warning)
 - `screenshots/encryption-key-modal-with-add-option.png` (enter key modal with add link)
+
+## 2026-01-19: Lost Encryption Key UI Flow (PRD §6.4)
+
+**Task:** Implement the Lost Encryption Key recovery UI flow for users who have lost their encryption key
+
+**Changes made:**
+1. Created `components/auth/lost-encryption-key-modal.tsx`:
+   - Modal dialog for users who have lost their encryption key
+   - Warning section explaining that without the key, private feed features cannot be used
+   - **Check Your Secure Storage** option:
+     - Explains that the key was shown when first set up
+     - Suggests checking password manager, secure notes, etc.
+     - "I Found My Key" button returns user to the encryption key entry modal
+   - **Reset Your Private Feed** option (shown only for feed owners):
+     - Explains the destructive nature of the reset
+     - Lists consequences: all followers lose access, existing posts unreadable, followers must re-request
+     - "Reset Private Feed" button navigates to settings with action=reset parameter
+   - **Request New Access** option (shown for followers of private feeds):
+     - Explains that without the key, grants cannot be decrypted
+     - Instructions to add new encryption key and ask feed owners to revoke and re-approve
+   - Automatically checks if user has a private feed and what feeds they follow locally
+   - Loading state while checking status
+
+2. Updated `components/auth/encryption-key-modal.tsx`:
+   - Imported `LostEncryptionKeyModal` component
+   - Added "Lost your key? See recovery options" link at bottom of modal
+   - Added `showLostKeyModal` state for controlling the lost key modal
+   - Added `handleLostKeyFoundKey` callback to close lost key modal and return to key entry
+   - Added `handleLostKeyResetFeed` callback to navigate to settings with action=reset parameter
+   - Integrated `LostEncryptionKeyModal` in the component render
+
+3. Updated `components/settings/private-feed-settings.tsx`:
+   - Added `openReset` prop (boolean) to trigger auto-opening of reset dialog
+   - Added useEffect to open reset dialog when `openReset` prop is true and feed is enabled
+
+4. Updated `app/settings/page.tsx`:
+   - Modified `renderPrivateFeedSettings()` to check for `action=reset` URL parameter
+   - Passes `openReset={shouldOpenReset}` prop to `PrivateFeedSettings` component
+
+5. Fixed `lib/services/identity-service.ts`:
+   - Fixed SDK API call for `sdk.identities.update()` - uses `identityId` and `privateKeyWif` instead of `identity` and `signer`
+   - Removed unused `IdentitySigner` import
+
+**Key features per PRD §6.4:**
+- Accessible from "Lost your key?" link in encryption key modal
+- Clear explanation of consequences of not having the key
+- Multiple recovery options based on user's role (owner vs follower)
+- Feed owners can easily navigate to reset their private feed
+- Followers are guided to add new encryption key and request re-approval
+- Checking secure storage is the first recommended option
+- Deep-link support: navigating to `/settings?section=privateFeed&action=reset` auto-opens reset dialog
+
+**Screenshots:**
+- `screenshots/lost-encryption-key-ui.png` (lost key modal showing recovery options)
+- `screenshots/lost-encryption-key-ui-full.png` (full page view with modal)
+- `screenshots/lost-key-reset-dialog.png` (reset dialog auto-opened from lost key flow)

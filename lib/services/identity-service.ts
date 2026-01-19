@@ -1,7 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service';
 import {
   IdentityPublicKeyInCreation,
-  IdentitySigner,
 } from '@dashevo/wasm-sdk';
 
 export interface IdentityPublicKey {
@@ -260,17 +259,13 @@ class IdentityService {
       // Create IdentityPublicKeyInCreation from object
       const newKey = IdentityPublicKeyInCreation.fromObject(newKeyObj);
 
-      // Create signer and add the auth key
-      const signer = new IdentitySigner();
-      signer.addKeyFromWif(authPrivateKeyWif);
-
       console.log(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
 
       // Update the identity
       await sdk.identities.update({
-        identity,
+        identityId,
         addPublicKeys: [newKey],
-        signer,
+        privateKeyWif: authPrivateKeyWif,
       });
 
       console.log('Encryption key added successfully');

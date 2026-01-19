@@ -335,3 +335,23 @@
 7. **Identity cache clearing after update**: After successfully adding the encryption key to an identity, must call `this.clearCache(identityId)` to ensure subsequent identity fetches reflect the new key. Otherwise, the cached identity would be stale.
 
 **No blockers encountered** - the implementation integrates with the existing EvoSDK infrastructure and follows patterns established in other identity operations.
+
+## 2026-01-19: Lost Encryption Key UI Flow Implementation
+
+**Key observations:**
+
+1. **SDK API differences for identity update**: The `sdk.identities.update()` method expects `identityId` (string) and `privateKeyWif` (string), not `identity` (object) and `signer` (IdentitySigner). Initially had a type error passing `identity` object - fixed by passing the string `identityId` directly.
+
+2. **URL parameter-driven dialog opening**: For the "Reset Private Feed" deep-link flow, used URL search params (`?action=reset`) rather than React state or context. This allows the Lost Key modal to navigate away and have the settings page auto-open the reset dialog. The pattern is: `window.location.href = '/settings?section=privateFeed&action=reset'`.
+
+3. **Dynamic status checking in modal**: The `LostEncryptionKeyModal` dynamically checks whether the user has a private feed (`privateFeedService.hasPrivateFeed()`) and what feeds they follow locally (`privateFeedKeyStore.getFollowedFeedOwners()`) to show appropriate recovery options. This provides context-aware UI without requiring props.
+
+4. **Props vs URL params for modal triggering**: Added `openReset?: boolean` prop to `PrivateFeedSettings` rather than having the component read URL params directly. This keeps the component testable and allows the parent (settings page) to control the logic of when to open the reset dialog.
+
+5. **Radix Dialog missing accessibility warning**: The Radix Dialog component warns about missing `Description` or `aria-describedby`. This is a known warning that can be addressed by adding a `VisuallyHidden` description or a `DialogDescription` element. For now, the warning is informational and doesn't affect functionality.
+
+6. **Test identity session persistence simplified testing**: The browser session from previous testing persisted, so navigating to `/settings?section=privateFeed` worked after refreshing the page. This allowed quick iteration on the modal flow without re-logging in each time.
+
+7. **Multiple nested modals (encryption key + lost key)**: The Lost Key modal opens on top of the Encryption Key modal. When user clicks "I Found My Key", only the Lost Key modal closes, returning them to the key entry. When user clicks "Reset Private Feed", both modals close and navigation occurs.
+
+**No blockers encountered** - the implementation follows established modal patterns and provides comprehensive recovery guidance per PRD §6.4.
