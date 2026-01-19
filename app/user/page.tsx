@@ -17,6 +17,7 @@ import {
   EnvelopeIcon,
   UserPlusIcon,
   LockClosedIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -119,6 +120,7 @@ function UserProfileContent() {
 
   // Private feed state
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const [isPrivateFollower, setIsPrivateFollower] = useState(false)
 
   // Progressive enrichment for post metadata (likes, reposts, etc.)
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
@@ -196,9 +198,21 @@ function UserProfileContent() {
 
         // Check if user has a private feed (for profile indicator)
         try {
-          const { privateFeedService } = await import('@/lib/services')
+          const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
           const hasPF = await privateFeedService.hasPrivateFeed(userId)
           setHasPrivateFeed(hasPF)
+
+          // If they have a private feed and we're viewing someone else's profile,
+          // check if we're an approved private follower
+          if (hasPF && currentUser?.identityId && currentUser.identityId !== userId) {
+            try {
+              const accessStatus = await privateFeedFollowerService.getAccessStatus(userId, currentUser.identityId)
+              setIsPrivateFollower(accessStatus === 'approved')
+            } catch (accessErr) {
+              // Access status check is non-critical
+              console.error('Failed to check private feed access status:', accessErr)
+            }
+          }
         } catch (e) {
           // Private feed check is non-critical
           console.error('Failed to check private feed status:', e)
@@ -626,12 +640,14 @@ function UserProfileContent() {
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Reset mentions when user changes
+  // Reset mentions and private feed state when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
     setMentionCount(null)
     setActiveTab('posts')
+    setHasPrivateFeed(false)
+    setIsPrivateFollower(false)
   }, [userId])
 
   const handleFollow = async () => {
@@ -1109,6 +1125,27 @@ function UserProfileContent() {
                                 sideOffset={5}
                               >
                                 This user has a private feed. Follow them to request access.
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
+                      )}
+                      {/* Private Follower Badge - shown when you have access to their private feed */}
+                      {isPrivateFollower && (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full">
+                                <CheckIcon className="h-3 w-3" />
+                                Private Follower
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                You have access to this user&apos;s private feed
                               </Tooltip.Content>
                             </Tooltip.Portal>
                           </Tooltip.Root>

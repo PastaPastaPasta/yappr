@@ -865,3 +865,26 @@
 - `screenshots/lost-encryption-key-ui.png` (lost key modal showing recovery options)
 - `screenshots/lost-encryption-key-ui-full.png` (full page view with modal)
 - `screenshots/lost-key-reset-dialog.png` (reset dialog auto-opened from lost key flow)
+
+## 2026-01-19: Private Follower Badge on Profile Page (PRD §4.9)
+
+**Task:** Add "Private Follower ✓" badge to profile page when viewing another user whose private feed you have been approved to access
+
+**Changes made:**
+1. Updated `app/user/page.tsx`:
+   - Added `CheckIcon` import from Heroicons
+   - Added `isPrivateFollower` state variable to track if current user is an approved private follower
+   - Extended the private feed status check to also query access status via `privateFeedFollowerService.getAccessStatus()`
+   - Sets `isPrivateFollower` to true when access status is `'approved'`
+   - Added reset of `isPrivateFollower` state when navigating between profiles
+   - Added "Private Follower ✓" badge with green styling next to the existing "Private Feed" badge
+   - Badge includes tooltip: "You have access to this user's private feed"
+
+**Key features per PRD §4.9:**
+- Badge only appears when viewing another user's profile (not your own)
+- Badge only appears when you're an approved private follower
+- Green styling with checkmark icon distinguishes it from the gray "Private Feed" badge
+- Tooltip provides context about what the badge means
+- State properly resets when navigating between different profiles
+
+**Screenshot:** `screenshots/private-follower-badge-profile.png` (profile page showing "Private Feed" badge area where "Private Follower ✓" badge would appear when conditions are met)

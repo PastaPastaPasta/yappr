@@ -355,3 +355,21 @@
 7. **Multiple nested modals (encryption key + lost key)**: The Lost Key modal opens on top of the Encryption Key modal. When user clicks "I Found My Key", only the Lost Key modal closes, returning them to the key entry. When user clicks "Reset Private Feed", both modals close and navigation occurs.
 
 **No blockers encountered** - the implementation follows established modal patterns and provides comprehensive recovery guidance per PRD §6.4.
+
+## 2026-01-19: Private Follower Badge Implementation
+
+**Key observations:**
+
+1. **State reset when navigating between profiles**: When changing the profile being viewed (userId changes), the private feed state variables (`hasPrivateFeed`, `isPrivateFollower`) must be reset to avoid showing stale badges. Added these to the existing useEffect that resets mentions state on userId change.
+
+2. **Conditional badge rendering based on access status**: The `privateFeedFollowerService.getAccessStatus()` returns `'none' | 'pending' | 'approved' | 'revoked'`. Only `'approved'` status should show the "Private Follower ✓" badge.
+
+3. **Access status check only for other users**: The access status check is only performed when: (a) the profile owner has a private feed, (b) there's a logged-in user, and (c) the viewer is not looking at their own profile. This prevents unnecessary API calls and ensures the badge never appears on one's own profile.
+
+4. **Dev server 404 errors during Playwright testing**: Encountered many 404 errors for static chunks when the dev server was initially running. Restarting the dev server resolved the issue. This appears to be related to stale compilation state.
+
+5. **Session persistence across test runs**: The browser session from previous testing remained active, with identity `DgnyeBmFSHzqGgvJxYxM9DiuJSCqirGDJkUCz9FERZWw` already logged in. This simplified testing but meant a different identity than the one in `testing-identity-1.json` was being used.
+
+6. **E2E testing of multi-user scenarios is complex**: Testing the "Private Follower ✓" badge end-to-end requires two identities with an established private follower relationship (one has approved the other). This would require: creating second identity, enabling private feed, following, requesting access, approving - a complex multi-step process.
+
+**No blockers encountered** - the implementation is straightforward and follows established patterns for badge rendering on the profile page.
