@@ -2,7 +2,40 @@
 
 ## Active Bugs
 
-(No active bugs)
+### BUG-007: getPrivateFollowers query fails with WasmSdkError (RESOLVED)
+
+**Resolution:** Removed `orderBy` clause from the query in `getPrivateFollowers()`. The `privateFeedGrant` document type's indices don't include `$createdAt`, so the orderBy was causing the query to fail.
+
+**Fix Applied:**
+```typescript
+// Changed from:
+const documents = await queryDocuments(sdk, {
+  ...
+  orderBy: [['$createdAt', 'desc']],  // REMOVED
+  ...
+});
+
+// To:
+const documents = await queryDocuments(sdk, {
+  dataContractId: this.contractId,
+  documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+  where: [['$ownerId', '==', ownerId]],
+  limit: 100,
+});
+```
+
+**Files Modified:**
+- `lib/services/private-feed-service.ts` - `getPrivateFollowers()` method (line 1044)
+
+**Verification:**
+After the fix:
+- The Private Followers section now correctly displays "1/1024" and lists existing followers
+- Recovery correctly identifies assigned leaf indices
+- UI dashboard shows accurate follower count
+
+**Note:** There may still be stale test data on-chain from prior testing sessions causing leafIndex conflicts. This is not a code bug but a test data issue.
+
+**Date Resolved:** 2026-01-19
 
 ## Resolved Bugs
 

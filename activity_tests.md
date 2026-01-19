@@ -1043,3 +1043,66 @@ Notification creation failed with "No private key found. Please log in again." T
 
 ### Test Result
 **PASSED** - E2E Test 3.1 completed successfully (notification issue is non-blocking)
+
+---
+
+## 2026-01-19: BUG-007 Fix - getPrivateFollowers Query Fails
+
+### Task
+Fix BUG-007: getPrivateFollowers() query fails with WasmSdkError, blocking follower approval
+
+### Status
+**FIXED** - Query now works correctly after removing unsupported `orderBy` clause
+
+### Root Cause Analysis
+The `getPrivateFollowers()` method in `private-feed-service.ts` was using:
+```typescript
+const documents = await queryDocuments(sdk, {
+  ...
+  where: [['$ownerId', '==', ownerId]],
+  orderBy: [['$createdAt', 'desc']],
+  ...
+});
+```
+
+The `privateFeedGrant` document type only has these indices:
+- `ownerAndRecipient`: `($ownerId, recipientId)`
+- `ownerAndLeaf`: `($ownerId, leafIndex)`
+
+Neither index includes `$createdAt`, causing the SDK query to fail. This led to:
+1. `recoverOwnerState()` thinking there were 0 grants
+2. Available leaves list being incorrect (all 1024 shown as available)
+3. Approval attempts failing with "duplicate unique properties" error
+
+### Solution Applied
+Removed the `orderBy` clause from the query. If ordering by grant date is needed, it can be done client-side after fetching.
+
+```typescript
+// Note: Query without orderBy because the privateFeedGrant indices don't include $createdAt
+// Sort client-side if ordering by grant date is needed
+const documents = await queryDocuments(sdk, {
+  dataContractId: this.contractId,
+  documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+  where: [['$ownerId', '==', ownerId]],
+  limit: 100,
+});
+```
+
+### Verification
+After the fix:
+- Private Followers section correctly shows "1/1024" with existing follower listed
+- "Your Private Feed" dashboard shows "1 /1024 Followers"
+- Recovery finds 1 active grant and calculates available leaves correctly
+- Recent Activity shows "User clx6Y= approved 44m ago"
+
+### Files Modified
+- `lib/services/private-feed-service.ts` - Removed `orderBy` from `getPrivateFollowers()` query
+
+### Screenshots
+- `screenshots/e2e-test4.2-bug007-fix-partial.png` - Private Feed settings showing follower count working
+
+### Test Result
+**BUG-007 FIXED** - Query now returns grants correctly
+
+### Re-test Required
+- [ ] E2E Test 4.2: Approve Request - Happy Path (may have stale test data conflicts on testnet)

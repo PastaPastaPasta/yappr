@@ -1045,11 +1045,12 @@ class PrivateFeedService {
     try {
       const sdk = await getEvoSdk();
 
+      // Note: Query without orderBy because the privateFeedGrant indices don't include $createdAt
+      // Sort client-side if ordering by grant date is needed
       const documents = await queryDocuments(sdk, {
         dataContractId: this.contractId,
         documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
         where: [['$ownerId', '==', ownerId]],
-        orderBy: [['$createdAt', 'desc']],
         limit: 100,
       });
 

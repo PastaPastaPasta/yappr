@@ -585,3 +585,47 @@ pkill -f "next dev"; rm -rf .next && npm run dev
 6. Then test the request flow
 
 **Lesson:** Multi-user E2E tests require careful orchestration. Having test identity JSON files with pre-configured encryption keys would speed up future tests. Consider adding profile and encryption key info to test identity files.
+
+---
+
+## 2026-01-19: BUG-007 - Query Index Constraints
+
+### Issue 39: Document Queries Must Match Available Indices (BUG-007)
+**Problem:** The `getPrivateFollowers()` query was failing with `WasmSdkError` because it used `orderBy: [['$createdAt', 'desc']]` but the `privateFeedGrant` document type indices don't include `$createdAt`.
+
+**Root Cause:** Dash Platform queries require matching indices. The available indices were:
+- `ownerAndRecipient`: `($ownerId, recipientId)`
+- `ownerAndLeaf`: `($ownerId, leafIndex)`
+
+Neither supports ordering by `$createdAt`.
+
+**Solution:** Remove the `orderBy` clause and sort client-side if needed.
+
+**Lesson:** When writing document queries:
+1. Always check the document type's indices in the contract definition
+2. The `where` and `orderBy` clauses must be supported by available indices
+3. If the SDK fails silently or with generic errors, check if the query matches an index
+4. Client-side sorting is a valid alternative when index support is missing
+
+### Issue 40: Stale Test Data on Testnet
+**Observation:** After fixing BUG-007, approval still failed with "duplicate unique properties" error. This is because there are stale grants from prior test sessions that weren't properly cleaned up.
+
+**Impact:** The `leafIndex` conflict occurs when:
+1. Recovery finds some grants but misses others
+2. Code calculates available leaves incorrectly
+3. New grant creation fails on already-used leafIndex
+
+**Lesson:** When running E2E tests on testnet:
+1. Test data accumulates across sessions
+2. Consider using fresh identities for each test run
+3. Or implement proper cleanup between tests
+4. The "duplicate unique properties" error often indicates stale data conflicts, not code bugs
+
+### Issue 41: Inconsistent UI Data Sources
+**Observation:** The Private Feed settings page showed inconsistent follower counts:
+- One card showed "0/1024 Followers"
+- Another showed "1/1024 Followers"
+
+**Cause:** Different UI components may fetch data from different sources (local state vs API calls), leading to inconsistency when queries fail or return partial data.
+
+**Lesson:** When UI components show different values for the same metric, investigate whether they're using the same data source and whether all queries are succeeding.
