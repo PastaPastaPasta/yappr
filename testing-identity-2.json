@@ -1,0 +1,14 @@
+{
+  "identityId": "6DkmgQWvbB1z8HJoY6MnfmnvDBcYLyjYyJ9fLDPYt87n",
+  "keys": {
+    "masterAuth": "cScFa5tVVAGd7vpEV3LMDuyySUMTNZn3wN5nYUtgUWD7E5HNrNDZ",
+    "highAuth": "cNjSTs6SQjk2BFnHXYHBZUAHunx4aLz5udb2htVHVR3QjS4TcWzv",
+    "criticalAuth": "cVCAkj9wxZ1R8ZLL8Y2qF7PRDCXnKMiDYhV9s3cwQ4nxaYrLmer5",
+    "transfer": "cNriKyweN8y91jKfZGtpoXsiU3aqvFRmVb9XEJ5rtsHiam2yY7wd",
+    "encryptionKey": "e32df82cf785981406c36123c28751e3e4c0860dbe3b86c91664be7e76d59693"
+  },
+  "balance": "0.9988 DASH",
+  "createdAt": "2026-01-19",
+  "hasProfile": true,
+  "displayName": "Test Follower User"
+}

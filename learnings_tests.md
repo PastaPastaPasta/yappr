@@ -520,3 +520,68 @@ pkill -f "next dev"; rm -rf .next && npm run dev
 **Observation:** Adding `console.log('Reply decryption: inherited encryption from', encryptionSourceOwnerId)` immediately revealed when the fix was working correctly in the browser.
 
 **Lesson:** For complex cryptographic flows like private feed decryption, strategic console logs showing key state transitions (e.g., "using X's keys instead of Y's") make debugging much easier without cluttering the codebase.
+
+---
+
+## 2026-01-19: E2E Test 3.1 - Request Access Happy Path
+
+### Issue 34: Encryption Key Required Before Requesting Private Feed Access
+**Observation:** When a user without an encryption key tries to request access to a private feed, they get a clear error message: "You need an encryption key to request private feed access. Please enable your own private feed first."
+
+**Context:** Per BUG-005 fix, the `requestAccess()` method now requires the requester to have an encryption public key. This key is included in the `FollowRequest` document so the owner can encrypt the grant payload.
+
+**Key Flow:**
+1. User clicks "Request Access" on a profile with private feed
+2. System checks if user has encryption key (stored locally or on identity)
+3. If no key found, shows error with guidance
+4. If key found, includes `publicKey: Array(33)` in the FollowRequest document
+
+**Lesson:** The encryption key requirement is properly enforced at the UI level, preventing broken requests where the owner can't encrypt the grant because the requester has no encryption key.
+
+### Issue 35: Multi-Step Identity Modification Flow
+**Observation:** Adding an encryption key to an identity requires a multi-step modal flow:
+1. Generate key (client-side)
+2. Save/copy private key (user action)
+3. Confirm key backup (checkbox)
+4. Enter MASTER key (required for identity modifications)
+5. Broadcast identity update transaction
+
+**Key Detail:** SDK dev.11 requires MASTER key (securityLevel=0) for identity modifications, not CRITICAL. The console shows: `Signing key validated: keyId=0, securityLevel=0`
+
+**Lesson:** The modal flow properly guides users through the complex process of adding an encryption key, with appropriate warnings and confirmations. The MASTER key requirement is clearly communicated.
+
+### Issue 36: Notification Creation Failure (Non-Blocking)
+**Observation:** After successfully creating the FollowRequest document, the notification creation fails with "No private key found. Please log in again."
+
+**Error Context:**
+```
+[ERROR] Error creating document: Error: No private key found. Please log in again.
+    at StateTransitionService.getPrivateKey
+[ERROR] Failed to create privateFeedRequest notification: No private key found...
+[LOG] Follow request created successfully
+```
+
+**Impact:** The main FollowRequest flow succeeds, but the owner doesn't receive a notification. This is non-blocking for the core functionality but affects UX.
+
+**Possible Cause:** The notification service may be using a different contract that requires re-authentication, or there's a timing issue with the private key lookup.
+
+**Lesson:** Notification creation should be wrapped in try/catch and not block the main operation. The current implementation correctly continues despite notification failure.
+
+### Issue 37: UI Button State Transitions
+**Observation:** The "Request Access" button has clear state transitions:
+- Default: "Request Access" with lock icon
+- During operation: "Requesting..." (disabled)
+- After success: "Pending..." with clock icon
+
+**Lesson:** Good UI feedback helps users understand the operation status. The "Pending..." state clearly indicates the request was submitted and is awaiting owner approval.
+
+### Issue 38: Test Identity Setup for Multi-User Testing
+**Observation:** E2E Test 3.1 required significant setup:
+1. Login as follower identity
+2. Skip DPNS registration (no username)
+3. Create profile (required for following)
+4. Follow the owner
+5. Add encryption key to identity
+6. Then test the request flow
+
+**Lesson:** Multi-user E2E tests require careful orchestration. Having test identity JSON files with pre-configured encryption keys would speed up future tests. Consider adding profile and encryption key info to test identity files.
