@@ -39,6 +39,7 @@ import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
 import { useMentionValidation } from '@/hooks/use-mention-validation'
 import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { tipService } from '@/lib/services/tip-service'
+import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
 type UsernameState = string | null | undefined
@@ -278,6 +279,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
   })
 
+  // Check if user can reply to private posts (PRD §5.5)
+  const { canReply: canReplyToPrivate, reason: cantReplyReason } = useCanReplyToPrivate(post)
+
   // Sync local state with prop changes (reuses computed initial values)
   useEffect(() => {
     setLiked(initialLiked)
@@ -428,6 +432,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleReply = () => {
     if (!requireAuth('reply')) return
+    // Check if user can reply to private posts (PRD §5.5)
+    if (!canReplyToPrivate) {
+      toast.error(cantReplyReason || "Can't reply to this post")
+      return
+    }
     setReplyingTo(enrichedPost)
     setComposeOpen(true)
   }
@@ -726,10 +735,26 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <Tooltip.Trigger asChild>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleReply(); }}
-                    className="group flex items-center gap-1 p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
+                    disabled={!canReplyToPrivate}
+                    className={cn(
+                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                      !canReplyToPrivate
+                        ? "opacity-50 cursor-not-allowed"
+                        : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
+                    )}
                   >
-                    <ChatBubbleOvalLeftIcon className="h-5 w-5 text-gray-500 group-hover:text-yappr-500 transition-colors" />
-                    <span className="text-sm text-gray-500 group-hover:text-yappr-500 transition-colors">
+                    <ChatBubbleOvalLeftIcon className={cn(
+                      "h-5 w-5 transition-colors",
+                      !canReplyToPrivate
+                        ? "text-gray-400"
+                        : "text-gray-500 group-hover:text-yappr-500"
+                    )} />
+                    <span className={cn(
+                      "text-sm transition-colors",
+                      !canReplyToPrivate
+                        ? "text-gray-400"
+                        : "text-gray-500 group-hover:text-yappr-500"
+                    )}>
                       {statsReplies > 0 && formatNumber(statsReplies)}
                     </span>
                   </button>
@@ -739,7 +764,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
                     sideOffset={5}
                   >
-                    Reply
+                    {cantReplyReason || 'Reply'}
                   </Tooltip.Content>
                 </Tooltip.Portal>
               </Tooltip.Root>

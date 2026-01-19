@@ -36,7 +36,9 @@ import {
   getDialogDescription,
 } from './compose-sub-components'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
-import { LockClosedIcon } from '@heroicons/react/24/solid'
+import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
+import { isPrivatePost } from '@/components/post/private-post-content'
+import type { EncryptionSource } from '@/lib/services/post-service'
 
 const CHARACTER_LIMIT = 500
 
@@ -450,10 +452,17 @@ export function ComposeModal() {
   const [privateFeedLoading, setPrivateFeedLoading] = useState(true)
   const [privateFollowerCount, setPrivateFollowerCount] = useState(0)
 
+  // Inherited encryption state for replies to private posts (PRD §5.5)
+  const [inheritedEncryption, setInheritedEncryption] = useState<EncryptionSource | null>(null)
+  const [inheritedEncryptionLoading, setInheritedEncryptionLoading] = useState(false)
+
   // Get visibility from first post (visibility only applies to first post)
   const firstPost = threadPosts[0]
   const visibility: PostVisibility = firstPost?.visibility || 'public'
-  const isPrivatePost = visibility === 'private' || visibility === 'private-with-teaser'
+  const isPrivatePostVisibility = visibility === 'private' || visibility === 'private-with-teaser'
+
+  // Determine if this will be encrypted (either explicit private post or inherited from parent)
+  const willBeEncrypted = isPrivatePostVisibility || inheritedEncryption !== null
 
   // Check private feed status when modal opens
   useEffect(() => {
@@ -490,6 +499,36 @@ export function ComposeModal() {
     }
   }, [isComposeOpen, user])
 
+  // Check for inherited encryption when replying to a post (PRD §5.5)
+  useEffect(() => {
+    if (isComposeOpen && replyingTo) {
+      setInheritedEncryptionLoading(true)
+      const checkInheritedEncryption = async () => {
+        try {
+          // Check if parent is a private post
+          if (isPrivatePost(replyingTo)) {
+            // Import getEncryptionSource dynamically
+            const { getEncryptionSource } = await import('@/lib/services/post-service')
+            const encryptionSource = await getEncryptionSource(replyingTo.id)
+            setInheritedEncryption(encryptionSource)
+          } else {
+            setInheritedEncryption(null)
+          }
+        } catch (error) {
+          console.error('Failed to check inherited encryption:', error)
+          setInheritedEncryption(null)
+        } finally {
+          setInheritedEncryptionLoading(false)
+        }
+      }
+      checkInheritedEncryption()
+    } else {
+      // Reset when not replying
+      setInheritedEncryption(null)
+      setInheritedEncryptionLoading(false)
+    }
+  }, [isComposeOpen, replyingTo])
+
   // Focus first textarea when modal opens
   useEffect(() => {
     if (isComposeOpen) {
@@ -512,8 +551,8 @@ export function ComposeModal() {
   const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT) || hasTeaserOverLimit
 
   const canPost = hasValidContent && !hasOverLimit && !isPosting
-  // Disable thread for private posts (private posts are single posts only)
-  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !isPrivatePost
+  // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
+  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted
 
   // Get the last posted post ID for chaining retries
   const lastPostedId = postedPosts.length > 0
@@ -543,8 +582,9 @@ export function ComposeModal() {
       const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
       const { retryPostCreation } = await import('@/lib/retry-utils')
 
-      // Check if this is a private post
+      // Check if this is a private post (explicit or inherited)
       const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
+      const hasInheritedEncryption = inheritedEncryption !== null
 
       // Filter to only unposted posts with content, preserving their IDs
       const postsToCreate = threadPosts
@@ -564,19 +604,43 @@ export function ComposeModal() {
       for (let i = 0; i < postsToCreate.length; i++) {
         const { threadPostId, content: postContent, teaser, visibility: postVisibility } = postsToCreate[i]
         const isThisPostPrivate = i === 0 && isPrivate
+        const isThisReplyInherited = i === 0 && hasInheritedEncryption && !isPrivate
 
         setPostingProgress({
           current: i + 1,
           total: postsToCreate.length,
-          status: isThisPostPrivate
-            ? `Encrypting and creating private post ${i + 1}...`
+          status: isThisPostPrivate || isThisReplyInherited
+            ? `Encrypting and creating private ${isThisReplyInherited ? 'reply' : 'post'} ${i + 1}...`
             : `Creating post ${i + 1} of ${postsToCreate.length}...`
         })
 
-        console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate})`)
+        console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
         let result
-        if (isThisPostPrivate) {
+        if (isThisReplyInherited && inheritedEncryption) {
+          // Create private reply with inherited encryption (PRD §5.5)
+          const { privateFeedService } = await import('@/lib/services')
+
+          const privateResult = await privateFeedService.createInheritedPrivateReply(
+            authedUser.identityId,
+            postContent,
+            { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
+            previousPostId || replyingTo?.id || ''
+          )
+
+          // Convert to the expected result format
+          if (privateResult.success) {
+            result = {
+              success: true,
+              data: { postId: privateResult.postId },
+            }
+          } else {
+            result = {
+              success: false,
+              error: new Error(privateResult.error || 'Failed to create private reply'),
+            }
+          }
+        } else if (isThisPostPrivate) {
           // Create private post using privateFeedService
           const { privateFeedService } = await import('@/lib/services')
           const { getEncryptionKey } = await import('@/lib/secure-storage')
@@ -998,8 +1062,36 @@ export function ComposeModal() {
                             </div>
                           )}
 
+                          {/* Inherited encryption banner for replies to private posts (PRD §5.5) */}
+                          {inheritedEncryption && !isPrivatePostVisibility && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800"
+                            >
+                              <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                              <span className="text-sm text-purple-700 dark:text-purple-300">
+                                This reply will be encrypted using the parent thread&apos;s encryption
+                              </span>
+                            </motion.div>
+                          )}
+
+                          {/* Inherited encryption loading state */}
+                          {inheritedEncryptionLoading && replyingTo && isPrivatePost(replyingTo) && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+                            >
+                              <div className="w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full animate-spin" />
+                              <span className="text-sm text-gray-500 dark:text-gray-400">
+                                Checking encryption inheritance...
+                              </span>
+                            </motion.div>
+                          )}
+
                           {/* Private post banner */}
-                          {isPrivatePost && (
+                          {isPrivatePostVisibility && (
                             <motion.div
                               initial={{ opacity: 0, y: -10 }}
                               animate={{ opacity: 1, y: 0 }}
@@ -1105,7 +1197,7 @@ export function ComposeModal() {
                     <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
                       <div className="flex items-center justify-between">
                         {/* Private post indicator */}
-                        {isPrivatePost && (
+                        {isPrivatePostVisibility && (
                           <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                             <LockClosedIcon className="w-3 h-3" />
                             <span>
@@ -1115,7 +1207,14 @@ export function ComposeModal() {
                             </span>
                           </div>
                         )}
-                        {!isPrivatePost && <div />}
+                        {/* Inherited encryption indicator */}
+                        {inheritedEncryption && !isPrivatePostVisibility && (
+                          <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
+                            <LinkIcon className="w-3 h-3" />
+                            <span>Reply inherits parent&apos;s encryption</span>
+                          </div>
+                        )}
+                        {!willBeEncrypted && <div />}
                         <span className="text-xs text-gray-400">
                           {threadPosts.length > 1
                             ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`

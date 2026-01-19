@@ -970,3 +970,51 @@
 - Local state properly rebuilt from authoritative chain documents
 
 **Screenshot:** `screenshots/owner-recovery-private-feed-settings.png`
+
+## 2026-01-19: Private Replies with Inherited Encryption (PRD §5.5)
+
+**Task:** Implement inherited encryption for replies to private posts
+
+**Changes made:**
+1. Updated `lib/services/post-service.ts`:
+   - Added `EncryptionSource` interface for tracking encryption inheritance
+   - Added `getEncryptionSource(replyToPostId)` function that walks up the reply chain to find the root private post
+   - Returns the feed owner ID and epoch to use for encrypting the reply
+
+2. Extended `lib/services/private-feed-service.ts`:
+   - Added `createInheritedPrivateReply(authorId, content, encryptionSource, replyToPostId)` method:
+     - Encrypts reply content using the parent thread's CEK (not the replier's own CEK)
+     - Validates access to the required encryption keys
+     - Derives CEK for the specified epoch from cached path keys
+     - Creates post document with proper encryption fields and replyToPostId
+
+3. Updated `components/compose/compose-modal.tsx`:
+   - Added `inheritedEncryption` state to track when replying to private posts
+   - Added `inheritedEncryptionLoading` state for async encryption source detection
+   - Added useEffect to check for inherited encryption when `replyingTo` is set
+   - Updated handlePost to use `createInheritedPrivateReply()` when inheritance is detected
+   - Added purple "inherited encryption" banner for replies to private posts
+   - Added loading state while checking encryption inheritance
+   - Disabled thread composition for inherited encryption replies
+   - Updated footer to show "Reply inherits parent's encryption" indicator
+
+4. Created `hooks/use-can-reply-to-private.ts`:
+   - Hook to check if current user can reply to a private post
+   - Returns `canReply`, `isPrivate`, `isLoading`, and `reason` for disabled state
+   - Checks: user is owner OR user has cached decryption keys for the feed
+
+5. Updated `components/post/post-card.tsx`:
+   - Integrated `useCanReplyToPrivate` hook
+   - Reply button disabled when user can't decrypt parent private post
+   - Tooltip shows reason when reply is disabled (e.g., "Can't reply - no access to this private feed")
+   - Toast notification when user attempts to reply without access
+
+**Key features per PRD §5.5:**
+- Replies to private posts inherit encryption from the root private post
+- `getEncryptionSource()` walks up the reply chain to find the original private post
+- Reply is encrypted using the thread owner's CEK, not the replier's own CEK
+- This allows anyone with access to the parent thread to also read replies
+- Reply button is disabled for users who can't decrypt the parent post
+- Clear visual indicators when composing an inherited-encryption reply
+
+**Screenshot:** `screenshots/private-reply-inherited-encryption.png`

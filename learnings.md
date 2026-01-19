@@ -421,3 +421,25 @@
 - The test identity from `testing-identity-1.json` doesn't have an encryption key on chain, so couldn't enable private feed to test recovery. Would need to use an identity that already has private feed enabled.
 
 **No blockers for the implementation itself** - the owner recovery code follows SPEC §8.8 precisely and integrates with the existing service layer patterns.
+
+## 2026-01-19: Private Replies with Inherited Encryption Implementation (PRD §5.5)
+
+**Key observations:**
+
+1. **getEncryptionSource walks the reply chain recursively**: The function fetches the parent post, checks if it's private, and if so, checks if the parent itself is a reply. If it is, it recurses to find the true root of the private thread. This ensures all replies in a chain use the same encryption source (the original private post's author's CEK).
+
+2. **Inherited replies use thread owner's CEK, not replier's**: When creating an inherited private reply, the encryption uses the CEK from the parent thread's owner. This means a user replying to a private post they follow encrypts their reply with *that person's* key, not their own private feed key (if they even have one).
+
+3. **CEK derivation for followers works backwards only**: Followers can derive older CEKs from their cached CEK using the hash chain (deriveCEK), but cannot derive forward. If the parent post was created at an epoch older than what the follower has cached, derivation still works. If newer, catch-up would be needed first (handled by the decryption path).
+
+4. **Naming conflict between isPrivatePost function and variable**: The compose-modal.tsx had a variable `isPrivatePost` that conflicted with the imported function of the same name. Renamed the variable to `isPrivatePostVisibility` to avoid the conflict while maintaining semantic clarity.
+
+5. **Reply button disabling requires async access check**: The `useCanReplyToPrivate` hook performs an async check to see if the user has cached decryption keys for the feed. This check happens in a useEffect and the hook exposes loading state to avoid UI flicker.
+
+6. **Purple styling differentiates inherited encryption from owner's private posts**: Used purple color scheme for the inherited encryption banner/indicator, distinct from the amber color used for the owner's own private posts. This provides clear visual differentiation between "your encrypted post" and "reply encrypted using thread's encryption."
+
+7. **SDK error blocked full E2E testing**: The "Add Encryption Key to Identity" SDK error encountered during setup prevented creating a complete test scenario with two identities and established private feed access. The code was verified via build/lint and UI inspection of the compose modal.
+
+8. **Test identity lacked encryption key**: The testing identities from `testing-identity-1.json` and `testing-identity-2.json` don't have encryption keys on their identities, preventing private feed enablement. Full E2E testing of the private reply feature would require identities with encryption keys and an established private follower relationship.
+
+**No blockers for the implementation itself** - the code follows PRD §5.5 precisely and integrates with existing private feed infrastructure.

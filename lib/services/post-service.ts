@@ -1393,5 +1393,65 @@ class PostService extends BaseDocumentService<Post> {
   }
 }
 
+/**
+ * Encryption source result for replies to private posts
+ */
+export interface EncryptionSource {
+  ownerId: string;     // The feed owner whose CEK should be used
+  epoch: number;       // The epoch at which the root private post was created
+  inherited: boolean;  // True if encryption is inherited from parent
+}
+
+/**
+ * Get the encryption source for a reply (PRD §5.5).
+ *
+ * Walks up the reply chain to find the root private post:
+ * - If the parent is a private post, use that post author's CEK
+ * - If the parent is public or if the parent's parent is private, recurse
+ * - Returns null if this is a reply to a public thread
+ *
+ * This enables replies to private posts to inherit the same encryption,
+ * so anyone who can see the parent can also see replies.
+ */
+export async function getEncryptionSource(
+  replyToPostId: string
+): Promise<EncryptionSource | null> {
+  try {
+    // Fetch the parent post (without enrichment - we only need encryption fields)
+    const parentPost = await postService.getPostById(replyToPostId, { skipEnrichment: true });
+
+    if (!parentPost) {
+      console.warn('Parent post not found:', replyToPostId);
+      return null;
+    }
+
+    // Check if parent is a private post
+    if (parentPost.encryptedContent && parentPost.epoch !== undefined && parentPost.nonce) {
+      // Parent is private - check if it's a reply to another private post
+      if (parentPost.replyToId) {
+        // Recurse to find the root private post
+        const rootSource = await getEncryptionSource(parentPost.replyToId);
+        if (rootSource) {
+          // Inherit from the root of the thread
+          return rootSource;
+        }
+      }
+
+      // This parent is the root private post - use its encryption
+      return {
+        ownerId: parentPost.author.id,
+        epoch: parentPost.epoch,
+        inherited: true
+      };
+    }
+
+    // Parent is public - no inherited encryption
+    return null;
+  } catch (error) {
+    console.error('Error getting encryption source:', error);
+    return null;
+  }
+}
+
 // Singleton instance
 export const postService = new PostService();

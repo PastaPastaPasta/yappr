@@ -441,6 +441,109 @@ class PrivateFeedService {
     }
   }
 
+  /**
+   * Create a private reply with inherited encryption (PRD §5.5)
+   *
+   * When replying to a private post, the reply inherits encryption from the
+   * root private post in the thread. This ensures anyone who can read the
+   * parent can also read the reply.
+   *
+   * @param authorId - The identity ID of the reply author (may differ from feed owner)
+   * @param content - The plaintext content to encrypt
+   * @param encryptionSource - The encryption source (feed owner ID and epoch)
+   * @param replyToPostId - The parent post ID being replied to
+   * @returns Promise<PrivatePostResult>
+   */
+  async createInheritedPrivateReply(
+    authorId: string,
+    content: string,
+    encryptionSource: { ownerId: string; epoch: number },
+    replyToPostId: string
+  ): Promise<PrivatePostResult> {
+    try {
+      // 1. Validate plaintext size
+      const plaintextBytes = utf8Encode(content);
+      if (plaintextBytes.length > MAX_PLAINTEXT_SIZE) {
+        return {
+          success: false,
+          error: `Content too long: ${plaintextBytes.length} bytes (max ${MAX_PLAINTEXT_SIZE})`,
+        };
+      }
+
+      // 2. Get the CEK from the cached follower keys for this feed owner
+      const cached = privateFeedKeyStore.getCachedCEK(encryptionSource.ownerId);
+      if (!cached) {
+        return {
+          success: false,
+          error: 'Cannot encrypt reply: no access to private feed encryption keys',
+        };
+      }
+
+      // 3. Derive CEK for the specified epoch
+      let cek: Uint8Array;
+      if (cached.epoch === encryptionSource.epoch) {
+        cek = cached.cek;
+      } else if (cached.epoch > encryptionSource.epoch) {
+        // Derive backwards from cached CEK
+        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, encryptionSource.epoch);
+      } else {
+        // Cached epoch is older than source - can't derive forward
+        return {
+          success: false,
+          error: 'Cannot encrypt reply: encryption key state is out of date',
+        };
+      }
+
+      // 4. Encrypt content using the feed owner's ID as AAD
+      const ownerIdBytes = identifierToBytes(encryptionSource.ownerId);
+      const encrypted = privateFeedCryptoService.encryptPostContent(
+        cek,
+        content,
+        ownerIdBytes,
+        encryptionSource.epoch
+      );
+
+      // 5. Create Post document with inherited encryption
+      const postData: Record<string, unknown> = {
+        content: '', // No teaser for replies - all content is encrypted
+        encryptedContent: Array.from(encrypted.ciphertext),
+        epoch: encryptionSource.epoch,
+        nonce: Array.from(encrypted.nonce),
+        replyToPostId: replyToPostId,
+      };
+
+      console.log('Creating inherited private reply:', {
+        authorId,
+        feedOwnerId: encryptionSource.ownerId,
+        epoch: encryptionSource.epoch,
+        replyToPostId,
+        encryptedContentLength: encrypted.ciphertext.length,
+      });
+
+      const result = await stateTransitionService.createDocument(
+        this.contractId,
+        DOCUMENT_TYPES.POST,
+        authorId,
+        postData
+      );
+
+      if (!result.success) {
+        return { success: false, error: result.error || 'Failed to create reply' };
+      }
+
+      const postId = (result.document?.$id || result.document?.id) as string | undefined;
+
+      console.log('Inherited private reply created successfully:', postId);
+      return { success: true, postId };
+    } catch (error) {
+      console.error('Error creating inherited private reply:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
   // ============================================================
   // Follower Management (SPEC §8.4 - Approve Follow Request)
   // ============================================================
