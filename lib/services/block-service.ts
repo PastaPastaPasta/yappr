@@ -67,12 +67,15 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /**
    * Block a user with optional message.
+   *
+   * If the blocked user is a private follower of the blocker, their access
+   * to the private feed is automatically revoked (per PRD §8.1).
    */
   async blockUser(
     blockerId: string,
     targetUserId: string,
     message?: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; autoRevoked?: boolean }> {
     try {
       if (blockerId === targetUserId) {
         return { success: false, error: 'Cannot block yourself' }
@@ -99,6 +102,12 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       if (result.success) {
         addOwnBlock(blockerId, targetUserId)
         await this.addToBloomFilter(blockerId, targetUserId)
+
+        // Auto-revoke private feed access if target is a private follower (PRD §8.1)
+        const autoRevoked = await this.autoRevokePrivateFeedAccess(blockerId, targetUserId)
+        if (autoRevoked) {
+          return { success: true, autoRevoked: true }
+        }
       }
 
       return result
@@ -108,6 +117,52 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to block user'
       }
+    }
+  }
+
+  /**
+   * Check if the target user is a private follower and revoke their access.
+   * This is called automatically when blocking a user (PRD §8.1).
+   *
+   * @returns true if access was revoked, false if not a private follower or revocation failed
+   */
+  private async autoRevokePrivateFeedAccess(
+    blockerId: string,
+    targetUserId: string
+  ): Promise<boolean> {
+    try {
+      // Dynamically import to avoid circular dependencies
+      const { privateFeedService, privateFeedKeyStore } = await import('./index')
+
+      // Check if blocker has private feed enabled locally
+      if (!privateFeedKeyStore.hasFeedSeed()) {
+        return false
+      }
+
+      // Check if target is a private follower by looking for their grant
+      const followers = await privateFeedService.getPrivateFollowers(blockerId)
+      const isPrivateFollower = followers.some(f => f.recipientId === targetUserId)
+
+      if (!isPrivateFollower) {
+        return false
+      }
+
+      // Revoke their access
+      console.log(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
+      const revokeResult = await privateFeedService.revokeFollower(blockerId, targetUserId)
+
+      if (revokeResult.success) {
+        console.log(`Successfully auto-revoked private feed access for: ${targetUserId}`)
+        return true
+      } else {
+        // Log the error but don't fail the block operation
+        console.error(`Failed to auto-revoke private feed access: ${revokeResult.error}`)
+        return false
+      }
+    } catch (error) {
+      // Auto-revocation failure should not prevent block from succeeding
+      console.error('Error during auto-revoke of private feed access:', error)
+      return false
     }
   }
 

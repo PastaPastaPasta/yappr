@@ -551,3 +551,34 @@
 **Screenshots:**
 - `screenshots/notifications-private-feed-tab.png` (notifications page with Private Feed tab)
 - `screenshots/notifications-private-feed-selected.png` (Private Feed tab selected)
+
+## 2026-01-19: Auto-Revoke Private Feed Access on Block (PRD §8.1)
+
+**Task:** Implement automatic revocation of private feed access when blocking a user who is a private follower
+
+**Changes made:**
+1. Updated `lib/services/block-service.ts`:
+   - Modified `blockUser()` method to check if the blocked user is a private follower
+   - Added `autoRevoked?: boolean` to the return type to indicate when auto-revocation occurred
+   - Added new private method `autoRevokePrivateFeedAccess()` that:
+     - Checks if the blocker has a private feed enabled (via `privateFeedKeyStore.hasFeedSeed()`)
+     - Queries private followers to check if the blocked user has a grant
+     - Calls `privateFeedService.revokeFollower()` if the user is a private follower
+     - Uses dynamic import to avoid circular dependencies
+     - Fails gracefully - block succeeds even if revocation fails
+   - Auto-revocation is best-effort: the block operation always succeeds, and revocation errors are logged but don't cause failure
+
+2. Updated `hooks/use-block.ts`:
+   - Modified `toggleBlock()` to handle the new `autoRevoked` response field
+   - Shows appropriate toast message when auto-revocation occurs:
+     - "User blocked" (normal block)
+     - "User blocked and private feed access revoked" (block + auto-revoke)
+
+**Key features per PRD §8.1:**
+- Blocking a private follower automatically revokes their private feed access
+- Creates proper rekey document on-chain to cryptographically revoke access
+- Deletes the user's grant document
+- Best-effort approach: revocation failure doesn't block the block operation
+- Clear user feedback via toast notification
+
+**Screenshot:** `screenshots/auto-revoke-block-settings.png`

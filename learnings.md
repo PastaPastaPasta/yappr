@@ -227,3 +227,19 @@
    - `read`: Boolean tracking read state
 
 **No blockers encountered** - the integration follows existing notification patterns and required minimal changes to existing code.
+
+## 2026-01-19: Auto-Revoke Private Feed Access on Block Implementation
+
+**Key observations:**
+
+1. **Circular dependency avoidance via dynamic imports**: The `block-service.ts` cannot statically import `private-feed-service.ts` due to potential circular dependency issues. Using dynamic `await import('./index')` inside the `autoRevokePrivateFeedAccess()` method avoids this problem while still allowing access to the private feed services when needed.
+
+2. **Best-effort pattern for secondary operations**: The auto-revocation is a secondary operation to the main block action. Following the same pattern used for notification creation, the revocation is wrapped in try-catch and logs errors without failing the main operation. This ensures users can always block someone even if the private feed revocation encounters issues.
+
+3. **Fast path using local state check**: Before querying the platform for private followers, the code first checks `privateFeedKeyStore.hasFeedSeed()` to verify the user has a private feed enabled locally. This avoids unnecessary network requests when the user doesn't have a private feed.
+
+4. **Return type extension for composite operations**: Extended the `blockUser()` return type to include `autoRevoked?: boolean` to signal to the UI that additional action was taken. This allows the UI to show a more informative toast message ("User blocked and private feed access revoked" vs just "User blocked").
+
+5. **TypeScript type narrowing with 'in' operator**: To safely check for the `autoRevoked` field which only exists on block responses (not unblock), used the `'autoRevoked' in result` check before accessing `result.autoRevoked`. This provides proper type narrowing.
+
+**No blockers encountered** - the implementation follows established patterns and integrates cleanly with existing private feed revocation logic.
