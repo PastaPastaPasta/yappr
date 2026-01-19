@@ -2,7 +2,23 @@
 
 ## Active Bugs
 
-*No active bugs*
+### BUG-012: followers listed in Private Feed page is incorrect
+
+**Status:** OPEN
+
+**Description:** The Private Feed settings page correctly detects 2 followers but displays incorrect user IDs when linking to their profiles.
+
+**Observed Behavior:**
+- Links point to: `fqo6OUtPAVlsnOP0YYxOfhgZNxUZHJ5VsG6yUUrUCZo=` and `QjTG2D1fnUuJt1Fxe5jWtrfPzpZsd2Hw8kW7WKE3UPY=`
+
+**Expected Behavior:**
+- Links should point to: `5TSasoJ1gF1ZKcpBC8zgEyvWCj4duVvdYRM4vTufhpn9` and `9XSvMdaxxpBNb5EmPDZjRn86j5xgcqgEoqnq3x4q3QLZ`
+
+**Impact:** Users cannot navigate to the correct profile pages for their private followers.
+
+**Possible Root Cause:** The `recipientId` field in `PrivateFeedGrant` documents may be stored/displayed incorrectly, or there's a data encoding issue (base64 vs base58).
+
+---
 
 ### BUG-010: Failed to create post: Private feed not enabled (RESOLVED)
 

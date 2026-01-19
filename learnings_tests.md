@@ -1228,3 +1228,24 @@ Document network-dependent tests as "BLOCKED" and re-test when testnet is stable
 23. **Pre-populate local state for testing** - Trigger auto-recovery or manually set up local keys before testing operations that require them.
 
 24. **Embrace "BLOCKED" test status** - When infrastructure issues prevent testing, document what WAS verified and clearly state what needs re-testing when infrastructure is stable.
+
+---
+
+## 2026-01-19: E2E Test 3.2 - Non-Follower Access Gate
+
+### Issue 71: Private Feed Access Requires Following First
+**Observation:** The "Request Access" button for private feeds is intentionally hidden until the user follows the profile owner. This implements a two-step access request flow:
+1. User must first follow (regular follow)
+2. Then "Request Access" button appears for private feed access
+
+**Key Details:**
+- Non-followers see: [Follow] button only
+- "Private Feed" badge is visible to all users (indicates private content exists)
+- After following: [Following] + [Request Access] buttons appear
+- The "Request Access" button has a lock icon for visual distinction
+
+**Lesson:** This design enforces a social relationship structure where private feed access is a layer on top of regular following. Users cannot request private access without first committing to a regular follow relationship.
+
+### Best Practices Updates
+
+25. **Test gating logic for sensitive features** - Features like private feed access may have prerequisites (e.g., must follow first). Always verify the gating logic is enforced correctly in the UI.

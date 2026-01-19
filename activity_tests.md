@@ -2097,3 +2097,64 @@ All these operations require DAPI connectivity which is currently intermittent.
 - [ ] E2E Test 6.1: Revoke Follower - Happy Path (when testnet is stable)
 
 ---
+
+## 2026-01-19: E2E Test 3.2 - Request Access — Not Following First (COMPLETED)
+
+### Task
+Test E2E 3.2: Request Access — Not Following First (PRD §4.7)
+
+### Status
+**PASSED** - Verified that non-followers cannot see "Request Access" button; must follow first
+
+### Prerequisites Met
+- Test identity 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA (non-follower "Test Owner PF") logged in
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 (owner "Test User 1") has private feed enabled
+
+### Test Steps Executed
+1. **Logged in as non-follower identity** - ✅
+   - Used identity 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA
+   - Skipped DPNS and key backup prompts
+
+2. **Navigate to owner's profile (not following)** - ✅
+   - URL: `/user/?id=9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2`
+   - Profile shows "Test User 1" with 8 posts
+   - "Private Feed" badge visible next to identity ID
+
+3. **Verify only [Follow] button is visible** - ✅
+   - "Follow" button displayed (blue)
+   - "Request Access" button is NOT visible
+   - This confirms non-followers cannot request private feed access
+
+4. **Click Follow button** - ✅
+   - Clicked "Follow" button
+   - Console: "Creating follow document with data: {followingId: Array(32)}"
+   - Console: "Document creation submitted successfully"
+   - Toast: "Following!"
+
+5. **Verify "Request Access" button NOW appears** - ✅
+   - Button changed to "Following"
+   - NEW: "Request Access" button with lock icon now visible
+   - Follower count increased from 3 to 4
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Only [Follow] button visible (before following) | Only "Follow" button shown | ✅ |
+| "Request Access" button NOT visible (before following) | Not visible, confirmed | ✅ |
+| Must follow first before requesting private access | Confirmed - button only appears after following | ✅ |
+| "Request Access" appears after following | Button appears with lock icon | ✅ |
+
+### Key Observations
+1. **Correct gating of private feed access request** - The UI properly requires users to follow before they can request private feed access
+2. **Clear visual distinction** - "Private Feed" badge is visible to all users, signaling private content is available
+3. **Progressive disclosure** - The "Request Access" button only appears after the user has committed to following, ensuring they understand the relationship structure
+
+### Screenshots
+- `screenshots/e2e-test3.2-non-follower-no-request-access.png` - Profile showing only "Follow" button (no Request Access)
+- `screenshots/e2e-test3.2-profile-with-private-feed-badge.png` - Profile with Private Feed badge visible
+- `screenshots/e2e-test3.2-after-follow-request-access-visible.png` - After following, "Request Access" button now visible
+
+### Test Result
+**PASSED** - E2E Test 3.2 completed successfully
+
+---
