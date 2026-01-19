@@ -989,6 +989,131 @@ class PrivateFeedFollowerService {
   }
 
   // ============================================================
+  // Background Key Sync (PRD §5.4)
+  // ============================================================
+
+  /**
+   * Sync keys for all followed private feeds in background
+   *
+   * Per PRD §5.4 Key Caching:
+   * "On app load:
+   *  1. For each feed owner we follow privately:
+   *     - Check if cachedEpoch < latest post epoch from that author
+   *     - If stale, trigger background catch-up
+   *  2. Decrypt posts using cached keys"
+   *
+   * This method should be called on app load/login to proactively
+   * sync keys before the user tries to view private posts.
+   *
+   * @returns Summary of sync results
+   */
+  async syncFollowedFeeds(): Promise<{
+    synced: string[];
+    failed: string[];
+    upToDate: string[];
+  }> {
+    const synced: string[] = [];
+    const failed: string[] = [];
+    const upToDate: string[] = [];
+
+    try {
+      // Get all feeds we have keys for
+      const followedOwners = privateFeedKeyStore.getFollowedFeedOwners();
+
+      if (followedOwners.length === 0) {
+        console.log('PrivateFeedSync: No followed private feeds to sync');
+        return { synced, failed, upToDate };
+      }
+
+      console.log(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
+
+      // Process each feed owner in parallel (with limited concurrency)
+      const CONCURRENCY_LIMIT = 3;
+      const chunks: string[][] = [];
+      for (let i = 0; i < followedOwners.length; i += CONCURRENCY_LIMIT) {
+        chunks.push(followedOwners.slice(i, i + CONCURRENCY_LIMIT));
+      }
+
+      for (const chunk of chunks) {
+        const results = await Promise.allSettled(
+          chunk.map(async (ownerId) => {
+            const result = await this.syncFeedKeys(ownerId);
+            return { ownerId, result };
+          })
+        );
+
+        for (const settledResult of results) {
+          if (settledResult.status === 'fulfilled') {
+            const { ownerId, result } = settledResult.value;
+            if (result.status === 'synced') {
+              synced.push(ownerId);
+            } else if (result.status === 'up_to_date') {
+              upToDate.push(ownerId);
+            } else {
+              failed.push(ownerId);
+            }
+          } else {
+            // Promise rejected - shouldn't happen but handle gracefully
+            console.error('PrivateFeedSync: Promise rejected:', settledResult.reason);
+          }
+        }
+      }
+
+      console.log(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
+      return { synced, failed, upToDate };
+    } catch (error) {
+      console.error('PrivateFeedSync: Error syncing feeds:', error);
+      return { synced, failed, upToDate };
+    }
+  }
+
+  /**
+   * Sync keys for a single feed owner
+   *
+   * Checks if the cached epoch is behind the chain epoch and
+   * triggers catch-up if needed.
+   *
+   * @param ownerId - The feed owner's identity ID
+   */
+  async syncFeedKeys(ownerId: string): Promise<{
+    status: 'synced' | 'up_to_date' | 'failed';
+    error?: string;
+  }> {
+    try {
+      // Get cached epoch from local storage
+      const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
+      if (cachedEpoch === null) {
+        // No cached epoch means we don't have keys properly initialized
+        return { status: 'failed', error: 'No cached epoch' };
+      }
+
+      // Get latest epoch from chain
+      const chainEpoch = await privateFeedService.getLatestEpoch(ownerId);
+
+      if (chainEpoch <= cachedEpoch) {
+        // Already up to date
+        return { status: 'up_to_date' };
+      }
+
+      // Need to catch up
+      console.log(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
+      const catchUpResult = await this.catchUp(ownerId);
+
+      if (catchUpResult.success) {
+        return { status: 'synced' };
+      } else {
+        return { status: 'failed', error: catchUpResult.error };
+      }
+    } catch (error) {
+      console.error(`PrivateFeedSync: Error syncing feed ${ownerId}:`, error);
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  // ============================================================
   // Utility Methods
   // ============================================================
 

@@ -1061,3 +1061,40 @@
 **Screenshots:**
 - `screenshots/quote-private-posts-compose-modal.png` (compose modal with visibility selector)
 - `screenshots/quote-private-posts-settings.png` (private feed settings page)
+
+## 2026-01-19: Background Key Sync for Private Feeds (PRD §5.4)
+
+**Task:** Implement background key sync on app load to proactively sync private feed keys
+
+**Changes made:**
+1. Extended `lib/services/private-feed-follower-service.ts` with background sync methods:
+   - `syncFollowedFeeds()` - Main sync method that processes all followed private feeds:
+     - Gets all feed owners from local key storage
+     - Processes feeds in parallel with concurrency limit (3 at a time)
+     - For each feed, checks if cached epoch < chain epoch
+     - Triggers catch-up for stale feeds
+     - Returns summary: synced, failed, up-to-date counts
+   - `syncFeedKeys(ownerId)` - Single feed sync helper:
+     - Gets cached epoch from local storage
+     - Fetches latest epoch from chain via `privateFeedService.getLatestEpoch()`
+     - Triggers `catchUp()` if local is behind
+     - Returns status: 'synced', 'up_to_date', or 'failed'
+
+2. Updated `contexts/auth-context.tsx`:
+   - Modified `initializePostLoginTasks()` to include private feed sync
+   - Sync runs immediately on session restoration (same as block data)
+   - Non-blocking background execution
+   - Console logging for sync results
+
+**Key features per PRD §5.4:**
+- "On app load:
+   1. For each feed owner we follow privately:
+      - Check if cachedEpoch < latest post epoch from that author
+      - If stale, trigger background catch-up
+   2. Decrypt posts using cached keys"
+- Sync runs in background, doesn't block UI
+- Limited concurrency (3 feeds at a time) to avoid overwhelming network
+- Graceful error handling - individual feed failures don't affect others
+- Logging for debugging and monitoring
+
+**Screenshot:** `screenshots/background-key-sync-settings.png` (Private Feed settings page showing sync working - console shows "PrivateFeedSync: No followed private feeds to sync")

@@ -59,7 +59,7 @@ async function setDashPlatformClientIdentity(identityId: string): Promise<void> 
   }
 }
 
-// Helper to initialize post-login background tasks (block data + DashPay contacts check)
+// Helper to initialize post-login background tasks (block data + DashPay contacts + private feed sync)
 function initializePostLoginTasks(identityId: string, delayMs: number): void {
   // Initialize block data immediately (background)
   import('@/lib/services/block-service').then(async ({ blockService }) => {
@@ -68,6 +68,18 @@ function initializePostLoginTasks(identityId: string, delayMs: number): void {
       console.log('Auth: Block data initialized')
     } catch (err) {
       console.error('Auth: Failed to initialize block data:', err)
+    }
+  })
+
+  // Sync private feed keys immediately (background) - PRD §5.4
+  import('@/lib/services/private-feed-follower-service').then(async ({ privateFeedFollowerService }) => {
+    try {
+      const result = await privateFeedFollowerService.syncFollowedFeeds()
+      if (result.synced.length > 0 || result.failed.length > 0) {
+        console.log(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
+      }
+    } catch (err) {
+      console.error('Auth: Failed to sync private feed keys:', err)
     }
   })
 

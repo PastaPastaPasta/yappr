@@ -463,3 +463,21 @@
 7. **Multi-identity E2E testing remains challenging**: Testing the full quote flow would require: (a) two identities with encryption keys, (b) one to create a private post, (c) the other to have private follower access, (d) create a quote. This complex setup wasn't feasible in the current test environment.
 
 **No blockers for the implementation itself** - the code follows PRD §5.3 precisely and integrates with existing private feed infrastructure.
+
+## 2026-01-19: Background Key Sync Implementation (PRD §5.4)
+
+**Key observations:**
+
+1. **Existing post-login tasks pattern**: The auth context already has an `initializePostLoginTasks()` function that runs background tasks after login/session restoration. This includes block data initialization and DashPay contacts check. The private feed sync naturally fits this pattern.
+
+2. **Concurrency limit for network requests**: When syncing multiple feeds, used a concurrency limit of 3 to avoid overwhelming the DAPI with parallel requests. This uses a chunking approach with `Promise.allSettled()` to process feeds in batches.
+
+3. **Promise.allSettled vs Promise.all**: Used `Promise.allSettled()` instead of `Promise.all()` so that individual feed sync failures don't abort the entire sync operation. Each feed is processed independently and results are aggregated.
+
+4. **Test identity without followed private feeds**: The test identity doesn't follow any private feeds, so the sync correctly reports "No followed private feeds to sync". This confirms the sync function is being called but doesn't have data to actually sync. Full E2E testing would require setting up a complete private follower relationship between two identities.
+
+5. **Non-blocking background execution**: The sync runs as a fire-and-forget promise (using `.then()` pattern) so it doesn't block the UI or session restoration. Any errors are caught and logged without affecting the user experience.
+
+6. **Sync trigger timing**: The sync runs immediately on session restoration, at the same time as block data initialization. This ensures keys are synced before the user tries to view private posts in their feed.
+
+**No blockers encountered** - the implementation is straightforward and follows existing patterns in the codebase.
