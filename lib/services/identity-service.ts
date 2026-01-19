@@ -1,4 +1,5 @@
 import { getEvoSdk } from './evo-sdk-service';
+import { signerService } from './signer-service';
 // WASM SDK imports with dynamic initialization
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
 
@@ -15,14 +16,14 @@ export interface IdentityPublicKey {
   id: number;
   type: number;
   purpose: number;
-  securityLevel?: number;
-  security_level?: number;  // SDK may return snake_case variant
+  securityLevel: number;              // Now required (normalized in getIdentity)
+  security_level?: number;            // SDK may return snake_case variant
   readOnly?: boolean;
-  read_only?: boolean;      // SDK may return snake_case variant
+  read_only?: boolean;                // SDK may return snake_case variant
   disabledAt?: number;
-  disabled_at?: number;     // SDK may return snake_case variant
+  disabled_at?: number;               // SDK may return snake_case variant
   contractBounds?: unknown;
-  contract_bounds?: unknown; // SDK may return snake_case variant
+  contract_bounds?: unknown;          // SDK may return snake_case variant
   data: string | Uint8Array;
 }
 
@@ -70,11 +71,24 @@ class IdentityService {
       
       console.log('Raw identity response:', JSON.stringify(identity, null, 2));
       console.log('Public keys from identity:', identity.publicKeys);
-      
+
+      // Normalize public keys to ensure all fields are present
+      const rawPublicKeys = identity.publicKeys || identity.public_keys || [];
+      const normalizedPublicKeys: IdentityPublicKey[] = rawPublicKeys.map((key: IdentityPublicKey) => ({
+        id: key.id,
+        type: key.type,
+        purpose: key.purpose,
+        securityLevel: key.securityLevel ?? key.security_level ?? 2, // Default to HIGH (2) if missing
+        readOnly: key.readOnly ?? key.read_only ?? false,
+        disabledAt: key.disabledAt ?? key.disabled_at,
+        contractBounds: key.contractBounds ?? key.contract_bounds,
+        data: key.data
+      }));
+
       const identityInfo: IdentityInfo = {
         id: identity.id || identityId,
         balance: identity.balance || 0,
-        publicKeys: identity.publicKeys || identity.public_keys || [],
+        publicKeys: normalizedPublicKeys,
         revision: identity.revision || 0
       };
 
@@ -210,7 +224,8 @@ class IdentityService {
 
   /**
    * Validate that a private key has sufficient security level for identity updates
-   * Identity modifications require CRITICAL (1) or MASTER (0) security level
+   * Identity modifications REQUIRE a MASTER (0) security level key in dev.11+
+   * CRITICAL keys are NOT sufficient for identity updates.
    *
    * @param privateKeyWif - The WIF-encoded private key to validate
    * @param identityId - The identity to validate against
@@ -251,15 +266,16 @@ class IdentityService {
         return { isValid: false, error: 'Private key does not match any key on this identity' };
       }
 
-      // For identity updates, we need CRITICAL (1) or MASTER (0) security level
-      // HIGH (2) and below are not allowed
-      if (match.securityLevel > 1) {
+      // For identity updates in dev.11+, we REQUIRE MASTER (0) security level
+      // The WASM SDK explicitly checks: key.security_level() == SecurityLevel::MASTER
+      // CRITICAL (1) and below are NOT sufficient for identity updates
+      if (match.securityLevel !== 0) {
         const levelName = getSecurityLevelName(match.securityLevel);
         return {
           isValid: false,
           securityLevel: match.securityLevel,
           keyId: match.keyId,
-          error: `Identity modifications require a CRITICAL or MASTER key. You provided a ${levelName} key.`
+          error: `Identity modifications require a MASTER key. You provided a ${levelName} key.`
         };
       }
 
@@ -281,12 +297,14 @@ class IdentityService {
    * Add an encryption public key to an identity
    * This creates an identity update state transition
    *
-   * NOTE: Identity modifications on Dash Platform require a CRITICAL (1) or MASTER (0)
-   * security level key for signing. The typical HIGH (2) login key is insufficient.
+   * NOTE: Identity modifications on Dash Platform REQUIRE a MASTER (0) security level key
+   * for signing in dev.11+. CRITICAL (1) and HIGH (2) keys are NOT sufficient.
+   * This is enforced by the WASM SDK which verifies the signer has a private key
+   * matching one of the identity's MASTER keys.
    *
    * @param identityId - The identity to update
    * @param encryptionPrivateKey - The private key bytes (32 bytes)
-   * @param signingPrivateKeyWif - The CRITICAL/MASTER level key for signing (in WIF format)
+   * @param signingPrivateKeyWif - The MASTER level key for signing (in WIF format)
    * @param contractId - Optional contract ID to bind the key to
    * @returns Result with success status and the new key ID
    */
@@ -358,13 +376,15 @@ class IdentityService {
       console.log(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
 
       console.log(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
-      console.log('Calling sdk.identities.update with privateKeyWif length:', signingPrivateKeyWif?.length);
 
-      // Update the identity
+      // Create signer from private key
+      const signer = await signerService.createSigner(signingPrivateKeyWif);
+
+      // Update the identity using dev.11+ typed API
       await sdk.identities.update({
-        identityId,
+        identity,
         addPublicKeys: [newKey],
-        privateKeyWif: signingPrivateKeyWif,
+        signer
       });
       console.log('sdk.identities.update completed');
 

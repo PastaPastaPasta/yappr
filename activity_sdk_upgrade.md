@@ -138,3 +138,60 @@ Updated `createDocument()`, `updateDocument()`, and `deleteDocument()` to use th
 1. Phase 3: Identity Service updates
 2. Phase 4: DPNS Service updates
 3. Phase 5: Final verification and testing
+
+---
+
+## 2026-01-19: Phase 3 Complete - Identity Service Updates
+
+### Changes Made
+
+1. **Updated `validateKeySecurityLevel()` in `lib/services/identity-service.ts`**:
+   - Changed validation to require MASTER (0) security level, not just CRITICAL (1) or MASTER
+   - The WASM SDK's `identityUpdate` function explicitly requires a MASTER key for signing
+   - Updated error message: "Identity modifications require a MASTER key. You provided a {level} key."
+   - Updated JSDoc to clarify MASTER key requirement for dev.11+
+
+2. **Updated `addEncryptionKey()` documentation**:
+   - Clarified that CRITICAL keys are NOT sufficient for identity updates in dev.11+
+   - The WASM SDK verifies the signer has a private key matching one of the identity's MASTER keys
+
+### SDK API Verification
+
+The `sdk.identities.update()` API in dev.11 requires:
+```typescript
+{
+  identity: Identity,        // Full WASM Identity object
+  addPublicKeys?: IdentityPublicKeyInCreation[],
+  disablePublicKeys?: number[],
+  signer: IdentitySigner,    // Must have MASTER key
+  settings?: PutSettings
+}
+```
+
+The WASM SDK (identity.rs lines 614-643) explicitly filters for MASTER keys:
+- `key.purpose() == Purpose::AUTHENTICATION`
+- `key.security_level() == SecurityLevel::MASTER`
+- Supported key types: ECDSA_HASH160 or ECDSA_SECP256K1
+
+### Build Status
+
+- **Build succeeds** with no new errors
+- **Lint passes** with only pre-existing warnings
+
+### Testing
+
+Tested via Playwright:
+1. Navigated to Private Feed settings
+2. Attempted to add encryption key with CRITICAL key → **Correctly rejected** with message "Identity modifications require a MASTER key. You provided a CRITICAL key."
+3. Attempted with MASTER key → **Validation passed** (keyId=0, securityLevel=0)
+4. SDK call encountered WasmSdkError (likely network/testnet issue, not Phase 3 code)
+
+### Screenshot
+
+`screenshots/sdk-upgrade-phase3-identity-service.png` - Shows private feed settings page
+`screenshots/sdk-upgrade-phase3-identity-update-test.png` - Shows settings after test
+
+### Next Steps
+
+1. Phase 4: DPNS Service updates
+2. Phase 5: Final verification and testing

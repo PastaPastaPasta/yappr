@@ -187,3 +187,82 @@ await sdk.documents.create({ document, identityKey: matchingKey, signer });
 - **ECDSA_HASH160 (type 2)**: 20-byte hash160, hex string (40 chars)
 
 The `findMatchingKeyIndex()` function handles both types correctly.
+
+---
+
+## 2026-01-19: Phase 3 Learnings - Identity Service Updates
+
+### Identity Updates Require MASTER Key (Not Just CRITICAL)
+
+**Critical Discovery**: In dev.11, identity update operations (`sdk.identities.update()`) require a **MASTER** (security level 0) key for signing. This is more restrictive than previously documented.
+
+**WASM SDK Implementation** (identity.rs lines 614-643):
+```rust
+// Find all valid master keys (AUTHENTICATION + MASTER + supported key type)
+let master_keys: Vec<_> = identity
+    .public_keys()
+    .iter()
+    .filter(|(_, key)| {
+        key.purpose() == Purpose::AUTHENTICATION
+            && key.security_level() == SecurityLevel::MASTER
+            && (key.key_type() == KeyType::ECDSA_HASH160
+                || key.key_type() == KeyType::ECDSA_SECP256K1)
+    })
+    .collect();
+
+// Check if identity has any master keys
+if master_keys.is_empty() {
+    return Err(WasmSdkError::invalid_argument(
+        "Identity does not have any master key with supported key type",
+    ));
+}
+```
+
+**Implications**:
+- CRITICAL keys (security level 1) are **NOT** allowed for identity modifications
+- Users must provide their MASTER key to add encryption keys or modify identity
+- The UI/UX should be updated to clearly request MASTER keys, not "CRITICAL or MASTER"
+
+### Security Level Hierarchy for Operations
+
+| Operation Type | Allowed Security Levels |
+|---------------|------------------------|
+| Document operations (create/update/delete) | CRITICAL (1), HIGH (2) |
+| Identity operations (add/disable keys) | MASTER (0) only |
+| Transfer operations | Keys with TRANSFER purpose |
+
+### IdentityUpdateOptions API Structure
+
+The `sdk.identities.update()` function in dev.11 expects:
+```typescript
+interface IdentityUpdateOptions {
+  identity: Identity;           // Full WASM Identity object (NOT just identityId)
+  addPublicKeys?: IdentityPublicKeyInCreation[];
+  disablePublicKeys?: number[]; // Key IDs to disable
+  signer: IdentitySigner;       // Must contain MASTER key
+  settings?: PutSettings;
+}
+```
+
+**Key differences from document operations**:
+- Takes full `Identity` object, not just `identityId`
+- No `identityKey` parameter - the SDK finds the appropriate MASTER key automatically
+- Signer must have a private key that matches one of the identity's MASTER keys
+
+### IdentityPublicKeyInCreation Constructor
+
+For adding new keys to an identity, use `IdentityPublicKeyInCreation`:
+```typescript
+const newKey = new wasm.IdentityPublicKeyInCreation(
+  newKeyId,           // id (auto-assigned if 0)
+  'ENCRYPTION',       // purpose (string or number)
+  'MEDIUM',           // securityLevel (string or number)
+  'ECDSA_SECP256K1',  // keyType (string or number)
+  false,              // readOnly
+  publicKeyBytes,     // data as Uint8Array (NOT hex or base64)
+  null,               // signature (null for new keys)
+  null                // contractBounds (null = no binding)
+);
+```
+
+**Note**: The `data` parameter must be a `Uint8Array`, not a hex or base64 string.
