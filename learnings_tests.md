@@ -1166,3 +1166,65 @@ localStorage.setItem('yappr:pf:cached_cek:OWNER_ID', JSON.stringify(corruptedCek
 20. **Show actual error messages** - Don't use generic messages like "revoked" for all failures. Show the actual error to help users and developers understand what went wrong.
 
 21. **Test error handling explicitly** - Error states are often overlooked in testing. Explicitly corrupt state or simulate failures to verify error handling UI is correct.
+
+---
+
+## 2026-01-19: E2E Test 6.1 - Revocation Flow Blocked by Testnet
+
+### Issue 68: Testnet DAPI Availability for Write Operations
+**Problem:** The revocation flow requires several DAPI operations that consistently failed during testing due to testnet connectivity issues.
+
+**Operations Required for Revocation:**
+1. Fetch latest epoch from PrivateFeedState document
+2. Create PrivateFeedRekey document (advances epoch by 1)
+3. Delete the user's PrivateFeedGrant document
+4. Send notification to the revoked user
+
+**Errors Observed:**
+```
+Error fetching latest epoch: WasmSdkError
+Error revoking follower: WasmSdkError
+Error revoking follower: Error: Unknown error
+```
+
+**Key Insight:** While read operations (querying posts, profiles, grants) were intermittently working, the write operations (creating/deleting documents) consistently failed.
+
+**Lesson:** E2E tests for write operations on testnet are inherently fragile. Consider:
+1. Running tests during off-peak hours when testnet is more stable
+2. Having retry logic with exponential backoff for transient failures
+3. Using a local devnet for more reliable testing
+4. Separating UI verification tests from on-chain operation tests
+
+### Issue 69: Auto-Recovery Prerequisites for Revocation
+**Observation:** Before revocation could be attempted, the local feed seed needed to be recovered. This happened automatically when viewing a private post due to the BUG-011 fix.
+
+**Recovery Flow:**
+1. Navigate to profile/private post as owner
+2. BUG-011 auto-recovery triggers: "Owner auto-recovery: no local feed seed, attempting recovery with encryption key"
+3. Recovery completes: "Owner recovery completed successfully"
+4. Feed seed now stored locally, enabling revocation operations
+
+**Lesson:** The revocation flow depends on having local cryptographic state (feed seed, available leaves, etc.). Ensure auto-recovery is triggered before attempting management operations like revocation.
+
+### Issue 70: UI Verification Passed Despite Network Failures
+**Observation:** All UI elements for the revocation flow were correctly implemented:
+- ✅ Follower list displays correctly with usernames and "Following since" dates
+- ✅ Revoke button appears for each follower
+- ✅ Clicking Revoke shows Confirm/Cancel confirmation
+- ✅ Confirmation dialog is simple and clear
+- ✅ Error toast "Failed to revoke access" shows on network failure
+
+**Lesson:** When testnet is unreliable, focus on verifying:
+1. UI elements and interactions (can be tested fully)
+2. Client-side validation and state management (can be tested fully)
+3. Error handling for network failures (can be tested!)
+
+Document network-dependent tests as "BLOCKED" and re-test when testnet is stable.
+
+### Best Practices Updates
+
+22. **Separate UI verification from on-chain testing** - UI tests can pass even when network operations fail. Document the distinction clearly.
+
+23. **Pre-populate local state for testing** - Trigger auto-recovery or manually set up local keys before testing operations that require them.
+
+24. **Embrace "BLOCKED" test status** - When infrastructure issues prevent testing, document what WAS verified and clearly state what needs re-testing when infrastructure is stable.

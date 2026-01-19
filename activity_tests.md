@@ -1997,3 +1997,103 @@ Modified `components/post/private-post-content.tsx`:
 **PASSED** - E2E Test 5.7 completed successfully. Error state now properly shows error message with Retry button, and retry functionality works correctly.
 
 ---
+
+## 2026-01-19: E2E Test 6.1 - Revoke Follower - Happy Path (BLOCKED)
+
+### Task
+Test E2E 6.1: Revoke Follower - Happy Path (PRD §4.6)
+
+### Status
+**BLOCKED** - Dash Platform testnet experiencing persistent DAPI connectivity issues
+
+### Prerequisites Met
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 (owner) logged in
+- Private feed enabled with 2 followers (User 96QK0= and User clx6Y=)
+- Encryption key stored in session
+- Local feed seed recovered via auto-recovery (BUG-011 fix)
+
+### Test Steps Executed
+
+#### UI Verification (PASSED)
+1. **Navigate to Settings > Private Feed** - ✅
+   - Dashboard displays correctly
+   - Shows 2/1024 Followers, 0 Pending, 5 Private Posts
+   - Epoch Usage: 0/1999 revocations
+
+2. **Verify follower list** - ✅
+   - User 96QK0= visible with [Revoke] button
+   - User clx6Y= visible with [Revoke] button
+   - Warning text: "Revoking access will prevent the user from seeing your future private posts. They will still be able to see posts from when they had access."
+
+3. **Click Revoke button** - ✅
+   - Confirmation UI appears with [Confirm] and [Cancel] buttons
+   - Red "Confirm" button, grey "Cancel" button
+
+4. **Click Confirm** - ❌ BLOCKED
+   - Network call fails with `WasmSdkError`
+   - Error: "Error fetching latest epoch: WasmSdkError"
+   - Error toast: "Failed to revoke access"
+
+#### Auto-Recovery Verification (PASSED)
+- When local feed seed was missing, viewing a private post triggered auto-recovery
+- Console: "Owner auto-recovery: no local feed seed, attempting recovery with encryption key"
+- Console: "Owner recovery completed successfully"
+- Console: "Found 2 active grants"
+
+### Errors Encountered
+
+**Error: "Error fetching latest epoch: WasmSdkError"**
+```
+Error fetching latest epoch: WasmSdkError
+Error revoking follower: WasmSdkError
+Error revoking follower: Error: Unknown error
+```
+
+This error occurs when the SDK cannot reach DAPI nodes to query the current epoch status, which is required before creating a PrivateFeedRekey document.
+
+### Root Cause Analysis
+The Dash Platform testnet is experiencing persistent DAPI node availability issues:
+1. Multiple queries fail intermittently with WasmSdkError
+2. DPNS queries consistently failing
+3. Profile queries for follower avatars failing
+4. The revocation requires epoch fetch which also fails
+
+This is **NOT a code bug** - the revocation flow code is correct:
+- UI correctly shows followers and Revoke buttons
+- Confirm/Cancel confirmation dialog works
+- The code correctly calls `privateFeedService.revokeFollower()`
+- The error handling correctly displays "Failed to revoke access" toast
+
+### UI Verification Summary
+| UI Element | Present | Status |
+|------------|---------|--------|
+| Follower list with 2 users | Yes | ✅ |
+| Revoke button per follower | Yes | ✅ |
+| Confirm/Cancel dialog on click | Yes | ✅ |
+| Warning text about revocation effects | Yes | ✅ |
+| Error toast on network failure | Yes | ✅ |
+
+### Screenshots
+- `screenshots/e2e-test6.1-before-revoke.png` - Dashboard before revocation attempt
+- `screenshots/e2e-test6.1-followers-list.png` - Private Followers list with Revoke buttons
+- `screenshots/e2e-test6.1-revoke-confirmation.png` - Confirm/Cancel dialog
+- `screenshots/e2e-test6.1-revoke-testnet-unavailable.png` - Final state after network failure
+
+### Recommendation
+This test should be **re-attempted when testnet is stable**. The code appears correct - only infrastructure issues are blocking completion.
+
+The revocation flow involves:
+1. Fetch latest epoch from PrivateFeedState
+2. Create PrivateFeedRekey document (epoch advances by 1)
+3. Delete the user's PrivateFeedGrant document
+4. Send notification to the revoked user
+
+All these operations require DAPI connectivity which is currently intermittent.
+
+### Test Result
+**BLOCKED** - UI verification PASSED; on-chain operation blocked by testnet infrastructure issues
+
+### Re-test Required
+- [ ] E2E Test 6.1: Revoke Follower - Happy Path (when testnet is stable)
+
+---
