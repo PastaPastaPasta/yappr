@@ -56,9 +56,9 @@ async function waitForPostCompletion(page: import('@playwright/test').Page): Pro
   const composeModal = page.getByLabel('Create a new post');
   const toastSelector = page.locator('[role="alert"]');
 
-  // Wait up to 90 seconds for blockchain operation
+  // Wait up to 60 seconds for blockchain operation (reduced from 90s to fit within test timeout)
   const startTime = Date.now();
-  const maxWait = 90000;
+  const maxWait = 60000;
 
   while (Date.now() - startTime < maxWait) {
     // Check if modal closed (success)
@@ -263,9 +263,6 @@ test.describe('02 - Compose Private Post', () => {
 
     // Both success and timeout are acceptable - the post may still go through on timeout
     expect(['success', 'timeout']).toContain(result);
-
-    // Verify we're back on the home page or feed
-    await page.waitForTimeout(2000);
   });
 
   /**
