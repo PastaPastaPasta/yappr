@@ -585,3 +585,54 @@ console.log('UI responsive during sync:', uiResponsive);
 - Background sync may not show visible indicators
 - Test responsiveness, not just completion
 - Give time for sync to complete before checking decryption
+
+---
+
+### 2026-01-20 - Block Action Location in Yappr UI
+
+**Issue:** Tests for blocking users couldn't find a "Block" button on the profile page.
+
+**Root Cause:** Yappr places the block action inside the post card's dropdown menu ("..." button), not on the profile page. The profile page only shows an "Unblock" button if the user is already blocked.
+
+**Resolution:** Updated tests to access the block menu through post cards:
+
+```typescript
+// Navigate to target user's profile
+await goToProfile(page, targetUserId);
+
+// Find a post card and click its menu
+const postCards = page.locator('article');
+const menuButton = postCards.first().locator('button').filter({ has: page.locator('svg') }).last();
+await menuButton.click();
+
+// Find and click the Block option
+const blockOption = page.locator('[role="menuitem"]').filter({ hasText: /block/i });
+await blockOption.first().click();
+```
+
+**Tips:**
+- The block menu is per-post, not per-profile - requires at least one post from that user
+- The `[role="menuitem"]` selector targets Radix DropdownMenu items
+- Check for "Unblock" text to determine if user is already blocked
+- If target user has no posts, the block flow cannot be tested via UI
+
+---
+
+### 2026-01-20 - Block/Auto-Revoke Interaction
+
+**Finding:** The `useBlock` hook in Yappr calls `blockService.autoRevokePrivateFeedAccess()` during the block operation to handle auto-revocation of private feed access.
+
+**Key Behaviors:**
+1. **Owner blocks private follower** → Block created + Grant deleted + Epoch advances
+2. **Owner blocks non-follower** → Only block created, no revocation
+3. **Follower blocks owner** → Only block created, follower's grant unchanged
+
+**Test State Challenges:**
+- Test 8.1 requires an approved private follower to block - but Identity 2 is revoked
+- Test 8.2 requires target to have posts to access block menu - Identity 3 has no posts
+- Test 8.3 can run with any identity that has posts by the owner
+
+**Tips:**
+- Track block state in identity JSON: `blockedBy` and `blockedByFollower` properties
+- Tests that can't complete due to missing prerequisites should skip with explanation
+- The auto-revoke toast message contains "revoked" if revocation was triggered
