@@ -25,6 +25,7 @@ const KEY_PATH_KEYS_PREFIX = 'path_keys:';
 const KEY_CACHED_CEK_PREFIX = 'cached_cek:';
 const KEY_AVAILABLE_LEAVES = 'available_leaves';
 const KEY_RECIPIENT_MAP = 'recipient_map';
+const KEY_WRAP_NONCE_SALT_PREFIX = 'wrap_nonce_salt:'; // BUG-013 fix: store wrap nonce salt for followers
 
 /**
  * Stored path key with version information
@@ -403,6 +404,27 @@ class PrivateFeedKeyStore {
     return cached ? cached.epoch : null;
   }
 
+  /**
+   * Store wrap nonce salt for a followed feed (BUG-013 fix)
+   * This is needed to apply rekey documents
+   */
+  storeWrapNonceSalt(ownerId: string, salt: Uint8Array): void {
+    setItem(KEY_WRAP_NONCE_SALT_PREFIX + ownerId, toBase64(salt));
+  }
+
+  /**
+   * Get wrap nonce salt for a followed feed (BUG-013 fix)
+   */
+  getWrapNonceSalt(ownerId: string): Uint8Array | null {
+    const stored = getItem(KEY_WRAP_NONCE_SALT_PREFIX + ownerId);
+    if (!stored) return null;
+    try {
+      return fromBase64(stored);
+    } catch {
+      return null;
+    }
+  }
+
   // ============================================================
   // Cleanup
   // ============================================================
@@ -413,6 +435,7 @@ class PrivateFeedKeyStore {
   clearFeedKeys(ownerId: string): void {
     removeItem(KEY_PATH_KEYS_PREFIX + ownerId);
     removeItem(KEY_CACHED_CEK_PREFIX + ownerId);
+    removeItem(KEY_WRAP_NONCE_SALT_PREFIX + ownerId); // BUG-013 fix
   }
 
   /**
@@ -474,15 +497,20 @@ class PrivateFeedKeyStore {
 
   /**
    * Initialize follower state from grant payload
+   * BUG-013 fix: Added optional wrapNonceSalt parameter to enable rekey support
    */
   initializeFollowerState(
     ownerId: string,
     pathKeys: NodeKey[],
     grantEpoch: number,
-    currentCEK: Uint8Array
+    currentCEK: Uint8Array,
+    wrapNonceSalt?: Uint8Array
   ): void {
     this.storePathKeys(ownerId, pathKeys);
     this.storeCachedCEK(ownerId, grantEpoch, currentCEK);
+    if (wrapNonceSalt) {
+      this.storeWrapNonceSalt(ownerId, wrapNonceSalt);
+    }
   }
 
   /**

@@ -163,20 +163,42 @@ function NotificationsPage() {
                       </Link>
 
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm">
-                          <Link
-                            href={`/user?id=${notification.from?.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-semibold hover:underline"
-                          >
-                            {notification.from?.displayName || notification.from?.username || 'Unknown User'}
-                          </Link>
-                          {' '}
-                          {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
-                          <span className="text-gray-500 ml-2">
-                            {formatTime(notification.createdAt)}
-                          </span>
-                        </p>
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm flex-1">
+                            <Link
+                              href={`/user?id=${notification.from?.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="font-semibold hover:underline"
+                            >
+                              {notification.from?.displayName || notification.from?.username || 'Unknown User'}
+                            </Link>
+                            {' '}
+                            {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
+                            <span className="text-gray-500 ml-2">
+                              {formatTime(notification.createdAt)}
+                            </span>
+                          </p>
+
+                          {/* Action buttons for private feed notifications */}
+                          {notification.type === 'privateFeedRequest' && (
+                            <Link
+                              href="/settings?section=privateFeed"
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950 dark:hover:bg-blue-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Requests
+                            </Link>
+                          )}
+                          {notification.type === 'privateFeedApproved' && (
+                            <Link
+                              href={`/user?id=${notification.from?.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Profile
+                            </Link>
+                          )}
+                        </div>
 
                         {notification.post && (
                           <Link

@@ -88,6 +88,7 @@ export interface GrantPayload {
   leafIndex: number;
   pathKeys: NodeKey[];
   currentCEK: Uint8Array;
+  wrapNonceSalt?: Uint8Array; // Added to allow followers to apply rekey documents
 }
 
 // Helper functions for integer encoding (big-endian as per SPEC §5.1.1)
@@ -638,6 +639,7 @@ class PrivateFeedCryptoService {
 
   /**
    * Encode grant payload to bytes (SPEC §9.3.1)
+   * Extended with wrapNonceSalt for follower rekey support
    */
   encodeGrantPayload(payload: GrantPayload): Uint8Array {
     const parts: Uint8Array[] = [
@@ -655,11 +657,18 @@ class PrivateFeedCryptoService {
 
     parts.push(payload.currentCEK);
 
+    // Include wrapNonceSalt if provided (32 bytes)
+    // This allows followers to apply rekey documents
+    if (payload.wrapNonceSalt) {
+      parts.push(payload.wrapNonceSalt);
+    }
+
     return concat(...parts);
   }
 
   /**
    * Decode grant payload from bytes (SPEC §9.3.1)
+   * Extended to read wrapNonceSalt if present
    */
   decodeGrantPayload(data: Uint8Array): GrantPayload {
     let offset = 0;
@@ -683,8 +692,15 @@ class PrivateFeedCryptoService {
     }
 
     const currentCEK = data.slice(offset, offset + KEY_SIZE);
+    offset += KEY_SIZE;
 
-    return { version, grantEpoch, leafIndex, pathKeys, currentCEK };
+    // Check if wrapNonceSalt is present (optional, 32 bytes at end)
+    let wrapNonceSalt: Uint8Array | undefined;
+    if (offset + KEY_SIZE <= data.length) {
+      wrapNonceSalt = data.slice(offset, offset + KEY_SIZE);
+    }
+
+    return { version, grantEpoch, leafIndex, pathKeys, currentCEK, wrapNonceSalt };
   }
 
   /**

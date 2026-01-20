@@ -528,6 +528,7 @@ class PrivateFeedFollowerService {
 
   /**
    * Apply a single rekey document (SPEC §8.7)
+   * BUG-013 fix: Now uses stored wrapNonceSalt for proper nonce derivation
    */
   private async applyRekey(
     ownerId: string,
@@ -540,6 +541,14 @@ class PrivateFeedFollowerService {
       const pathKeys = privateFeedKeyStore.getPathKeys(ownerId);
       if (!pathKeys) {
         return { success: false, error: 'No path keys found' };
+      }
+
+      // 1.5. BUG-013 fix: Get wrapNonceSalt (required for proper nonce derivation)
+      const wrapNonceSalt = privateFeedKeyStore.getWrapNonceSalt(ownerId);
+      if (!wrapNonceSalt) {
+        // Grant was created before BUG-013 fix, fall back to legacy nonce derivation
+        console.warn('No wrapNonceSalt found for owner', ownerId, '- using legacy nonce derivation');
+        return this.applyRekeyLegacy(ownerId, rekey, pathKeys);
       }
 
       // 2. Build key lookup from current path keys
@@ -587,11 +596,9 @@ class PrivateFeedFollowerService {
           // Decrypt the packet
           const wrapKey = privateFeedCryptoService.deriveWrapKey(unwrapSourceKey.key);
 
-          // We need the wrapNonceSalt from the owner's feed - but as a follower we don't have it
-          // The nonce is derived deterministically, so we compute it from public parameters
-          // For rekey packets, the nonce derivation uses a special salt derived from feedSeed
-          // As followers, we need to derive the nonce using the same public parameters
-          const nonce = this.deriveRekeyNonceFollower(
+          // BUG-013 fix: Use the proper nonce derivation with stored wrapNonceSalt
+          const nonce = privateFeedCryptoService.deriveRekeyNonce(
+            wrapNonceSalt,
             rekey.epoch,
             packet.targetNodeId,
             packet.targetVersion,
@@ -659,6 +666,122 @@ class PrivateFeedFollowerService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Rekey application failed',
+      };
+    }
+  }
+
+  /**
+   * Legacy rekey application for grants created before BUG-013 fix
+   * Uses empty salt for nonce derivation (will likely fail but provides graceful degradation)
+   */
+  private async applyRekeyLegacy(
+    ownerId: string,
+    rekey: PrivateFeedRekeyDocument,
+    pathKeys: NodeKey[]
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const ownerIdBytes = identifierToBytes(ownerId);
+
+      // Build key lookup from current path keys
+      const keyLookup = new Map<string, NodeKey>();
+      for (const pk of pathKeys) {
+        keyLookup.set(`${pk.nodeId}:${pk.version}`, pk);
+      }
+
+      // Parse rekey packets
+      const packets = privateFeedCryptoService.decodeRekeyPackets(rekey.packets);
+
+      // Process packets iteratively
+      const newKeys = new Map<number, NodeKey>();
+      const decryptedPackets = new Set<number>();
+      let progress = true;
+
+      while (progress) {
+        progress = false;
+
+        for (let i = 0; i < packets.length; i++) {
+          if (decryptedPackets.has(i)) continue;
+
+          const packet = packets[i];
+          const lookupKey = `${packet.encryptedUnderNodeId}:${packet.encryptedUnderVersion}`;
+
+          let unwrapSourceKey: NodeKey | undefined;
+          const newKey = newKeys.get(packet.encryptedUnderNodeId);
+          if (newKey && newKey.version === packet.encryptedUnderVersion) {
+            unwrapSourceKey = newKey;
+          } else {
+            unwrapSourceKey = keyLookup.get(lookupKey);
+          }
+
+          if (!unwrapSourceKey) continue;
+
+          const wrapKey = privateFeedCryptoService.deriveWrapKey(unwrapSourceKey.key);
+
+          // Legacy: Use empty salt nonce derivation (will likely fail)
+          const nonce = this.deriveRekeyNonceFollower(
+            rekey.epoch,
+            packet.targetNodeId,
+            packet.targetVersion,
+            packet.encryptedUnderNodeId,
+            packet.encryptedUnderVersion
+          );
+
+          const aad = privateFeedCryptoService.buildRekeyAAD(
+            ownerIdBytes,
+            rekey.epoch,
+            packet.targetNodeId,
+            packet.targetVersion,
+            packet.encryptedUnderNodeId,
+            packet.encryptedUnderVersion
+          );
+
+          try {
+            const unwrappedKey = privateFeedCryptoService.unwrapKey(
+              wrapKey,
+              packet.wrappedKey,
+              nonce,
+              aad
+            );
+
+            newKeys.set(packet.targetNodeId, {
+              nodeId: packet.targetNodeId,
+              version: packet.targetVersion,
+              key: unwrappedKey,
+            });
+            decryptedPackets.add(i);
+            progress = true;
+          } catch {
+            // Can't decrypt
+          }
+        }
+      }
+
+      const newRootKey = newKeys.get(1);
+      if (!newRootKey) {
+        return { success: false, error: 'Failed to derive new root key - grant may need to be re-created after BUG-013 fix' };
+      }
+
+      const newCEK = privateFeedCryptoService.decryptCEK(
+        newRootKey.key,
+        rekey.encryptedCEK,
+        ownerIdBytes,
+        rekey.epoch
+      );
+
+      const updatedPathKeys = pathKeys.map((pk) => {
+        const newKey = newKeys.get(pk.nodeId);
+        return newKey || pk;
+      });
+
+      privateFeedKeyStore.storePathKeys(ownerId, updatedPathKeys);
+      privateFeedKeyStore.storeCachedCEK(ownerId, rekey.epoch, newCEK);
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error applying rekey (legacy):', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Rekey application failed (legacy grant)',
       };
     }
   }
@@ -850,12 +973,13 @@ class PrivateFeedFollowerService {
       const payload = privateFeedCryptoService.decodeGrantPayload(payloadBytes);
       privateFeedCryptoService.validateGrantPayload(payload, grant.leafIndex);
 
-      // 5. Store path keys and CEK
+      // 5. Store path keys, CEK, and wrapNonceSalt (BUG-013 fix)
       privateFeedKeyStore.initializeFollowerState(
         ownerId,
         payload.pathKeys,
         payload.grantEpoch,
-        payload.currentCEK
+        payload.currentCEK,
+        payload.wrapNonceSalt // BUG-013 fix: store salt for rekey support
       );
 
       // 6. Catch up on any rekeys since grant epoch

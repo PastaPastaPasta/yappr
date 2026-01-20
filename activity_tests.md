@@ -2664,3 +2664,72 @@ In `app/notifications/page.tsx`, the notification rendering (lines 140-199) show
 - [ ] E2E Test 4.4: Approve from Notification (after BUG-014 is fixed)
 
 ---
+
+## 2026-01-20: BUG-014 Fix - Private Feed Request Notifications Missing Action Button
+
+### Task
+Fix BUG-014: Private feed request notifications missing action button
+
+### Status
+**FIXED** - BUG-014 resolved; E2E Test 4.4 can now be re-verified
+
+### What Was Fixed
+Added action buttons to the notifications page for private feed notification types as required by PRD §7.4:
+1. `[View Requests]` button for `privateFeedRequest` type - links to `/settings?section=privateFeed`
+2. `[View Profile]` button for `privateFeedApproved` type - links to user profile
+
+### Root Cause
+The notifications page (`app/notifications/page.tsx`) rendered notification items without action buttons for private feed notification types. The PRD §7.4 specifies that request notifications should have a `[View Requests]` button to navigate to the settings page.
+
+### Solution Applied
+Modified the notification item rendering to include conditional action buttons based on notification type:
+
+```typescript
+{/* Action buttons for private feed notifications */}
+{notification.type === 'privateFeedRequest' && (
+  <Link
+    href="/settings?section=privateFeed"
+    onClick={(e) => e.stopPropagation()}
+    className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 ..."
+  >
+    View Requests
+  </Link>
+)}
+{notification.type === 'privateFeedApproved' && (
+  <Link
+    href={`/user?id=${notification.from?.id}`}
+    onClick={(e) => e.stopPropagation()}
+    className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 ..."
+  >
+    View Profile
+  </Link>
+)}
+```
+
+### Files Modified
+- `app/notifications/page.tsx` - Added action buttons for private feed notification types
+
+### Verification
+1. Logged in as feed owner (identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2)
+2. Navigated to Notifications page
+3. Selected "Private Feed" tab
+4. Verified notification shows:
+   - Lock icon
+   - "Test Owner PF requested access to your private feed 28m"
+   - **"View Requests" button** in blue on the right side
+   - Unread indicator
+5. Clicked "View Requests" button
+6. Verified navigation to `/settings?section=privateFeed`
+7. Verified pending request visible with Approve/Ignore buttons
+
+### Screenshots
+- `screenshots/bug014-fix-view-requests-button.png` - Notification with View Requests button
+- `screenshots/bug014-fix-navigated-to-settings.png` - Settings page after clicking button
+
+### Test Result
+**PASSED** - BUG-014 fix verified
+
+### Re-test Required
+- [x] E2E Test 4.4: Approve from Notification - Now has working View Requests button
+
+---

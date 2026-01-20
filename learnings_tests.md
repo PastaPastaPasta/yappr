@@ -1470,3 +1470,66 @@ The ignore state appears to be stored client-side (localStorage/sessionStorage) 
 
 36. **Check PRD mockups against implementation**: PRD mockups often show UI elements that may not have been implemented. Compare the actual UI against PRD mockups to identify missing features.
 
+
+---
+
+## 2026-01-20: BUG-014 Fix - Notification Action Buttons
+
+### Issue 82: Adding Conditional UI Elements in Notification Lists
+**Problem:** BUG-014 identified that private feed request notifications lacked action buttons (View Requests) as specified in PRD §7.4.
+
+**Implementation Approach:**
+The fix involved adding conditional rendering based on notification type within the existing notification item mapping:
+
+```typescript
+{/* Action buttons for private feed notifications */}
+{notification.type === 'privateFeedRequest' && (
+  <Link
+    href="/settings?section=privateFeed"
+    onClick={(e) => e.stopPropagation()}
+    className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 ..."
+  >
+    View Requests
+  </Link>
+)}
+{notification.type === 'privateFeedApproved' && (
+  <Link
+    href={`/user?id=${notification.from?.id}`}
+    onClick={(e) => e.stopPropagation()}
+    className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 ..."
+  >
+    View Profile
+  </Link>
+)}
+```
+
+**Key Details:**
+1. The `onClick={(e) => e.stopPropagation()}` prevents the link click from bubbling up to the parent's `onClick` handler (which marks the notification as read)
+2. Action buttons use pill/chip styling (`rounded-full`, small padding) to fit within the notification layout
+3. Color scheme differentiates button types: blue for "View Requests", green for "View Profile"
+4. Using `Link` component instead of `button` for proper navigation semantics
+
+**Lesson:** When adding action buttons to list items that already have click handlers, always use `stopPropagation()` to prevent unintended parent handlers from firing. This is a common pattern when adding interactive elements to clickable containers.
+
+### Issue 83: Testing Notification UI with Real Data
+**Challenge:** Testing the notification UI fix required either:
+1. Generating a real private feed request notification (multi-step, multi-identity)
+2. Injecting mock data into the notification store
+
+**Solution Used:** Logging in as the identity that has pending requests to their private feed generates the notifications organically via the `notification-service.ts` polling.
+
+**Key Insight:** The notification service queries `followRequest` documents where `targetId == userId`, so any pending requests to the user's private feed will appear as notifications after the polling interval.
+
+**Lesson:** For notification testing, understand the data source. Private feed notifications come from querying `followRequest` documents, not from a separate notification collection. This means:
+- Testing requires actual on-chain `followRequest` documents to exist
+- The "Private Feed" filter tab shows these notifications
+- Notifications appear after the polling service runs (usually within 30 seconds)
+
+### Best Practices Updates
+
+37. **Use `stopPropagation()` for nested click handlers** - When adding clickable elements inside clickable containers, prevent event bubbling to avoid triggering parent handlers.
+
+38. **Match styling to existing UI patterns** - The notification action buttons used the same pill styling as other status indicators in the app, maintaining visual consistency.
+
+39. **Test with real data flows when possible** - Rather than mocking notification data, trigger actual on-chain state that generates the notifications naturally. This tests the full flow.
+

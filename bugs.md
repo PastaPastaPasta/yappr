@@ -2,45 +2,66 @@
 
 ## Active Bugs
 
-### BUG-014: Private feed request notifications missing action button
+(No active bugs)
 
-**Status:** OPEN
-
-**Description:** Private feed request notifications in the notifications page do not have an action button to view or manage the request, as specified in PRD §7.4.
-
-**Observed Behavior:**
-- Notification shows "Test Owner PF requested access to your private feed 19m"
-- Clicking the notification only marks it as read
-- No `[View Requests]` button is present
-- No inline `[Approve]` / `[Ignore]` buttons are present
-
-**Expected Behavior (per PRD §7.4):**
-```
-┌─────────────────────────────────────────────────────┐
-│ 🔒 @alice requested access to your private feed     │
-│ 2 hours ago                      [View Requests]    │
-└─────────────────────────────────────────────────────┘
-```
-
-**PRD References:**
-- PRD §7.4: Shows notification UI mockup with `[View Requests]` button
-- PRD §7.5: States notification can navigate to requests page OR show inline approve/ignore
-
-**Impact:** Medium - Users can still manage requests via Settings > Private Feed, but the notification doesn't provide a direct path there.
-
-**Location:** `app/notifications/page.tsx` - the notification rendering doesn't include action buttons for `privateFeedRequest` type notifications
-
-**Suggested Fix:**
-1. Add a `[View Requests]` button that links to `/settings?section=privateFeed` for `privateFeedRequest` notifications
-2. OR implement inline `[Approve]` / `[Ignore]` buttons directly in the notification
-
-**Screenshot:** `screenshots/e2e-test4.4-notification-private-feed-tab.png`
-
-**Date Reported:** 2026-01-19
+### BUG-015: in adding encryption key; ui says master or critical; only master can add keys
 
 ---
 
 ## Resolved Bugs
+
+### BUG-014: Private feed request notifications missing action button (RESOLVED)
+
+**Status:** RESOLVED
+
+**Description:** Private feed request notifications in the notifications page did not have an action button to view or manage the request, as specified in PRD §7.4.
+
+**Original Behavior:**
+- Notification showed "Test Owner PF requested access to your private feed 19m"
+- Clicking the notification only marked it as read
+- No `[View Requests]` button was present
+- No inline `[Approve]` / `[Ignore]` buttons were present
+
+**Fix Applied:**
+Added action buttons to the notifications page for private feed notification types:
+1. `[View Requests]` button for `privateFeedRequest` type - links to `/settings?section=privateFeed`
+2. `[View Profile]` button for `privateFeedApproved` type - links to user profile
+
+**Code Changes:**
+```typescript
+// Added to app/notifications/page.tsx
+{notification.type === 'privateFeedRequest' && (
+  <Link
+    href="/settings?section=privateFeed"
+    onClick={(e) => e.stopPropagation()}
+    className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 ..."
+  >
+    View Requests
+  </Link>
+)}
+{notification.type === 'privateFeedApproved' && (
+  <Link
+    href={`/user?id=${notification.from?.id}`}
+    onClick={(e) => e.stopPropagation()}
+    className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 ..."
+  >
+    View Profile
+  </Link>
+)}
+```
+
+**Files Modified:**
+- `app/notifications/page.tsx` - Added action buttons for private feed notification types
+
+**Verification:**
+- Notification now shows "View Requests" button in blue on the right side
+- Clicking "View Requests" navigates to Private Feed settings (`/settings?section=privateFeed`)
+- User can directly access the pending requests list to Approve/Ignore
+- Screenshots:
+  - `screenshots/bug014-fix-view-requests-button.png` - Notification with View Requests button
+  - `screenshots/bug014-fix-navigated-to-settings.png` - Settings page after clicking button
+
+**Date Resolved:** 2026-01-20
 
 ### BUG-013: Followers fail to fetch latest keys after revocation (RESOLVED)
 
