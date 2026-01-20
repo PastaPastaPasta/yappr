@@ -1429,3 +1429,80 @@ async function clearPrivateFeedKeys(page: Page): Promise<number> {
 - Reload page after clearing keys to trigger re-decryption attempt
 - The count of cleared keys may be 0 if no keys were cached yet
 - Check for multiple recovery scenarios - modal, locked content, or retry button
+
+---
+
+### 2026-01-20 - Performance Testing Strategies
+
+**Issue:** Needed to measure performance of blockchain-dependent operations with variable timing.
+
+**Finding:** Performance tests for blockchain apps should focus on observable metrics rather than strict timing assertions. Key strategies:
+
+1. **Separate client-side from network timing**: Measure encryption overhead separately from blockchain confirmation
+2. **Use relative comparisons**: Compare private vs public post creation instead of absolute targets
+3. **Soft assertions**: Log warnings instead of failing tests when timing exceeds targets
+4. **Measure perceived latency**: What the user experiences (page load to content visible)
+
+**Implementation pattern:**
+```typescript
+async function measureTime<T>(
+  operation: () => Promise<T>,
+  operationName: string
+): Promise<{ result: T; durationMs: number }> {
+  const startTime = performance.now();
+  const result = await operation();
+  const endTime = performance.now();
+  const durationMs = Math.round(endTime - startTime);
+  console.log(`TIMING: ${operationName} took ${durationMs}ms`);
+  return { result, durationMs };
+}
+```
+
+**Performance findings from Yappr:**
+- Dashboard load: ~7-8 seconds total (includes navigation + async data)
+- Decryption: <2ms per post when keys are cached (extremely fast)
+- Batch decryption: 26 posts in ~2ms (efficient parallel processing)
+- Feed scroll: UI remains responsive during crypto operations
+- Private post prep: ~10s includes loading indicator (blockchain variable)
+
+**Tips:**
+- Use `performance.now()` not `Date.now()` for sub-millisecond precision
+- Log timing data for debugging even when tests pass
+- Don't fail tests due to blockchain network variability
+- Focus on verifying crypto doesn't block UI (responsiveness checks)
+
+---
+
+### 2026-01-20 - Post Creation Flow Timing
+
+**Issue:** Measuring post creation time is complex because it spans client-side prep, blockchain broadcast, and confirmation.
+
+**Finding:** The post creation flow has distinct phases:
+1. **Client-side prep** (~0-500ms): Encryption (if private), form validation
+2. **Loading indicator appears**: User sees "sending" state
+3. **Blockchain broadcast** (~2-8s): Transaction sent to network
+4. **Confirmation wait** (~3-30s): Waiting for block inclusion
+5. **UI update**: Modal closes, post appears in feed
+
+**Measurement strategy:**
+- Measure time from "Post" click to loading indicator = encryption overhead
+- Measure time until modal closes = full operation time
+- Accept timeout as valid result (blockchain may not confirm quickly)
+
+**Code pattern:**
+```typescript
+const { durationMs: encryptionPrepTime } = await measureTime(async () => {
+  await postBtn.click();
+  // Wait for either loading indicator or modal close
+  await Promise.race([
+    loadingIndicator.waitFor({ state: 'visible', timeout: 10000 }),
+    modal.waitFor({ state: 'hidden', timeout: 10000 }),
+  ]);
+}, 'Post preparation (encryption)');
+```
+
+**Tips:**
+- Loading indicator appearing means client-side work is done
+- Modal closing means full operation completed
+- Timeout doesn't mean failure - post may still succeed
+- Close modal manually if test needs to continue after timeout

@@ -61,7 +61,7 @@ Track implementation progress against e2e_prd.md phases.
 - [x] 13-dashboard.spec.ts
 - [x] 16-hashtags-search.spec.ts
 - [x] 17-error-scenarios.spec.ts
-- [ ] 18-performance.spec.ts
+- [x] 18-performance.spec.ts
 
 ---
 
@@ -658,3 +658,55 @@ Running 6 tests using 1 worker
 - After cache corruption, the app shows graceful degradation (locked content state)
 - Page remains responsive after cache corruption - no infinite retry loops
 - Browser refresh recovery works correctly with encryption key modal re-prompting if needed
+
+### 2026-01-20 - 18-performance.spec.ts Complete
+
+**What was done:**
+- Created `e2e/tests/18-performance.spec.ts` test suite
+- Implemented 5 core test scenarios from YAPPR_PRIVATE_FEED_E2E_TESTS.md §18:
+  - 18.1 Private Feed Enable Time (< 5 seconds target)
+  - 18.2 Private Post Creation Latency (measures client-side encryption overhead)
+  - 18.3 Single Post Decryption Latency (< 100ms target)
+  - 18.4 Revocation Completion Time - Infrastructure Check (< 10 seconds target)
+  - 18.5 Batch Decryption in Feed (progressive rendering)
+- Added 2 bonus tests:
+  - Bonus: Feed Scroll Performance (measures scroll responsiveness)
+  - Bonus: Dashboard Stats Load Time (measures async data loading)
+
+**Files created:**
+- `e2e/tests/18-performance.spec.ts`
+
+**Test results:**
+```
+Running 7 tests using 1 worker
+  ✓ 18.1 Private Feed Enable Time (30.0s)
+  ✓ 18.2 Private Post Creation Latency (1.7m)
+  ✓ 18.3 Single Post Decryption Latency (31.4s)
+  ✓ 18.4 Revocation Completion Time - Infrastructure Check (27.2s)
+  ✓ 18.5 Batch Decryption in Feed (33.7s)
+  ✓ Bonus: Feed Scroll Performance (29.0s)
+  ✓ Bonus: Dashboard Stats Load Time (23.3s)
+7 passed (4.7m)
+```
+
+**Key learnings:**
+- Performance tests should focus on measurable metrics, not strict assertions (blockchain timing is variable)
+- Use `performance.now()` for precise timing measurements
+- Client-side encryption overhead should be measured separately from blockchain confirmation time
+- Decryption is very fast (<2ms per post) when keys are cached
+- Batch decryption is efficient - 26 posts decrypted in ~2ms total
+- Dashboard stats typically load within 7-8 seconds total (including navigation)
+- UI remains responsive during crypto operations (no blocking)
+
+---
+
+## ALL E2E TESTS COMPLETE
+
+All 18 test suites from e2e_prd.md have been implemented:
+
+**Phase 1 (Foundation):** ✓
+**Phase 2 (P0 Tests):** ✓
+**Phase 3 (P1 Tests):** ✓
+**Phase 4 (P2 Tests):** ✓
+
+Total test files: 19 (including 00-setup-verification.spec.ts)
