@@ -81,70 +81,103 @@ export function FeedStats() {
       return
     }
 
+    let cancelled = false
+    const currentIdentityId = user.identityId
+
     const fetchStats = async () => {
       // Check cache first to reduce network queries
-      const cacheKey = `user_stats_${user.identityId}`
+      const cacheKey = `user_stats_${currentIdentityId}`
       const cached = cacheManager.get<UserStats>('sidebar', cacheKey)
       if (cached) {
-        setStats(cached)
+        if (!cancelled) {
+          setStats(cached)
+        }
         return
       }
 
-      setLoading(true)
+      if (!cancelled) {
+        setLoading(true)
+      }
       try {
         const [posts, followers, following, likes] = await Promise.all([
-          postService.countUserPosts(user.identityId),
-          followService.countFollowers(user.identityId),
-          followService.countFollowing(user.identityId),
-          likeService.countUserLikes(user.identityId)
+          postService.countUserPosts(currentIdentityId),
+          followService.countFollowers(currentIdentityId),
+          followService.countFollowing(currentIdentityId),
+          likeService.countUserLikes(currentIdentityId)
         ])
-        const newStats = { posts, followers, following, likesGiven: likes }
-        setStats(newStats)
-        // Cache for 2 minutes to reduce query frequency
-        cacheManager.set('sidebar', cacheKey, newStats, { ttl: 120000 })
+        if (!cancelled) {
+          const newStats = { posts, followers, following, likesGiven: likes }
+          setStats(newStats)
+          // Cache for 2 minutes to reduce query frequency
+          cacheManager.set('sidebar', cacheKey, newStats, { ttl: 120000 })
+        }
       } catch (error) {
         console.error('Error fetching user stats:', error)
-        setStats({ posts: 0, followers: 0, following: 0, likesGiven: 0 })
+        if (!cancelled) {
+          setStats({ posts: 0, followers: 0, following: 0, likesGiven: 0 })
+        }
       } finally {
-        setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+        }
       }
     }
 
     fetchStats().catch(err => console.error('Failed to fetch stats:', err))
+
+    return () => {
+      cancelled = true
+    }
   }, [shouldLoad, user?.identityId])
 
   // Fetch global stats only when shouldLoad is true
   useEffect(() => {
     if (!shouldLoad) return
 
+    let cancelled = false
+
     const fetchGlobalStats = async () => {
       // Check cache first to reduce network queries
       const cacheKey = 'global_platform_stats'
       const cached = cacheManager.get<GlobalStats>('sidebar', cacheKey)
       if (cached) {
-        setGlobalStats(cached)
+        if (!cancelled) {
+          setGlobalStats(cached)
+        }
         return
       }
 
-      setGlobalLoading(true)
+      if (!cancelled) {
+        setGlobalLoading(true)
+      }
       try {
         const [totalPosts, activeUsers] = await Promise.all([
           postService.countAllPosts(),
           postService.countUniqueAuthors()
         ])
-        const newGlobalStats = { totalPosts, activeUsers }
-        setGlobalStats(newGlobalStats)
-        // Cache for 5 minutes since global stats change slowly
-        cacheManager.set('sidebar', cacheKey, newGlobalStats, { ttl: 300000 })
+        if (!cancelled) {
+          const newGlobalStats = { totalPosts, activeUsers }
+          setGlobalStats(newGlobalStats)
+          // Cache for 5 minutes since global stats change slowly
+          cacheManager.set('sidebar', cacheKey, newGlobalStats, { ttl: 300000 })
+        }
       } catch (error) {
         console.error('Error fetching global stats:', error)
-        setGlobalStats({ totalPosts: 0, activeUsers: 0 })
+        if (!cancelled) {
+          setGlobalStats({ totalPosts: 0, activeUsers: 0 })
+        }
       } finally {
-        setGlobalLoading(false)
+        if (!cancelled) {
+          setGlobalLoading(false)
+        }
       }
     }
 
     fetchGlobalStats().catch(err => console.error('Failed to fetch global stats:', err))
+
+    return () => {
+      cancelled = true
+    }
   }, [shouldLoad])
 
   return (
@@ -154,12 +187,10 @@ export function FeedStats() {
         Stats
       </h2>
       <div className="px-4 py-3 space-y-2">
-        {!shouldLoad ? (
-          // Initial placeholder before deferred loading starts
-          <StatsPlaceholder rows={user ? 6 : 2} />
-        ) : globalLoading ? (
+        {!shouldLoad || globalLoading || !globalStats ? (
+          // Show placeholder until global stats are loaded
           <StatsPlaceholder rows={2} />
-        ) : globalStats ? (
+        ) : (
           <>
             <div className="flex justify-between text-sm">
               <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
@@ -170,14 +201,13 @@ export function FeedStats() {
               <span className="font-medium">{formatNumber(globalStats.activeUsers)}</span>
             </div>
           </>
-        ) : (
-          <p className="text-sm text-gray-500">No stats available</p>
         )}
         {user && (
           <>
-            {!shouldLoad || loading ? (
+            {!shouldLoad || loading || !stats ? (
+              // Show placeholder until user stats are loaded
               <StatsPlaceholder rows={4} />
-            ) : stats ? (
+            ) : (
               <>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600 dark:text-gray-400">Your Posts</span>
@@ -196,7 +226,7 @@ export function FeedStats() {
                   <span className="font-medium">{formatNumber(stats.likesGiven)}</span>
                 </div>
               </>
-            ) : null}
+            )}
           </>
         )}
       </div>
