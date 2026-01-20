@@ -70,6 +70,7 @@ export class DashPlatformClient {
     quotedPostId?: string
     mediaUrl?: string
     primaryHashtag?: string
+    language?: string
   }) {
     // Get identity ID from instance or auth context
     let identityId = this.identityId
@@ -150,8 +151,8 @@ export class DashPlatformClient {
         postData.primaryHashtag = options.primaryHashtag.replace('#', '')
       }
       
-      // Add language (defaults to 'en' in the contract, but let's be explicit)
-      postData.language = 'en'
+      // Add language (defaults to 'en' if not specified)
+      postData.language = options?.language || 'en'
       
       console.log('Creating post with data:', postData)
       
