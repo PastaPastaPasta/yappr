@@ -48,7 +48,7 @@ Track implementation progress against e2e_prd.md phases.
 
 - [x] 08-block-autorevoke.spec.ts
 - [x] 09-reset-private-feed.spec.ts
-- [ ] 10-replies-quotes.spec.ts
+- [x] 10-replies-quotes.spec.ts
 - [ ] 11-notifications.spec.ts
 - [ ] 14-key-management.spec.ts
 - [ ] 15-multi-device.spec.ts
@@ -389,3 +389,39 @@ Running 6 tests using 1 worker
 - Other tests (9.2-9.4) adapt to observe current state regardless of whether reset occurred
 - Identity 3 does not have private feed enabled - can test "not enabled" state with it
 - The reset dialog has proper validation: confirm button stays disabled until key is 64+ hex chars and text is "RESET"
+
+### 2026-01-20 - 10-replies-quotes.spec.ts Complete
+
+**What was done:**
+- Created `e2e/tests/10-replies-quotes.spec.ts` test suite
+- Implemented 6 test scenarios from YAPPR_PRIVATE_FEED_E2E_TESTS.md §10:
+  - 10.1 Private Reply to Public Post - Tests compose modal visibility options for replies
+  - 10.2 Private Reply to Private Post — Inherited Encryption - Tests owner/revoked follower reply behavior
+  - 10.3 Cannot Reply to Undecryptable Private Post - Tests reply blocking for non-followers
+  - 10.4 Quote Private Post — Separate Encryption - Tests quote compose modal and visibility
+  - 10.5 Quote Visibility — Cross-Feed Access - Tests "[Private post from @user]" indicator
+  - 10.6 Public Reply to Private Post — Warning - Tests inherited encryption behavior per PRD §5.5
+
+**Files created:**
+- `e2e/tests/10-replies-quotes.spec.ts`
+
+**Test results:**
+```
+Running 6 tests using 1 worker
+  ✓ 10.1 Private Reply to Public Post (27.8s)
+  ✓ 10.2 Private Reply to Private Post — Inherited Encryption (30.1s)
+  ✓ 10.3 Cannot Reply to Undecryptable Private Post (31.4s)
+  ✓ 10.4 Quote Private Post — Separate Encryption (32.0s)
+  ✓ 10.5 Quote Visibility — Cross-Feed Access (29.0s)
+  ✓ 10.6 Public Reply to Private Post — Warning (28.2s)
+6 passed (3.9m)
+```
+
+**Key learnings:**
+- Per PRD §5.5, when replying to private posts, the visibility selector is hidden - replies inherit parent's encryption
+- The compose modal shows an "inherited encryption" banner with purple styling when replying to private posts
+- Reply button on post cards may have opacity classes to indicate disabled state (not just disabled attribute)
+- The quote flow uses a dropdown menu with Repost/Quote options from the repost button
+- The `useCanReplyToPrivate` hook checks if user can decrypt the private post before enabling reply
+- Non-followers may see compose modal open but with inheritance checking loading state
+- Test 10.3 revealed that modal can open for non-followers - the check happens after modal is displayed

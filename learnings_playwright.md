@@ -727,3 +727,98 @@ const isValid = confirmText === 'RESET' && encryptionKeyHex.trim().length >= 64;
 - Entering invalid key length shows specific error message
 - The confirm text input uppercases automatically (`onChange` converts to uppercase)
 - Test both validation conditions separately for full coverage
+
+---
+
+### 2026-01-20 - Private Reply Inheritance (PRD §5.5)
+
+**Issue:** Needed to understand how replies to private posts are handled.
+
+**Finding:** Per PRD §5.5, replies to private posts inherit the parent's encryption:
+1. **Visibility selector is hidden** when replying to a private post
+2. **Inherited encryption banner** appears with purple styling: "This reply will be encrypted using the parent thread's encryption"
+3. **Replies use the parent post owner's CEK**, not the replier's own CEK
+4. Any user approved by the parent post owner can decrypt the reply
+
+**Implementation Details:**
+- `compose-modal.tsx` checks `isPrivatePost(replyingTo)` and hides visibility selector
+- `getEncryptionSource()` retrieves the parent's `{ownerId, epoch}` for inherited encryption
+- `createInheritedPrivateReply()` method handles the encrypted reply creation
+- The `useCanReplyToPrivate` hook gates reply access based on decryption capability
+
+**Tips:**
+- When testing replies to private posts, look for the inherited encryption banner, not visibility selector
+- Non-followers can't reply to private posts - the reply button shows tooltip "Can't reply - no access"
+- Owners can always reply to their own private posts
+- The compose modal may still open for non-followers during the access check - wait for loading to complete
+
+---
+
+### 2026-01-20 - Quote vs Reply Encryption Differences (PRD §5.3 vs §5.5)
+
+**Issue:** Needed to understand the difference between quoting and replying to private posts.
+
+**Finding:** The encryption inheritance differs:
+
+**Replies (PRD §5.5):**
+- Reply **inherits** parent's encryption (uses parent owner's CEK)
+- Anyone approved by the parent owner can decrypt the reply
+- Visibility selector is hidden - always encrypted if parent is encrypted
+
+**Quotes (PRD §5.3):**
+- Quote uses **separate** encryption (quoter's own CEK)
+- Quote wrapper is decrypted by quoter's followers
+- Embedded quoted content requires **separate** decryption from the original owner
+- Non-followers of the original owner see "[Private post from @user]" for the quoted portion
+
+**Implementation:**
+- Quotes: `setQuotingPost(enrichedPost)` stores the post reference
+- Quotes have full visibility selector (Public, Private, Private with Teaser)
+- `PrivateQuotedPostContent` component handles separate decryption of quoted posts
+
+**Tips:**
+- Look for the quote preview in compose modal when testing quotes
+- Quoted private posts have their own decryption loading state
+- The "[Private post from @user]" text indicates locked quoted content
+- Test cross-feed access: user A's followers can see A's quote wrapper but not B's quoted content
+
+---
+
+### 2026-01-20 - Reply Button State Detection
+
+**Issue:** Needed to detect if reply button is disabled for private posts.
+
+**Finding:** The reply button uses multiple signals to indicate disabled state:
+1. **Opacity classes**: `opacity-50 cursor-not-allowed` when disabled
+2. **Tooltip**: Shows "Can't reply - no access to this private feed"
+3. **Click behavior**: May still open modal briefly while checking access
+
+**Code from post-card.tsx:**
+```tsx
+<button
+  onClick={(e) => { e.stopPropagation(); handleReply(); }}
+  disabled={!canReplyToPrivate}
+  className={cn(
+    "group flex items-center gap-1 p-2 rounded-full transition-colors",
+    !canReplyToPrivate
+      ? "opacity-50 cursor-not-allowed"
+      : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
+  )}
+>
+```
+
+**Detection in tests:**
+```typescript
+const opacityClass = await replyBtn.getAttribute('class').catch(() => '');
+const hasDisabledOpacity = opacityClass?.includes('opacity-50');
+
+// Hover to see tooltip
+await replyBtn.hover();
+const tooltip = page.getByText(/can.?t reply|no access/i);
+const hasTooltip = await tooltip.first().isVisible({ timeout: 3000 });
+```
+
+**Tips:**
+- Check opacity classes as they're more reliable than disabled attribute
+- Tooltip only appears on hover - add explicit hover before checking
+- The `useCanReplyToPrivate` hook returns `{canReply, reason}` - the reason is shown in tooltip
