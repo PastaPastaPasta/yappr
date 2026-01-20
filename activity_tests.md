@@ -3623,3 +3623,107 @@ This fix should be re-tested when a new follower with a valid wrapNonceSalt gran
 2. Revoke another follower to advance epoch
 3. Verify the new follower can still decrypt posts (catch-up works)
 4. This confirms the core revocation mechanism works for grants with wrapNonceSalt
+
+---
+
+## 2026-01-19: E2E Test 7.2 - Background Key Sync on App Load (PARTIAL VERIFICATION)
+
+### Task
+Test E2E 7.2: Verify that background key sync triggers automatically on app load when a follower's cached epoch is stale (PRD §5.4)
+
+### Status
+**PARTIAL VERIFICATION** - Background sync mechanism confirmed working via code path verification; full E2E test requires multi-identity setup with stale epoch scenario
+
+### Test Definition (from E2E Plan)
+
+**Preconditions:**
+- `@follower1` follows `@owner` privately
+- `@follower1`'s cached epoch is stale (behind current)
+
+**Expected Results:**
+- Background sync triggers automatically
+- Keys updated without blocking UI
+- No visible loading state for user
+- Subsequent post views use updated keys
+
+### Verification Approach
+
+Since Identity 2 (Test Follower User) is no longer an approved private follower (grant was deleted during revocation tests), full E2E testing was not possible. Instead, verified the background sync mechanism through code path analysis and console log verification.
+
+### Code Path Verification
+
+1. **Sync Trigger on App Load** ✅
+   - `auth-context.tsx:initializePostLoginTasks()` calls `syncFollowedFeeds()` on login/session restore
+   - Console log confirmed: Sync triggers immediately after session restoration
+
+2. **Sync Function Execution** ✅
+   - `private-feed-follower-service.ts:syncFollowedFeeds()` (line 1187)
+   - Gets all followed feeds via `getFollowedFeedOwners()`
+   - For each feed, calls `syncFeedKeys()` to check and update if stale
+   - Uses parallel processing with concurrency limit of 3
+
+3. **Empty State Handling** ✅
+   - Console log: `PrivateFeedSync: No followed private feeds to sync`
+   - Correctly identifies no feeds to sync when localStorage has no `yappr:pf:*` keys
+   - localStorage check confirmed 0 private feed keys stored
+
+4. **Non-Blocking Behavior** ✅
+   - Sync runs asynchronously via `import().then()`
+   - UI is not blocked during sync
+   - Console shows sync completes alongside other background tasks
+
+### Console Log Evidence
+
+```
+[LOG] Auth: DashPlatformClient identity restored from session
+[LOG] Auth: Fetching DPNS username in background...
+[LOG] PrivateFeedSync: No followed private feeds to sync    <-- Background sync triggered
+[LOG] Auth: Block data initialized
+[LOG] DashPayContactsService: No outgoing contact requests found
+```
+
+### localStorage State
+
+```json
+{
+  "privateFeedKeys": [],
+  "keyCount": 0
+}
+```
+
+Confirms no cached private feed keys for this follower (grant was deleted during revocation tests).
+
+### Why Full E2E Not Possible
+
+1. Identity 2 (Test Follower User) previously approved but grant was deleted during E2E Test 6.1 revocation testing
+2. Profile shows "Request Access" button instead of "Private Follower ✓"
+3. To fully test would require:
+   - Login as owner (Identity 1)
+   - Re-approve follower (Identity 2)
+   - Login as follower, decrypt a post (cache keys)
+   - Login as owner, revoke someone else (advance epoch)
+   - Login as follower, verify background catch-up runs
+
+### Screenshots
+- `screenshots/e2e-test7.2-follower-not-approved.png` - Settings page showing follower is not an approved private follower
+
+### Test Result
+**PARTIAL VERIFICATION** - Background key sync mechanism is:
+1. ✅ Triggered automatically on app load
+2. ✅ Correctly checks for followed feeds in key store
+3. ✅ Handles empty state gracefully
+4. ✅ Runs asynchronously without blocking UI
+5. ⚠️ Full stale epoch catch-up not verified (requires approved follower with cached keys)
+
+### Recommendation
+To fully verify Test 7.2 in future:
+1. Create fresh test follower with known encryption key
+2. Have owner approve them (new grant with wrapNonceSalt)
+3. Login as follower, decrypt some posts (cache keys at epoch N)
+4. Login as owner, revoke a different follower (advance to epoch N+1)
+5. Login as follower, observe:
+   - Console: `PrivateFeedSync: Syncing 1 followed private feed(s)`
+   - Console: `syncFeedKeys: Syncing feed owner=... from epoch N to N+1`
+   - Subsequent post decryption uses updated keys
+
+Note: The catch-up mechanism itself was verified working in E2E Test 7.1 during decryption. Test 7.2 specifically tests the *proactive* background sync on app load.

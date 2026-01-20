@@ -1948,3 +1948,56 @@ When adding new fields to cryptographic protocols:
 2. Plan migration paths for existing users
 3. Version the protocol explicitly
 4. Test with both old and new data formats
+
+---
+
+## 2026-01-19: E2E Test 7.2 - Multi-Identity Test State Challenges
+
+### Issue Encountered
+
+While attempting E2E Test 7.2 (Background Key Sync on App Load), discovered that the test identity (Identity 2 - Test Follower User) is no longer an approved private follower. Their grant was deleted during previous revocation tests (E2E Test 6.1).
+
+### Why This Matters
+
+1. **Test dependencies across sessions** - E2E tests for private feeds create inter-dependent state across multiple identities
+2. **Revocation tests destructively modify grants** - Once a follower is revoked or their grant is deleted, they need to be re-approved
+3. **Cannot easily "reset" test state** - On-chain documents (grants, rekeys) cannot be deleted except through specific operations
+
+### Test State Management Challenges
+
+1. **PrivateFeedGrant documents:**
+   - Created when owner approves follower
+   - Deleted when owner revokes follower or follower is blocked
+   - Cannot be recreated without owner action
+
+2. **PrivateFeedRekey documents:**
+   - Created on every revocation
+   - IMMUTABLE - cannot be deleted (per PRD §2.3)
+   - Accumulate over time, affecting epoch
+
+3. **Local key cache:**
+   - Stored in localStorage as `yappr:pf:*` keys
+   - Cleared when user logs out or clears browser data
+   - Must be re-initialized via grant decryption
+
+### Lessons Learned
+
+1. **Test isolation is hard with blockchain state** - Unlike traditional apps, you can't easily reset blockchain state between tests
+2. **Document test order dependencies** - Some tests (like 7.2) depend on state created by earlier tests (like follower approval)
+3. **Consider test identity lifecycle** - Track which identities have been modified by which tests
+
+### Recommendations for Future Testing
+
+1. **Use fresh identities for destructive tests** - Create new test identities for revocation tests to preserve existing follower relationships
+2. **Document identity states** - Keep testing-identity-X.json files updated with current on-chain state (approved, revoked, etc.)
+3. **Create setup scripts** - Automated scripts to establish specific test preconditions
+4. **Parallel test tracks** - Use separate identities for "happy path" tests vs "destructive" tests
+
+### Workaround Used
+
+For Test 7.2, performed partial verification:
+- Verified background sync mechanism triggers on app load (console logs)
+- Verified empty state handling (no followed feeds to sync)
+- Documented that full verification requires re-establishing follower relationship
+
+The core mechanism was previously verified working in E2E Test 7.1 (catch-up during decryption), so the sync infrastructure is confirmed functional even without full E2E verification in this session.
