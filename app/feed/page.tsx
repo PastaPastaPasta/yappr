@@ -442,13 +442,18 @@ function FeedPage() {
 
           console.log(`Feed: First batch has ${firstBatchNonReplies.length} non-reply posts`)
 
-          // Enrich first batch with reposts and quotes
-          await enrichPostsWithRepostsAndQuotes(firstBatchPosts)
-
-          // Set initial posts immediately (non-blocking display)
+          // Set initial posts IMMEDIATELY (before any enrichment)
           posts = firstBatchPosts
           forYouNextCursor = firstBatchCursor
           forYouHasMore = firstBatchRaw.length === 20
+
+          // Enrich first batch with reposts and quotes in background (non-blocking)
+          enrichPostsWithRepostsAndQuotes(firstBatchPosts).then(() => {
+            // Force a re-render to show repost/quote data
+            setData((current: FeedItem[] | null) => current ? [...current] : null)
+          }).catch(err => {
+            console.error('Feed: Error enriching first batch:', err)
+          })
 
           // If we need more posts, fetch them in background (non-blocking)
           if (firstBatchNonReplies.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
@@ -479,11 +484,17 @@ function FeedPage() {
                   break
                 }
 
-                // Transform and enrich background batch
+                // Transform background batch (enrich in background, don't block)
                 const bgPosts = bgRawPosts.map(transformRawPost)
-                await enrichPostsWithRepostsAndQuotes(bgPosts)
-
                 const bgNonReplies = bgPosts.filter((p: any) => !p.replyToId)
+
+                // Enrich in background (non-blocking)
+                enrichPostsWithRepostsAndQuotes(bgPosts).then(() => {
+                  // Force re-render to show repost/quote data
+                  setData((current: FeedItem[] | null) => current ? [...current] : null)
+                }).catch(err => {
+                  console.error('Feed: Error enriching background batch:', err)
+                })
                 allNonReplyCount += bgNonReplies.length
 
                 // Update cursor
