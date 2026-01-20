@@ -1,11 +1,25 @@
 import { Page, expect } from '@playwright/test';
 
 /**
- * Navigate to the home/feed page
+ * Navigate to the home/feed page and wait for it to fully load
  */
 export async function goToHome(page: Page): Promise<void> {
-  await page.goto('/');
-  await page.waitForLoadState('networkidle');
+  // Navigate to /feed explicitly (/ may redirect to other places)
+  await page.goto('/feed');
+  await page.waitForLoadState('domcontentloaded');
+
+  // Wait for feed page to be interactive - look for the Home header first
+  // This appears before the feed content loads
+  const homeHeader = page.getByRole('heading', { name: 'Home' });
+  await expect(homeHeader).toBeVisible({ timeout: 30000 });
+
+  // Wait for the compose area to be ready (indicates user is logged in and feed is loading)
+  // The "What's happening?" button indicates the page is ready for interaction
+  const composeArea = page.getByRole('button', { name: /what.?s happening/i });
+  await expect(composeArea).toBeVisible({ timeout: 60000 });
+
+  // Give a moment for any dynamic content to settle
+  await page.waitForTimeout(2000);
 }
 
 /**
@@ -68,27 +82,30 @@ export async function goToPost(page: Page, postId: string): Promise<void> {
  * Open the compose modal
  */
 export async function openComposeModal(page: Page): Promise<void> {
-  // Look for the compose button (usually a floating action button or in the header)
-  const composeBtn = page.locator('button:has-text("Post")').or(
-    page.locator('button:has-text("Compose")')
-  ).or(page.locator('[aria-label="Compose"]'))
-    .or(page.locator('button').filter({ has: page.locator('svg') }).first());
+  // Primary: Click the "What's happening?" button in the feed composer area
+  const whatsHappeningBtn = page.locator('button:has-text("What\'s happening")');
 
-  // Try the new post button in sidebar or header
-  const newPostBtn = page.locator('a[href*="compose"]').or(
-    page.locator('button').filter({ hasText: /new post/i })
-  );
+  // Fallback: Look for compose buttons in sidebar or other locations
+  const sidebarPost = page.locator('button:has-text("Post")');
+  const composeBtn = page.locator('button:has-text("Compose")');
+  const composeAriaLabel = page.locator('[aria-label="Compose"]');
 
-  if (await newPostBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await newPostBtn.click();
+  // Try the "What's happening?" button first (most reliable on feed page)
+  if (await whatsHappeningBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await whatsHappeningBtn.click();
+  } else if (await sidebarPost.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await sidebarPost.click();
+  } else if (await composeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await composeBtn.click();
+  } else if (await composeAriaLabel.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await composeAriaLabel.click();
   } else {
-    // Click on compose in navigation or FAB
-    await composeBtn.first().click();
+    throw new Error('Could not find compose button to open modal');
   }
 
   // Wait for modal to appear
-  await expect(page.locator('[role="dialog"]').or(page.locator('.compose-modal'))).toBeVisible({
-    timeout: 5000,
+  await expect(page.locator('[role="dialog"]')).toBeVisible({
+    timeout: 10000,
   });
 }
 

@@ -214,3 +214,54 @@ saveIdentity(2, updatedIdentity);
 - Tests that modify on-chain state should be idempotent (skip if already done)
 - Track state changes in the identity JSON files for subsequent runs
 - Consider using fresh identities from faucet for truly clean state
+
+---
+
+### 2026-01-20 - Profile Page Button States
+
+**Issue:** Request access tests needed to handle multiple possible states on the profile page.
+
+**Root Cause:** The profile page shows different buttons based on the relationship between viewer and profile owner:
+- "Follow" - when not following
+- "Following" or "Unfollow" - when following
+- "Request Access" - when following and owner has private feed, viewer hasn't requested
+- "Pending" - when request is pending
+- "Revoked" - when access was revoked (cannot re-request)
+- Private follower indicator when approved
+
+**Resolution:** Tests check for all possible states and skip appropriately:
+
+```typescript
+const isPending = await pendingBtn.isVisible({ timeout: 2000 }).catch(() => false);
+const isApproved = await approvedIndicator.isVisible({ timeout: 2000 }).catch(() => false);
+const isRevoked = await revokedBtn.isVisible({ timeout: 2000 }).catch(() => false);
+const canRequest = await requestBtn.isVisible({ timeout: 2000 }).catch(() => false);
+
+if (isApproved) {
+  test.skip(true, 'Follower already has approved access from previous run');
+  return;
+}
+```
+
+**Tips:**
+- Profile buttons also include follower/following counts (e.g., "0 Following", "4 Followers")
+- Use `.filter({ hasText: /pattern/i })` for case-insensitive matching
+- Handle both fresh and stale state gracefully with descriptive skip messages
+
+---
+
+### 2026-01-20 - Transient Network Failures
+
+**Issue:** Test 3.2 failed intermittently during identity lookup with 90-second timeout.
+
+**Root Cause:** Blockchain DAPI requests can occasionally fail or take longer than expected due to network conditions or node availability.
+
+**Resolution:** The existing retry logic in `auth.helpers.ts` handles most cases. For truly flaky tests, consider:
+1. Re-running individual tests to verify they pass
+2. Using Playwright's built-in retry configuration
+3. Increasing timeouts for network-heavy operations
+
+**Tips:**
+- Single test failures during identity lookup are often transient
+- If a test fails once but passes on retry, it's likely network-related
+- The 90s timeout with progressive intervals (1s, 2s, 5s, 10s) is sufficient for most cases
