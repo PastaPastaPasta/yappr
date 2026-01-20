@@ -293,15 +293,12 @@ function FeedPage() {
         }
       } else {
         // For You feed - get all posts and reposts
-        // Auto-paginate to ensure we have enough non-reply posts after filtering
-        const MIN_NON_REPLY_POSTS = 20 // Minimum posts to show before requiring "Load More"
+        // NON-BLOCKING: Show first batch immediately, fetch more in background
+        const MIN_NON_REPLY_POSTS = 20 // Target posts to show before requiring "Load More"
         const MAX_FETCH_ITERATIONS = 5 // Safety limit to prevent infinite loops
         const dashClient = getDashPlatformClient()
 
-        let allRawPosts: any[] = []
-        let currentStartAfter = pagination?.startAfter
-        let fetchIteration = 0
-        let nonReplyCount = 0
+        const currentStartAfter = pagination?.startAfter
 
         // Helper to transform a raw document to our post format
         const transformRawPost = (doc: any) => {
@@ -348,139 +345,203 @@ function FeedPage() {
           }
         }
 
-        // Auto-paginate until we have enough non-reply posts or exhaust data
-        let lastBatchSize = 0
-        let exhaustedPosts = false
+        // Helper to enrich posts with reposts and quoted posts data
+        const enrichPostsWithRepostsAndQuotes = async (postsToEnrich: any[]) => {
+          // Fetch reposts for these posts
+          try {
+            const { repostService } = await import('@/lib/services/repost-service')
+            const { unifiedProfileService } = await import('@/lib/services')
 
-        do {
-          const queryOptions: any = {
-            limit: 20,
-            forceRefresh: forceRefresh && fetchIteration === 0, // Only force refresh on first fetch
-            startAfter: currentStartAfter
-          }
+            const postIds = postsToEnrich.map((p: any) => p.id)
+            if (postIds.length > 0) {
+              const reposts = await repostService.getRepostsByPostIds(postIds)
 
-          console.log('Feed: Loading posts', currentStartAfter ? `starting after ${currentStartAfter}` : '', `(iteration ${fetchIteration + 1})`)
-          const rawPosts = await dashClient.queryPosts(queryOptions)
-          lastBatchSize = rawPosts.length
-
-          if (rawPosts.length === 0) {
-            console.log('Feed: No more posts available')
-            exhaustedPosts = true
-            break
-          }
-
-          allRawPosts = [...allRawPosts, ...rawPosts]
-
-          // Count non-reply posts so far
-          nonReplyCount = allRawPosts.filter((doc: any) => {
-            const data = doc.data || doc
-            return !(data.replyToPostId || doc.replyToPostId)
-          }).length
-
-          // Update pagination cursor for next iteration
-          const lastPost = rawPosts[rawPosts.length - 1]
-          currentStartAfter = lastPost.$id || lastPost.id
-
-          fetchIteration++
-
-          // Continue if we don't have enough non-reply posts and haven't hit safety limit
-          if (nonReplyCount < MIN_NON_REPLY_POSTS && fetchIteration < MAX_FETCH_ITERATIONS) {
-            console.log(`Feed: Only ${nonReplyCount} non-reply posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
-          }
-        } while (nonReplyCount < MIN_NON_REPLY_POSTS && fetchIteration < MAX_FETCH_ITERATIONS)
-
-        console.log(`Feed: Fetched ${allRawPosts.length} total posts (${nonReplyCount} non-replies) in ${fetchIteration} iteration(s)`)
-
-        // Store pagination state for For You feed
-        forYouNextCursor = currentStartAfter || null
-        // Has more if we didn't exhaust posts and the last batch was full
-        forYouHasMore = !exhaustedPosts && lastBatchSize === 20
-
-        // Transform all posts
-        posts = allRawPosts.map(transformRawPost)
-
-        // Fetch recent reposts and merge into timeline
-        try {
-          const { repostService } = await import('@/lib/services/repost-service')
-          const { unifiedProfileService } = await import('@/lib/services')
-
-          // Get recent reposts (we query all reposts without specific user filter for "For You")
-          // This is a simplified approach - ideally we'd have a global reposts index
-          // For now, we'll get reposts for the posts we already have
-          const postIds = posts.map((p: any) => p.id)
-          if (postIds.length > 0) {
-            const reposts = await repostService.getRepostsByPostIds(postIds)
-
-            // Group reposts by postId and get the most recent one for display
-            const repostMap = new Map<string, any>()
-            for (const repost of reposts) {
-              const existing = repostMap.get(repost.postId)
-              if (!existing || repost.$createdAt > existing.$createdAt) {
-                repostMap.set(repost.postId, repost)
-              }
-            }
-
-            // Get unique reposter IDs and fetch their profiles
-            const reposterIds = Array.from(new Set(Array.from(repostMap.values()).map(r => r.$ownerId)))
-            const reposterProfiles = new Map<string, any>()
-            await Promise.all(reposterIds.map(async (id) => {
-              try {
-                const profile = await unifiedProfileService.getProfileWithUsername(id)
-                if (profile) {
-                  reposterProfiles.set(id, profile)
+              const repostMap = new Map<string, any>()
+              for (const repost of reposts) {
+                const existing = repostMap.get(repost.postId)
+                if (!existing || repost.$createdAt > existing.$createdAt) {
+                  repostMap.set(repost.postId, repost)
                 }
-              } catch (e) {
-                // Ignore profile fetch errors
               }
-            }))
 
-            // Update posts with repost info for display
-            for (const post of posts) {
-              const repost = repostMap.get(post.id)
-              if (repost && repost.$ownerId !== post.author.id) {
-                // Create a reposted version of this post
-                const repostTimestamp = new Date(repost.$createdAt)
-                // Only show as reposted if it's newer than the original
-                if (repostTimestamp > post.createdAt) {
-                  const reposterProfile = reposterProfiles.get(repost.$ownerId)
-                  post.repostedBy = {
-                    id: repost.$ownerId,
-                    // Empty string shows "Someone reposted" instead of "User XKSFJL reposted"
-                    displayName: reposterProfile?.displayName || '',
-                    username: reposterProfile?.username
+              const reposterIds = Array.from(new Set(Array.from(repostMap.values()).map(r => r.$ownerId)))
+              const reposterProfiles = new Map<string, any>()
+              await Promise.all(reposterIds.map(async (id) => {
+                try {
+                  const profile = await unifiedProfileService.getProfileWithUsername(id)
+                  if (profile) {
+                    reposterProfiles.set(id, profile)
                   }
-                  post.repostTimestamp = repostTimestamp
+                } catch (e) {
+                  // Ignore profile fetch errors
+                }
+              }))
+
+              for (const post of postsToEnrich) {
+                const repost = repostMap.get(post.id)
+                if (repost && repost.$ownerId !== post.author.id) {
+                  const repostTimestamp = new Date(repost.$createdAt)
+                  if (repostTimestamp > post.createdAt) {
+                    const reposterProfile = reposterProfiles.get(repost.$ownerId)
+                    post.repostedBy = {
+                      id: repost.$ownerId,
+                      displayName: reposterProfile?.displayName || '',
+                      username: reposterProfile?.username
+                    }
+                    post.repostTimestamp = repostTimestamp
+                  }
                 }
               }
             }
+          } catch (repostError) {
+            console.error('Feed: Error fetching reposts:', repostError)
           }
-        } catch (repostError) {
-          console.error('Feed: Error fetching reposts:', repostError)
-          // Continue without reposts - non-critical
-        }
 
-        // Fetch quoted posts and attach them to posts
-        try {
-          const { postService } = await import('@/lib/services')
-          const quotedPostIds = posts
-            .filter((p: any) => p.quotedPostId)
-            .map((p: any) => p.quotedPostId)
+          // Fetch quoted posts
+          try {
+            const { postService } = await import('@/lib/services')
+            const quotedPostIds = postsToEnrich
+              .filter((p: any) => p.quotedPostId)
+              .map((p: any) => p.quotedPostId)
 
-          if (quotedPostIds.length > 0) {
-            const quotedPosts = await postService.getPostsByIds(quotedPostIds)
-            const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
+            if (quotedPostIds.length > 0) {
+              const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+              const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
-            // Attach quoted posts to their parent posts
-            for (const post of posts) {
-              if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
-                post.quotedPost = quotedPostMap.get(post.quotedPostId)
+              for (const post of postsToEnrich) {
+                if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
+                  post.quotedPost = quotedPostMap.get(post.quotedPostId)
+                }
               }
             }
+          } catch (quoteError) {
+            console.error('Feed: Error fetching quoted posts:', quoteError)
           }
-        } catch (quoteError) {
-          console.error('Feed: Error fetching quoted posts:', quoteError)
-          // Continue without quoted posts - non-critical
+
+          return postsToEnrich
         }
+
+        // FIRST FETCH: Get initial batch and display immediately
+        console.log('Feed: Loading posts', currentStartAfter ? `starting after ${currentStartAfter}` : '', '(iteration 1)')
+        const firstBatchRaw = await dashClient.queryPosts({
+          limit: 20,
+          forceRefresh,
+          startAfter: currentStartAfter
+        })
+
+        if (firstBatchRaw.length === 0) {
+          console.log('Feed: No posts available')
+          posts = []
+          forYouNextCursor = null
+          forYouHasMore = false
+        } else {
+          // Transform first batch
+          const firstBatchPosts = firstBatchRaw.map(transformRawPost)
+          const firstBatchNonReplies = firstBatchPosts.filter((p: any) => !p.replyToId)
+          const firstBatchCursor = firstBatchRaw[firstBatchRaw.length - 1].$id || firstBatchRaw[firstBatchRaw.length - 1].id
+
+          console.log(`Feed: First batch has ${firstBatchNonReplies.length} non-reply posts`)
+
+          // Enrich first batch with reposts and quotes
+          await enrichPostsWithRepostsAndQuotes(firstBatchPosts)
+
+          // Set initial posts immediately (non-blocking display)
+          posts = firstBatchPosts
+          forYouNextCursor = firstBatchCursor
+          forYouHasMore = firstBatchRaw.length === 20
+
+          // If we need more posts, fetch them in background (non-blocking)
+          if (firstBatchNonReplies.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
+            console.log(`Feed: Only ${firstBatchNonReplies.length} non-reply posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`)
+
+            // Start background fetch (don't await - let it run async)
+            const fetchMoreInBackground = async () => {
+              let bgCurrentStartAfter = firstBatchCursor
+              let bgFetchIteration = 1 // Already did iteration 1
+              let allNonReplyCount = firstBatchNonReplies.length
+              let bgLastBatchSize = firstBatchRaw.length
+
+              while (allNonReplyCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS && bgLastBatchSize === 20) {
+                bgFetchIteration++
+                console.log(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`)
+
+                const bgRawPosts = await dashClient.queryPosts({
+                  limit: 20,
+                  forceRefresh: false,
+                  startAfter: bgCurrentStartAfter
+                })
+
+                bgLastBatchSize = bgRawPosts.length
+
+                if (bgRawPosts.length === 0) {
+                  console.log('Feed: No more posts available (background)')
+                  setHasMore(false)
+                  break
+                }
+
+                // Transform and enrich background batch
+                const bgPosts = bgRawPosts.map(transformRawPost)
+                await enrichPostsWithRepostsAndQuotes(bgPosts)
+
+                const bgNonReplies = bgPosts.filter((p: any) => !p.replyToId)
+                allNonReplyCount += bgNonReplies.length
+
+                // Update cursor
+                const lastPost = bgRawPosts[bgRawPosts.length - 1]
+                bgCurrentStartAfter = lastPost.$id || lastPost.id
+
+                // Append to existing posts (progressive update)
+                setData((currentItems: FeedItem[] | null) => {
+                  if (!currentItems) return bgPosts
+                  const existingIds = new Set(currentItems.map((item: any) =>
+                    isFeedReplyContext(item) ? item.reply.id : item.id
+                  ))
+                  const newItems = bgPosts.filter((p: any) => !existingIds.has(p.id))
+
+                  // Sort merged items by timestamp
+                  const allItems = [...currentItems, ...newItems].sort((a: FeedItem, b: FeedItem) => {
+                    const getTime = (item: FeedItem): number => {
+                      if (isFeedReplyContext(item)) {
+                        return item.reply.createdAt instanceof Date
+                          ? item.reply.createdAt.getTime()
+                          : new Date(item.reply.createdAt).getTime()
+                      }
+                      const post = item as any
+                      if (post.repostTimestamp instanceof Date) return post.repostTimestamp.getTime()
+                      if (post.createdAt instanceof Date) return post.createdAt.getTime()
+                      return new Date(post.createdAt).getTime()
+                    }
+                    return getTime(b) - getTime(a)
+                  })
+
+                  console.log(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`)
+                  return allItems
+                })
+
+                // Enrich new posts progressively
+                enrichProgressively(bgPosts)
+
+                // Update pagination cursor
+                setLastPostId(bgCurrentStartAfter)
+
+                if (allNonReplyCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
+                  console.log(`Feed: Only ${allNonReplyCount} non-reply posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
+                }
+              }
+
+              // Update has more based on final state
+              setHasMore(bgLastBatchSize === 20)
+              console.log(`Feed: Background fetch complete. Total non-replies: ${allNonReplyCount}`)
+            }
+
+            // Fire and forget - don't block initial render
+            fetchMoreInBackground().catch(err => {
+              console.error('Feed: Background fetch error:', err)
+            })
+          }
+        }
+
+        // Note: Reposts and quoted posts are now enriched via enrichPostsWithRepostsAndQuotes helper
       }
 
       // For Following tab: Build reply context items for replies from followed users
