@@ -57,7 +57,7 @@ Track implementation progress against e2e_prd.md phases.
 
 ## Phase 4: P2 Test Suites
 
-- [ ] 12-profile-indicators.spec.ts
+- [x] 12-profile-indicators.spec.ts
 - [ ] 13-dashboard.spec.ts
 - [ ] 16-hashtags-search.spec.ts
 - [ ] 17-error-scenarios.spec.ts
@@ -525,3 +525,37 @@ Running 3 tests using 1 worker
 - Both devices achieve eventual consistency through on-chain state, not explicit sync protocols
 - Dashboard becomes visible after recovery without explicit user-facing sync indicators
 - Cross-device state is consistent because both devices read from the same blockchain state
+
+### 2026-01-20 - 12-profile-indicators.spec.ts Complete
+
+**What was done:**
+- Created `e2e/tests/12-profile-indicators.spec.ts` test suite
+- Implemented 5 test scenarios from YAPPR_PRIVATE_FEED_E2E_TESTS.md §12:
+  - 12.1 Private Feed Badge on Profile - Tests that "Private Feed" badge is visible to all users
+  - 12.2 Private Follower Indicator - Tests "Private Follower" badge for approved users
+  - 12.3 Private Post Count Visibility - Tests that post counts are visible to everyone
+  - Bonus: Owner sees their own Private Feed badge - Verifies owner can see their badge
+  - Bonus: Access Button States - Tests different access button states on profiles
+
+**Files created:**
+- `e2e/tests/12-profile-indicators.spec.ts`
+
+**Test results:**
+```
+Running 5 tests using 1 worker
+  ✓ 12.1 Private Feed Badge on Profile (32.3s)
+  ✓ 12.2 Private Follower Indicator (28.9s)
+  ✓ 12.3 Private Post Count Visibility (29.0s)
+  ✓ Bonus: Owner sees their own Private Feed badge (27.3s)
+  ✓ Bonus: Access Button States (29.3s)
+5 passed (2.6m)
+```
+
+**Key learnings:**
+- The "Private Feed" badge is in the profile header using a `span` element with lock icon
+- The badge uses class `bg-gray-100 dark:bg-gray-800 rounded-full` styling
+- "Private Follower" badge uses green styling (`text-green-600 bg-green-100`) with checkmark
+- Both badges are visible in the username/badges row after the display name
+- Access button states are handled by `PrivateFeedAccessButton` component
+- Revoked users may still see "Private Follower" badge due to cached UI state (potential minor bug)
+- The generic post count ("X posts") is always visible in the profile header

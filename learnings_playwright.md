@@ -1107,3 +1107,89 @@ const dashboardReady = await page.getByText(/your private feed/i).isVisible();
 - Don't fail tests because sync indicators aren't visible
 - Verify recovery by checking that protected operations work
 - Log intermediate states for debugging, but don't assert on them
+
+---
+
+### 2026-01-20 - Profile Badge Selectors
+
+**Issue:** Needed to locate the Private Feed and Private Follower badges on profile pages.
+
+**Finding:** The profile page (`app/user/page.tsx`) displays two types of badges:
+
+1. **Private Feed Badge** (lines 1114-1133):
+   - Visible to ALL viewers when profile owner has private feed enabled
+   - Uses `span` with class `bg-gray-100 dark:bg-gray-800 rounded-full`
+   - Contains lock icon (`LockClosedIcon`) and text "Private Feed"
+   - Tooltip: "This user has a private feed. Follow them to request access."
+
+2. **Private Follower Badge** (lines 1135-1154):
+   - Only visible when viewer has approved access to the owner's private feed
+   - Uses `span` with class `text-green-600 dark:text-green-400 bg-green-100`
+   - Contains checkmark icon (`CheckIcon`) and text "Private Follower"
+   - Tooltip: "You have access to this user's private feed"
+
+**Selectors:**
+```typescript
+// Private Feed badge - visible to everyone
+const privateFeedBadge = page.locator('span').filter({
+  hasText: /^Private Feed$/
+});
+
+// Private Follower badge - visible only to approved followers
+const privateFollowerBadge = page.locator('span').filter({
+  hasText: /Private Follower/i
+});
+```
+
+**Tips:**
+- Both badges appear in the same flex row below the display name
+- Check `hasPrivateFeed` state for Private Feed badge visibility
+- Check `isPrivateFollower` state for Private Follower badge visibility
+- Revoked users may briefly show cached badge state before UI updates
+
+---
+
+### 2026-01-20 - Access Button Component States
+
+**Finding:** The `PrivateFeedAccessButton` component (`components/profile/private-feed-access-button.tsx`) has multiple states:
+
+| State | UI Display | Conditions |
+|-------|-----------|------------|
+| `loading` | Gray skeleton | Initial load |
+| `no-private-feed` | Hidden | Owner has no private feed OR user not following |
+| `none` | "Request Access" button | Can request, hasn't requested yet |
+| `pending` | "Pending..." button (amber) | Request submitted, awaiting approval |
+| `approved` | "Private" + checkmark (green) | Has approved access |
+| `approved-no-keys` | "Private" + checkmark (blue) | Approved but needs encryption key |
+| `revoked` | "Revoked" indicator (gray) | Access was revoked |
+
+**Selectors:**
+```typescript
+// Request Access button
+const requestAccessBtn = page.locator('button').filter({
+  hasText: /Request Access/i
+});
+
+// Pending state
+const pendingBtn = page.locator('button').filter({
+  hasText: /Pending/i
+});
+
+// Approved indicator (div, not button)
+const approvedIndicator = page.locator('div').filter({
+  hasText: /Private/
+}).filter({
+  has: page.locator('svg')
+});
+
+// Revoked indicator (div, not button)
+const revokedIndicator = page.locator('div').filter({
+  hasText: /^Revoked$/
+});
+```
+
+**Tips:**
+- The approved and revoked states are `div` elements, not buttons
+- The pending button is clickable to show cancel option
+- Button only appears when user is following the profile owner
+- Loading state shows a pulsing gray skeleton
