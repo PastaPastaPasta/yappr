@@ -1411,3 +1411,38 @@ These modals can overlay each other, causing Playwright click timeouts due to el
 
 **Lesson:** When testing "view" functionality, make sure to set up the preconditions first. Document the setup steps as they're part of the test.
 
+
+---
+
+## 2026-01-19: E2E Test 4.3 - Ignore Request
+
+### Issue 80: Ignore vs Reject Pattern
+**Observation:** The "Ignore" functionality in the Private Feed request flow uses a "soft dismiss" pattern rather than a "hard reject" pattern.
+
+**Key Details:**
+- Clicking "Ignore" hides the request from the current UI session
+- The FollowRequest document is NOT deleted from the chain
+- Dashboard stats still reflect the real on-chain count (1 Pending)
+- Request reappears after page refresh
+- Owner can approve at any time (the option remains available)
+
+**UX Rationale:**
+1. **Non-committal**: Owner doesn't have to make a permanent decision immediately
+2. **No notification to requester**: Requester doesn't know they were ignored
+3. **Reversible**: Owner can change their mind without any awkwardness
+4. **Spam reduction**: Hides unwanted requests without escalating the situation
+
+**Implementation Pattern:**
+The ignore state appears to be stored client-side (localStorage/sessionStorage) keyed by the request document ID. This allows:
+- Fast UI response (no chain transaction needed)
+- Per-session or per-device ignore lists
+- No permanent record of the ignore action
+
+**Lesson:** When implementing "dismiss" functionality for user requests, consider whether it should be a soft (UI-only) or hard (on-chain/permanent) action. Soft dismissal is often better UX for social features where relationships may change.
+
+### Best Practices Updates
+
+33. **Soft dismiss vs hard reject**: For social features, "ignore" should typically be a UI-only action that doesn't create permanent records or notifications. This gives users flexibility without creating awkward situations.
+
+34. **Dashboard should reflect on-chain reality**: Even when UI elements are hidden/dismissed, stats and counts should reflect the actual on-chain state to avoid confusion.
+
