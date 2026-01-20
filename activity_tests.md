@@ -2854,3 +2854,75 @@ The condition `!replyingTo` prevents the visibility selector from appearing for 
 - [ ] E2E Test 10.1: Private Reply to Public Post (after BUG-016 is fixed)
 
 ---
+
+## 2026-01-19: BUG-016 Fix - Visibility Selector for Replies to Public Posts
+
+### Task
+Fix BUG-016: Visibility selector hidden when replying - cannot create private replies to public posts
+
+### Status
+**FIXED** - Visibility selector now shows when replying to PUBLIC posts, hidden when replying to PRIVATE posts
+
+### Root Cause Analysis
+In `components/compose/compose-modal.tsx` line 1051, the condition was:
+```typescript
+{!replyingTo && hasPrivateFeed && (
+  <VisibilitySelector ...
+```
+
+This condition `!replyingTo` hid the visibility selector for ALL replies, regardless of whether the parent post was public or private. Per PRD §5.5, private replies to public posts ARE allowed - the user should be able to choose visibility when replying to a public post.
+
+### Solution Applied
+Changed the condition from:
+```typescript
+{!replyingTo && hasPrivateFeed && (
+```
+
+To:
+```typescript
+{!(replyingTo && isPrivatePost(replyingTo)) && hasPrivateFeed && (
+```
+
+This logic means:
+- **Show visibility selector when:** Not replying at all, OR replying to a PUBLIC post
+- **Hide visibility selector when:** Replying to a PRIVATE post (inherits parent encryption per PRD §5.5)
+
+### Verification
+
+**Test 1: Reply to PUBLIC post**
+1. Navigated to a public post ("Phase 5 verification test...")
+2. Clicked "Post your reply"
+3. ✅ Visibility selector SHOWS with all three options:
+   - Public (default)
+   - Private
+   - Private with Teaser
+
+**Test 2: Reply to PRIVATE post**
+1. Navigated to a private post (🔒 "BUG-010 fix test...")
+2. Clicked "Post your reply"
+3. ✅ Visibility selector HIDDEN
+4. ✅ Purple banner shows: "This reply will be encrypted using the parent thread's encryption"
+5. ✅ Footer note shows: "Reply inherits parent's encryption"
+
+### Expected Results vs Actual
+| Scenario | Expected | Actual | Status |
+|----------|----------|--------|--------|
+| Reply to public post | Visibility selector shown | Selector with 3 options | ✅ |
+| Reply to private post | Visibility selector hidden | Hidden + inheritance banner | ✅ |
+| Lint check | No new errors | Passed | ✅ |
+| Build check | Successful | Passed | ✅ |
+
+### Screenshots
+- `screenshots/bug016-fix-reply-visibility-selector.png` - Reply to public post showing visibility selector with all options
+- `screenshots/bug016-fix-reply-to-private-no-selector.png` - Reply to private post with inherited encryption banner
+
+### Files Modified
+- `components/compose/compose-modal.tsx` - Updated visibility selector condition (line 1052)
+
+### Test Result
+**PASSED** - BUG-016 resolved. E2E Test 10.1 can now be re-tested.
+
+### Re-test Required
+- [ ] E2E Test 10.1: Private Reply to Public Post (BUG-016 fixed, needs re-verification)
+
+---

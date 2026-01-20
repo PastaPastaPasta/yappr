@@ -1047,8 +1047,9 @@ export function ComposeModal() {
 
                         {/* Thread posts */}
                         <div className="flex-1 space-y-4">
-                          {/* Visibility selector - only show for first post when not replying */}
-                          {!replyingTo && hasPrivateFeed && (
+                          {/* Visibility selector - show for new posts or replies to public posts
+                              Hide when replying to private posts (inherits parent encryption per PRD §5.5) */}
+                          {!(replyingTo && isPrivatePost(replyingTo)) && hasPrivateFeed && (
                             <div className="flex items-center gap-3 mb-2">
                               <VisibilitySelector
                                 visibility={visibility}

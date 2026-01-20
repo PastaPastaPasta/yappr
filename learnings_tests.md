@@ -1584,7 +1584,7 @@ The condition `!replyingTo` was likely added to support the inherited encryption
 // Show visibility selector when:
 // 1. Creating a new post (!replyingTo)
 // 2. Replying to a PUBLIC post (user can choose visibility)
-// 
+//
 // Hide when replying to a PRIVATE post (inherited encryption)
 const shouldShowVisibilitySelector = hasPrivateFeed && (
   !replyingTo || (replyingTo && !isPrivatePost(replyingTo))
@@ -1594,3 +1594,58 @@ const shouldShowVisibilitySelector = hasPrivateFeed && (
 **Lesson:** When implementing conditional UI elements, be careful to handle all edge cases. The inheritance logic for private replies is correct, but it needs to be applied specifically to private parent posts, not all parent posts.
 
 **Filed as BUG-016 in bugs.md**
+
+---
+
+## 2026-01-19: BUG-016 Fix - Conditional UI Logic for Replies
+
+### Issue 85: Overly Broad UI Condition Hiding Feature (BUG-016 - FIXED)
+**Problem:** The visibility selector was hidden for ALL replies when it should only be hidden for replies to private posts (inherited encryption case).
+
+**Root Cause:** The condition `!replyingTo` is a common pattern to check if we're creating a new post vs a reply. However, this pattern was incorrectly applied to the visibility selector, hiding it for all replies including replies to public posts.
+
+**Key Insight:** When implementing conditional UI based on reply state, consider what the feature should do in BOTH cases:
+1. Replying to PUBLIC post → User should choose visibility (like a new post)
+2. Replying to PRIVATE post → Visibility is inherited (hide selector, show inheritance banner)
+
+**Solution Pattern:**
+```typescript
+// Before (incorrect - too broad):
+{!replyingTo && hasPrivateFeed && (
+  <VisibilitySelector />
+)}
+
+// After (correct - considers parent post type):
+{!(replyingTo && isPrivatePost(replyingTo)) && hasPrivateFeed && (
+  <VisibilitySelector />
+)}
+```
+
+The key is the negation: we hide the selector ONLY when BOTH conditions are true:
+1. We ARE replying (`replyingTo` is truthy)
+2. The parent IS a private post (`isPrivatePost(replyingTo)` returns true)
+
+**Lesson:** When adding conditional logic based on reply state, always ask: "Should this feature behave differently based on the TYPE of post being replied to?" Don't assume all replies should be treated the same way.
+
+### Issue 86: Existing Helper Functions for Post Type Detection
+**Observation:** The `isPrivatePost()` function was already exported from `private-post-content.tsx` and used elsewhere in the compose modal (for the inherited encryption loading state). The fix simply reused this existing helper.
+
+```typescript
+// Already imported in compose-modal.tsx:
+import { isPrivatePost } from '@/components/post/private-post-content'
+
+// Already used for inherited encryption loading:
+{inheritedEncryptionLoading && replyingTo && isPrivatePost(replyingTo) && (
+  <LoadingState />
+)}
+```
+
+**Lesson:** Before writing new detection logic, search the codebase for existing helper functions. The `isPrivatePost()` function checks for `encryptedContent`, `epoch`, and `nonce` - all indicators of a private post.
+
+### Best Practices Updates
+
+41. **Consider reply target type in conditional logic** - When showing/hiding UI elements based on reply state, consider whether the logic should differ based on the TYPE of post being replied to (public vs private).
+
+42. **Reuse existing type detection helpers** - Before writing new detection logic, check for existing helpers like `isPrivatePost()` that already implement the correct checks.
+
+43. **Test both directions of conditional logic** - When fixing a "hidden when it shouldn't be" bug, also verify the inverse: "shown when it shouldn't be" is NOT happening. The fix was verified in both directions.

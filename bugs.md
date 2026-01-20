@@ -2,23 +2,23 @@
 
 ## Active Bugs
 
-### BUG-016: Visibility selector hidden when replying - cannot create private replies to public posts
+(No active bugs)
 
-**Status:** ACTIVE
+---
 
-**Description:** The compose modal does not show the visibility selector when creating a reply. This prevents users from creating private replies to public posts, which is explicitly allowed by PRD §5.5.
+## Resolved Bugs
 
-**Observed Behavior:**
+### BUG-016: Visibility selector hidden when replying - cannot create private replies to public posts (RESOLVED)
+
+**Status:** RESOLVED
+
+**Description:** The compose modal did not show the visibility selector when creating a reply. This prevented users from creating private replies to public posts, which is explicitly allowed by PRD §5.5.
+
+**Original Behavior:**
 - User opens reply dialog on a public post
 - Reply compose dialog shows only the text input area
-- No visibility selector (Public/Private/Private with Teaser) is available
-- User can only create a public reply
-
-**Expected Behavior (per PRD §5.5):**
-- "A private post can reply to a public post"
-- User should be able to select "Private" visibility when replying to a public post
-- The reply would be encrypted with the replier's own feed CEK
-- Non-followers see the locked/teaser state; private followers see the decrypted reply
+- No visibility selector (Public/Private/Private with Teaser) was available
+- User could only create a public reply
 
 **Root Cause:**
 In `components/compose/compose-modal.tsx` line 1051:
@@ -27,36 +27,36 @@ In `components/compose/compose-modal.tsx` line 1051:
   <VisibilitySelector ...
 ```
 
-The condition `!replyingTo` hides the visibility selector for ALL replies, when it should only be hidden for replies that inherit encryption from a private parent post.
+The condition `!replyingTo` hid the visibility selector for ALL replies, when it should only be hidden for replies that inherit encryption from a private parent post.
 
-**Correct Logic Should Be:**
-- Show visibility selector when replying to a PUBLIC post (user can choose public/private)
-- Hide visibility selector when replying to a PRIVATE post (inherits parent's encryption automatically)
-
-**Impact:** E2E Test 10.1 (Private Reply to Public Post) cannot be completed.
-
-**Files to Modify:**
-- `components/compose/compose-modal.tsx` - Change condition to check if parent is private, not just if replying
-
-**Suggested Fix:**
+**Fix Applied:**
+Changed the condition to:
 ```typescript
-// Show visibility selector when:
-// 1. Not replying (new post)
-// 2. Replying to a PUBLIC post (user can choose visibility)
-// Hide when replying to a PRIVATE post (inherited encryption)
-{(!replyingTo || !isPrivatePost(replyingTo)) && hasPrivateFeed && (
+{!(replyingTo && isPrivatePost(replyingTo)) && hasPrivateFeed && (
   <VisibilitySelector ...
 ```
 
-**Screenshot:** N/A - UI simply doesn't show the selector
+This logic:
+- Shows visibility selector when NOT replying (new post)
+- Shows visibility selector when replying to a PUBLIC post (user can choose visibility)
+- Hides visibility selector when replying to a PRIVATE post (inherited encryption per PRD §5.5)
 
-**Discovered During:** E2E Test 10.1 - Private Reply to Public Post
+**Files Modified:**
+- `components/compose/compose-modal.tsx` - Updated visibility selector condition
 
-**Date Discovered:** 2026-01-19
+**Verification:**
+- Reply to PUBLIC post: Visibility selector shows with all 3 options ✅
+- Reply to PRIVATE post: Visibility selector hidden, inherited encryption banner shown ✅
+- Lint check: Passed ✅
+- Build check: Passed ✅
+
+**Screenshots:**
+- `screenshots/bug016-fix-reply-visibility-selector.png` - Reply to public post with visibility options
+- `screenshots/bug016-fix-reply-to-private-no-selector.png` - Reply to private post with inheritance banner
+
+**Date Resolved:** 2026-01-19
 
 ---
-
-## Resolved Bugs
 
 ### BUG-015: UI says MASTER or CRITICAL but only MASTER works for identity modifications (RESOLVED)
 
