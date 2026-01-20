@@ -639,10 +639,33 @@ class PrivateFeedService {
         }
       }
 
-      // 3. Get an available leaf index
-      const availableLeaves = privateFeedKeyStore.getAvailableLeaves();
+      // 3. Get an available leaf index (with chain verification to handle race conditions)
+      // Fetch existing grants from chain to get authoritative used leaf indices
+      const existingGrants = await this.getPrivateFollowers(ownerId);
+      const usedLeafIndices = new Set(existingGrants.map(g => g.leafIndex));
+
+      // Get local available leaves and filter out any that are already used on chain
+      let availableLeaves = privateFeedKeyStore.getAvailableLeaves();
       if (!availableLeaves || availableLeaves.length === 0) {
         return { success: false, error: 'No available leaf slots (feed at capacity)' };
+      }
+
+      // Filter to only truly available leaves (not used on chain)
+      availableLeaves = availableLeaves.filter(leaf => !usedLeafIndices.has(leaf));
+      if (availableLeaves.length === 0) {
+        // Local state was stale, rebuild from chain
+        availableLeaves = [];
+        for (let i = 0; i < TREE_CAPACITY; i++) {
+          if (!usedLeafIndices.has(i)) {
+            availableLeaves.push(i);
+          }
+        }
+        // Update local state with corrected available leaves
+        privateFeedKeyStore.storeAvailableLeaves(availableLeaves);
+
+        if (availableLeaves.length === 0) {
+          return { success: false, error: 'No available leaf slots (feed at capacity)' };
+        }
       }
 
       const leafIndex = availableLeaves[0];
