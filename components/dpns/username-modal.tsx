@@ -6,6 +6,7 @@ import { X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/contexts/auth-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
+import { useSettingsStore } from '@/lib/store'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
 
@@ -20,6 +21,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
   const router = useRouter()
   const { user } = useAuth()
   const { reset } = useDpnsRegistration()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const currentIdentityId = customIdentityId || user?.identityId || ''
 
@@ -50,7 +52,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+            className={`fixed inset-0 bg-black/50 z-50 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
           />
 
           {/* Modal */}

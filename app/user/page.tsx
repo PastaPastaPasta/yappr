@@ -43,6 +43,7 @@ import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 import { UsernameModal } from '@/components/dpns/username-modal'
+import { useSettingsStore } from '@/lib/store'
 
 interface ProfileData {
   displayName: string
@@ -64,6 +65,7 @@ function UserProfileContent() {
   const userId = searchParams.get('id')
   const { user: currentUser } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const isOwnProfile = currentUser?.identityId === userId
 
@@ -769,7 +771,7 @@ function UserProfileContent() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl">
+          <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}

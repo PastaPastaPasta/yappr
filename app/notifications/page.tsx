@@ -11,6 +11,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { withAuth } from '@/contexts/auth-context'
+import { useSettingsStore } from '@/lib/store'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
@@ -48,6 +49,7 @@ function formatTime(date: Date): string {
 }
 
 function NotificationsPage() {
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   // Store - polling is handled by Sidebar, we just display data
   const filter = useNotificationStore((s) => s.filter)
   const isLoading = useNotificationStore((s) => s.isLoading)
@@ -65,7 +67,7 @@ function NotificationsPage() {
       <Sidebar />
 
       <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
             <Link

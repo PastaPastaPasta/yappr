@@ -13,10 +13,12 @@ import {
   MIN_KDF_ITERATIONS,
   MAX_KDF_ITERATIONS
 } from '@/lib/onchain-key-encryption'
+import { useSettingsStore } from '@/lib/store'
 
 export function KeyBackupModal() {
   const router = useRouter()
   const { isOpen, identityId, username, privateKey, redirectOnClose, close } = useKeyBackupModal()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -157,7 +159,7 @@ export function KeyBackupModal() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+            className={`fixed inset-0 bg-black/50 z-50 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
           />
 
           {/* Modal */}
