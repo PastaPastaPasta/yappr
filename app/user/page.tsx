@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense, useCallback } from 'react'
+import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon,
@@ -114,6 +114,7 @@ function UserProfileContent() {
 
   // Tab state for Posts/Mentions
   const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
+  const [postFilter, setPostFilter] = useState<'posts' | 'replies'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
@@ -123,6 +124,13 @@ function UserProfileContent() {
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: currentUser?.identityId
   })
+
+  // Filter posts based on selected filter (original posts vs replies)
+  const filteredPosts = useMemo(() => {
+    return postFilter === 'posts'
+      ? posts.filter(p => !p.replyToId && !p.repostedBy)
+      : posts.filter(p => p.replyToId && !p.repostedBy)
+  }, [posts, postFilter])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
@@ -618,12 +626,13 @@ function UserProfileContent() {
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Reset mentions when user changes
+  // Reset mentions and post filter when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
     setMentionCount(null)
     setActiveTab('posts')
+    setPostFilter('posts')
   }, [userId])
 
   const handleFollow = async () => {
@@ -1306,19 +1315,47 @@ function UserProfileContent() {
               {/* Tab Content */}
               {activeTab === 'posts' ? (
                 // Posts Tab
-                posts.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500">
-                    <p>No posts yet</p>
+                <>
+                  {/* Post Filter Pills */}
+                  <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                    <button
+                      onClick={() => setPostFilter('posts')}
+                      className={cn(
+                        'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
+                        postFilter === 'posts'
+                          ? 'bg-yappr-500 text-white'
+                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      )}
+                    >
+                      Posts
+                    </button>
+                    <button
+                      onClick={() => setPostFilter('replies')}
+                      className={cn(
+                        'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
+                        postFilter === 'replies'
+                          ? 'bg-yappr-500 text-white'
+                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      )}
+                    >
+                      Replies
+                    </button>
                   </div>
-                ) : (
-                  <div>
-                    {posts.map((post) => (
-                      <PostCard
-                        key={post.id}
-                        post={post}
-                        enrichment={getPostEnrichment(post)}
-                      />
-                    ))}
+
+                  {/* Posts List */}
+                  {filteredPosts.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                      <p>{postFilter === 'posts' ? 'No original posts yet' : 'No replies yet'}</p>
+                    </div>
+                  ) : (
+                    <div>
+                      {filteredPosts.map((post) => (
+                        <PostCard
+                          key={post.id}
+                          post={post}
+                          enrichment={getPostEnrichment(post)}
+                        />
+                      ))}
 
                     {/* Load More button */}
                     {(hasMore || hasMoreReposts) && (
@@ -1331,10 +1368,11 @@ function UserProfileContent() {
                         >
                           {isLoadingMore ? 'Loading...' : 'Load more posts'}
                         </Button>
+                      </div>
+                    )}
                     </div>
                   )}
-                </div>
-              )
+                </>
               ) : (
                 // Mentions Tab
                 mentionsLoading ? (
