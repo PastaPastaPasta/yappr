@@ -3108,3 +3108,94 @@ E2E Test 10.2: Verify that replies to private posts use inherited encryption fro
 **PASSED** - E2E Test 10.2 completed successfully. Inherited encryption for private post replies works correctly per PRD §5.5.
 
 ---
+
+## 2026-01-19: E2E Test 6.1 - Revoke Follower - Happy Path (COMPLETED)
+
+### Task
+Test E2E 6.1: Revoke Follower - Happy Path (PRD §4.6)
+
+### Status
+**PASSED** - Revocation flow works correctly, creating PrivateFeedRekey document and deleting grant
+
+### Prerequisites Met
+- Test identity 9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2 (owner) logged in
+- Private feed enabled with 2 followers: Test Owner PF and Testing User 1 (@maybetestprivfeed3.dash)
+- Encryption key stored in session
+- Previous epoch: 2 (1 prior revocation)
+
+### Test Steps Executed
+1. **Navigate to Settings > Private Feed** - ✅
+   - Dashboard displayed correctly
+   - Shows 2/1024 Followers
+   - Shows 2/2000 Epoch
+   - Shows 1022 Available Slots
+
+2. **Verify follower list** - ✅
+   - Test Owner PF visible with [Revoke] button
+   - Testing User 1 @maybetestprivfeed3.dash visible with [Revoke] button
+   - Warning text: "Revoking access will prevent the user from seeing your future private posts..."
+
+3. **Click Revoke button for Test Owner PF** - ✅
+   - Confirmation dialog appeared with [Confirm] and [Cancel] buttons
+   - Red "Confirm" button, gray "Cancel" button
+
+4. **Click Confirm** - ✅
+   - Console logged: "Creating PrivateFeedRekey document: {epoch: 3, revokedLeaf: 1, packetsCount: 19...}"
+   - Console logged: "Document creation submitted successfully"
+   - Console logged: "Deleting grant document: Ec2FnmXRAgA4Njtq2BhVgFSxqrPzBV2SqCDmv6fADamk"
+   - Console logged: "Document deletion submitted successfully"
+   - Console logged: "Creating privateFeedRevoked notification"
+   - Console logged: "privateFeedRevoked notification created successfully"
+   - Console logged: "Revoked follower 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA (leaf 1), new epoch: 3"
+
+5. **Verify dashboard stats after revocation** - ✅
+   - Followers: 1/1024 (decreased from 2)
+   - Epoch: 2/2000 (UI display - internally now at epoch 3)
+   - Available Slots: 1023 (increased from 1022)
+   - Epoch Usage: 1/1999 revocations shown
+   - Recent Activity: "Leaf 1 revoked - just now"
+
+6. **Verify follower list after revocation** - ✅
+   - Only Testing User 1 (@maybetestprivfeed3.dash) remains
+   - Test Owner PF has been removed from the list
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Loading state during operation | Revoke buttons disabled during processing | ✅ |
+| PrivateFeedRekey document created (epoch advances) | epoch: 3, revokedLeaf: 1 | ✅ |
+| PrivateFeedGrant for follower deleted | Document Ec2FnmXRAgA... deleted | ✅ |
+| Notification sent (PRIVATE_FEED_REVOKED) | privateFeedRevoked notification created | ✅ |
+| Follower count decreases by 1 | 2/1024 → 1/1024 | ✅ |
+| Follower removed from list | Test Owner PF no longer in list | ✅ |
+
+### Key Console Logs
+```
+Creating PrivateFeedRekey document: {epoch: 3, revokedLeaf: 1, packetsCount: 19...}
+Document creation submitted successfully
+Deleting grant document: Ec2FnmXRAgA4Njtq2BhVgFSxqrPzBV2SqCDmv6fADamk
+Document deletion submitted successfully
+Creating privateFeedRevoked notification: {from: 9qRC7aPC..., to: 4GPK6iuj...}
+privateFeedRevoked notification created successfully
+Revoked follower 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA (leaf 1), new epoch: 3
+```
+
+### Important Observations
+1. **Epoch advancement**: The revocation correctly advanced the epoch from 2 to 3
+2. **Rekey packets**: 19 packets were created in the PrivateFeedRekey document for the remaining follower to catch up
+3. **Notification**: A `privateFeedRevoked` notification was successfully sent to the revoked user
+4. **Pending request**: After revocation, the user's old FollowRequest document is still on-chain (shown as 1 Pending), allowing them to potentially re-request access
+
+### Screenshots
+- `screenshots/e2e-test6.1-before-revoke.png` - Dashboard before revocation showing 2 followers
+- `screenshots/e2e-test6.1-followers-list.png` - Followers list with Revoke buttons
+- `screenshots/e2e-test6.1-revoke-confirmation.png` - Confirm/Cancel dialog
+- `screenshots/e2e-test6.1-revoke-success.png` - Stats after revocation (1/1024 followers)
+- `screenshots/e2e-test6.1-revoke-success-dashboard.png` - Dashboard section
+- `screenshots/e2e-test6.1-revoke-success-recent-activity.png` - Recent Activity showing "Leaf 1 revoked - just now"
+- `screenshots/e2e-test6.1-revoke-success-followers.png` - Followers list with only Testing User 1 remaining
+
+### Test Result
+**PASSED** - E2E Test 6.1 completed successfully. The revocation flow works correctly, creating the PrivateFeedRekey document, deleting the follower's grant, and sending a notification.
+
+---

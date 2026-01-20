@@ -1726,3 +1726,48 @@ Creating private post: {hasTeaser: false, encryptedContentLength: ..., epoch: ..
 4. The epoch matches the parent post's epoch
 
 Both scenarios verify the same inherited encryption code path - the difference is only in whose grant is used for key derivation.
+
+
+---
+
+## 2026-01-19: E2E Test 6.1 - Revocation Flow Insights
+
+### Observation 1: Testnet Stability Has Improved
+**Previous Status:** Tests 4.2 and 6.1 were marked as BLOCKED due to testnet DAPI connectivity issues.
+
+**Current Status:** The revocation test completed successfully without any DAPI errors. This indicates the testnet infrastructure has stabilized.
+
+**Lesson:** When encountering testnet connectivity issues, it's worth retrying after some time rather than assuming a permanent problem.
+
+### Observation 2: Revocation Creates Multiple On-Chain Documents
+**What Happens During Revocation:**
+1. `PrivateFeedRekey` document created (contains new epoch and rekey packets for remaining followers)
+2. `PrivateFeedGrant` document deleted for the revoked user
+3. `notification` document created (type: privateFeedRevoked) for the revoked user
+
+**Console Log Sequence:**
+```
+Creating PrivateFeedRekey document: {epoch: 3, revokedLeaf: 1, packetsCount: 19...}
+Document creation submitted successfully
+Deleting grant document: Ec2FnmXRAgA4Njtq2BhVgFSxqrPzBV2SqCDmv6fADamk
+Document deletion submitted successfully
+Creating privateFeedRevoked notification
+privateFeedRevoked notification created successfully
+```
+
+**Lesson:** Revocation is a multi-step process with several on-chain operations. All must succeed for the revocation to complete properly.
+
+### Observation 3: Old FollowRequest Documents Persist After Revocation
+**Observation:** After revoking "Test Owner PF", a pending request from them appeared in the "Private Feed Requests" section.
+
+**Explanation:** The FollowRequest document created when the user originally requested access still exists on-chain. Revocation only deletes the PrivateFeedGrant document.
+
+**Implication:** Revoked users can potentially re-request access (their old request shows up), but they would need to be approved again with a new grant at the current epoch.
+
+### Observation 4: Epoch Advancement Per Revocation
+**Before:** Epoch 2 (1 prior revocation)
+**After:** Epoch 3 (new revocation)
+
+Each revocation increments the epoch by 1. The rekey packets allow remaining followers to derive the new CEK without needing a new grant.
+
+**Lesson:** The epoch counter tracks total revocations, not current follower count.
