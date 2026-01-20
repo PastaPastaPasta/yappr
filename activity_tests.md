@@ -2733,3 +2733,53 @@ Modified the notification item rendering to include conditional action buttons b
 - [x] E2E Test 4.4: Approve from Notification - Now has working View Requests button
 
 ---
+
+## 2026-01-19: BUG-015 Fix - UI Says MASTER or CRITICAL but Only MASTER Works
+
+### Task
+Fix BUG-015: In the Add Encryption Key modal, the UI says "MASTER or CRITICAL" key is accepted, but only MASTER key actually works for identity modifications in SDK dev.11+.
+
+### Status
+**FIXED** - UI now correctly states that only MASTER key is required
+
+### Root Cause
+The Dash Platform SDK dev.11 changed the security requirements for identity modifications. Only MASTER (securityLevel=0) keys are now accepted for modifying identities (adding keys). CRITICAL (securityLevel=1) keys, which previously worked, are no longer sufficient.
+
+The UI was showing messaging like:
+- "Modifying your identity requires your **CRITICAL** or **MASTER** key"
+- "CRITICAL / MASTER Key (WIF format)"
+- "Enter your CRITICAL or MASTER private key..."
+
+This was misleading users who would try their CRITICAL key and get an error.
+
+### Solution Applied
+Updated all user-facing text in `components/auth/add-encryption-key-modal.tsx` to say only "MASTER" key is required:
+
+1. **Intro step**: Changed "CRITICAL or MASTER key" to just "MASTER key"
+2. **Confirm step**: Changed "You'll enter your CRITICAL or MASTER key" to "You'll enter your MASTER key"
+3. **Critical-key step title**: Changed "Enter CRITICAL Key" to "Enter MASTER Key"
+4. **Description**: Changed to "Enter your MASTER key to authorize the identity modification"
+5. **Warning text**: Changed "CRITICAL (or MASTER)" to just "MASTER"
+6. **Label**: Changed "CRITICAL / MASTER Key (WIF format)" to "MASTER Key (WIF format)"
+7. **Placeholder**: Changed to "Enter your MASTER private key..."
+8. **Tip**: Changed "Your CRITICAL key was provided..." to "Your MASTER key was provided..."
+9. **Validation error**: Changed "Please enter your CRITICAL or MASTER key" to "Please enter your MASTER key"
+
+### Files Modified
+- `components/auth/add-encryption-key-modal.tsx` - Updated all user-facing text referencing CRITICAL to say MASTER only
+
+### Verification
+1. Ran `npm run lint` - passed with no new errors
+2. Verified all text changes with grep:
+   - All user-facing text now says "MASTER" not "CRITICAL or MASTER"
+   - Only internal variable names (like `criticalKeyWif`) remain unchanged (they don't affect UI)
+3. Dev server started successfully
+4. Navigated to Settings > Private Feed - page loads correctly
+
+### Screenshots
+- `screenshots/bug015-fix-private-feed-settings.png` - Private Feed settings page after fix
+
+### Test Result
+**FIXED** - BUG-015 resolved. Users will now see clear messaging that MASTER key is required for identity modifications.
+
+---

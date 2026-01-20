@@ -24,9 +24,9 @@ type Step = 'intro' | 'generate' | 'confirm' | 'critical-key' | 'adding' | 'succ
  * Modal for generating and adding an encryption key to an identity.
  * Implements PRD §6.2 - Key Addition Flow
  *
- * NOTE: Adding an encryption key to an identity requires a CRITICAL or MASTER
+ * NOTE: Adding an encryption key to an identity requires a MASTER
  * security level key for signing. The typical HIGH security level login key
- * is insufficient for identity modifications on Dash Platform.
+ * is insufficient for identity modifications on Dash Platform (SDK dev.11+).
  */
 export function AddEncryptionKeyModal({
   isOpen,
@@ -41,7 +41,7 @@ export function AddEncryptionKeyModal({
   const [hasCopied, setHasCopied] = useState(false)
   const [hasConfirmedBackup, setHasConfirmedBackup] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // CRITICAL key for identity modification
+  // MASTER key for identity modification
   const [criticalKeyWif, setCriticalKeyWif] = useState<string>('')
   const [showCriticalKey, setShowCriticalKey] = useState(false)
   const [isValidatingKey, setIsValidatingKey] = useState(false)
@@ -104,7 +104,7 @@ export function AddEncryptionKeyModal({
         privateKeyBytes[i] = parseInt(privateKeyHex.substr(i * 2, 2), 16)
       }
 
-      // Add the encryption key to identity using the CRITICAL-level key
+      // Add the encryption key to identity using the MASTER-level key
       const { identityService } = await import('@/lib/services/identity-service')
       const result = await identityService.addEncryptionKey(
         user.identityId,
@@ -137,7 +137,7 @@ export function AddEncryptionKeyModal({
   // Validate the CRITICAL key before proceeding
   const validateCriticalKey = useCallback(async () => {
     if (!user || !criticalKeyWif.trim()) {
-      setKeyValidationError('Please enter your CRITICAL or MASTER key')
+      setKeyValidationError('Please enter your MASTER key')
       return
     }
 
@@ -218,9 +218,9 @@ export function AddEncryptionKeyModal({
                 <div className="flex gap-3">
                   <ShieldCheckIcon className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                   <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
-                    <p className="font-medium">CRITICAL Key Required:</p>
+                    <p className="font-medium">MASTER Key Required:</p>
                     <p>
-                      Modifying your identity requires your <strong>CRITICAL</strong> or <strong>MASTER</strong> key
+                      Modifying your identity requires your <strong>MASTER</strong> key
                       (not your regular HIGH login key). You&apos;ll need this key in a later step.
                     </p>
                   </div>
@@ -376,7 +376,7 @@ export function AddEncryptionKeyModal({
                 <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
                   <li className="flex gap-2">
                     <span>1.</span>
-                    <span>You&apos;ll enter your CRITICAL or MASTER key to authorize the change</span>
+                    <span>You&apos;ll enter your MASTER key to authorize the change</span>
                   </li>
                   <li className="flex gap-2">
                     <span>2.</span>
@@ -403,7 +403,7 @@ export function AddEncryptionKeyModal({
             <div className="flex flex-col gap-3">
               <Button onClick={() => setStep('critical-key')} className="w-full">
                 <ShieldCheckIcon className="h-4 w-4 mr-2" />
-                Continue with CRITICAL Key
+                Continue with MASTER Key
               </Button>
               <Button onClick={() => setStep('generate')} variant="outline" className="w-full">
                 Back
@@ -417,11 +417,11 @@ export function AddEncryptionKeyModal({
           <>
             <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
               <ShieldCheckIcon className="h-6 w-6 text-yappr-500" />
-              Enter CRITICAL Key
+              Enter MASTER Key
             </Dialog.Title>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              Enter your CRITICAL or MASTER key to authorize the identity modification.
+              Enter your MASTER key to authorize the identity modification.
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
@@ -431,17 +431,17 @@ export function AddEncryptionKeyModal({
                   <div className="text-sm text-amber-700 dark:text-amber-300">
                     <p className="font-medium">Why is this needed?</p>
                     <p>
-                      Dash Platform requires a CRITICAL (or MASTER) security level key to modify
+                      Dash Platform requires a MASTER security level key to modify
                       your identity. Your regular HIGH login key cannot be used for this operation.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* CRITICAL Key Input */}
+              {/* MASTER Key Input */}
               <div className="space-y-2">
                 <label className="text-sm font-medium flex items-center justify-between">
-                  <span>CRITICAL / MASTER Key (WIF format)</span>
+                  <span>MASTER Key (WIF format)</span>
                   <button
                     onClick={() => setShowCriticalKey(!showCriticalKey)}
                     className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
@@ -460,7 +460,7 @@ export function AddEncryptionKeyModal({
                     setCriticalKeyWif(e.target.value)
                     setKeyValidationError(null)
                   }}
-                  placeholder="Enter your CRITICAL or MASTER private key..."
+                  placeholder="Enter your MASTER private key..."
                   className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
                 {keyValidationError && (
@@ -470,7 +470,7 @@ export function AddEncryptionKeyModal({
 
               <div className="text-xs text-gray-500 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
                 <p>
-                  <strong>Tip:</strong> Your CRITICAL key was provided when you created your identity.
+                  <strong>Tip:</strong> Your MASTER key was provided when you created your identity.
                   It starts with &apos;c&apos; (testnet) or &apos;X&apos; (mainnet) and is about 51-52 characters.
                 </p>
               </div>

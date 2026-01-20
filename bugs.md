@@ -4,11 +4,45 @@
 
 (No active bugs)
 
-### BUG-015: in adding encryption key; ui says master or critical; only master can add keys
-
 ---
 
 ## Resolved Bugs
+
+### BUG-015: UI says MASTER or CRITICAL but only MASTER works for identity modifications (RESOLVED)
+
+**Status:** RESOLVED
+
+**Description:** In the Add Encryption Key modal, the UI stated "MASTER or CRITICAL" key was required, but only MASTER key actually works for identity modifications in SDK dev.11+.
+
+**Original Behavior:**
+- UI showed: "Modifying your identity requires your **CRITICAL** or **MASTER** key"
+- Label showed: "CRITICAL / MASTER Key (WIF format)"
+- Placeholder showed: "Enter your CRITICAL or MASTER private key..."
+- Users who entered their CRITICAL key would get an error
+
+**Root Cause:** Dash Platform SDK dev.11 changed security requirements - only MASTER (securityLevel=0) keys are accepted for identity modifications. CRITICAL (securityLevel=1) keys no longer work for this purpose.
+
+**Fix Applied:**
+Updated all user-facing text in `components/auth/add-encryption-key-modal.tsx` to state only "MASTER" key is required:
+1. Intro step: Changed to "MASTER Key Required"
+2. Confirm step: Changed to "You'll enter your MASTER key"
+3. Critical-key step title: Changed to "Enter MASTER Key"
+4. Warning text: Changed to "Dash Platform requires a MASTER security level key"
+5. Label: Changed to "MASTER Key (WIF format)"
+6. Placeholder: Changed to "Enter your MASTER private key..."
+7. Tip: Changed to "Your MASTER key was provided when you created..."
+8. Validation error: Changed to "Please enter your MASTER key"
+
+**Files Modified:**
+- `components/auth/add-encryption-key-modal.tsx` - Updated all user-facing text
+
+**Verification:**
+- `npm run lint` passed with no new errors
+- All text changes confirmed via grep
+- Dev server runs successfully
+- Screenshot: `screenshots/bug015-fix-private-feed-settings.png`
+
+**Date Resolved:** 2026-01-19
 
 ### BUG-014: Private feed request notifications missing action button (RESOLVED)
 

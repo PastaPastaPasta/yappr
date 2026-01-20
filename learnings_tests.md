@@ -1533,3 +1533,22 @@ The fix involved adding conditional rendering based on notification type within 
 
 39. **Test with real data flows when possible** - Rather than mocking notification data, trigger actual on-chain state that generates the notifications naturally. This tests the full flow.
 
+---
+
+## 2026-01-19: BUG-015 Fix - SDK Security Level Changes
+
+### Issue 84: MASTER vs CRITICAL Key Confusion (BUG-015 - FIXED)
+**Problem:** The Add Encryption Key modal stated that either "MASTER or CRITICAL" key was required, but only MASTER key actually works for identity modifications.
+
+**Root Cause:** Dash Platform SDK dev.11 changed the security requirements for identity modifications. Only MASTER (securityLevel=0) keys are now accepted for operations like adding new keys to an identity. CRITICAL (securityLevel=1) keys no longer work for this purpose.
+
+**Discovery:** This was documented in Issue 6 of the SDK upgrade learnings, but the UI text wasn't updated to reflect this change.
+
+**Solution:** Updated all user-facing text in `components/auth/add-encryption-key-modal.tsx` to say only "MASTER" key is required, removing all references to "CRITICAL or MASTER".
+
+**Lesson:** When SDK behavior changes, audit all user-facing text that describes the behavior. The implementation was correct (it only accepted MASTER keys), but the UI copy was misleading users.
+
+### Best Practices Updates
+
+40. **Keep UI text in sync with SDK requirements** - When SDK security models change (like only accepting MASTER keys), update all user-facing copy to match. Users shouldn't have to discover through trial and error that their CRITICAL key won't work.
+
