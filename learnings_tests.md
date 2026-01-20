@@ -1343,3 +1343,26 @@ These modals can overlay each other, causing Playwright click timeouts due to el
 
 30. **Handle modal stacking in automation** - When multiple modals appear, they may intercept clicks on each other. Dismiss them in z-index order (front modal first).
 
+---
+
+## 2026-01-19: E2E Test 3.4 - Straightforward Test
+
+### Issue 76: BUG-005 Fix Working Correctly
+**Observation:** The BUG-005 fix that requires encryption keys before requesting private feed access is working correctly. When a user without an encryption key clicks "Request Access", they get a clear error message.
+
+**Error Message:** "You need an encryption key to request private feed access. Please enable your own private feed first."
+
+**Key Details:**
+- The system checks the identity's public keys for a key with `purpose=1` (ENCRYPTION) and `type=0` (ECDSA_SECP256K1)
+- If no matching key is found, the request flow is blocked with a helpful error message
+- The button remains in "Request Access" state (not stuck in loading)
+
+**Lesson:** When testing error paths, verify that:
+1. The error message is clear and actionable
+2. The UI doesn't get stuck in a loading state
+3. The button/form returns to a usable state after the error
+
+### Best Practices Updates
+
+31. **Test error paths explicitly** - Error flows are often overlooked in testing. Make sure to test what happens when prerequisites aren't met (like missing encryption keys).
+

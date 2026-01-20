@@ -2215,6 +2215,58 @@ recipientId: identifierToBase58(doc.recipientId) || '',  // Returns base58 like 
 
 ---
 
+## 2026-01-19: E2E Test 3.4 - Request Access — Missing Encryption Key (COMPLETED)
+
+### Task
+Test E2E 3.4: Request Access — Missing Encryption Key (PRD §4.7)
+
+### Status
+**PASSED** - Correctly blocks request flow and shows encryption key requirement
+
+### Prerequisites Met
+- Test identity 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA logged in
+- Identity follows the owner (9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2)
+- Identity has NO encryption key on identity (only 4 standard keys: MASTER, CRITICAL, HIGH, TRANSFER)
+
+### Test Steps Executed
+1. **Logged in as test identity without encryption key** - ✅
+   - Used identity 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA ("Test Owner PF")
+   - Already following the owner from previous test (Test 3.2)
+
+2. **Navigate to owner's profile** - ✅
+   - URL: `/user/?id=9qRC7aPC3xTFwGJvMpwHfycU4SA49mx4Fc3Bh6jCT8v2`
+   - Profile shows "Test User 1" with "Private Feed" badge
+   - "Following" and "Request Access" buttons visible
+
+3. **Click "Request Access" button** - ✅
+   - Console showed: "Fetching identity: 4GPK6iujRhZVpdtpv2oBZXqfw9o7YSSngtU2MLBnf2SA"
+   - Console showed: "Public keys from identity: [Object, Object, Object, Object]" (4 keys, no encryption key)
+   - Toast error appeared: "You need an encryption key to request private feed access. Please enable your own private feed first."
+
+4. **Verify request flow is blocked** - ✅
+   - Button still shows "Request Access" (not changed to "Pending...")
+   - No FollowRequest document created
+   - Error message clearly guides user on next steps
+
+### Expected Results vs Actual
+| Expected | Actual | Status |
+|----------|--------|--------|
+| Prompt to add encryption key first | Toast: "You need an encryption key to request private feed access. Please enable your own private feed first." | ✅ |
+| Request flow blocked | Button remains "Request Access", no request created | ✅ |
+
+### Key Observations
+1. **Clear error message**: The error clearly states both the problem (need encryption key) and the solution (enable your own private feed first)
+2. **Graceful failure**: No spinner shown, button doesn't enter loading state indefinitely
+3. **Identity check performed**: The system checks the identity's public keys to look for an encryption key (purpose=1, type=0)
+
+### Screenshots
+- `screenshots/e2e-test3.4-missing-encryption-key-error.png` - Profile showing Request Access button after error
+
+### Test Result
+**PASSED** - E2E Test 3.4 completed successfully
+
+---
+
 ## 2026-01-19: E2E Test 1.2 - Enable Private Feed - Missing Encryption Key (COMPLETED)
 
 ### Task
