@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToHome, openComposeModal, waitForToast, goToSearch } from '../helpers/navigation.helpers';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
 
 /**
  * Test Suite: Hashtags and Search
@@ -16,31 +17,6 @@ import { goToHome, openComposeModal, waitForToast, goToSearch } from '../helpers
  * end-to-end post creation + search. The hashtag extraction logic is tested
  * implicitly by verifying the hashtag page and explore page function correctly.
  */
-
-/**
- * Helper to handle the "Enter Encryption Key" modal that may appear
- */
-async function handleEncryptionKeyModal(
-  page: import('@playwright/test').Page,
-  encryptionKey: string
-): Promise<boolean> {
-  // Look specifically for the encryption key modal by its title
-  const encryptionModal = page.getByRole('dialog', { name: /Enter Encryption Key/i });
-  const isVisible = await encryptionModal.isVisible({ timeout: 3000 }).catch(() => false);
-
-  if (isVisible) {
-    const keyInput = encryptionModal.locator('input[type="password"]');
-    await keyInput.first().fill(encryptionKey);
-
-    const saveBtn = encryptionModal.locator('button').filter({ hasText: /save|confirm/i });
-    await saveBtn.first().click();
-
-    // Wait for modal to close
-    await expect(encryptionModal).not.toBeVisible({ timeout: 30000 });
-    return true;
-  }
-  return false;
-}
 
 /**
  * Helper to close all modals by pressing Escape multiple times

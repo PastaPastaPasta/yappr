@@ -3,6 +3,13 @@ import * as path from 'path';
 
 /**
  * Test identity structure matching testing-identity-X.json files
+ *
+ * These files contain BASELINE state - credentials and initial setup that was
+ * established when the test environment was created. They should NOT be modified
+ * during test runs.
+ *
+ * For runtime state tracking (follower relationships, revocations, etc.),
+ * use the in-memory state module: ./test-state.ts
  */
 export interface TestIdentity {
   identityId: string;
@@ -15,6 +22,7 @@ export interface TestIdentity {
   };
   balance: string;
   createdAt: string;
+  // Baseline state (established at identity setup, don't modify during tests)
   privateFeedEnabled?: boolean;
   privateFeedEnabledAt?: string;
   hasProfile?: boolean;
@@ -28,14 +36,6 @@ export function loadIdentity(identityNumber: 1 | 2 | 3): TestIdentity {
   const filePath = path.join(process.cwd(), `testing-identity-${identityNumber}.json`);
   const content = fs.readFileSync(filePath, 'utf-8');
   return JSON.parse(content);
-}
-
-/**
- * Save updated identity state back to JSON file
- */
-export function saveIdentity(identityNumber: 1 | 2 | 3, identity: TestIdentity): void {
-  const filePath = path.join(process.cwd(), `testing-identity-${identityNumber}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(identity, null, 2) + '\n');
 }
 
 /**
@@ -67,8 +67,11 @@ export function hasEncryptionKey(identity: TestIdentity): boolean {
 }
 
 /**
- * Check if an identity has private feed enabled
+ * Check if an identity has private feed enabled (baseline state from file)
+ *
+ * Note: This checks the baseline state from the identity file. For runtime
+ * state tracking, use the test-state module instead.
  */
-export function isPrivateFeedEnabled(identity: TestIdentity): boolean {
+export function hasPrivateFeedEnabledBaseline(identity: TestIdentity): boolean {
   return identity.privateFeedEnabled === true;
 }

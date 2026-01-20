@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToPrivateFeedSettings, waitForToast } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
+import { loadIdentity } from '../test-data/identities';
+import { markPrivateFeedEnabled, isPrivateFeedEnabled } from '../test-data/test-state';
 
 /**
  * Test Suite: Enable Private Feed
@@ -31,13 +32,6 @@ test.describe('01 - Enable Private Feed', () => {
    * Uses follower1Identity (Identity 2) which has encryption key but no private feed enabled
    */
   test('1.1 Enable Private Feed - Happy Path', async ({ page, follower1Identity, loginAs }) => {
-    // Check if this identity already has private feed enabled (from previous test run)
-    const currentIdentity = loadIdentity(2);
-    if (currentIdentity.privateFeedEnabled) {
-      test.skip(true, 'Identity 2 already has private feed enabled from previous run');
-      return;
-    }
-
     // Login as follower1 (has encryption key, no private feed yet)
     await loginAs(follower1Identity);
 
@@ -82,11 +76,8 @@ test.describe('01 - Enable Private Feed', () => {
     // Should show: Followers: 0/1024, Available Slots
     await expect(page.locator('text=/\\d+\\s*\\/\\s*1,?024/').first()).toBeVisible({ timeout: 10000 });
 
-    // Update the identity file to track that private feed is now enabled
-    const updatedIdentity = loadIdentity(2);
-    updatedIdentity.privateFeedEnabled = true;
-    updatedIdentity.privateFeedEnabledAt = new Date().toISOString().split('T')[0];
-    saveIdentity(2, updatedIdentity);
+    // Track that private feed is now enabled (in-memory state)
+    markPrivateFeedEnabled(2);
   });
 
   /**

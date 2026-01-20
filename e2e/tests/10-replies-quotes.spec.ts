@@ -1,6 +1,10 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToProfile, goToHome, goToPost } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
+import { loadIdentity } from '../test-data/identities';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
+
+// Alias for backwards compatibility with existing test code
+const handleEncryptionKeyModalIfPresent = handleEncryptionKeyModal;
 
 /**
  * Test Suite: Private Replies and Quotes
@@ -729,32 +733,3 @@ test.describe('10 - Private Replies and Quotes', () => {
     await page.keyboard.press('Escape');
   });
 });
-
-/**
- * Helper function to handle encryption key modal if it appears
- */
-async function handleEncryptionKeyModalIfPresent(
-  page: import('@playwright/test').Page,
-  identity: { keys: { encryptionKey?: string } }
-): Promise<boolean> {
-  const modal = page.locator('[role="dialog"]');
-  if (!await modal.isVisible({ timeout: 3000 }).catch(() => false)) return false;
-
-  const isEncryptionModal = await page.getByText(/enter.*encryption.*key/i)
-    .isVisible({ timeout: 2000 }).catch(() => false);
-  if (!isEncryptionModal) return false;
-
-  if (!identity.keys.encryptionKey) {
-    console.log('Encryption key modal appeared but no key available');
-    return false;
-  }
-
-  console.log('Handling encryption key modal');
-  const keyInput = page.locator('input[type="password"]');
-  await keyInput.first().fill(identity.keys.encryptionKey);
-
-  const saveBtn = page.locator('button').filter({ hasText: /save|confirm|enter/i });
-  await saveBtn.first().click();
-  await page.waitForTimeout(3000);
-  return true;
-}

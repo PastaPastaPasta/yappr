@@ -1,5 +1,6 @@
 import { Page, expect } from '@playwright/test';
 import { TestIdentity } from '../test-data/identities';
+import { dismissPostLoginModals } from './modal.helpers';
 
 /**
  * Login to Yappr with a test identity
@@ -61,11 +62,12 @@ export async function login(page: Page, identity: TestIdentity): Promise<void> {
   // Wait for post-login redirects to stabilize
   // The app may redirect through /profile/create or /user before reaching final destination
   await page.waitForLoadState('domcontentloaded');
-  await page.waitForTimeout(2000);
 
-  // If we ended up on profile/create, wait for any redirect
+  // If we ended up on profile/create, wait for redirect to complete
   if (page.url().includes('/profile/create')) {
-    await page.waitForTimeout(3000);
+    await expect(page).not.toHaveURL(/\/profile\/create/, { timeout: 10000 }).catch(() => {
+      // May stay on profile/create if profile needs to be created
+    });
     await page.waitForLoadState('domcontentloaded');
   }
 }
@@ -121,160 +123,9 @@ export async function loginWithKey(
   await expect(page).not.toHaveURL(/\/login/, { timeout: 60000 });
 }
 
-/**
- * Dismiss any modals that appear after login (username registration, key backup)
- */
-export async function dismissPostLoginModals(page: Page): Promise<void> {
-  // Give time for modals to appear
-  await page.waitForTimeout(3000);
-
-  // Try to dismiss modals multiple times (they may stack)
-  for (let i = 0; i < 10; i++) {
-    // Check for KeyBackupModal specifically (has "Backup Your Key" heading)
-    const keyBackupModal = page.getByText('Backup Your Key');
-    const hasKeyBackupModal = await keyBackupModal.isVisible({ timeout: 1000 }).catch(() => false);
-
-    // Check for other modals
-    const modalByRole = page.locator('[role="dialog"]');
-    const modalByBackdrop = page.locator('.backdrop-blur-sm');
-
-    const hasRoleDialog = await modalByRole.isVisible({ timeout: 500 }).catch(() => false);
-    const hasBackdrop = await modalByBackdrop.isVisible({ timeout: 500 }).catch(() => false);
-
-    if (!hasRoleDialog && !hasBackdrop && !hasKeyBackupModal) break;
-
-    // PRIORITY 1: Handle KeyBackupModal specifically
-    if (hasKeyBackupModal) {
-      // The modal content is in a div after the backdrop-blur-sm div
-      // Look for the close button (X) in the modal - it's in the top-right corner
-      // The button contains an X SVG icon from lucide-react
-
-      // Strategy 1: Find the button that's a sibling after the backdrop within the AnimatePresence
-      // The structure is: backdrop-blur-sm div, then modal content div with the X button inside
-      try {
-        // Use page.evaluate to find and click the X button
-        const clicked = await page.evaluate(() => {
-          // Find the modal by looking for "Backup Your Key" heading
-          const heading = Array.from(document.querySelectorAll('h1')).find(h => h.textContent?.includes('Backup Your Key'));
-          if (!heading) return false;
-
-          // Find the parent modal container (rounded-2xl)
-          const modalContainer = heading.closest('.rounded-2xl');
-          if (!modalContainer) return false;
-
-          // Find the close button (first button in the modal, positioned at top-right)
-          const closeButton = modalContainer.querySelector('button');
-          if (!closeButton) return false;
-
-          closeButton.click();
-          return true;
-        });
-
-        if (clicked) {
-          await page.waitForTimeout(2000);
-          continue;
-        }
-      } catch {
-        // Continue to other strategies
-      }
-
-      // Strategy 2: Try clicking the Skip for now button (scroll into view first)
-      try {
-        const skipBtn = page.locator('button:has-text("Skip for now")');
-        if (await skipBtn.count() > 0) {
-          // Use page.evaluate to scroll and click
-          await page.evaluate(() => {
-            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Skip for now'));
-            if (btn) {
-              btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-              btn.click();
-            }
-          });
-          await page.waitForTimeout(2000);
-          continue;
-        }
-      } catch {
-        // Continue
-      }
-    }
-
-    // PRIORITY 2: Try "Skip for now" button - scroll into view first
-    const skipButtons = page.locator('button:has-text("Skip for now")');
-    const skipCount = await skipButtons.count();
-    if (skipCount > 0) {
-      try {
-        // Use evaluate to scroll and click
-        await page.evaluate(() => {
-          const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Skip for now'));
-          if (btn) {
-            btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-            btn.click();
-          }
-        });
-        await page.waitForTimeout(1500);
-        continue;
-      } catch {
-        // Continue to try other dismiss methods
-      }
-    }
-
-    // PRIORITY 3: Try clicking any close button (X) via evaluate
-    try {
-      const clicked = await page.evaluate(() => {
-        // Look for buttons with SVG children (likely close buttons)
-        const buttons = Array.from(document.querySelectorAll('button'));
-        for (const btn of buttons) {
-          const svg = btn.querySelector('svg');
-          if (svg && btn.childNodes.length <= 2) {
-            // This is likely a close/X button (just has an icon)
-            btn.click();
-            return true;
-          }
-        }
-        return false;
-      });
-      if (clicked) {
-        await page.waitForTimeout(1000);
-        continue;
-      }
-    } catch {
-      // Continue
-    }
-
-    // PRIORITY 4: Try "Cancel" button
-    const cancelBtn = page.locator('button:has-text("Cancel")');
-    if (await cancelBtn.isVisible({ timeout: 500 }).catch(() => false)) {
-      try {
-        await cancelBtn.scrollIntoViewIfNeeded();
-        await cancelBtn.click({ timeout: 3000 });
-        await page.waitForTimeout(1000);
-        continue;
-      } catch {
-        // Continue to try other dismiss methods
-      }
-    }
-
-    // PRIORITY 5: Try clicking the X button by aria-label
-    const ariaCloseBtn = page.locator('button[aria-label="Close"], button[aria-label="close"]');
-    if (await ariaCloseBtn.isVisible({ timeout: 500 }).catch(() => false)) {
-      try {
-        await ariaCloseBtn.click({ timeout: 3000 });
-        await page.waitForTimeout(1000);
-        continue;
-      } catch {
-        // Continue to try escape
-      }
-    }
-
-    // PRIORITY 6: Try pressing Escape as last resort
-    try {
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(1000);
-    } catch {
-      break;
-    }
-  }
-}
+// dismissPostLoginModals is now imported from modal.helpers.ts
+// Re-export for backwards compatibility with any code importing from auth.helpers
+export { dismissPostLoginModals } from './modal.helpers';
 
 /**
  * Enter encryption key when prompted by the application

@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToNotifications, goToSettings, goToProfile } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
+import { loadIdentity } from '../test-data/identities';
 
 /**
  * Test Suite: Private Feed Notifications

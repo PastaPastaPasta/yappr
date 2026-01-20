@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToProfile, goToHome, waitForToast } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
+import { loadIdentity } from '../test-data/identities';
 
 /**
  * Test Suite: Request Access Flow

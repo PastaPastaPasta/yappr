@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToPrivateFeedSettings } from '../helpers/navigation.helpers';
 import { loadIdentity } from '../test-data/identities';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
 
 /**
  * Test Suite: Private Feed Dashboard
@@ -622,46 +623,3 @@ test.describe('13 - Dashboard', () => {
     }
   });
 });
-
-/**
- * Helper function to handle the encryption key modal if it appears
- */
-async function handleEncryptionKeyModal(
-  page: import('@playwright/test').Page,
-  identity: { keys: { encryptionKey?: string } }
-): Promise<boolean> {
-  const modal = page.locator('[role="dialog"]');
-  const modalVisible = await modal.isVisible({ timeout: 3000 }).catch(() => false);
-
-  if (!modalVisible) {
-    return false;
-  }
-
-  // Check if it's the encryption key modal
-  const isEncryptionModal = await page.getByText(/enter.*encryption.*key/i)
-    .first()
-    .isVisible({ timeout: 2000 })
-    .catch(() => false);
-
-  if (!isEncryptionModal) {
-    return false;
-  }
-
-  console.log('Encryption key modal detected - filling in key');
-
-  // Fill in the encryption key
-  if (identity.keys.encryptionKey) {
-    const keyInput = modal.locator('input[type="password"]');
-    await keyInput.first().fill(identity.keys.encryptionKey);
-
-    // Find and click the confirm/save button
-    const confirmBtn = modal.locator('button').filter({ hasText: /confirm|save|enter|submit/i });
-    await confirmBtn.first().click();
-
-    // Wait for modal to close
-    await page.waitForTimeout(3000);
-    return true;
-  }
-
-  return false;
-}

@@ -1,58 +1,8 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToSettings, goToProfile, goToHome } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
-
-/**
- * Helper to handle the "Enter Encryption Key" modal that appears when
- * the private feed state needs to sync during operations
- */
-async function handleEncryptionKeyModal(page: import('@playwright/test').Page, identity: { keys: { encryptionKey?: string } }): Promise<boolean> {
-  const modal = page.locator('[role="dialog"]');
-  const modalVisible = await modal.isVisible({ timeout: 3000 }).catch(() => false);
-
-  if (!modalVisible) return false;
-
-  // Check if it's the encryption key modal
-  const isEncryptionModal = await page.getByText(/enter.*encryption.*key|encryption.*private.*key/i)
-    .first()
-    .isVisible({ timeout: 2000 })
-    .catch(() => false);
-
-  if (!isEncryptionModal) return false;
-
-  // We need the encryption key from the identity
-  if (!identity.keys.encryptionKey) {
-    console.log('Encryption key modal appeared but identity has no encryption key');
-    // Try to skip the modal
-    const skipBtn = page.locator('button').filter({ hasText: /skip|cancel|close/i });
-    if (await skipBtn.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-      await skipBtn.first().click();
-      await page.waitForTimeout(1000);
-    }
-    return false;
-  }
-
-  // Fill in the encryption key
-  const keyInput = page.locator('input[type="password"]').or(
-    page.locator('input[placeholder*="hex"]')
-  ).or(page.locator('input[placeholder*="encryption"]'));
-
-  const inputVisible = await keyInput.first().isVisible({ timeout: 3000 }).catch(() => false);
-  if (inputVisible) {
-    await keyInput.first().fill(identity.keys.encryptionKey);
-    await page.waitForTimeout(500);
-
-    // Click the save/confirm button
-    const saveBtn = page.locator('button').filter({ hasText: /save|confirm|submit|enter/i });
-    if (await saveBtn.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-      await saveBtn.first().click();
-      await page.waitForTimeout(3000); // Wait for sync operation
-      return true;
-    }
-  }
-
-  return false;
-}
+import { loadIdentity } from '../test-data/identities';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
+import { markAsRevoked, incrementRevocationEpoch, markAsBlocked, markBlockedByFollower } from '../test-data/test-state';
 
 /**
  * Helper to block a user via the post card menu
@@ -305,19 +255,10 @@ test.describe('08 - Block/Auto-Revoke Interaction', () => {
     if (blockResult.autoRevoked) {
       console.log('Auto-revocation was triggered (expected for private followers)');
 
-      // Update identity tracking
-      const updatedIdentity = loadIdentity(targetIdentityNumber);
-      delete (updatedIdentity as { isPrivateFollowerOf?: string }).isPrivateFollowerOf;
-      (updatedIdentity as { revokedFromPrivateFeed?: string }).revokedFromPrivateFeed = ownerIdentity.identityId;
-      (updatedIdentity as { revokedAt?: string }).revokedAt = new Date().toISOString().split('T')[0];
-      (updatedIdentity as { blockedBy?: string }).blockedBy = ownerIdentity.identityId;
-      saveIdentity(targetIdentityNumber, updatedIdentity);
-
-      // Also track the epoch change on owner
-      const updatedOwner = loadIdentity(1);
-      (updatedOwner as { lastRevocationEpoch?: number }).lastRevocationEpoch =
-        ((updatedOwner as { lastRevocationEpoch?: number }).lastRevocationEpoch || 1) + 1;
-      saveIdentity(1, updatedOwner);
+      // Track in-memory
+      markAsRevoked(targetIdentityNumber, ownerIdentity.identityId);
+      markAsBlocked(targetIdentityNumber, ownerIdentity.identityId);
+      incrementRevocationEpoch(1);
     } else {
       console.log('Auto-revocation was NOT triggered');
       // This could indicate a bug if the user was a private follower
@@ -423,10 +364,8 @@ test.describe('08 - Block/Auto-Revoke Interaction', () => {
       console.log('No auto-revocation triggered (expected for non-private-follower)');
     }
 
-    // Update identity tracking
-    const updatedIdentity3 = loadIdentity(3);
-    (updatedIdentity3 as { blockedBy?: string }).blockedBy = ownerIdentity.identityId;
-    saveIdentity(3, updatedIdentity3);
+    // Track block in-memory
+    markAsBlocked(3, ownerIdentity.identityId);
 
     // Verify the user is now shown as blocked
     const nowBlocked = await isUserBlocked(page);
@@ -514,10 +453,8 @@ test.describe('08 - Block/Auto-Revoke Interaction', () => {
       console.log('No auto-revocation triggered (expected - follower blocking owner has no effect on grants)');
     }
 
-    // Update identity tracking
-    const updatedOwner = loadIdentity(1);
-    (updatedOwner as { blockedByFollower?: string }).blockedByFollower = follower1Identity.identityId;
-    saveIdentity(1, updatedOwner);
+    // Track in-memory
+    markBlockedByFollower(1, follower1Identity.identityId);
 
     // Verify the owner is now shown as blocked (from follower's perspective)
     const nowBlocked = await isUserBlocked(page);

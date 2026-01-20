@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToHome, openComposeModal, goToPrivateFeedSettings, goToProfile, closeModal } from '../helpers/navigation.helpers';
 import { loadIdentity } from '../test-data/identities';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
 
 /**
  * Test Suite: Performance Tests
@@ -21,29 +22,6 @@ import { loadIdentity } from '../test-data/identities';
  * - @owner (Identity 1): Has private feed enabled
  * - @follower1 (Identity 2): May have access (approved or revoked)
  */
-
-/**
- * Helper to handle the "Enter Encryption Key" modal that may appear
- */
-async function handleEncryptionKeyModal(
-  page: import('@playwright/test').Page,
-  encryptionKey: string
-): Promise<boolean> {
-  const encryptionModal = page.getByRole('dialog', { name: /Enter Encryption Key/i });
-  const isVisible = await encryptionModal.isVisible({ timeout: 3000 }).catch(() => false);
-
-  if (isVisible) {
-    const keyInput = encryptionModal.locator('input[type="password"]');
-    await keyInput.first().fill(encryptionKey);
-
-    const saveBtn = encryptionModal.locator('button').filter({ hasText: /save|confirm/i });
-    await saveBtn.first().click();
-
-    await expect(encryptionModal).not.toBeVisible({ timeout: 30000 });
-    return true;
-  }
-  return false;
-}
 
 /**
  * Helper to measure time for an async operation

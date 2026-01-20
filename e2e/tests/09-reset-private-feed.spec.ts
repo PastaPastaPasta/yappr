@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToSettings, goToProfile, goToHome, openComposeModal } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
+import { loadIdentity } from '../test-data/identities';
+import { markPrivateFeedReset, markAccessRevokedByReset } from '../test-data/test-state';
 
 /**
  * Test Suite: Reset Private Feed
@@ -273,17 +274,9 @@ test.describe('09 - Reset Private Feed', () => {
       console.log('Dashboard shows 0 followers after reset (expected)');
     }
 
-    // Update identity tracking
-    const updatedOwner = loadIdentity(1);
-    (updatedOwner as { lastResetAt?: string }).lastResetAt = new Date().toISOString().split('T')[0];
-    (updatedOwner as { lastRevocationEpoch?: number }).lastRevocationEpoch = 1; // Reset to epoch 1
-    saveIdentity(1, updatedOwner);
-
-    // Mark follower as no longer having access
-    const updatedFollower = loadIdentity(2);
-    delete (updatedFollower as { isPrivateFollowerOf?: string }).isPrivateFollowerOf;
-    (updatedFollower as { accessRevokedByReset?: boolean }).accessRevokedByReset = true;
-    saveIdentity(2, updatedFollower);
+    // Track reset in-memory
+    markPrivateFeedReset(1);
+    markAccessRevokedByReset(2);
 
     console.log('Private feed reset completed successfully');
   });

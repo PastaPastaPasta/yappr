@@ -1,58 +1,8 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToSettings, goToProfile, goToHome, openComposeModal } from '../helpers/navigation.helpers';
-import { loadIdentity, saveIdentity } from '../test-data/identities';
-
-/**
- * Helper to handle the "Enter Encryption Key" modal that appears when
- * the private feed state needs to sync during approval/revocation
- */
-async function handleEncryptionKeyModal(page: import('@playwright/test').Page, identity: { keys: { encryptionKey?: string } }): Promise<boolean> {
-  const modal = page.locator('[role="dialog"]');
-  const modalVisible = await modal.isVisible({ timeout: 3000 }).catch(() => false);
-
-  if (!modalVisible) return false;
-
-  // Check if it's the encryption key modal
-  const isEncryptionModal = await page.getByText(/enter.*encryption.*key|encryption.*private.*key/i)
-    .first()
-    .isVisible({ timeout: 2000 })
-    .catch(() => false);
-
-  if (!isEncryptionModal) return false;
-
-  // We need the encryption key from the identity
-  if (!identity.keys.encryptionKey) {
-    console.log('Encryption key modal appeared but identity has no encryption key');
-    // Try to skip the modal
-    const skipBtn = page.locator('button').filter({ hasText: /skip|cancel|close/i });
-    if (await skipBtn.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-      await skipBtn.first().click();
-      await page.waitForTimeout(1000);
-    }
-    return false;
-  }
-
-  // Fill in the encryption key
-  const keyInput = page.locator('input[type="password"]').or(
-    page.locator('input[placeholder*="hex"]')
-  ).or(page.locator('input[placeholder*="encryption"]'));
-
-  const inputVisible = await keyInput.first().isVisible({ timeout: 3000 }).catch(() => false);
-  if (inputVisible) {
-    await keyInput.first().fill(identity.keys.encryptionKey);
-    await page.waitForTimeout(500);
-
-    // Click the save/confirm button
-    const saveBtn = page.locator('button').filter({ hasText: /save|confirm|submit|enter/i });
-    if (await saveBtn.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-      await saveBtn.first().click();
-      await page.waitForTimeout(3000); // Wait for sync operation
-      return true;
-    }
-  }
-
-  return false;
-}
+import { loadIdentity } from '../test-data/identities';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
+import { markAsRevoked, incrementRevocationEpoch } from '../test-data/test-state';
 
 /**
  * Test Suite: Revocation Flow
@@ -238,18 +188,9 @@ test.describe('06 - Revocation Flow', () => {
     // Take screenshot after revocation
     await page.screenshot({ path: 'screenshots/06-6.1-after-revoke.png' });
 
-    // Update identity tracking
-    const updatedIdentity2 = loadIdentity(2);
-    delete (updatedIdentity2 as { isPrivateFollowerOf?: string }).isPrivateFollowerOf;
-    (updatedIdentity2 as { revokedFromPrivateFeed?: string }).revokedFromPrivateFeed = ownerIdentity.identityId;
-    (updatedIdentity2 as { revokedAt?: string }).revokedAt = new Date().toISOString().split('T')[0];
-    saveIdentity(2, updatedIdentity2);
-
-    // Also track the epoch change on owner
-    const updatedOwner = loadIdentity(1);
-    (updatedOwner as { lastRevocationEpoch?: number }).lastRevocationEpoch =
-      ((updatedOwner as { lastRevocationEpoch?: number }).lastRevocationEpoch || 1) + 1;
-    saveIdentity(1, updatedOwner);
+    // Track revocation in-memory
+    markAsRevoked(2, ownerIdentity.identityId);
+    incrementRevocationEpoch(1);
 
     console.log('Successfully revoked follower');
   });

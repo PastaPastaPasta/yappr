@@ -1,7 +1,11 @@
 import { Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TestIdentity, saveIdentity } from '../test-data/identities';
+import { TestIdentity } from '../test-data/identities';
+import {
+  markPrivateFeedEnabled as markPrivateFeedEnabledState,
+  markHasProfile as markHasProfileState,
+} from '../test-data/test-state';
 
 /**
  * Faucet URL for creating test identities
@@ -51,28 +55,20 @@ export function validateTestIdentities(): void {
 }
 
 /**
- * Mark identity as having private feed enabled
+ * Mark identity as having private feed enabled (in-memory state)
  */
-export function markPrivateFeedEnabled(
-  identityNumber: 1 | 2 | 3,
-  identity: TestIdentity
-): void {
-  identity.privateFeedEnabled = true;
-  identity.privateFeedEnabledAt = new Date().toISOString().split('T')[0];
-  saveIdentity(identityNumber, identity);
+export function markPrivateFeedEnabled(identityNumber: 1 | 2 | 3): void {
+  markPrivateFeedEnabledState(identityNumber);
 }
 
 /**
- * Mark identity as having a profile
+ * Mark identity as having a profile (in-memory state)
  */
 export function markHasProfile(
   identityNumber: 1 | 2 | 3,
-  identity: TestIdentity,
   displayName: string
 ): void {
-  identity.hasProfile = true;
-  identity.displayName = displayName;
-  saveIdentity(identityNumber, identity);
+  markHasProfileState(identityNumber, displayName);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { goToHome, openComposeModal, waitForToast, closeModal } from '../helpers/navigation.helpers';
+import { handleEncryptionKeyModal } from '../helpers/modal.helpers';
 
 /**
  * Test Suite: Compose Private Post
@@ -18,30 +19,6 @@ import { goToHome, openComposeModal, waitForToast, closeModal } from '../helpers
 
 const TEASER_LIMIT = 280;
 const CHARACTER_LIMIT = 500;
-
-/**
- * Helper to handle the "Enter Encryption Key" modal that may appear during private post creation
- */
-async function handleEncryptionKeyModal(page: import('@playwright/test').Page, encryptionKey: string): Promise<boolean> {
-  // Check if the encryption key modal appears
-  const encryptionModal = page.getByRole('dialog', { name: /Enter Encryption Key/i });
-  const isVisible = await encryptionModal.isVisible({ timeout: 5000 }).catch(() => false);
-
-  if (isVisible) {
-    // Fill in the encryption key
-    const keyInput = encryptionModal.locator('input[type="password"]');
-    await keyInput.fill(encryptionKey);
-
-    // Click the "Save Key" button
-    const submitBtn = encryptionModal.locator('button').filter({ hasText: /Save Key/i }).first();
-    await submitBtn.click();
-
-    // Wait for modal to close
-    await expect(encryptionModal).not.toBeVisible({ timeout: 30000 });
-    return true;
-  }
-  return false;
-}
 
 /**
  * Helper to wait for post creation to complete
