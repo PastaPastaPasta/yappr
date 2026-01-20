@@ -1,0 +1,205 @@
+'use client'
+
+import { useEffect, useState, useRef } from 'react'
+import { ChartBarIcon } from '@heroicons/react/24/outline'
+import { formatNumber } from '@/lib/utils'
+import { useAuth } from '@/contexts/auth-context'
+import { postService, followService, likeService } from '@/lib/services'
+import { cacheManager } from '@/lib/cache-manager'
+
+interface UserStats {
+  posts: number
+  followers: number
+  following: number
+  likesGiven: number
+}
+
+interface GlobalStats {
+  totalPosts: number
+  activeUsers: number
+}
+
+// Skeleton placeholder for stats section
+function StatsPlaceholder({ rows = 2 }: { rows?: number }) {
+  return (
+    <div className="space-y-2">
+      {[...Array(rows)].map((_, i) => (
+        <div key={i} className="flex justify-between">
+          <div className="h-4 w-20 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+          <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function FeedStats() {
+  const { user } = useAuth()
+  const [stats, setStats] = useState<UserStats | null>(null)
+  const [globalStats, setGlobalStats] = useState<GlobalStats | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [globalLoading, setGlobalLoading] = useState(false)
+  const [shouldLoad, setShouldLoad] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Defer loading until the component is visible or after a delay
+  // This ensures the main feed content loads first
+  useEffect(() => {
+    // Use Intersection Observer to load when visible
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setShouldLoad(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '100px' } // Start loading slightly before visible
+    )
+
+    // Also set a timeout as fallback - load after 2 seconds even if not visible
+    const timeoutId = setTimeout(() => {
+      setShouldLoad(true)
+      observer.disconnect()
+    }, 2000)
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
+    }
+
+    return () => {
+      observer.disconnect()
+      clearTimeout(timeoutId)
+    }
+  }, [])
+
+  // Fetch user stats only when shouldLoad is true
+  useEffect(() => {
+    if (!shouldLoad || !user?.identityId) {
+      if (!user?.identityId) {
+        setStats(null)
+      }
+      return
+    }
+
+    const fetchStats = async () => {
+      // Check cache first to reduce network queries
+      const cacheKey = `user_stats_${user.identityId}`
+      const cached = cacheManager.get<UserStats>('sidebar', cacheKey)
+      if (cached) {
+        setStats(cached)
+        return
+      }
+
+      setLoading(true)
+      try {
+        const [posts, followers, following, likes] = await Promise.all([
+          postService.countUserPosts(user.identityId),
+          followService.countFollowers(user.identityId),
+          followService.countFollowing(user.identityId),
+          likeService.countUserLikes(user.identityId)
+        ])
+        const newStats = { posts, followers, following, likesGiven: likes }
+        setStats(newStats)
+        // Cache for 2 minutes to reduce query frequency
+        cacheManager.set('sidebar', cacheKey, newStats, { ttl: 120000 })
+      } catch (error) {
+        console.error('Error fetching user stats:', error)
+        setStats({ posts: 0, followers: 0, following: 0, likesGiven: 0 })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchStats().catch(err => console.error('Failed to fetch stats:', err))
+  }, [shouldLoad, user?.identityId])
+
+  // Fetch global stats only when shouldLoad is true
+  useEffect(() => {
+    if (!shouldLoad) return
+
+    const fetchGlobalStats = async () => {
+      // Check cache first to reduce network queries
+      const cacheKey = 'global_platform_stats'
+      const cached = cacheManager.get<GlobalStats>('sidebar', cacheKey)
+      if (cached) {
+        setGlobalStats(cached)
+        return
+      }
+
+      setGlobalLoading(true)
+      try {
+        const [totalPosts, activeUsers] = await Promise.all([
+          postService.countAllPosts(),
+          postService.countUniqueAuthors()
+        ])
+        const newGlobalStats = { totalPosts, activeUsers }
+        setGlobalStats(newGlobalStats)
+        // Cache for 5 minutes since global stats change slowly
+        cacheManager.set('sidebar', cacheKey, newGlobalStats, { ttl: 300000 })
+      } catch (error) {
+        console.error('Error fetching global stats:', error)
+        setGlobalStats({ totalPosts: 0, activeUsers: 0 })
+      } finally {
+        setGlobalLoading(false)
+      }
+    }
+
+    fetchGlobalStats().catch(err => console.error('Failed to fetch global stats:', err))
+  }, [shouldLoad])
+
+  return (
+    <div ref={containerRef} className="bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-hidden">
+      <h2 className="text-xl font-bold px-4 py-3 flex items-center gap-2">
+        <ChartBarIcon className="h-5 w-5" />
+        Stats
+      </h2>
+      <div className="px-4 py-3 space-y-2">
+        {!shouldLoad ? (
+          // Initial placeholder before deferred loading starts
+          <StatsPlaceholder rows={user ? 6 : 2} />
+        ) : globalLoading ? (
+          <StatsPlaceholder rows={2} />
+        ) : globalStats ? (
+          <>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
+              <span className="font-medium">{formatNumber(globalStats.totalPosts)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600 dark:text-gray-400">Active Users</span>
+              <span className="font-medium">{formatNumber(globalStats.activeUsers)}</span>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-gray-500">No stats available</p>
+        )}
+        {user && (
+          <>
+            {!shouldLoad || loading ? (
+              <StatsPlaceholder rows={4} />
+            ) : stats ? (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">Your Posts</span>
+                  <span className="font-medium">{formatNumber(stats.posts)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">Followers</span>
+                  <span className="font-medium">{formatNumber(stats.followers)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">Following</span>
+                  <span className="font-medium">{formatNumber(stats.following)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">Likes Given</span>
+                  <span className="font-medium">{formatNumber(stats.likesGiven)}</span>
+                </div>
+              </>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
