@@ -96,6 +96,14 @@ function FeedPage() {
     setError(null)
 
     try {
+      // Don't load posts on Following tab if user is not logged in
+      // (the login prompt is shown instead, and posts won't be displayed)
+      if (activeTab === 'following' && !user?.identityId) {
+        console.log('Feed: Skipping Following feed load - user not logged in')
+        setLoading(false)
+        return
+      }
+
       console.log(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '')
 
       const cacheKey = activeTab === 'following'
