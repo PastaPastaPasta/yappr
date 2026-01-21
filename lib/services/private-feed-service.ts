@@ -1234,7 +1234,7 @@ class PrivateFeedService {
 
       const existingDoc = documents[0];
       const documentId = existingDoc.$id as string;
-      const revision = (existingDoc.$revision as number) || 1;
+      const revision = (existingDoc.$revision as number) || (existingDoc.revision as number) || 1;
 
       // 7. Update the PrivateFeedState document with new encrypted seed
       // The treeCapacity and maxEpoch remain the same
