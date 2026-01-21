@@ -680,6 +680,21 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             />
           )}
 
+          {/* Quoted post - show skeleton while loading, then actual content */}
+          {post.quotedPostId && !post.quotedPost && (
+            <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 animate-pulse">
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                <div className="h-3 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-3 w-16 bg-gray-200 dark:bg-gray-700 rounded" />
+              </div>
+              <div className="mt-2 space-y-2">
+                <div className="h-3 w-full bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-3 w-3/4 bg-gray-200 dark:bg-gray-700 rounded" />
+              </div>
+            </div>
+          )}
+
           {post.quotedPost && (
             <Link
               href={`/post?id=${post.quotedPost.id}`}
