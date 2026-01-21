@@ -3,10 +3,10 @@
  */
 
 // Contract IDs
-export const YAPPR_CONTRACT_ID = 'ANn45rpp7du8MtVYzF1P6VRvaBo5auiZABd9ddoiBYdo' // Testnet - v4 with postHashtag and postMention consolidated
+export const YAPPR_CONTRACT_ID = '6HV3uQ5BzgvUJvvVBaS3YihrzKGndz6pEVUk55R4MXeo' // Testnet - v5 with block, blockFilter, blockFollow, postHashtag, postMention consolidated
 export const YAPPR_PROFILE_CONTRACT_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 export const YAPPR_DM_CONTRACT_ID = 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
-export const YAPPR_BLOCK_CONTRACT_ID = 'DCLfH2tgyQhyaFeQigFk8ptC1MjQgsDghkYDvDrLMF3m' // Enhanced blocking contract with bloom filters
+// YAPPR_BLOCK_CONTRACT_ID removed - block, blockFilter, blockFollow document types now in YAPPR_CONTRACT_ID
 export const DPNS_CONTRACT_ID = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec' // Testnet
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID

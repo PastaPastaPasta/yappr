@@ -2,7 +2,7 @@ import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
 import { identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
-import { YAPPR_BLOCK_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
+import { DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
 import { BlockDocument, BlockFollowData } from '../types'
 import {
@@ -36,7 +36,7 @@ const MAX_BLOCK_FOLLOWS = 100
  */
 class BlockService extends BaseDocumentService<BlockDocument> {
   constructor() {
-    super(DOCUMENT_TYPES.BLOCK, YAPPR_BLOCK_CONTRACT_ID)
+    super(DOCUMENT_TYPES.BLOCK)
   }
 
   /**
