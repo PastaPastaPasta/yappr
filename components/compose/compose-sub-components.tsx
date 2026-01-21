@@ -305,7 +305,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         epoch: post.epoch,
         nonce: post.nonce,
         $ownerId: post.author.id,
-      })
+      }, user?.identityId)
 
       if (result.success && result.content) {
         setState({ status: 'decrypted', content: result.content })

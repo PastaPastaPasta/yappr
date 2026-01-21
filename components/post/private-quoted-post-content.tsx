@@ -111,7 +111,7 @@ export function PrivateQuotedPostContent({
         epoch: quotedPost.epoch,
         nonce: quotedPost.nonce,
         $ownerId: quotedPost.author.id,
-      })
+      }, user?.identityId)
 
       if (result.success && result.content) {
         setState({ status: 'decrypted', content: result.content })

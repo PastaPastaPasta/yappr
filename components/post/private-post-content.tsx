@@ -197,7 +197,7 @@ export function PrivatePostContent({
           epoch: post.epoch!,
           nonce: post.nonce!,
           $ownerId: encryptionSourceOwnerId,
-        })
+        }, user.identityId)
 
         if (decryptResult.success && decryptResult.content) {
           setState({ status: 'decrypted', content: decryptResult.content })
@@ -409,11 +409,16 @@ export function PrivatePostContent({
         epoch: post.epoch!,
         nonce: post.nonce!,
         $ownerId: encryptionSourceOwnerId,
-      })
+      }, user.identityId)
 
       if (result.success && result.content) {
         setState({ status: 'decrypted', content: result.content })
       } else {
+        // Check if access has been revoked (grant deleted)
+        if (result.error === 'Access has been revoked') {
+          setState({ status: 'locked', reason: 'revoked' })
+          return
+        }
         // BUG-017 fix: Check if we need to trigger key recovery due to missing wrapNonceSalt
         if (result.error?.startsWith('REKEY_RECOVERY_NEEDED:')) {
           console.log('BUG-017: Triggering key recovery due to missing wrapNonceSalt')

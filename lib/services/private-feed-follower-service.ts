@@ -419,8 +419,9 @@ class PrivateFeedFollowerService {
    * Decrypt a private post
    *
    * @param post - The encrypted post fields
+   * @param myId - The current user's identity ID (optional, enables revocation detection)
    */
-  async decryptPost(post: EncryptedPostFields): Promise<DecryptResult> {
+  async decryptPost(post: EncryptedPostFields, myId?: string): Promise<DecryptResult> {
     try {
       const ownerId = post.$ownerId;
       const postEpoch = post.epoch;
@@ -438,7 +439,7 @@ class PrivateFeedFollowerService {
 
       // 3. If post epoch is newer than our cached epoch, catch up
       if (postEpoch > cachedEpoch) {
-        const catchUpResult = await this.catchUp(ownerId);
+        const catchUpResult = await this.catchUp(ownerId, myId);
         if (!catchUpResult.success) {
           // BUG-017 fix: If recovery is needed (missing wrapNonceSalt), propagate special error
           // The UI layer can detect this and prompt the user to enter their encryption key
@@ -500,7 +501,7 @@ class PrivateFeedFollowerService {
    *
    * @param ownerId - The feed owner's identity ID
    */
-  async catchUp(ownerId: string): Promise<{ success: boolean; error?: string }> {
+  async catchUp(ownerId: string, myId?: string): Promise<{ success: boolean; error?: string }> {
     try {
       const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
       if (cachedEpoch === null) {
@@ -530,6 +531,16 @@ class PrivateFeedFollowerService {
       for (const rekey of rekeyDocs) {
         const result = await this.applyRekey(ownerId, rekey);
         if (!result.success) {
+          // If we failed to derive root key, check if we've actually been revoked
+          if (result.error?.includes('Failed to derive new root key') && myId) {
+            const grant = await this.getGrant(ownerId, myId);
+            if (!grant) {
+              // Grant is gone - definitively revoked
+              // Clear local keys since they're no longer valid
+              privateFeedKeyStore.clearFeedKeys(ownerId);
+              return { success: false, error: 'Access has been revoked' };
+            }
+          }
           return result;
         }
       }
@@ -776,7 +787,7 @@ class PrivateFeedFollowerService {
       );
 
       // 6. Catch up on any rekeys since grant epoch
-      const catchUpResult = await this.catchUp(ownerId);
+      const catchUpResult = await this.catchUp(ownerId, myId);
       if (!catchUpResult.success) {
         // Log but don't fail - we have initial keys at least
         console.warn('Failed to catch up after recovery:', catchUpResult.error);
@@ -1013,8 +1024,9 @@ class PrivateFeedFollowerService {
    * triggers catch-up if needed.
    *
    * @param ownerId - The feed owner's identity ID
+   * @param myId - The current user's identity ID (optional, enables revocation detection)
    */
-  async syncFeedKeys(ownerId: string): Promise<{
+  async syncFeedKeys(ownerId: string, myId?: string): Promise<{
     status: 'synced' | 'up_to_date' | 'failed';
     error?: string;
   }> {
@@ -1036,7 +1048,7 @@ class PrivateFeedFollowerService {
 
       // Need to catch up
       console.log(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
-      const catchUpResult = await this.catchUp(ownerId);
+      const catchUpResult = await this.catchUp(ownerId, myId);
 
       if (catchUpResult.success) {
         return { status: 'synced' };
