@@ -18,6 +18,7 @@ import { formatNumber } from '@/lib/utils'
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
+import { useSettingsStore } from '@/lib/store'
 
 interface Follower {
   id: string
@@ -37,6 +38,7 @@ function FollowersPage() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const followersState = useAsyncState<Follower[]>(null)
   // Extract stable setter functions to avoid infinite loop in useCallback dependencies
   const { setLoading, setError, setData } = followersState
@@ -293,7 +295,7 @@ function FollowersPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">

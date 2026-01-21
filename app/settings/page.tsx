@@ -57,6 +57,8 @@ function SettingsPage() {
   const setLinkPreviews = useSettingsStore((s) => s.setLinkPreviews)
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
   const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -520,6 +522,27 @@ function SettingsPage() {
           </div>
         </RadioGroup.Root>
       </div>
+
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-4">Performance</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium">Potato Mode</p>
+            <p className="text-sm text-gray-500">
+              Disable blur effects and visual flair. Enable this if Yappr feels sluggish on your device.
+            </p>
+          </div>
+          <Switch.Root
+            checked={potatoMode}
+            onCheckedChange={setPotatoMode}
+            className={`w-11 h-6 rounded-full relative transition-colors ${
+              potatoMode ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+            }`}
+          >
+            <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
+          </Switch.Root>
+        </div>
+      </div>
     </div>
   )
 
@@ -629,7 +652,7 @@ function SettingsPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}

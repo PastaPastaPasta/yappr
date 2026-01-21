@@ -37,6 +37,7 @@ const dpns_convert_to_homograph_safe = (input: string): string => {
   }
 }
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
+import { useSettingsStore } from '@/lib/store'
 
 interface FollowingUser {
   id: string
@@ -56,6 +57,7 @@ function FollowingPage() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const followingState = useAsyncState<FollowingUser[]>(null)
   // Extract stable setter functions to avoid infinite loop in useCallback dependencies
   const { setLoading, setError, setData } = followingState
@@ -448,7 +450,7 @@ function FollowingPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">

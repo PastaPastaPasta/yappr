@@ -11,7 +11,7 @@ import { FeedItem, isFeedReplyContext } from '@/lib/types'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
-import { useAppStore } from '@/lib/store'
+import { useAppStore, useSettingsStore } from '@/lib/store'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
@@ -28,6 +28,7 @@ function FeedPage() {
   const router = useRouter()
   const [isHydrated, setIsHydrated] = useState(false)
   const { setComposeOpen } = useAppStore()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const { user } = useAuth()
   const { open: openLoginPrompt } = useLoginPromptModal()
   const postsState = useAsyncState<any[]>(null)
@@ -927,7 +928,7 @@ function FeedPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="px-4 py-3 flex items-center justify-between">
             <h1 className="text-xl font-bold">Home</h1>
             <button

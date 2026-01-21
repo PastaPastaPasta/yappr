@@ -160,6 +160,9 @@ interface SettingsState {
   /** Send read receipts in direct messages */
   sendReadReceipts: boolean
   setSendReadReceipts: (enabled: boolean) => void
+  /** Potato Mode: Disable visual effects like backdrop blur for better performance on older devices */
+  potatoMode: boolean
+  setPotatoMode: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -169,6 +172,8 @@ export const useSettingsStore = create<SettingsState>()(
       setLinkPreviews: (enabled) => set({ linkPreviews: enabled }),
       sendReadReceipts: true, // Enabled by default
       setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
+      potatoMode: false, // Disabled by default - blur effects enabled
+      setPotatoMode: (enabled) => set({ potatoMode: enabled }),
     }),
     {
       name: 'yappr-settings',
