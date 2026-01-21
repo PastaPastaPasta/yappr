@@ -35,7 +35,9 @@ export function PrivateQuotedPostContent({
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
 
   const isOwner = user?.identityId === quotedPost.author.id
-  const hasTeaser = quotedPost.content && quotedPost.content.length > 0
+  // Skip rendering teaser if it's just the lock emoji placeholder
+  const teaserContent = quotedPost.content?.trim()
+  const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
 
   // Get display name for author
   const authorDisplay = getAuthorDisplay(quotedPost.author)

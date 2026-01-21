@@ -60,26 +60,6 @@ interface ProfileData {
   hasUnifiedProfile?: boolean
 }
 
-// Helper to normalize byte arrays from SDK (may be base64 string, Uint8Array, or regular array)
-function normalizeBytes(value: unknown): Uint8Array | undefined {
-  if (!value) return undefined
-  if (value instanceof Uint8Array) return value
-  if (Array.isArray(value)) return new Uint8Array(value)
-  if (typeof value === 'string') {
-    try {
-      const binary = atob(value)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
-      return bytes
-    } catch {
-      return undefined
-    }
-  }
-  return undefined
-}
-
 function UserProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -238,47 +218,20 @@ function UserProfileContent() {
           console.error('Failed to check private feed status:', e)
         }
 
-        // Process posts
-        const postDocs = postsResult.documents || []
-        const transformedPosts: Post[] = postDocs.map((doc: any) => {
-          const authorIdStr = doc.$ownerId || doc.ownerId || userId
-
-          // Extract private feed fields if present
-          const rawEncryptedContent = doc.encryptedContent
-          const epoch = doc.epoch as number | undefined
-          const rawNonce = doc.nonce
-          const encryptedContent = normalizeBytes(rawEncryptedContent)
-          const nonce = normalizeBytes(rawNonce)
-
-          return {
-            id: doc.$id || doc.id,
-            content: doc.content || '',
-            author: {
-              id: authorIdStr,
-              // Don't use a fake username format - leave empty and let hasDpns control display
-              username: '',
-              // Use empty displayName initially - skeleton shows when hasDpns is undefined
-              displayName: '',
-              avatar: '', // Let UserAvatar fetch the actual avatar
-              verified: false,
-              followers: 0,
-              following: 0,
-              joinedAt: new Date(),
-              // undefined = still loading, will show skeleton in PostCard
-              hasDpns: undefined,
-            } as any,
-            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
-            likes: 0,
-            reposts: 0,
-            replies: 0,
-            views: 0,
-            quotedPostId: doc.quotedPostId || undefined,
-            // Private feed fields
-            encryptedContent,
-            epoch,
-            nonce,
-          }
-        })
+        // Process posts - postService.getUserPosts() returns already-transformed Post objects
+        // We just need to update author display info for progressive enrichment
+        const transformedPosts: Post[] = (postsResult.documents || []).map((post: Post) => ({
+          ...post,
+          author: {
+            ...post.author,
+            // Clear display fields - will be populated by progressive enrichment
+            username: '',
+            displayName: '',
+            avatar: '',
+            // undefined = still loading, will show skeleton in PostCard
+            hasDpns: undefined,
+          },
+        }))
 
         // Fetch user's reposts and merge with their posts
         try {
@@ -364,10 +317,10 @@ function UserProfileContent() {
         }
 
         // Set pagination state based on original posts (not reposts)
-        const originalPosts = postDocs || []
+        const originalPosts = postsResult.documents || []
         if (originalPosts.length > 0) {
-          const lastPost = originalPosts[originalPosts.length - 1] as any
-          setLastPostId(lastPost.$id || lastPost.id)
+          const lastPost = originalPosts[originalPosts.length - 1]
+          setLastPostId(lastPost.id)
         }
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
@@ -467,7 +420,7 @@ function UserProfileContent() {
       const { repostService } = await import('@/lib/services/repost-service')
 
       const newPosts: Post[] = []
-      let newPostDocs: any[] = []
+      let newPostDocs: Post[] = []
       let newRepostDocs: any[] = []
 
       // Fetch more posts using cursor-based pagination
@@ -479,41 +432,19 @@ function UserProfileContent() {
 
         newPostDocs = postsResult.documents || []
 
-        // Transform new posts
-        for (const doc of newPostDocs) {
-          const authorIdStr = doc.$ownerId || doc.ownerId || userId
-
-          // Extract private feed fields if present
-          const encryptedContent = normalizeBytes(doc.encryptedContent)
-          const epoch = doc.epoch as number | undefined
-          const nonce = normalizeBytes(doc.nonce)
-
+        // postService.getUserPosts() returns already-transformed Post objects
+        // We just update author display info (username/displayName already resolved for this profile)
+        for (const post of newPostDocs) {
           newPosts.push({
-            id: doc.$id || doc.id,
-            content: doc.content || '',
+            ...post,
             author: {
-              id: authorIdStr,
-              // Use resolved username or empty string (not fake user_ prefix)
+              ...post.author,
+              // Use already-resolved username and displayName from profile
               username: username || '',
-              // Use resolved displayName or empty string for skeleton/enrichment
               displayName: profile?.displayName || '',
               avatar: '',
-              verified: false,
-              followers: 0,
-              following: 0,
-              joinedAt: new Date(),
               hasDpns: hasDpns,
-            } as any,
-            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
-            likes: 0,
-            reposts: 0,
-            replies: 0,
-            views: 0,
-            quotedPostId: doc.quotedPostId || undefined,
-            // Private feed fields
-            encryptedContent,
-            epoch,
-            nonce,
+            },
           })
         }
       }
@@ -602,8 +533,8 @@ function UserProfileContent() {
       // Update pagination state for posts (only if posts were fetched)
       if (canLoadMorePosts) {
         if (newPostDocs.length > 0) {
-          const lastPost = newPostDocs[newPostDocs.length - 1] as any
-          setLastPostId(lastPost.$id || lastPost.id)
+          const lastPost = newPostDocs[newPostDocs.length - 1] as Post
+          setLastPostId(lastPost.id)
         }
         setHasMore(newPostDocs.length >= 50)
       }
