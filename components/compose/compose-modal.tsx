@@ -604,19 +604,14 @@ export function ComposeModal() {
 
     try {
       const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
-      const { getEncryptionKey } = await import('@/lib/secure-storage')
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
 
-      // Get the encryption key from secure storage
-      const storedKeyHex = getEncryptionKey(user.identityId)
-      if (!storedKeyHex) {
+      // Get the encryption key bytes from secure storage (handles WIF and hex)
+      const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
+      if (!encryptionPrivateKey) {
         toast.error('No encryption key found. Please try again.')
         return
       }
-
-      // Convert to Uint8Array
-      const encryptionPrivateKey = new Uint8Array(
-        storedKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
-      )
 
       // Enable private feed
       const result = await privateFeedService.enablePrivateFeed(user.identityId, encryptionPrivateKey)
@@ -738,16 +733,10 @@ export function ComposeModal() {
         } else if (isThisPostPrivate) {
           // Create private post using privateFeedService
           const { privateFeedService } = await import('@/lib/services')
-          const { getEncryptionKey } = await import('@/lib/secure-storage')
+          const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
 
-          // Try to get encryption key for automatic sync/recovery
-          const storedKeyHex = getEncryptionKey(authedUser.identityId)
-          let encryptionPrivateKey: Uint8Array | undefined
-          if (storedKeyHex) {
-            encryptionPrivateKey = new Uint8Array(
-              storedKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
-            )
-          }
+          // Try to get encryption key for automatic sync/recovery (handles WIF and hex)
+          const encryptionPrivateKey = getEncryptionKeyBytes(authedUser.identityId) ?? undefined
 
           const privateResult = await privateFeedService.createPrivatePost(
             authedUser.identityId,
@@ -1177,7 +1166,7 @@ export function ComposeModal() {
                             >
                               <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                               <span className="text-sm text-purple-700 dark:text-purple-300">
-                                This reply will be encrypted using the parent thread&apos;s encryption
+                                Your reply will be visible to all subscribers of this private feed
                               </span>
                             </motion.div>
                           )}
