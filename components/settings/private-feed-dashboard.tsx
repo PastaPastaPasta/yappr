@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import {
   UserGroupIcon,
   ClockIcon,
@@ -262,47 +261,6 @@ export function PrivateFeedDashboard() {
               {Math.round(100 - epochUsagePercent)}% of revocation capacity remaining
             </p>
           )}
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex gap-3">
-          <Button
-            data-testid="view-requests-btn"
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => {
-              // Scroll to requests section
-              const requestsSection = document.getElementById('private-feed-requests')
-              if (requestsSection) {
-                requestsSection.scrollIntoView({ behavior: 'smooth' })
-              }
-            }}
-          >
-            <ClockIcon className="h-4 w-4 mr-2" />
-            View Requests
-            {pendingRequestCount > 0 && (
-              <span className="ml-2 bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full">
-                {pendingRequestCount}
-              </span>
-            )}
-          </Button>
-          <Button
-            data-testid="manage-followers-btn"
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => {
-              // Scroll to followers section
-              const followersSection = document.getElementById('private-feed-followers')
-              if (followersSection) {
-                followersSection.scrollIntoView({ behavior: 'smooth' })
-              }
-            }}
-          >
-            <UserGroupIcon className="h-4 w-4 mr-2" />
-            Manage Followers
-          </Button>
         </div>
 
         {/* Recent Activity */}
