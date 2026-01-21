@@ -69,11 +69,40 @@ export function Sidebar() {
 
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
+  const [displayName, setDisplayName] = useState<string | null>(null)
 
   // Prevent hydration mismatches
   useEffect(() => {
     setIsHydrated(true)
   }, [])
+
+  // Fetch display name from profile when no DPNS username
+  useEffect(() => {
+    if (!user?.identityId || user.dpnsUsername) {
+      setDisplayName(null)
+      return
+    }
+
+    let mounted = true
+
+    async function fetchDisplayName() {
+      try {
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+        const profile = await unifiedProfileService.getProfile(user!.identityId)
+        if (mounted && profile?.displayName) {
+          setDisplayName(profile.displayName)
+        }
+      } catch (error) {
+        console.error('Failed to fetch display name:', error)
+      }
+    }
+
+    fetchDisplayName()
+
+    return () => {
+      mounted = false
+    }
+  }, [user?.identityId, user?.dpnsUsername])
 
   // Initial notification fetch and polling
   useEffect(() => {
@@ -222,7 +251,7 @@ export function Sidebar() {
                 <div className="flex flex-1 text-left">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold truncate">
-                      {user.dpnsUsername ? `@${user.dpnsUsername}` : 'Identity'}
+                      {user.dpnsUsername ? `@${user.dpnsUsername}` : (displayName || 'Identity')}
                     </p>
                     <p className="text-sm text-gray-500 truncate">{formatIdentityId(user.identityId)}</p>
                   </div>
