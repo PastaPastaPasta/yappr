@@ -39,6 +39,7 @@ import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
 import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import type { EncryptionSource } from '@/lib/services/post-service'
+import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 
 const CHARACTER_LIMIT = 500
 
@@ -452,6 +453,11 @@ export function ComposeModal() {
   const [privateFeedLoading, setPrivateFeedLoading] = useState(true)
   const [privateFollowerCount, setPrivateFollowerCount] = useState(0)
 
+  // Enable private feed flow state (Improvement 1)
+  const [showAddKeyModal, setShowAddKeyModal] = useState(false)
+  const [pendingVisibility, setPendingVisibility] = useState<PostVisibility | null>(null)
+  const [hasEncryptionKeyOnIdentity, setHasEncryptionKeyOnIdentity] = useState(false)
+
   // Inherited encryption state for replies to private posts (PRD §5.5)
   const [inheritedEncryption, setInheritedEncryption] = useState<EncryptionSource | null>(null)
   const [inheritedEncryptionLoading, setInheritedEncryptionLoading] = useState(false)
@@ -464,13 +470,13 @@ export function ComposeModal() {
   // Determine if this will be encrypted (either explicit private post or inherited from parent)
   const willBeEncrypted = isPrivatePostVisibility || inheritedEncryption !== null
 
-  // Check private feed status when modal opens
+  // Check private feed status and encryption key status when modal opens
   useEffect(() => {
     if (isComposeOpen && user) {
       setPrivateFeedLoading(true)
       const checkPrivateFeed = async () => {
         try {
-          const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
+          const { privateFeedService, privateFeedKeyStore, identityService } = await import('@/lib/services')
 
           // First check local state (fast) - if local keys exist, user has private feed
           const hasLocalKeys = privateFeedKeyStore.hasFeedSeed()
@@ -487,6 +493,19 @@ export function ComposeModal() {
             // Get follower count from recipient map
             const recipientMap = privateFeedKeyStore.getRecipientMap()
             setPrivateFollowerCount(Object.keys(recipientMap).length)
+          }
+
+          // Check if user has encryption key on identity (for enabling private feed flow)
+          if (!hasPrivate) {
+            try {
+              const identity = await identityService.getIdentity(user.identityId)
+              const hasEncKey = identity?.publicKeys?.some(
+                (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
+              ) ?? false
+              setHasEncryptionKeyOnIdentity(hasEncKey)
+            } catch {
+              setHasEncryptionKeyOnIdentity(false)
+            }
           }
         } catch (error) {
           console.error('Failed to check private feed status:', error)
@@ -558,6 +577,83 @@ export function ComposeModal() {
   const lastPostedId = postedPosts.length > 0
     ? postedPosts[postedPosts.length - 1].postedPostId
     : null
+
+  // Handle request to enable private feed when user selects a private visibility option
+  const handleEnablePrivateFeedRequest = useCallback(async (targetVisibility: PostVisibility) => {
+    if (!user) return
+
+    // Store the pending visibility so we can auto-select it after enabling
+    setPendingVisibility(targetVisibility)
+
+    if (!hasEncryptionKeyOnIdentity) {
+      // User needs to add encryption key to identity first
+      setShowAddKeyModal(true)
+    } else {
+      // User has encryption key on identity, prompt them to enter it
+      // so we can enable the private feed
+      const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
+      useEncryptionKeyModal.getState().open('manage_private_feed', async () => {
+        // After key entry, enable the private feed
+        await enablePrivateFeedAfterKeyEntry(targetVisibility)
+      })
+    }
+  }, [user, hasEncryptionKeyOnIdentity])
+
+  // Enable private feed after encryption key is ready
+  const enablePrivateFeedAfterKeyEntry = useCallback(async (targetVisibility: PostVisibility) => {
+    if (!user) return
+
+    try {
+      const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
+      const { getEncryptionKey } = await import('@/lib/secure-storage')
+
+      // Get the encryption key from secure storage
+      const storedKeyHex = getEncryptionKey(user.identityId)
+      if (!storedKeyHex) {
+        toast.error('No encryption key found. Please try again.')
+        return
+      }
+
+      // Convert to Uint8Array
+      const encryptionPrivateKey = new Uint8Array(
+        storedKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+      )
+
+      // Enable private feed
+      const result = await privateFeedService.enablePrivateFeed(user.identityId, encryptionPrivateKey)
+
+      if (result.success) {
+        setHasPrivateFeed(true)
+        // Update visibility to the pending one
+        if (firstPost) {
+          updateThreadPostVisibility(firstPost.id, targetVisibility)
+        }
+        toast.success('Private feed enabled!')
+
+        // Get follower count
+        const recipientMap = privateFeedKeyStore.getRecipientMap()
+        setPrivateFollowerCount(Object.keys(recipientMap).length)
+      } else {
+        toast.error(result.error || 'Failed to enable private feed')
+      }
+    } catch (error) {
+      console.error('Error enabling private feed:', error)
+      toast.error('Failed to enable private feed')
+    } finally {
+      setPendingVisibility(null)
+    }
+  }, [user, firstPost, updateThreadPostVisibility])
+
+  // Handle success from AddEncryptionKeyModal
+  const handleAddKeySuccess = useCallback(async () => {
+    setShowAddKeyModal(false)
+    setHasEncryptionKeyOnIdentity(true)
+
+    // Now enable the private feed with the pending visibility
+    if (pendingVisibility) {
+      await enablePrivateFeedAfterKeyEntry(pendingVisibility)
+    }
+  }, [pendingVisibility, enablePrivateFeedAfterKeyEntry])
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -939,6 +1035,7 @@ export function ComposeModal() {
   }
 
   return (
+    <>
     <Dialog.Root open={isComposeOpen} onOpenChange={setComposeOpen}>
       <AnimatePresence>
         {isComposeOpen && (
@@ -1049,7 +1146,7 @@ export function ComposeModal() {
                         <div className="flex-1 space-y-4">
                           {/* Visibility selector - show for new posts or replies to public posts
                               Hide when replying to private posts (inherits parent encryption per PRD §5.5) */}
-                          {!(replyingTo && isPrivatePost(replyingTo)) && hasPrivateFeed && (
+                          {!(replyingTo && isPrivatePost(replyingTo)) && (
                             <div className="flex items-center gap-3 mb-2">
                               <VisibilitySelector
                                 visibility={visibility}
@@ -1062,6 +1159,7 @@ export function ComposeModal() {
                                 privateFeedLoading={privateFeedLoading}
                                 privateFollowerCount={privateFollowerCount}
                                 disabled={isPosting}
+                                onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
                               />
                             </div>
                           )}
@@ -1234,5 +1332,16 @@ export function ComposeModal() {
         )}
       </AnimatePresence>
     </Dialog.Root>
+
+      {/* Add Encryption Key Modal - shown when user needs to add encryption key to identity */}
+      <AddEncryptionKeyModal
+        isOpen={showAddKeyModal}
+        onClose={() => {
+          setShowAddKeyModal(false)
+          setPendingVisibility(null)
+        }}
+        onSuccess={handleAddKeySuccess}
+      />
+    </>
   )
 }

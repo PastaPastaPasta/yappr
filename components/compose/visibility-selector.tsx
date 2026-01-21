@@ -12,6 +12,8 @@ interface VisibilitySelectorProps {
   privateFeedLoading: boolean
   privateFollowerCount: number
   disabled?: boolean
+  /** Called when user clicks a private visibility option but doesn't have a private feed */
+  onEnablePrivateFeedRequest?: (targetVisibility: PostVisibility) => void
 }
 
 const TEASER_LIMIT = 280
@@ -56,6 +58,7 @@ export function VisibilitySelector({
   privateFeedLoading,
   privateFollowerCount,
   disabled = false,
+  onEnablePrivateFeedRequest,
 }: VisibilitySelectorProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
@@ -67,7 +70,11 @@ export function VisibilitySelector({
   // Handle option selection
   const handleSelect = (option: VisibilityOption) => {
     if (option.requiresPrivateFeed && !hasPrivateFeed) {
-      // Don't allow selecting private options if no private feed
+      // Trigger enable flow instead of blocking
+      if (onEnablePrivateFeedRequest) {
+        onEnablePrivateFeedRequest(option.value)
+        setIsExpanded(false)
+      }
       return
     }
     onVisibilityChange(option.value)
@@ -91,11 +98,6 @@ export function VisibilitySelector({
         <span>Loading...</span>
       </div>
     )
-  }
-
-  // Don't show if user doesn't have a private feed
-  if (!hasPrivateFeed) {
-    return null
   }
 
   return (
@@ -138,18 +140,21 @@ export function VisibilitySelector({
             const isDisabled = option.requiresPrivateFeed && !hasPrivateFeed
             const isSelected = option.value === visibility
 
+            // Make the option clickable if we have an enable handler
+            const canClick = !isDisabled || onEnablePrivateFeedRequest
+
             return (
               <button
                 key={option.value}
                 data-testid={`visibility-${option.value}`}
                 type="button"
                 onClick={() => handleSelect(option)}
-                disabled={isDisabled}
+                disabled={isDisabled && !onEnablePrivateFeedRequest}
                 className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors ${
                   isSelected
                     ? 'bg-yappr-50 dark:bg-yappr-900/20'
                     : 'hover:bg-gray-50 dark:hover:bg-gray-800'
-                } ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                } ${isDisabled && !onEnablePrivateFeedRequest ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
               >
                 <div
                   className={`mt-0.5 p-1.5 rounded-lg ${
@@ -183,7 +188,9 @@ export function VisibilitySelector({
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{option.description}</p>
                   {isDisabled && (
-                    <p className="text-xs text-red-500 dark:text-red-400 mt-1">Enable private feed first</p>
+                    <p className="text-xs text-yappr-500 dark:text-yappr-400 mt-1">
+                      {onEnablePrivateFeedRequest ? 'Click to enable private feed' : 'Enable private feed first'}
+                    </p>
                   )}
                 </div>
               </button>
