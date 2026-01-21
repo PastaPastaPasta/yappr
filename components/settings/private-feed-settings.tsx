@@ -114,7 +114,16 @@ export function PrivateFeedSettings({ openReset = false }: PrivateFeedSettingsPr
     }
   }, [openReset, isEnabled, isLoading])
 
-  const handleStartEnable = () => {
+  const handleStartEnable = async () => {
+    // Check if we already have the key stored in secure storage
+    if (user) {
+      const { getEncryptionKey } = await import('@/lib/secure-storage')
+      const storedKey = getEncryptionKey(user.identityId)
+      if (storedKey) {
+        // Pre-populate the key field with the stored key
+        setEncryptionKeyHex(storedKey)
+      }
+    }
     setShowKeyInput(true)
     setKeyError(null)
   }
