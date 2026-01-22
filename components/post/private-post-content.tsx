@@ -559,6 +559,8 @@ export function PrivatePostContent({
       ? 'Log in to view'
       : state.reason === 'approved-no-keys'
       ? 'Key recovery required'
+      : state.reason === 'no-keys' && isOwner
+      ? 'Enter encryption key to view'
       : 'Private content'
 
     // Render the Request Access button based on current state
@@ -675,9 +677,23 @@ export function PrivatePostContent({
                 Recover
               </button>
             )}
-            {/* Request Access button for no-keys, or pending badge for pending requests */}
+            {/* Enter Key button for owner with no encryption key stored locally */}
+            {state.reason === 'no-keys' && isOwner && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openEncryptionKeyModal('view_private_posts', () => {
+                    void attemptDecryption()
+                  })
+                }}
+                className="px-3 py-1 bg-yappr-500 hover:bg-yappr-600 text-white rounded-full text-xs font-medium transition-colors"
+              >
+                Enter Key
+              </button>
+            )}
+            {/* Request Access button for no-keys (non-owner), or pending badge for pending requests */}
             {/* Don't show request button on replies - access is based on root post owner's credentials */}
-            {(state.reason === 'no-keys' || state.reason === 'pending' || isPending) && !post.replyToId && renderRequestButton()}
+            {(state.reason === 'no-keys' || state.reason === 'pending' || isPending) && !post.replyToId && !isOwner && renderRequestButton()}
           </div>
         </div>
 
