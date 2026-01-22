@@ -924,7 +924,6 @@
   },
   "privateFeedRekey": {
     "type": "object",
-    "canBeDeleted": false,
     "indices": [
       {
         "name": "ownerAndEpoch",
@@ -979,7 +978,7 @@
         "description": "CEK[epoch] encrypted under new root key (32 bytes + 16 byte auth tag)"
       }
     },
-    "description": "A rekey document created when revoking a private feed follower. IMMUTABLE - cannot be deleted.",
+    "description": "A rekey document created when revoking a private feed follower.",
     "additionalProperties": false
   },
   "privateFeedState": {

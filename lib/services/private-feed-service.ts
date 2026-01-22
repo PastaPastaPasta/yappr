@@ -1196,14 +1196,96 @@ class PrivateFeedService {
       // 2. Verify user has the encryption key by deriving public key
       const encryptionPubKey = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
-      // 3. Generate new feed seed (SPEC §8.1 step 1)
+      // 3. Delete all existing PrivateFeedGrant documents
+      // These are now useless since they're encrypted to old seed's epoch keys
+      console.log('Deleting existing grants...');
+      const sdk = await getEvoSdk();
+      const { documents: grantDocs } = await paginateFetchAll<{ $id: string }>(
+        sdk,
+        (startAfter) => ({
+          dataContractId: this.contractId,
+          documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+          where: [['$ownerId', '==', ownerId]],
+          orderBy: [['leafIndex', 'asc']],
+          limit: 100,
+          ...(startAfter && { startAfter }),
+        }),
+        (doc) => ({ $id: doc.$id as string }),
+        { maxResults: 1024 }
+      );
+
+      console.log(`Found ${grantDocs.length} grants to delete`);
+
+      // Delete grants one by one (unfortunately no batch delete in SDK)
+      let deletedCount = 0;
+      for (const grant of grantDocs) {
+        try {
+          const deleteResult = await stateTransitionService.deleteDocument(
+            this.contractId,
+            DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+            grant.$id,
+            ownerId
+          );
+          if (deleteResult.success) {
+            deletedCount++;
+          } else {
+            console.warn(`Failed to delete grant ${grant.$id}:`, deleteResult.error);
+          }
+        } catch (deleteError) {
+          console.warn(`Error deleting grant ${grant.$id}:`, deleteError);
+          // Continue with other grants even if one fails
+        }
+      }
+      console.log(`Deleted ${deletedCount}/${grantDocs.length} grants`);
+
+      // 4. Delete all existing PrivateFeedRekey documents
+      // These reference the old epoch chain and would cause conflicts/confusion
+      console.log('Deleting existing rekey documents...');
+      const { documents: rekeyDocs } = await paginateFetchAll<{ $id: string }>(
+        sdk,
+        (startAfter) => ({
+          dataContractId: this.contractId,
+          documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
+          where: [['$ownerId', '==', ownerId]],
+          orderBy: [['epoch', 'asc']],
+          limit: 100,
+          ...(startAfter && { startAfter }),
+        }),
+        (doc) => ({ $id: doc.$id as string }),
+        { maxResults: 2000 } // maxEpoch is typically 2000
+      );
+
+      console.log(`Found ${rekeyDocs.length} rekey documents to delete`);
+
+      let deletedRekeyCount = 0;
+      for (const rekey of rekeyDocs) {
+        try {
+          const deleteResult = await stateTransitionService.deleteDocument(
+            this.contractId,
+            DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
+            rekey.$id,
+            ownerId
+          );
+          if (deleteResult.success) {
+            deletedRekeyCount++;
+          } else {
+            console.warn(`Failed to delete rekey ${rekey.$id}:`, deleteResult.error);
+          }
+        } catch (deleteError) {
+          console.warn(`Error deleting rekey ${rekey.$id}:`, deleteError);
+          // Continue with other rekeys even if one fails
+        }
+      }
+      console.log(`Deleted ${deletedRekeyCount}/${rekeyDocs.length} rekey documents`);
+
+      // 5. Generate new feed seed (SPEC §8.1 step 1)
       const newFeedSeed = privateFeedCryptoService.generateFeedSeed();
 
-      // 4. Pre-compute epoch chain and get CEK[1] for immediate use
+      // 6. Pre-compute epoch chain and get CEK[1] for immediate use
       const epochChain = privateFeedCryptoService.generateEpochChain(newFeedSeed, MAX_EPOCH);
       const cek1 = epochChain[1];
 
-      // 5. Encrypt new feedSeed to owner's public key using ECIES
+      // 7. Encrypt new feedSeed to owner's public key using ECIES
       // versionedPayload = 0x01 || feedSeed
       const versionedPayload = new Uint8Array(1 + newFeedSeed.length);
       versionedPayload[0] = PROTOCOL_VERSION;
@@ -1219,24 +1301,23 @@ class PrivateFeedService {
         aad
       );
 
-      // 6. Fetch the existing document to get its revision number
-      const sdk = await getEvoSdk();
-      const documents = await queryDocuments(sdk, {
+      // 8. Fetch the existing PrivateFeedState document to get its revision number
+      const stateDocs = await queryDocuments(sdk, {
         dataContractId: this.contractId,
         documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_STATE,
         where: [['$ownerId', '==', ownerId]],
         limit: 1,
       });
 
-      if (documents.length === 0) {
+      if (stateDocs.length === 0) {
         return { success: false, error: 'PrivateFeedState document not found' };
       }
 
-      const existingDoc = documents[0];
+      const existingDoc = stateDocs[0];
       const documentId = existingDoc.$id as string;
       const revision = (existingDoc.$revision as number) || (existingDoc.revision as number) || 1;
 
-      // 7. Update the PrivateFeedState document with new encrypted seed
+      // 9. Update the PrivateFeedState document with new encrypted seed
       // The treeCapacity and maxEpoch remain the same
       const updateData = {
         treeCapacity: TREE_CAPACITY,
@@ -1263,7 +1344,7 @@ class PrivateFeedService {
         return { success: false, error: result.error || 'Failed to update PrivateFeedState' };
       }
 
-      // 8. Clear all local owner state and reinitialize
+      // 10. Clear all local owner state and reinitialize
       privateFeedKeyStore.clearOwnerKeys();
       privateFeedKeyStore.initializeOwnerState(newFeedSeed, TREE_CAPACITY);
 
