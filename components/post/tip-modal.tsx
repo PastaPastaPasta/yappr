@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -13,12 +13,18 @@ import { identityService } from '@/lib/services/identity-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
+import {
+  getTransferKey,
+  hasTransferKey,
+  storeTransferKey,
+} from '@/lib/secure-storage'
 
 // Preset tip amounts in DASH
 const PRESET_AMOUNTS = [0.001, 0.005, 0.01, 0.05]
 
-type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error'
+type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'save-prompt' | 'error'
 type PaymentTab = 'credits' | 'crypto'
+type KeySource = 'prefilled' | 'manual' | null
 
 export function TipModal() {
   const { isOpen, post, close } = useTipModal()
@@ -37,6 +43,10 @@ export function TipModal() {
   const [activeTab, setActiveTab] = useState<PaymentTab>('credits')
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
+
+  // Transfer key persistence
+  const [keySource, setKeySource] = useState<KeySource>(null)
+  const usedTransferKeyRef = useRef<string | null>(null)
 
   // Fetch user balance when modal opens
   useEffect(() => {
@@ -59,6 +69,19 @@ export function TipModal() {
     }
   }, [isOpen, post])
 
+  // Check for stored transfer key when modal opens
+  useEffect(() => {
+    if (isOpen && user) {
+      const storedKey = getTransferKey(user.identityId)
+      if (storedKey) {
+        setTransferKey(storedKey)
+        setKeySource('prefilled')
+      } else {
+        setKeySource(null)
+      }
+    }
+  }, [isOpen, user])
+
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
@@ -71,6 +94,8 @@ export function TipModal() {
       setPaymentUris([])
       setSelectedQrPayment(null)
       setShowQrDialog(false)
+      setKeySource(null)
+      usedTransferKeyRef.current = null
     }
   }, [isOpen])
 
@@ -85,6 +110,19 @@ export function TipModal() {
   const handlePresetClick = (preset: number) => {
     setAmount(preset.toString())
     setError(null)
+  }
+
+  const handleTransferKeyChange = (value: string) => {
+    setTransferKey(value)
+    // If user types anything different from the prefilled key, mark as manual
+    if (keySource === 'prefilled' && user) {
+      const storedKey = getTransferKey(user.identityId)
+      if (value !== storedKey) {
+        setKeySource('manual')
+      }
+    } else if (value && keySource === null) {
+      setKeySource('manual')
+    }
   }
 
   const handleContinue = () => {
@@ -122,27 +160,40 @@ export function TipModal() {
     const dashAmount = parseFloat(amount)
     const credits = tipService.dashToCredits(dashAmount)
 
+    // Store key for potential save-for-later prompt
+    const keyToUse = transferKey
+    if (keySource === 'manual') {
+      usedTransferKeyRef.current = keyToUse
+    }
+
     const result = await tipService.sendTip(
       user.identityId,
       post.author.id,
       post.id,
       credits,
-      transferKey,
+      keyToUse,
       tipMessage.trim() || undefined
     )
 
-    // Clear sensitive data from memory immediately
+    // Clear sensitive data from input immediately
     setTransferKey('')
 
     if (result.success) {
-      setState('success')
       // Refresh balance display and persist to auth context
       identityService.getBalance(user.identityId)
         .then(b => setBalance(b.confirmed))
         .catch(() => {})
       // Update global balance in auth context (persists to localStorage)
       refreshBalance().catch(err => console.error('Failed to refresh balance:', err))
+
+      // If key was manually entered and not already saved, offer to save
+      if (keySource === 'manual' && usedTransferKeyRef.current && !hasTransferKey(user.identityId)) {
+        setState('save-prompt')
+      } else {
+        setState('success')
+      }
     } else {
+      usedTransferKeyRef.current = null
       setState('error')
       setError(result.error || 'Transfer failed')
     }
@@ -158,6 +209,24 @@ export function TipModal() {
   const handleRetry = () => {
     setState('input')
     setError(null)
+  }
+
+  // Handle saving the transfer key for future use
+  const handleSaveKey = () => {
+    if (!user || !usedTransferKeyRef.current) {
+      setState('success')
+      return
+    }
+
+    // Store the key locally and go to success
+    storeTransferKey(user.identityId, usedTransferKeyRef.current)
+    usedTransferKeyRef.current = null
+    setState('success')
+  }
+
+  const handleSkipSave = () => {
+    usedTransferKeyRef.current = null
+    setState('success')
   }
 
   // Handle showing QR code for an external payment URI
@@ -324,15 +393,24 @@ export function TipModal() {
                           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             Transfer Private Key (WIF)
                           </label>
-                          <input
-                            type="password"
-                            value={transferKey}
-                            onChange={(e) => setTransferKey(e.target.value)}
-                            placeholder="Enter your transfer private key"
-                            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                          />
+                          <div className="relative">
+                            <input
+                              type="password"
+                              value={transferKey}
+                              onChange={(e) => handleTransferKeyChange(e.target.value)}
+                              placeholder="Enter your transfer private key"
+                              className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            />
+                            {keySource === 'prefilled' && (
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
+                                Saved
+                              </span>
+                            )}
+                          </div>
                           <p className="mt-1 text-xs text-gray-500">
-                            Your key is never stored and is cleared after the transaction.
+                            {keySource === 'prefilled'
+                              ? 'Using your saved transfer key.'
+                              : 'Your key is cleared after the transaction unless you choose to save it.'}
                           </p>
                         </div>
 
@@ -443,6 +521,49 @@ export function TipModal() {
                     <div className="animate-spin rounded-full h-12 w-12 border-4 border-amber-500 border-t-transparent mx-auto" />
                     <p className="text-gray-600 dark:text-gray-400">Sending tip...</p>
                     <p className="text-xs text-gray-500">Please wait, this may take a moment.</p>
+                  </div>
+                )}
+
+                {/* Save Prompt State - offer to save manually entered key */}
+                {state === 'save-prompt' && (
+                  <div className="py-4 space-y-4">
+                    <div className="text-center">
+                      <CheckCircleIcon className="h-12 w-12 text-green-500 mx-auto mb-2" />
+                      <p className="text-lg font-medium">Tip sent successfully!</p>
+                      <p className="text-gray-600 dark:text-gray-400">
+                        You sent {dashAmount} DASH to {recipientName}
+                      </p>
+                    </div>
+
+                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-4">
+                      <div className="flex items-start gap-3">
+                        <BookmarkIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <p className="font-medium text-amber-800 dark:text-amber-300">
+                            Save transfer key for future tips?
+                          </p>
+                          <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
+                            Your transfer key will be securely stored so you won&apos;t need to enter it again.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <Button
+                        onClick={handleSkipSave}
+                        variant="outline"
+                        className="flex-1"
+                      >
+                        No thanks
+                      </Button>
+                      <Button
+                        onClick={handleSaveKey}
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white"
+                      >
+                        Save key
+                      </Button>
+                    </div>
                   </div>
                 )}
 

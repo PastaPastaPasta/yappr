@@ -108,6 +108,44 @@ function AuthLoadingSpinner(): JSX.Element {
   )
 }
 
+/**
+ * Attempt to derive encryption key and check if it matches the identity.
+ * If it matches, stores the key and marks it as 'derived'.
+ * Returns the derived key bytes if successful, null otherwise.
+ */
+async function attemptEncryptionKeyDerivation(
+  identityId: string,
+  authPrivateKey: Uint8Array
+): Promise<Uint8Array | null> {
+  try {
+    const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } =
+      await import('@/lib/crypto/key-derivation')
+    const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
+    const { privateKeyToWif } = await import('@/lib/crypto/wif')
+
+    // Derive the encryption key
+    const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
+
+    // Check if it matches the identity's key
+    const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId, 1)
+
+    if (matches) {
+      // Convert to WIF and store
+      const wif = privateKeyToWif(derivedKey, 'testnet', true)
+      storeEncryptionKey(identityId, wif)
+      storeEncryptionKeyType(identityId, 'derived')
+      console.log('Auth: Encryption key derived and stored')
+      return derivedKey
+    }
+
+    return null
+  } catch (error) {
+    console.error('Auth: Failed to derive encryption key:', error)
+    return null
+  }
+}
+
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -215,7 +253,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Set storage mode based on "remember me" choice
       // - rememberMe=true: localStorage (shared across tabs, persists)
       // - rememberMe=false: sessionStorage (single tab, cleared on close)
-      const { storePrivateKey, setRememberMe } = await import('@/lib/secure-storage')
+      const { storePrivateKey, setRememberMe, hasEncryptionKey } = await import('@/lib/secure-storage')
       setRememberMe(rememberMe)
       storePrivateKey(identityId, privateKey)
 
@@ -223,6 +261,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Set identity in DashPlatformClient for document operations
       await setDashPlatformClientIdentity(identityId)
+
+      // Attempt key derivation for encryption key (background, non-blocking)
+      // This auto-derives and stores the encryption key if it matches identity
+      const { parsePrivateKey } = await import('@/lib/crypto/wif')
+      const { privateKey: authPrivateKeyBytes } = parsePrivateKey(privateKey)
+
+      // Check if identity has encryption key (purpose=1)
+      const hasEncryptionKeyOnIdentity = authUser.publicKeys.some(
+        (key) => key.purpose === 1 && key.type === 0
+      )
+
+      if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
+        // Try to derive encryption key
+        console.log('Auth: Attempting encryption key derivation...')
+        const derivedEncKey = await attemptEncryptionKeyDerivation(identityId, authPrivateKeyBytes)
+
+        if (!derivedEncKey) {
+          // Derivation didn't match - user has external key, will need to enter it manually
+          console.log('Auth: Encryption key derivation failed - external key exists on identity')
+          // Note: The encryption-key-modal will handle prompting for manual entry
+        }
+      }
 
       // First check if user has DPNS username (unless skipped)
       console.log('Checking for DPNS username...')
@@ -269,11 +329,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem('yappr_skip_dpns')
     sessionStorage.removeItem('yappr_backup_prompt_shown')
 
-    // Clear private key, encryption key, and caches
+    // Clear private key, encryption key, transfer key, and caches
     if (user?.identityId) {
-      const { clearPrivateKey, clearEncryptionKey } = await import('@/lib/secure-storage')
+      const {
+        clearPrivateKey,
+        clearEncryptionKey,
+        clearEncryptionKeyType,
+        clearTransferKey,
+      } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
       clearEncryptionKey(user.identityId)
+      clearEncryptionKeyType(user.identityId)
+      clearTransferKey(user.identityId)
 
       const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
       invalidateBlockCache(user.identityId)
@@ -303,6 +370,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Password login is not yet configured')
       }
 
+      // Decrypt credentials from backup
       const result = await encryptedKeyService.loginWithPassword(username, password)
 
       // Continue with normal login flow using decrypted credentials

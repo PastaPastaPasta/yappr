@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { X, Loader2, Eye, EyeOff, Shield, AlertTriangle } from 'lucide-react'
+import { X, Loader2, Eye, EyeOff, Shield, AlertTriangle, Key, Check } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
@@ -184,11 +184,28 @@ export function KeyBackupModal() {
                 </div>
               </div>
 
-              <h1 className="text-2xl font-bold text-center mb-2">Backup Your Key</h1>
+              <h1 className="text-2xl font-bold text-center mb-2">Backup Your Keys</h1>
               <p className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
-                Save an encrypted copy of your private key to Dash Platform.
+                Save an encrypted copy of your keys to Dash Platform.
                 This lets you sign in with just your username and password.
               </p>
+
+              {/* Key to be protected */}
+              <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+                  Key included in backup
+                </p>
+                <div className="flex items-center gap-3 text-sm">
+                  <div className="w-8 h-8 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center">
+                    <Key className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
+                  </div>
+                  <div className="flex-1">
+                    <span className="font-medium text-gray-900 dark:text-white">Login Key</span>
+                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-xs">Required for signing in</span>
+                  </div>
+                  <Check className="w-4 h-4 text-green-500" />
+                </div>
+              </div>
 
               {/* Security Warning */}
               <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-lg p-4 mb-4">

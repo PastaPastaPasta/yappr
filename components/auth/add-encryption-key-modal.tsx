@@ -16,12 +16,13 @@ interface AddEncryptionKeyModalProps {
   onSuccess?: () => void
 }
 
-type Step = 'intro' | 'generate' | 'confirm' | 'critical-key' | 'adding' | 'success' | 'error'
+type Step = 'intro' | 'generate' | 'critical-key' | 'adding' | 'success' | 'error'
 
 /**
  * AddEncryptionKeyModal Component
  *
- * Modal for generating and adding an encryption key to an identity.
+ * Modal for deriving and adding an encryption key to an identity.
+ * Uses HKDF derivation from auth key for zero-friction setup.
  * Implements PRD §6.2 - Key Addition Flow
  *
  * NOTE: Adding an encryption key to an identity requires a MASTER
@@ -36,6 +37,7 @@ export function AddEncryptionKeyModal({
   const { user } = useAuth()
   const [step, setStep] = useState<Step>('intro')
   const [privateKeyWif, setPrivateKeyWif] = useState<string>('')
+  const [privateKeyBytes, setPrivateKeyBytes] = useState<Uint8Array | null>(null)
   const [showPrivateKey, setShowPrivateKey] = useState(false)
   const [hasCopied, setHasCopied] = useState(false)
   const [hasConfirmedBackup, setHasConfirmedBackup] = useState(false)
@@ -46,25 +48,36 @@ export function AddEncryptionKeyModal({
   const [isValidatingKey, setIsValidatingKey] = useState(false)
   const [keyValidationError, setKeyValidationError] = useState<string | null>(null)
 
-  // Generate a new encryption keypair
-  const generateKeyPair = useCallback(async () => {
+  // Derive encryption key from auth key using HKDF
+  const deriveKey = useCallback(async () => {
+    if (!user) return
+
     try {
-      // Generate random 32 bytes for private key
-      const privateKeyBytes = new Uint8Array(32)
-      crypto.getRandomValues(privateKeyBytes)
+      const { getPrivateKey } = await import('@/lib/secure-storage')
+      const authKeyWif = getPrivateKey(user.identityId)
+      if (!authKeyWif) {
+        throw new Error('Auth key not found in storage')
+      }
 
-      // Convert to WIF format
-      const { privateKeyToWif } = await import('@/lib/crypto/wif')
-      const privateWif = privateKeyToWif(privateKeyBytes, 'testnet', true)
+      // Parse auth key to bytes
+      const { parsePrivateKey, privateKeyToWif } = await import('@/lib/crypto/wif')
+      const parsed = parsePrivateKey(authKeyWif)
+      const authPrivateKey = parsed.privateKey
 
-      setPrivateKeyWif(privateWif)
+      // Derive encryption key using HKDF
+      const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
+      const encryptionKeyBytes = deriveEncryptionKey(authPrivateKey, user.identityId)
+      const encryptionKeyWif = privateKeyToWif(encryptionKeyBytes, 'testnet', true)
+
+      setPrivateKeyBytes(encryptionKeyBytes)
+      setPrivateKeyWif(encryptionKeyWif)
       setStep('generate')
     } catch (err) {
-      console.error('Error generating keypair:', err)
-      setError('Failed to generate encryption key')
+      console.error('Error deriving encryption key:', err)
+      setError(err instanceof Error ? err.message : 'Failed to derive encryption key')
       setStep('error')
     }
-  }, [])
+  }, [user])
 
   // Copy private key to clipboard
   const copyToClipboard = useCallback(async () => {
@@ -80,18 +93,13 @@ export function AddEncryptionKeyModal({
 
   // Add the encryption key to identity
   const addKeyToIdentity = useCallback(async () => {
-    if (!user || !privateKeyWif || !criticalKeyWif.trim()) return
+    if (!user || !privateKeyWif || !privateKeyBytes || !criticalKeyWif.trim()) return
 
     setStep('adding')
     setError(null)
 
     try {
-      const { storeEncryptionKey } = await import('@/lib/secure-storage')
-      const { parsePrivateKey } = await import('@/lib/crypto/wif')
-
-      // Parse the WIF key to get bytes
-      const parsed = parsePrivateKey(privateKeyWif)
-      const privateKeyBytes = parsed.privateKey
+      const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
 
       // Add the encryption key to identity using the MASTER-level key
       const { identityService } = await import('@/lib/services/identity-service')
@@ -105,6 +113,8 @@ export function AddEncryptionKeyModal({
       if (result.success) {
         // Store the encryption key in session (WIF format)
         storeEncryptionKey(user.identityId, privateKeyWif)
+        // Mark as derived since we derived it from auth key
+        storeEncryptionKeyType(user.identityId, 'derived')
 
         setStep('success')
         toast.success('Encryption key added to your identity!')
@@ -121,12 +131,12 @@ export function AddEncryptionKeyModal({
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
       setStep('error')
     }
-  }, [user, privateKeyWif, criticalKeyWif, onSuccess])
+  }, [user, privateKeyWif, privateKeyBytes, criticalKeyWif, onSuccess])
 
   // Validate the CRITICAL key before proceeding
   const validateCriticalKey = useCallback(async () => {
     if (!user || !criticalKeyWif.trim()) {
-      setKeyValidationError('Please enter your MASTER key')
+      setKeyValidationError('Please enter your Master key')
       return
     }
 
@@ -161,6 +171,7 @@ export function AddEncryptionKeyModal({
     // Reset state
     setStep('intro')
     setPrivateKeyWif('')
+    setPrivateKeyBytes(null)
     setShowPrivateKey(false)
     setHasCopied(false)
     setHasConfirmedBackup(false)
@@ -184,6 +195,7 @@ export function AddEncryptionKeyModal({
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
               To use private feeds, you need an encryption key on your identity.
+              This key is automatically recreated from your login key — unless your login key changes.
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
@@ -191,53 +203,38 @@ export function AddEncryptionKeyModal({
                 <div className="flex gap-3">
                   <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                   <div className="text-sm text-amber-700 dark:text-amber-300 space-y-2">
-                    <p className="font-medium">Important:</p>
-                    <ul className="list-disc ml-4 space-y-1">
-                      <li>A new encryption key will be generated for you</li>
-                      <li>You <strong>must</strong> save this key securely</li>
-                      <li>Without it, you cannot access your private feed data</li>
-                      <li>This key is separate from your login key</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
-                <div className="flex gap-3">
-                  <ShieldCheckIcon className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                  <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
-                    <p className="font-medium">MASTER Key Required:</p>
+                    <p className="font-medium">Why save a backup?</p>
                     <p>
-                      Modifying your identity requires your <strong>MASTER</strong> key
-                      (not your regular HIGH login key). You&apos;ll need this key in a later step.
+                      If your login key ever changes, this backup is the only way to recover
+                      your private feed content. The key will be shown once.
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
-                <h4 className="font-medium mb-2 text-sm">What this key is used for:</h4>
+                <h4 className="font-medium mb-2 text-sm">What this key does:</h4>
                 <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
                   <li className="flex gap-2">
                     <span className="text-yappr-500">•</span>
-                    Encrypting your private feed seed
+                    Keeps your private posts private
                   </li>
                   <li className="flex gap-2">
                     <span className="text-yappr-500">•</span>
-                    Decrypting grants from private feeds you follow
+                    Lets you read private feeds you follow
                   </li>
                   <li className="flex gap-2">
                     <span className="text-yappr-500">•</span>
-                    Securely managing private feed access
+                    Manages access securely behind the scenes
                   </li>
                 </ul>
               </div>
             </div>
 
             <div className="flex flex-col gap-3">
-              <Button onClick={generateKeyPair} className="w-full">
+              <Button onClick={deriveKey} className="w-full">
                 <KeyIcon className="h-4 w-4 mr-2" />
-                Generate Encryption Key
+                Create Encryption Key
               </Button>
               <Button onClick={handleClose} variant="outline" className="w-full">
                 Cancel
@@ -255,24 +252,25 @@ export function AddEncryptionKeyModal({
             </Dialog.Title>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              Your encryption key has been generated. Save it securely now.
+              Your encryption key has been created. Save it securely as backup.
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
               {/* Warning */}
-              <div className="bg-red-50 dark:bg-red-950 p-4 rounded-lg border border-red-200 dark:border-red-800">
+              <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg border border-amber-200 dark:border-amber-800">
                 <div className="flex gap-3">
-                  <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0" />
-                  <div className="text-sm text-red-700 dark:text-red-300">
-                    <p className="font-bold">Save this key NOW!</p>
-                    <p>Once you close this dialog, you cannot view this key again.</p>
+                  <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                  <div className="text-sm text-amber-700 dark:text-amber-300">
+                    <p className="font-bold">Why save this?</p>
+                    <p>If your login key ever changes, this backup is the only way to recover your private feed content.</p>
                   </div>
                 </div>
               </div>
 
-              {/* Private Key Display */}
+              {/* Encryption Key Display */}
               <div className="space-y-2">
-                <label className="text-sm font-medium">Private Key (WIF)</label>
+                <label className="text-sm font-medium">Encryption Key (WIF)</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Used only for private feeds. Does not control funds.</p>
                 <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
                   <div className="flex-1 p-3 font-mono text-sm overflow-hidden min-h-[44px] flex items-center">
                     {showPrivateKey ? (
@@ -327,77 +325,21 @@ export function AddEncryptionKeyModal({
                   htmlFor="confirm-backup"
                   className="text-sm cursor-pointer select-none"
                 >
-                  I have securely saved my private key in a password manager or other secure location
+                  I have securely saved this encryption key in a password manager or other secure location
                 </label>
               </div>
             </div>
 
             <div className="flex flex-col gap-3">
               <Button
-                onClick={() => setStep('confirm')}
+                onClick={() => setStep('critical-key')}
                 disabled={!hasConfirmedBackup}
                 className="w-full"
               >
                 Continue
               </Button>
               <Button onClick={handleClose} variant="outline" className="w-full">
-                Cancel (key will be lost)
-              </Button>
-            </div>
-          </>
-        )
-
-      case 'confirm':
-        return (
-          <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
-              <KeyIcon className="h-6 w-6 text-yappr-500" />
-              Confirm Key Addition
-            </Dialog.Title>
-
-            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              Ready to add the encryption key to your identity.
-            </Dialog.Description>
-
-            <div className="space-y-4 mb-6">
-              <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg">
-                <h4 className="font-medium mb-2 text-sm text-blue-800 dark:text-blue-200">
-                  What happens next:
-                </h4>
-                <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                  <li className="flex gap-2">
-                    <span>1.</span>
-                    <span>You&apos;ll enter your MASTER key to authorize the change</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span>2.</span>
-                    <span>A transaction will be broadcast to add this key to your identity</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span>3.</span>
-                    <span>The encryption key will be stored locally for this session</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span>4.</span>
-                    <span>You can then enable your private feed</span>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="text-sm text-gray-500 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
-                <p>
-                  This will cost a small amount of Dash Platform credits from your identity balance.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <Button onClick={() => setStep('critical-key')} className="w-full">
-                <ShieldCheckIcon className="h-4 w-4 mr-2" />
-                Continue with MASTER Key
-              </Button>
-              <Button onClick={() => setStep('generate')} variant="outline" className="w-full">
-                Back
+                Cancel (discards unused key)
               </Button>
             </div>
           </>
@@ -408,31 +350,27 @@ export function AddEncryptionKeyModal({
           <>
             <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
               <ShieldCheckIcon className="h-6 w-6 text-yappr-500" />
-              Enter MASTER Key
+              Confirm with Master Key
             </Dialog.Title>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              Enter your MASTER key to authorize the identity modification.
+              Enter your Master key to confirm this change to your identity.
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
-              <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
-                <div className="flex gap-3">
-                  <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-                  <div className="text-sm text-amber-700 dark:text-amber-300">
-                    <p className="font-medium">Why is this needed?</p>
-                    <p>
-                      Dash Platform requires a MASTER security level key to modify
-                      your identity. Your regular HIGH login key cannot be used for this operation.
-                    </p>
-                  </div>
+              <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  <p>
+                    Your Master key is different from your login key.
+                    It was provided when you created your identity.
+                  </p>
                 </div>
               </div>
 
-              {/* MASTER Key Input */}
+              {/* Master Key Input */}
               <div className="space-y-2">
                 <div className="text-sm font-medium flex items-center justify-between">
-                  <span>MASTER Key (WIF format)</span>
+                  <span>Master Key</span>
                   <button
                     type="button"
                     onClick={() => setShowCriticalKey(!showCriticalKey)}
@@ -452,7 +390,7 @@ export function AddEncryptionKeyModal({
                     setCriticalKeyWif(e.target.value)
                     setKeyValidationError(null)
                   }}
-                  placeholder="Enter your MASTER private key..."
+                  placeholder="Enter your Master key..."
                   className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
                 {keyValidationError && (
@@ -460,10 +398,12 @@ export function AddEncryptionKeyModal({
                 )}
               </div>
 
-              <div className="text-xs text-gray-500 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="text-xs text-gray-500 space-y-2">
                 <p>
-                  <strong>Tip:</strong> Your MASTER key was provided when you created your identity.
-                  It starts with &apos;c&apos; (testnet) or &apos;X&apos; (mainnet) and is about 51-52 characters.
+                  Starts with &apos;c&apos; (testnet) or &apos;X&apos; (mainnet), about 51-52 characters.
+                </p>
+                <p>
+                  This will cost a small amount of credits from your identity balance.
                 </p>
               </div>
             </div>
@@ -486,7 +426,7 @@ export function AddEncryptionKeyModal({
                   </>
                 )}
               </Button>
-              <Button onClick={() => setStep('confirm')} variant="outline" className="w-full" disabled={isValidatingKey}>
+              <Button onClick={() => setStep('generate')} variant="outline" className="w-full" disabled={isValidatingKey}>
                 Back
               </Button>
             </div>
@@ -566,7 +506,7 @@ export function AddEncryptionKeyModal({
               {privateKeyWif && (
                 <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
                   <p className="text-sm text-amber-700 dark:text-amber-300">
-                    <strong>Note:</strong> Your private key was generated. If you saved it, you can try again later using the &quot;Enter Encryption Key&quot; option after manually adding the key to your identity.
+                    <strong>Note:</strong> Your encryption key was derived. If you saved it, you can try again later.
                   </p>
                 </div>
               )}

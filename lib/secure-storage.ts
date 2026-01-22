@@ -243,3 +243,92 @@ export const hasEncryptionKey = (identityId: string): boolean => {
 export const clearEncryptionKey = (identityId: string): boolean => {
   return secureStorage.delete(`ek_${identityId}`)
 }
+
+// Key type tracking for encryption and transfer keys
+// 'derived' means the key was derived from auth key and can be re-derived
+// 'external' means the key was pre-existing/manually entered and must be backed up
+
+export type KeyType = 'derived' | 'external'
+
+/**
+ * Store the type of encryption key (derived or external)
+ */
+export const storeEncryptionKeyType = (identityId: string, type: KeyType) => {
+  secureStorage.set(`ek_type_${identityId}`, type)
+}
+
+/**
+ * Get the type of encryption key
+ */
+export const getEncryptionKeyType = (identityId: string): KeyType | null => {
+  const value = secureStorage.get(`ek_type_${identityId}`)
+  return value === 'derived' || value === 'external' ? value : null
+}
+
+/**
+ * Clear encryption key type
+ */
+export const clearEncryptionKeyType = (identityId: string): boolean => {
+  return secureStorage.delete(`ek_type_${identityId}`)
+}
+
+// Transfer key storage for credit transfer operations
+// Keys are stored in WIF format for consistency with other private keys
+
+/**
+ * Store transfer key in WIF format.
+ * Accepts both WIF and hex formats - converts hex to WIF before storing.
+ */
+export const storeTransferKey = (identityId: string, transferKey: string) => {
+  // If already WIF, store as-is
+  if (isLikelyWif(transferKey)) {
+    secureStorage.set(`tk_${identityId}`, transferKey)
+    return
+  }
+
+  // Parse the key (handles both hex and WIF)
+  const parsed = parsePrivateKey(transferKey)
+
+  // Convert to WIF for storage (testnet by default, compressed)
+  const wif = privateKeyToWif(parsed.privateKey, 'testnet', true)
+  secureStorage.set(`tk_${identityId}`, wif)
+}
+
+/**
+ * Get transfer key as raw string (for display/backup purposes).
+ * Returns the stored format (WIF for new keys, possibly hex for legacy).
+ */
+export const getTransferKey = (identityId: string): string | null => {
+  const value = secureStorage.get(`tk_${identityId}`)
+  return typeof value === 'string' ? value : null
+}
+
+/**
+ * Get transfer key as Uint8Array bytes.
+ * Handles both WIF and legacy hex formats automatically.
+ */
+export const getTransferKeyBytes = (identityId: string): Uint8Array | null => {
+  const value = getTransferKey(identityId)
+  if (!value) return null
+
+  try {
+    const parsed = parsePrivateKey(value)
+    return parsed.privateKey
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if transfer key is stored
+ */
+export const hasTransferKey = (identityId: string): boolean => {
+  return secureStorage.has(`tk_${identityId}`)
+}
+
+/**
+ * Clear transfer key from storage
+ */
+export const clearTransferKey = (identityId: string): boolean => {
+  return secureStorage.delete(`tk_${identityId}`)
+}
