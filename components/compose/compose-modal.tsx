@@ -671,7 +671,6 @@ export function ComposeModal() {
     let failureError: Error | null = null
 
     try {
-      const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
       const { retryPostCreation } = await import('@/lib/retry-utils')
 
       // Check if this is a private post (explicit or inherited)
@@ -708,86 +707,70 @@ export function ComposeModal() {
 
         console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
-        let result
+        // Build unified post creation options
+        const replyToPostOwnerId = i === 0 && replyingTo
+          ? replyingTo.author.id
+          : previousPostId ? authedUser.identityId : undefined
+
+        // Determine encryption options
+        let encryptionOptions: import('@/lib/services/post-service').EncryptionOptions | undefined
+
         if (isThisReplyInherited && inheritedEncryption) {
-          // Create private reply with inherited encryption (PRD §5.5)
-          const { privateFeedService } = await import('@/lib/services')
-
-          const privateResult = await privateFeedService.createInheritedPrivateReply(
-            authedUser.identityId,
-            postContent,
-            { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
-            previousPostId || replyingTo?.id || ''
-          )
-
-          // Convert to the expected result format
-          if (privateResult.success) {
-            result = {
-              success: true,
-              data: { postId: privateResult.postId },
-            }
-          } else {
-            result = {
-              success: false,
-              error: new Error(privateResult.error || 'Failed to create private reply'),
-            }
+          // Inherited encryption for replies to private posts (PRD §5.5)
+          encryptionOptions = {
+            type: 'inherited',
+            source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
           }
         } else if (isThisPostPrivate) {
-          // Create private post using privateFeedService
-          const { privateFeedService } = await import('@/lib/services')
+          // Owner encryption for new private posts
           const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
-
-          // Try to get encryption key for automatic sync/recovery (handles WIF and hex)
           const encryptionPrivateKey = getEncryptionKeyBytes(authedUser.identityId) ?? undefined
 
-          const privateResult = await privateFeedService.createPrivatePost(
-            authedUser.identityId,
-            postContent,
-            postVisibility === 'private-with-teaser' ? teaser : undefined,
-            encryptionPrivateKey
-          )
+          encryptionOptions = {
+            type: 'owner',
+            teaser: postVisibility === 'private-with-teaser' ? teaser : undefined,
+            encryptionPrivateKey,
+          }
+        }
 
-          // Convert to the expected result format
-          if (privateResult.success) {
-            result = {
-              success: true,
-              data: { postId: privateResult.postId },
-            }
-          } else {
-            // Check if this is a sync required error
-            if (privateResult.error?.startsWith('SYNC_REQUIRED:')) {
+        // Use unified postService.createPost for all post types
+        const result = await retryPostCreation(async () => {
+          const { postService } = await import('@/lib/services')
+
+          // Check for sync required errors before they get wrapped by retry
+          try {
+            const post = await postService.createPost(authedUser.identityId, postContent, {
+              replyToId: previousPostId || undefined,
+              replyToPostOwnerId,
+              quotedPostId: i === 0 ? quotingPost?.id : undefined,
+              encryption: encryptionOptions,
+            })
+
+            // Return the post data directly - retryPostCreation wraps it in { success, data }
+            return { postId: post.id, document: post }
+          } catch (error) {
+            // Check if this is a sync required error - handle it specially
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            if (errorMsg.startsWith('SYNC_REQUIRED:')) {
               const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
               useEncryptionKeyModal.getState().open('sync_state', () => {
-                // After user enters key, they should retry posting
                 toast('Please try posting again now that your keys are synced')
               })
               toast.error('Your private feed state needs to sync. Please enter your encryption key.')
-              // Don't treat as fatal - user can retry
-              setIsPosting(false)
-              setPostingProgress(null)
-              return
+              // Throw a special error that we can detect
+              const syncError = new Error('SYNC_REQUIRED')
+              ;(syncError as Error & { syncRequired: boolean }).syncRequired = true
+              throw syncError
             }
-            result = {
-              success: false,
-              error: new Error(privateResult.error || 'Failed to create private post'),
-            }
+            throw error
           }
-        } else {
-          // Create public post using dashClient
-          // For the first post, if it's a reply, use replyingTo.author.id for notification queries
-          // For subsequent thread posts, we're replying to our own posts so the current user is the owner
-          const replyToPostOwnerId = i === 0 && replyingTo
-            ? replyingTo.author.id
-            : previousPostId ? authedUser.identityId : undefined
+        })
 
-          result = await retryPostCreation(async () => {
-            const dashClient = getDashPlatformClient()
-            return await dashClient.createPost(postContent, {
-              replyToPostId: previousPostId || undefined,
-              replyToPostOwnerId: replyToPostOwnerId,
-              quotedPostId: i === 0 ? quotingPost?.id : undefined,
-            })
-          })
+        // Handle sync required - abort without marking as failure
+        if (!result.success && (result.error as Error & { syncRequired?: boolean })?.syncRequired) {
+          setIsPosting(false)
+          setPostingProgress(null)
+          return
         }
 
         if (result.success) {

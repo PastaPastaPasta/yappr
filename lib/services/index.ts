@@ -31,7 +31,7 @@ export { profileMigrationService } from './profile-migration-service';
 export type { EvoSdkConfig } from './evo-sdk-service';
 export type { IdentityInfo, IdentityBalance } from './identity-service';
 export type { ProfileDocument } from './profile-service';
-export type { PostDocument, PostStats } from './post-service';
+export type { PostDocument, PostStats, EncryptionOptions } from './post-service';
 export type { LikeDocument } from './like-service';
 export type { FollowDocument } from './follow-service';
 export type { RepostDocument } from './repost-service';
@@ -88,11 +88,17 @@ export type {
 } from './private-feed-key-store';
 
 // Private feed service (owner operations)
-export { privateFeedService } from './private-feed-service';
+export {
+  privateFeedService,
+  prepareOwnerEncryption,
+  prepareInheritedEncryption,
+} from './private-feed-service';
 export type {
   PrivateFeedStateDocument,
   PrivateFeedRekeyDocument,
   PrivatePostResult,
+  EncryptedPostData,
+  PrepareEncryptionResult,
 } from './private-feed-service';
 
 // Private feed follower service (follower operations)

@@ -30,6 +30,20 @@ export interface PostDocument {
   nonce?: Uint8Array;
 }
 
+/**
+ * Encryption options for creating private posts
+ */
+export interface EncryptionOptions {
+  /** Type of encryption: 'owner' for own private posts, 'inherited' for replies to private posts */
+  type: 'owner' | 'inherited';
+  /** Optional public teaser content (only for 'owner' type) */
+  teaser?: string;
+  /** Owner's encryption private key for automatic sync/recovery (only for 'owner' type) */
+  encryptionPrivateKey?: Uint8Array;
+  /** Encryption source for inherited encryption (only for 'inherited' type) */
+  source?: { ownerId: string; epoch: number };
+}
+
 export interface PostStats {
   postId: string;
   likes: number;
@@ -372,10 +386,14 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Create a new post
+   * Create a new post (public or private)
+   *
+   * This is the unified post creation method that handles both public and private posts.
+   * For private posts, pass the `encryption` option with the appropriate type.
+   *
    * @param ownerId - Identity ID of the post author
-   * @param content - Post content
-   * @param options - Optional fields including replyToPostOwnerId for notification queries
+   * @param content - Post content (plaintext - will be encrypted if encryption option is provided)
+   * @param options - Optional fields including encryption for private posts
    */
   async createPost(
     ownerId: string,
@@ -389,11 +407,49 @@ class PostService extends BaseDocumentService<Post> {
       primaryHashtag?: string;
       language?: string;
       sensitive?: boolean;
+      /** Encryption options for private posts */
+      encryption?: EncryptionOptions;
     } = {}
   ): Promise<Post> {
-    const data: Record<string, unknown> = {
-      content
-    };
+    const PRIVATE_POST_PLACEHOLDER = '🔒';
+    const data: Record<string, unknown> = {};
+
+    // Handle encryption if provided
+    if (options.encryption) {
+      const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');
+
+      let encryptionResult;
+      if (options.encryption.type === 'owner') {
+        encryptionResult = await prepareOwnerEncryption(
+          ownerId,
+          content,
+          options.encryption.teaser,
+          options.encryption.encryptionPrivateKey
+        );
+      } else if (options.encryption.type === 'inherited' && options.encryption.source) {
+        encryptionResult = await prepareInheritedEncryption(
+          content,
+          options.encryption.source
+        );
+      } else {
+        throw new Error('Invalid encryption options: inherited type requires source');
+      }
+
+      if (!encryptionResult.success) {
+        throw new Error(encryptionResult.error);
+      }
+
+      // Set encrypted fields
+      data.encryptedContent = encryptionResult.data.encryptedContent;
+      data.epoch = encryptionResult.data.epoch;
+      data.nonce = encryptionResult.data.nonce;
+
+      // Use teaser or placeholder as public content
+      data.content = encryptionResult.data.teaser || PRIVATE_POST_PLACEHOLDER;
+    } else {
+      // Public post - use content directly
+      data.content = content;
+    }
 
     // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;

@@ -9,7 +9,12 @@
  * Operations:
  * - enablePrivateFeed(): Initialize a new private feed
  * - hasPrivateFeed(): Check if a user has a private feed
- * - createPrivatePost(): Create an encrypted private post
+ * - approveFollower(): Grant access to a follower
+ * - revokeFollower(): Revoke access from a follower
+ *
+ * For creating private posts, use postService.createPost() with encryption options.
+ * Helper functions prepareOwnerEncryption() and prepareInheritedEncryption() are
+ * exported for use by postService.
  *
  * See YAPPR_PRIVATE_FEED_SPEC.md for cryptographic details.
  * See YAPPR_PRIVATE_FEED_PRD.md for implementation guidance.
@@ -319,262 +324,6 @@ class PrivateFeedService {
       return { success: true };
     } catch (error) {
       console.error('Error enabling private feed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
-  }
-
-  /**
-   * Create a private post (SPEC §8.2)
-   *
-   * @param ownerId - The identity ID of the post author
-   * @param content - The plaintext content to encrypt
-   * @param teaser - Optional public teaser content
-   * @param encryptionPrivateKey - Optional: encryption key for automatic sync/recovery
-   * @returns Promise<PrivatePostResult>
-   */
-  async createPrivatePost(
-    ownerId: string,
-    content: string,
-    teaser?: string,
-    encryptionPrivateKey?: Uint8Array
-  ): Promise<PrivatePostResult> {
-    try {
-      // 0. Check if local keys exist at all (BUG-010 fix)
-      // This handles the case where the user enabled private feed on another device/session
-      // and hasn't yet synced to this device
-      const hasLocalKeys = privateFeedKeyStore.hasFeedSeed();
-
-      if (!hasLocalKeys) {
-        console.log('No local private feed keys found, need full recovery');
-
-        if (encryptionPrivateKey) {
-          // Run full recovery to restore local state from chain
-          const recoveryResult = await this.recoverOwnerState(ownerId, encryptionPrivateKey);
-          if (!recoveryResult.success) {
-            return {
-              success: false,
-              error: `Recovery failed: ${recoveryResult.error}`,
-            };
-          }
-          console.log('Full recovery completed, continuing with post creation');
-        } else {
-          // No key provided - return a specific error that UI can detect
-          return {
-            success: false,
-            error: 'SYNC_REQUIRED:No local keys found. Please enter your encryption key to sync.',
-          };
-        }
-      }
-
-      // 1. SYNC CHECK (SPEC §8.2 step 1)
-      // Fetch latest epoch from chain and compare with local
-      const chainEpoch = await this.getLatestEpoch(ownerId);
-      const localEpoch = privateFeedKeyStore.getCurrentEpoch();
-
-      if (chainEpoch > localEpoch) {
-        // Need to run owner recovery to sync state
-        console.log(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
-
-        if (encryptionPrivateKey) {
-          // Automatic recovery with provided key
-          const recoveryResult = await this.recoverOwnerState(ownerId, encryptionPrivateKey);
-          if (!recoveryResult.success) {
-            return {
-              success: false,
-              error: `Sync failed: ${recoveryResult.error}`,
-            };
-          }
-          console.log('Automatic recovery completed, continuing with post creation');
-        } else {
-          // No key provided - return a specific error that UI can detect
-          return {
-            success: false,
-            error: 'SYNC_REQUIRED:Local state out of sync. Please enter your encryption key to sync.',
-          };
-        }
-      }
-
-      // 2. Validate plaintext size (SPEC §8.2 step 2)
-      const plaintextBytes = utf8Encode(content);
-      if (plaintextBytes.length > MAX_PLAINTEXT_SIZE) {
-        return {
-          success: false,
-          error: `Content too long: ${plaintextBytes.length} bytes (max ${MAX_PLAINTEXT_SIZE})`,
-        };
-      }
-
-      // 3. Get feed seed and current CEK
-      const feedSeed = privateFeedKeyStore.getFeedSeed();
-      if (!feedSeed) {
-        return { success: false, error: 'Private feed not enabled' };
-      }
-
-      // Get or derive CEK for current epoch
-      let cek: Uint8Array;
-      const cached = privateFeedKeyStore.getCachedCEK(ownerId);
-
-      if (cached && cached.epoch === localEpoch) {
-        cek = cached.cek;
-      } else if (cached && cached.epoch > localEpoch) {
-        // Derive backwards from cached CEK
-        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, localEpoch);
-      } else {
-        // Generate fresh from chain
-        const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
-        cek = chain[localEpoch];
-      }
-
-      // 4-8. Encrypt content (SPEC §8.2 steps 3-8)
-      const ownerIdBytes = identifierToBytes(ownerId);
-      const encrypted = privateFeedCryptoService.encryptPostContent(
-        cek,
-        content,
-        ownerIdBytes,
-        localEpoch
-      );
-
-      // 9. Create Post document (SPEC §8.2 step 9)
-      // Note: Data contract requires content.minLength >= 1, so use placeholder if no teaser
-      const PRIVATE_POST_PLACEHOLDER = '🔒';
-      const postData: Record<string, unknown> = {
-        content: teaser || PRIVATE_POST_PLACEHOLDER,
-        encryptedContent: Array.from(encrypted.ciphertext),
-        epoch: localEpoch,
-        nonce: Array.from(encrypted.nonce),
-      };
-
-      console.log('Creating private post:', {
-        hasTeaser: !!teaser,
-        encryptedContentLength: encrypted.ciphertext.length,
-        epoch: localEpoch,
-        nonceLength: encrypted.nonce.length,
-      });
-
-      const result = await stateTransitionService.createDocument(
-        this.contractId,
-        DOCUMENT_TYPES.POST,
-        ownerId,
-        postData
-      );
-
-      if (!result.success) {
-        return { success: false, error: result.error || 'Failed to create post' };
-      }
-
-      const postId = (result.document?.$id || result.document?.id) as string | undefined;
-
-      console.log('Private post created successfully:', postId);
-      return { success: true, postId };
-    } catch (error) {
-      console.error('Error creating private post:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
-  }
-
-  /**
-   * Create a private reply with inherited encryption (PRD §5.5)
-   *
-   * When replying to a private post, the reply inherits encryption from the
-   * root private post in the thread. This ensures anyone who can read the
-   * parent can also read the reply.
-   *
-   * @param authorId - The identity ID of the reply author (may differ from feed owner)
-   * @param content - The plaintext content to encrypt
-   * @param encryptionSource - The encryption source (feed owner ID and epoch)
-   * @param replyToPostId - The parent post ID being replied to
-   * @returns Promise<PrivatePostResult>
-   */
-  async createInheritedPrivateReply(
-    authorId: string,
-    content: string,
-    encryptionSource: { ownerId: string; epoch: number },
-    replyToPostId: string
-  ): Promise<PrivatePostResult> {
-    try {
-      // 1. Validate plaintext size
-      const plaintextBytes = utf8Encode(content);
-      if (plaintextBytes.length > MAX_PLAINTEXT_SIZE) {
-        return {
-          success: false,
-          error: `Content too long: ${plaintextBytes.length} bytes (max ${MAX_PLAINTEXT_SIZE})`,
-        };
-      }
-
-      // 2. Get the CEK from the cached follower keys for this feed owner
-      const cached = privateFeedKeyStore.getCachedCEK(encryptionSource.ownerId);
-      if (!cached) {
-        return {
-          success: false,
-          error: 'Cannot encrypt reply: no access to private feed encryption keys',
-        };
-      }
-
-      // 3. Derive CEK for the specified epoch
-      let cek: Uint8Array;
-      if (cached.epoch === encryptionSource.epoch) {
-        cek = cached.cek;
-      } else if (cached.epoch > encryptionSource.epoch) {
-        // Derive backwards from cached CEK
-        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, encryptionSource.epoch);
-      } else {
-        // Cached epoch is older than source - can't derive forward
-        return {
-          success: false,
-          error: 'Cannot encrypt reply: encryption key state is out of date',
-        };
-      }
-
-      // 4. Encrypt content using the feed owner's ID as AAD
-      const ownerIdBytes = identifierToBytes(encryptionSource.ownerId);
-      const encrypted = privateFeedCryptoService.encryptPostContent(
-        cek,
-        content,
-        ownerIdBytes,
-        encryptionSource.epoch
-      );
-
-      // 5. Create Post document with inherited encryption
-      // Note: Data contract requires content.minLength >= 1, so use placeholder
-      const PRIVATE_POST_PLACEHOLDER = '🔒';
-      const postData: Record<string, unknown> = {
-        content: PRIVATE_POST_PLACEHOLDER, // No teaser for replies - all content is encrypted
-        encryptedContent: Array.from(encrypted.ciphertext),
-        epoch: encryptionSource.epoch,
-        nonce: Array.from(encrypted.nonce),
-        replyToPostId: replyToPostId,
-      };
-
-      console.log('Creating inherited private reply:', {
-        authorId,
-        feedOwnerId: encryptionSource.ownerId,
-        epoch: encryptionSource.epoch,
-        replyToPostId,
-        encryptedContentLength: encrypted.ciphertext.length,
-      });
-
-      const result = await stateTransitionService.createDocument(
-        this.contractId,
-        DOCUMENT_TYPES.POST,
-        authorId,
-        postData
-      );
-
-      if (!result.success) {
-        return { success: false, error: result.error || 'Failed to create reply' };
-      }
-
-      const postId = (result.document?.$id || result.document?.id) as string | undefined;
-
-      console.log('Inherited private reply created successfully:', postId);
-      return { success: true, postId };
-    } catch (error) {
-      console.error('Error creating inherited private reply:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -1587,3 +1336,231 @@ export const privateFeedService = new PrivateFeedService();
 
 // Export types
 export type { PrivateFeedService };
+
+// ============================================================
+// Exported Encryption Helpers for use by postService
+// ============================================================
+
+/**
+ * Encrypted post data ready for document creation
+ */
+export interface EncryptedPostData {
+  encryptedContent: number[];  // Array for platform serialization
+  epoch: number;
+  nonce: number[];             // Array for platform serialization
+  teaser?: string;             // Optional public teaser
+}
+
+/**
+ * Result of preparing encryption - either data or error
+ */
+export type PrepareEncryptionResult =
+  | { success: true; data: EncryptedPostData }
+  | { success: false; error: string };
+
+// Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
+const EXPORTED_MAX_PLAINTEXT_SIZE = 999;
+
+/**
+ * Prepare owner encryption for a private post (SPEC §8.2)
+ *
+ * This extracts the encryption logic from createPrivatePost for use by
+ * the consolidated postService.createPost method.
+ *
+ * @param ownerId - The identity ID of the post author
+ * @param content - The plaintext content to encrypt
+ * @param teaser - Optional public teaser content
+ * @param encryptionPrivateKey - Optional: encryption key for automatic sync/recovery
+ * @returns PrepareEncryptionResult with encrypted data or error
+ */
+export async function prepareOwnerEncryption(
+  ownerId: string,
+  content: string,
+  teaser?: string,
+  encryptionPrivateKey?: Uint8Array
+): Promise<PrepareEncryptionResult> {
+  try {
+    // 0. Check if local keys exist at all (BUG-010 fix)
+    const hasLocalKeys = privateFeedKeyStore.hasFeedSeed();
+
+    if (!hasLocalKeys) {
+      console.log('No local private feed keys found, need full recovery');
+
+      if (encryptionPrivateKey) {
+        const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
+        if (!recoveryResult.success) {
+          return { success: false, error: `Recovery failed: ${recoveryResult.error}` };
+        }
+        console.log('Full recovery completed, continuing with encryption');
+      } else {
+        return {
+          success: false,
+          error: 'SYNC_REQUIRED:No local keys found. Please enter your encryption key to sync.',
+        };
+      }
+    }
+
+    // 1. SYNC CHECK (SPEC §8.2 step 1)
+    const chainEpoch = await privateFeedService.getLatestEpoch(ownerId);
+    const localEpoch = privateFeedKeyStore.getCurrentEpoch();
+
+    if (chainEpoch > localEpoch) {
+      console.log(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
+
+      if (encryptionPrivateKey) {
+        const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
+        if (!recoveryResult.success) {
+          return { success: false, error: `Sync failed: ${recoveryResult.error}` };
+        }
+        console.log('Automatic recovery completed, continuing with encryption');
+      } else {
+        return {
+          success: false,
+          error: 'SYNC_REQUIRED:Local state out of sync. Please enter your encryption key to sync.',
+        };
+      }
+    }
+
+    // 2. Validate plaintext size (SPEC §8.2 step 2)
+    const plaintextBytes = utf8Encode(content);
+    if (plaintextBytes.length > EXPORTED_MAX_PLAINTEXT_SIZE) {
+      return {
+        success: false,
+        error: `Content too long: ${plaintextBytes.length} bytes (max ${EXPORTED_MAX_PLAINTEXT_SIZE})`,
+      };
+    }
+
+    // 3. Get feed seed and current CEK
+    const feedSeed = privateFeedKeyStore.getFeedSeed();
+    if (!feedSeed) {
+      return { success: false, error: 'Private feed not enabled' };
+    }
+
+    // Get current epoch after potential recovery
+    const currentEpoch = privateFeedKeyStore.getCurrentEpoch();
+
+    // Get or derive CEK for current epoch
+    let cek: Uint8Array;
+    const cached = privateFeedKeyStore.getCachedCEK(ownerId);
+
+    if (cached && cached.epoch === currentEpoch) {
+      cek = cached.cek;
+    } else if (cached && cached.epoch > currentEpoch) {
+      cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, currentEpoch);
+    } else {
+      const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
+      cek = chain[currentEpoch];
+    }
+
+    // 4-8. Encrypt content (SPEC §8.2 steps 3-8)
+    const ownerIdBytes = identifierToBytes(ownerId);
+    const encrypted = privateFeedCryptoService.encryptPostContent(
+      cek,
+      content,
+      ownerIdBytes,
+      currentEpoch
+    );
+
+    console.log('Prepared owner encryption:', {
+      hasTeaser: !!teaser,
+      encryptedContentLength: encrypted.ciphertext.length,
+      epoch: currentEpoch,
+      nonceLength: encrypted.nonce.length,
+    });
+
+    return {
+      success: true,
+      data: {
+        encryptedContent: Array.from(encrypted.ciphertext),
+        epoch: currentEpoch,
+        nonce: Array.from(encrypted.nonce),
+        teaser,
+      },
+    };
+  } catch (error) {
+    console.error('Error preparing owner encryption:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Prepare inherited encryption for a reply to a private post (PRD §5.5)
+ *
+ * When replying to a private post, the reply inherits encryption from the
+ * root private post in the thread. This ensures anyone who can read the
+ * parent can also read the reply.
+ *
+ * @param content - The plaintext content to encrypt
+ * @param source - The encryption source (feed owner ID and epoch)
+ * @returns PrepareEncryptionResult with encrypted data or error
+ */
+export async function prepareInheritedEncryption(
+  content: string,
+  source: { ownerId: string; epoch: number }
+): Promise<PrepareEncryptionResult> {
+  try {
+    // 1. Validate plaintext size
+    const plaintextBytes = utf8Encode(content);
+    if (plaintextBytes.length > EXPORTED_MAX_PLAINTEXT_SIZE) {
+      return {
+        success: false,
+        error: `Content too long: ${plaintextBytes.length} bytes (max ${EXPORTED_MAX_PLAINTEXT_SIZE})`,
+      };
+    }
+
+    // 2. Get the CEK from the cached follower keys for this feed owner
+    const cached = privateFeedKeyStore.getCachedCEK(source.ownerId);
+    if (!cached) {
+      return {
+        success: false,
+        error: 'Cannot encrypt reply: no access to private feed encryption keys',
+      };
+    }
+
+    // 3. Derive CEK for the specified epoch
+    let cek: Uint8Array;
+    if (cached.epoch === source.epoch) {
+      cek = cached.cek;
+    } else if (cached.epoch > source.epoch) {
+      cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, source.epoch);
+    } else {
+      return {
+        success: false,
+        error: 'Cannot encrypt reply: encryption key state is out of date',
+      };
+    }
+
+    // 4. Encrypt content using the feed owner's ID as AAD
+    const ownerIdBytes = identifierToBytes(source.ownerId);
+    const encrypted = privateFeedCryptoService.encryptPostContent(
+      cek,
+      content,
+      ownerIdBytes,
+      source.epoch
+    );
+
+    console.log('Prepared inherited encryption:', {
+      feedOwnerId: source.ownerId,
+      epoch: source.epoch,
+      encryptedContentLength: encrypted.ciphertext.length,
+    });
+
+    return {
+      success: true,
+      data: {
+        encryptedContent: Array.from(encrypted.ciphertext),
+        epoch: source.epoch,
+        nonce: Array.from(encrypted.nonce),
+      },
+    };
+  } catch (error) {
+    console.error('Error preparing inherited encryption:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
