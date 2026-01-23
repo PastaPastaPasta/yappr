@@ -70,6 +70,16 @@ const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   privateFeedRevoked: 'revoked your private feed access'
 }
 
+const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
+  all: 'When someone interacts with you, you\'ll see it here',
+  like: 'When someone likes your post, you\'ll see it here',
+  repost: 'When someone reposts your post, you\'ll see it here',
+  reply: 'When someone replies to your post, you\'ll see it here',
+  follow: 'When someone follows you, you\'ll see it here',
+  mention: 'When someone mentions you, you\'ll see it here',
+  privateFeed: 'Private feed requests and updates will appear here'
+}
+
 function formatTime(date: Date): string {
   const diff = Date.now() - date.getTime()
   const minutes = Math.floor(diff / 60000)
@@ -215,7 +225,7 @@ function NotificationsPage() {
             <BellIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No notifications yet</p>
             <p className="text-sm text-gray-400 mt-2">
-              When someone follows you or mentions you, you&apos;ll see it here
+              {EMPTY_STATE_MESSAGES[filter]}
             </p>
           </div>
         ) : (
