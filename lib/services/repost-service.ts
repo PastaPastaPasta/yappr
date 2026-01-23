@@ -258,7 +258,8 @@ class RepostService extends BaseDocumentService<RepostDocument> {
             ['postOwnerId', '==', userId],
             ['$createdAt', '>', sinceTimestamp]
           ],
-          orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']]
+          // Match postOwnerReposts index: [postOwnerId: asc, $createdAt: asc]
+          orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );

@@ -119,11 +119,46 @@ export function PrivateFeedFollowRequests() {
     try {
       const { privateFeedService, identityService } = await import('@/lib/services')
 
-      // Get requester's public encryption key
-      let publicKey = request.publicKey
+      // Helper to normalize key data to Uint8Array
+      const normalizeKeyData = (data: unknown): Uint8Array | null => {
+        if (!data) return null
+        if (data instanceof Uint8Array) return data
+        if (Array.isArray(data)) return new Uint8Array(data)
+        if (typeof data === 'string') {
+          // Use length to differentiate hex vs base64:
+          // 33-byte key: hex = 66 chars, base64 = 44 chars
+          const isLikelyHex = data.length === 66 && /^[0-9a-fA-F]+$/.test(data)
+          if (isLikelyHex) {
+            const hexPairs = data.match(/.{1,2}/g) || []
+            return new Uint8Array(hexPairs.map(byte => parseInt(byte, 16)))
+          }
+          // Try base64
+          try {
+            const binary = atob(data)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) {
+              bytes[i] = binary.charCodeAt(i)
+            }
+            return bytes
+          } catch {
+            console.warn('Invalid base64 encoding for key data')
+            return null
+          }
+        }
+        return null
+      }
 
+      // First normalize the request.publicKey if it exists but isn't a Uint8Array
+      let publicKey: Uint8Array | undefined = undefined
+      if (request.publicKey) {
+        const normalized = normalizeKeyData(request.publicKey)
+        if (normalized) {
+          publicKey = normalized
+        }
+      }
+
+      // If still no valid public key, try to fetch from identity
       if (!publicKey) {
-        // Try to fetch from identity
         const identity = await identityService.getIdentity(request.id)
         if (identity?.publicKeys) {
           // Find encryption key (purpose 0 = AUTHENTICATION, 1 = ENCRYPTION)
@@ -132,31 +167,9 @@ export function PrivateFeedFollowRequests() {
             (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
           )
           if (encryptionKey?.data) {
-            // Convert data to Uint8Array
-            if (typeof encryptionKey.data === 'string') {
-              // Base64 or hex
-              if (/^[0-9a-fA-F]+$/.test(encryptionKey.data)) {
-                const hexPairs = encryptionKey.data.match(/.{1,2}/g) || []
-                publicKey = new Uint8Array(
-                  hexPairs.map(byte => parseInt(byte, 16))
-                )
-              } else {
-                // Base64
-                try {
-                  const binary = atob(encryptionKey.data)
-                  publicKey = new Uint8Array(binary.length)
-                  for (let i = 0; i < binary.length; i++) {
-                    publicKey[i] = binary.charCodeAt(i)
-                  }
-                } catch {
-                  // Invalid base64, skip this key
-                  console.warn('Invalid base64 encoding for encryption key data')
-                }
-              }
-            } else if (encryptionKey.data instanceof Uint8Array) {
-              publicKey = encryptionKey.data
-            } else if (Array.isArray(encryptionKey.data)) {
-              publicKey = new Uint8Array(encryptionKey.data)
+            const normalized = normalizeKeyData(encryptionKey.data)
+            if (normalized) {
+              publicKey = normalized
             }
           }
         }

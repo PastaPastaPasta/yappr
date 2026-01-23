@@ -309,12 +309,13 @@ function FeedPage() {
 
         const currentStartAfter = pagination?.startAfter
 
-        // Helper to normalize byte arrays from SDK (may be base64 string, Uint8Array, or regular array)
+        // Helper to normalize byte arrays from SDK (may be base64 string, hex string, Uint8Array, or regular array)
         const normalizeBytes = (value: unknown): Uint8Array | undefined => {
           if (!value) return undefined
           if (value instanceof Uint8Array) return value
           if (Array.isArray(value)) return new Uint8Array(value)
           if (typeof value === 'string') {
+            // Try base64 decode first
             try {
               const binary = atob(value)
               const bytes = new Uint8Array(binary.length)
@@ -323,6 +324,14 @@ function FeedPage() {
               }
               return bytes
             } catch {
+              // Might be hex - validate even length for proper decoding
+              if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
+                const bytes = new Uint8Array(value.length / 2)
+                for (let i = 0; i < bytes.length; i++) {
+                  bytes[i] = parseInt(value.substr(i * 2, 2), 16)
+                }
+                return bytes
+              }
               return undefined
             }
           }

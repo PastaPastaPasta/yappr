@@ -290,7 +290,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           ['postOwnerId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']],
+        // Match postOwnerLikes index: [postOwnerId: asc, $createdAt: asc]
+        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']],
         limit: 100
       });
 

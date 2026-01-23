@@ -265,25 +265,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Attempt key derivation for encryption key (background, non-blocking)
       // This auto-derives and stores the encryption key if it matches identity
-      const { parsePrivateKey } = await import('@/lib/crypto/wif')
-      const { privateKey: authPrivateKeyBytes } = parsePrivateKey(privateKey)
+      // Use fire-and-forget IIFE so this doesn't block login
+      ;(async () => {
+        try {
+          const { parsePrivateKey } = await import('@/lib/crypto/wif')
+          const { privateKey: authPrivateKeyBytes } = parsePrivateKey(privateKey)
 
-      // Check if identity has encryption key (purpose=1)
-      const hasEncryptionKeyOnIdentity = authUser.publicKeys.some(
-        (key) => key.purpose === 1 && key.type === 0
-      )
+          // Check if identity has encryption key (purpose=1)
+          const hasEncryptionKeyOnIdentity = authUser.publicKeys.some(
+            (key) => key.purpose === 1 && key.type === 0
+          )
 
-      if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
-        // Try to derive encryption key
-        console.log('Auth: Attempting encryption key derivation...')
-        const derivedEncKey = await attemptEncryptionKeyDerivation(identityId, authPrivateKeyBytes)
+          if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
+            // Try to derive encryption key
+            console.log('Auth: Attempting encryption key derivation...')
+            const derivedEncKey = await attemptEncryptionKeyDerivation(identityId, authPrivateKeyBytes)
 
-        if (!derivedEncKey) {
-          // Derivation didn't match - user has external key, will need to enter it manually
-          console.log('Auth: Encryption key derivation failed - external key exists on identity')
-          // Note: The encryption-key-modal will handle prompting for manual entry
+            if (!derivedEncKey) {
+              // Derivation didn't match - user has external key, will need to enter it manually
+              console.log('Auth: Encryption key derivation failed - external key exists on identity')
+              // Note: The encryption-key-modal will handle prompting for manual entry
+            }
+          }
+        } catch (err) {
+          console.warn('Encryption key derivation failed (non-fatal):', err)
         }
-      }
+      })()
 
       // First check if user has DPNS username (unless skipped)
       console.log('Checking for DPNS username...')

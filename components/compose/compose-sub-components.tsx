@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials, formatTime } from '@/lib/utils'
@@ -237,6 +237,9 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
   const { user } = useAuth()
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
 
+  // Request ID ref to prevent stale async updates
+  const requestIdRef = useRef(0)
+
   const isPrivate = isPrivatePost(post)
   const hasTeaser = post.content && post.content.length > 0
 
@@ -244,13 +247,20 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
   const attemptDecryption = useCallback(async () => {
     if (!isPrivate) return
 
+    // Capture request ID to detect stale responses
+    const currentRequestId = ++requestIdRef.current
+
     if (!post.encryptedContent || post.epoch == null || !post.nonce) {
-      setState({ status: 'error' })
+      if (currentRequestId === requestIdRef.current) {
+        setState({ status: 'error' })
+      }
       return
     }
 
     if (!user) {
-      setState({ status: 'locked' })
+      if (currentRequestId === requestIdRef.current) {
+        setState({ status: 'locked' })
+      }
       return
     }
 
@@ -258,6 +268,9 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
     try {
       const { privateFeedFollowerService, privateFeedKeyStore, privateFeedCryptoService, MAX_EPOCH } = await import('@/lib/services')
+
+      // Check if this request is stale
+      if (currentRequestId !== requestIdRef.current) return
 
       // For replies to private posts, we need to find the encryption source owner
       // (PRD §5.5 - inherited encryption)
@@ -275,13 +288,18 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         }
       }
 
+      // Check if this request is stale after async operations
+      if (currentRequestId !== requestIdRef.current) return
+
       // Check if user is the encryption source owner (can decrypt with their own feed keys)
       const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
 
       if (isEncryptionSourceOwner) {
         const feedSeed = privateFeedKeyStore.getFeedSeed()
         if (!feedSeed) {
-          setState({ status: 'locked' })
+          if (currentRequestId === requestIdRef.current) {
+            setState({ status: 'locked' })
+          }
           return
         }
 
@@ -304,13 +322,19 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
           ownerIdBytes
         )
 
-        setState({ status: 'decrypted', content: decryptedContent })
+        if (currentRequestId === requestIdRef.current) {
+          setState({ status: 'decrypted', content: decryptedContent })
+        }
         return
       }
 
       const canDecrypt = await privateFeedFollowerService.canDecrypt(encryptionSourceOwnerId)
+      if (currentRequestId !== requestIdRef.current) return
+
       if (!canDecrypt) {
-        setState({ status: 'locked' })
+        if (currentRequestId === requestIdRef.current) {
+          setState({ status: 'locked' })
+        }
         return
       }
 
@@ -321,6 +345,8 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         $ownerId: encryptionSourceOwnerId,
       }, user?.identityId)
 
+      if (currentRequestId !== requestIdRef.current) return
+
       if (result.success && result.content) {
         setState({ status: 'decrypted', content: result.content })
       } else {
@@ -328,12 +354,16 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
       }
     } catch (error) {
       console.error('Error decrypting quoted post preview:', error)
-      setState({ status: 'error' })
+      if (currentRequestId === requestIdRef.current) {
+        setState({ status: 'error' })
+      }
     }
   }, [isPrivate, post, user])
 
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
+    // Increment request ID to invalidate any in-flight requests
+    requestIdRef.current++
     setState({ status: 'idle' })
   }, [post.id, user?.identityId])
 

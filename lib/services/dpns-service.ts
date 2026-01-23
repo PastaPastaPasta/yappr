@@ -410,15 +410,24 @@ class DpnsService {
 
     // Convert WASM keys to the format expected by findMatchingKeyIndex
     const keyInfos: IdentityPublicKeyInfo[] = activeWasmKeys.map(key => {
-      // Get the raw data from the WASM key - data getter returns hex string
-      const dataHex = key.data;
-      const data = new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
+      // Defensively handle key.data which may be hex string or Uint8Array
+      let data: Uint8Array;
+      if (key.data instanceof Uint8Array) {
+        data = key.data;
+      } else if (typeof key.data === 'string' && key.data.length > 0) {
+        // Hex string - convert to Uint8Array
+        const matches = key.data.match(/.{1,2}/g);
+        data = new Uint8Array(matches?.map(byte => parseInt(byte, 16)) || []);
+      } else {
+        // Fallback for missing/invalid data
+        data = new Uint8Array(0);
+      }
 
       return {
-        id: key.keyId,
-        type: key.keyTypeNumber,
-        purpose: key.purposeNumber,
-        securityLevel: key.securityLevelNumber,
+        id: key.keyId ?? 0,
+        type: key.keyTypeNumber ?? 0,
+        purpose: key.purposeNumber ?? 0,
+        securityLevel: key.securityLevelNumber ?? 0,
         data
       };
     });
