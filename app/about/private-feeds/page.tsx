@@ -1015,7 +1015,7 @@ export default function PrivateFeedsPage() {
                   </p>
                 </a>
               </div>
-              <p className="text-sm text-gray-500 mt-6">Last updated: January 2025</p>
+              <p className="text-sm text-gray-500 mt-6">Last updated: January 2026</p>
             </div>
           </div>
         </motion.div>

@@ -258,6 +258,8 @@ export const clearEncryptionKey = (identityId: string): boolean => {
 // Key type tracking for encryption and transfer keys
 // 'derived' means the key was derived from auth key and can be re-derived
 // 'external' means the key was pre-existing/manually entered and must be backed up
+// Note: This type is also defined in lib/crypto/key-derivation.ts - kept separate
+// to avoid circular import issues since secure-storage is a low-level module.
 
 export type KeyType = 'derived' | 'external'
 

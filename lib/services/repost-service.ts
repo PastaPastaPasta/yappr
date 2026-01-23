@@ -29,6 +29,9 @@ class RepostService extends BaseDocumentService<RepostDocument> {
     // Convert postOwnerId (optional field)
     const rawPostOwnerId = data.postOwnerId || doc.postOwnerId;
     const postOwnerId = rawPostOwnerId ? identifierToBase58(rawPostOwnerId) : undefined;
+    if (rawPostOwnerId && !postOwnerId) {
+      console.error('RepostService: Invalid postOwnerId format:', rawPostOwnerId);
+    }
 
     return {
       $id: (doc.$id || doc.id) as string,

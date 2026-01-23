@@ -99,15 +99,24 @@ function PostDetailContent() {
             </div>
 
             {user ? (
-              canReplyToPrivate ? (
+              isCheckingAccess ? (
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled
+                  >
+                    Checking access...
+                  </Button>
+                </div>
+              ) : canReplyToPrivate ? (
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800">
                   <Button
                     onClick={handleReply}
                     variant="outline"
                     className="w-full"
-                    disabled={isCheckingAccess}
                   >
-                    {isCheckingAccess ? 'Checking access...' : 'Post your reply'}
+                    Post your reply
                   </Button>
                 </div>
               ) : (

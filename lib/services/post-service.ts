@@ -1031,8 +1031,8 @@ class PostService extends BaseDocumentService<Post> {
         }
         return bytes;
       } catch {
-        // Might be hex
-        if (/^[0-9a-fA-F]+$/.test(value)) {
+        // Might be hex - validate even length for proper decoding
+        if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
           const bytes = new Uint8Array(value.length / 2);
           for (let i = 0; i < bytes.length; i++) {
             bytes[i] = parseInt(value.substr(i * 2, 2), 16);
@@ -1508,8 +1508,16 @@ export interface EncryptionSource {
  * so anyone who can see the parent can also see replies.
  */
 export async function getEncryptionSource(
-  replyToPostId: string
+  replyToPostId: string,
+  depth: number = 0
 ): Promise<EncryptionSource | null> {
+  // Prevent unbounded recursion (reasonable thread depth limit)
+  const MAX_DEPTH = 100;
+  if (depth >= MAX_DEPTH) {
+    console.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
+    return null;
+  }
+
   try {
     // Fetch the parent post (without enrichment - we only need encryption fields)
     const parentPost = await postService.getPostById(replyToPostId, { skipEnrichment: true });
@@ -1524,7 +1532,7 @@ export async function getEncryptionSource(
       // Parent is private - check if it's a reply to another private post
       if (parentPost.replyToId) {
         // Recurse to find the root private post
-        const rootSource = await getEncryptionSource(parentPost.replyToId);
+        const rootSource = await getEncryptionSource(parentPost.replyToId, depth + 1);
         if (rootSource) {
           // Inherit from the root of the thread
           return rootSource;
