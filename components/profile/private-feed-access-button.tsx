@@ -114,6 +114,12 @@ export function PrivateFeedAccessButton({
         setShowCancelOption(false)
         toast.success('Request cancelled')
       } else {
+        // If no pending request exists, update status to reflect reality
+        // This handles race conditions where the request was already processed
+        if (result.error?.toLowerCase().includes('no pending request')) {
+          setStatus('none')
+          setShowCancelOption(false)
+        }
         toast.error(result.error || 'Failed to cancel request')
       }
     } catch (error) {

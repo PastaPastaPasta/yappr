@@ -324,6 +324,11 @@ export function usePrivateFeedRequest({
         updateStatus('none')
         toast.success('Request cancelled')
       } else {
+        // If no pending request exists, update status to reflect reality
+        // This handles race conditions where the request was already processed
+        if (result.error?.toLowerCase().includes('no pending request')) {
+          updateStatus('none')
+        }
         toast.error(result.error || 'Failed to cancel request')
       }
     } catch (error) {
