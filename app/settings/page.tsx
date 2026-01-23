@@ -584,7 +584,7 @@ function SettingsPage() {
     // Clear the URL param when opening the reset dialog to prevent re-open on re-render
     const handleResetDialogOpened = () => {
       if (shouldOpenReset) {
-        router.replace('/settings?tab=privateFeed', { scroll: false })
+        router.replace('/settings?section=privateFeed', { scroll: false })
       }
     }
 

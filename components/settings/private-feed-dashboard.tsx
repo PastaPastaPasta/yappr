@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -39,8 +39,12 @@ export function PrivateFeedDashboard() {
   const [privatePostCount, setPrivatePostCount] = useState(0)
   const [currentEpoch, setCurrentEpoch] = useState(1)
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
+  const requestIdRef = useRef(0)
 
   const loadDashboardData = useCallback(async () => {
+    // Increment request ID to track this specific request
+    const currentRequestId = ++requestIdRef.current
+
     if (!user?.identityId) {
       setIsLoading(false)
       return
@@ -54,6 +58,10 @@ export function PrivateFeedDashboard() {
 
       // Check if private feed is enabled
       const hasPrivateFeed = await privateFeedService.hasPrivateFeed(user.identityId)
+
+      // Bail out if a newer request has started
+      if (currentRequestId !== requestIdRef.current) return
+
       setIsEnabled(hasPrivateFeed)
 
       if (!hasPrivateFeed) {
@@ -66,14 +74,26 @@ export function PrivateFeedDashboard() {
 
       // Get followers from grants
       const followers = await privateFeedService.getPrivateFollowers(user.identityId)
+
+      // Bail out if a newer request has started
+      if (currentRequestId !== requestIdRef.current) return
+
       setFollowerCount(followers.length)
 
       // Get pending requests
       const requests = await privateFeedFollowerService.getFollowRequestsForOwner(user.identityId)
+
+      // Bail out if a newer request has started
+      if (currentRequestId !== requestIdRef.current) return
+
       setPendingRequestCount(requests.length)
 
       // Get current epoch
       const epoch = await privateFeedService.getLatestEpoch(user.identityId)
+
+      // Bail out if a newer request has started
+      if (currentRequestId !== requestIdRef.current) return
+
       setCurrentEpoch(epoch)
 
       // Count private posts by querying user's posts and filtering for those with encryptedContent
@@ -83,9 +103,14 @@ export function PrivateFeedDashboard() {
         const privatePosts = userPostsResult.documents.filter(
           post => post.encryptedContent || post.epoch !== undefined
         )
+
+        // Bail out if a newer request has started
+        if (currentRequestId !== requestIdRef.current) return
+
         setPrivatePostCount(privatePosts.length)
       } catch (err) {
         console.error('Failed to count private posts:', err)
+        if (currentRequestId !== requestIdRef.current) return
         setPrivatePostCount(0)
       }
 
@@ -95,6 +120,9 @@ export function PrivateFeedDashboard() {
       // Add approved followers as activity (sort by grantedAt descending to get most recent)
       const sortedFollowers = [...followers].sort((a, b) => b.grantedAt - a.grantedAt)
       for (const follower of sortedFollowers.slice(0, 5)) {
+        // Bail out if a newer request has started
+        if (currentRequestId !== requestIdRef.current) return
+
         let username: string | undefined
         let displayName = `User ${follower.recipientId.slice(-6)}`
 
@@ -122,6 +150,9 @@ export function PrivateFeedDashboard() {
         })
       }
 
+      // Bail out if a newer request has started
+      if (currentRequestId !== requestIdRef.current) return
+
       // Get rekey documents for revocation activity
       const rekeyDocs = await privateFeedService.getRekeyDocuments(user.identityId)
 
@@ -139,12 +170,19 @@ export function PrivateFeedDashboard() {
 
       // Sort by timestamp descending and take top 5
       activity.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+
+      // Final bail out check before setting state
+      if (currentRequestId !== requestIdRef.current) return
+
       setRecentActivity(activity.slice(0, 5))
 
     } catch (error) {
       console.error('Error loading dashboard data:', error)
     } finally {
-      setIsLoading(false)
+      // Only update loading state if this is still the current request
+      if (currentRequestId === requestIdRef.current) {
+        setIsLoading(false)
+      }
     }
   }, [user?.identityId])
 
