@@ -242,7 +242,6 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
 
   const isPrivate = isPrivatePost(post)
-  const isOwner = user?.identityId === post.author.id
   const hasTeaser = post.content && post.content.length > 0
 
   // Attempt decryption for private posts
