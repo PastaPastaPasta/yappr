@@ -33,6 +33,7 @@ import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { identityService } from './identity-service';
+import { parsePublicKeyData } from '../crypto/key-validation';
 
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
 const MAX_PLAINTEXT_SIZE = 999;
@@ -243,8 +244,13 @@ class PrivateFeedService {
 
       const derivedPubKeyHex = Buffer.from(encryptionPubKey).toString('hex');
       const matchingKey = identity.publicKeys.find(
-        key => key.purpose === 1 && key.type === 0 && !key.disabledAt &&
-          Buffer.from(key.data).toString('hex') === derivedPubKeyHex
+        key => {
+          if (key.purpose !== 1 || key.type !== 0 || key.disabledAt) return false;
+          // Properly parse the on-chain public key (handles Uint8Array, hex string, or base64)
+          const onChainPubKey = parsePublicKeyData(key.data);
+          if (!onChainPubKey) return false;
+          return Buffer.from(onChainPubKey).toString('hex') === derivedPubKeyHex;
+        }
       );
 
       if (!matchingKey) {

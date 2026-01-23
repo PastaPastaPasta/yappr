@@ -46,7 +46,7 @@ export type EncryptionKeyValidationResult = KeyValidationResult
 /**
  * Parse public key data from identity (can be Uint8Array, hex string, or base64)
  */
-function parsePublicKeyData(data: unknown): Uint8Array | null {
+export function parsePublicKeyData(data: unknown): Uint8Array | null {
   if (!data) return null
 
   if (data instanceof Uint8Array) {
