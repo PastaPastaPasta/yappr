@@ -239,7 +239,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   /**
    * Get reposts of posts owned by a specific user (for notification queries).
    * Uses the postOwnerReposts index: [postOwnerId, $createdAt]
-   * Paginates through all results to return complete list.
+   * Limited to 100 most recent reposts for notification purposes.
    * @param userId - Identity ID of the post owner
    * @param since - Only return reposts created after this timestamp (optional)
    */
@@ -249,22 +249,20 @@ class RepostService extends BaseDocumentService<RepostDocument> {
 
       const sinceTimestamp = since?.getTime() || 0;
 
-      const { documents } = await paginateFetchAll(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: 'repost',
-          where: [
-            ['postOwnerId', '==', userId],
-            ['$createdAt', '>', sinceTimestamp]
-          ],
-          // Match postOwnerReposts index: [postOwnerId: asc, $createdAt: asc]
-          orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']]
-        }),
-        (doc) => this.transformDocument(doc)
-      );
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'repost',
+        where: [
+          ['postOwnerId', '==', userId],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        // Match postOwnerReposts index: [postOwnerId: asc, $createdAt: asc]
+        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']],
+        limit: 100
+      });
 
-      return documents;
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting reposts of my posts:', error);
       return [];

@@ -549,9 +549,16 @@ function SettingsPage() {
     const actionParam = searchParams.get('action')
     const shouldOpenReset = actionParam === 'reset'
 
+    // Clear the URL param when opening the reset dialog to prevent re-open on re-render
+    const handleResetDialogOpened = () => {
+      if (shouldOpenReset) {
+        router.replace('/settings?tab=privateFeed', { scroll: false })
+      }
+    }
+
     return (
       <div className="p-6 space-y-6">
-        <PrivateFeedSettings openReset={shouldOpenReset} />
+        <PrivateFeedSettings openReset={shouldOpenReset} onResetOpened={handleResetDialogOpened} />
         <PrivateFeedDashboard />
         <div id="private-feed-requests">
           <PrivateFeedFollowRequests />

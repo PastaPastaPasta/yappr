@@ -32,6 +32,7 @@ import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
+import { identityService } from './identity-service';
 
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
 const MAX_PLAINTEXT_SIZE = 999;
@@ -231,8 +232,27 @@ class PrivateFeedService {
         return { success: false, error: 'Private feed already enabled' };
       }
 
-      // 2. Verify user has encryption key on identity
+      // 2. Derive public key and verify it matches the identity's registered encryption key
       const encryptionPubKey = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
+
+      // Verify the derived public key is registered on the identity
+      const identity = await identityService.getIdentity(ownerId);
+      if (!identity) {
+        return { success: false, error: 'Could not fetch identity' };
+      }
+
+      const derivedPubKeyHex = Buffer.from(encryptionPubKey).toString('hex');
+      const matchingKey = identity.publicKeys.find(
+        key => key.purpose === 1 && key.type === 0 && !key.disabledAt &&
+          Buffer.from(key.data).toString('hex') === derivedPubKeyHex
+      );
+
+      if (!matchingKey) {
+        return {
+          success: false,
+          error: 'The provided encryption key does not match the encryption key registered on your identity',
+        };
+      }
 
       // 3. Generate feed seed (SPEC §8.1 step 1)
       const feedSeed = privateFeedCryptoService.generateFeedSeed();

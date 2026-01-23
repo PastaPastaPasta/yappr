@@ -206,14 +206,14 @@ class IdentityService {
   }
 
   /**
-   * Check if identity has an encryption key (purpose=1, type=0)
+   * Check if identity has an active (non-disabled) encryption key (purpose=1, type=0)
    */
   async hasEncryptionKey(identityId: string): Promise<boolean> {
     try {
       const identity = await this.getIdentity(identityId);
       if (!identity) return false;
       return identity.publicKeys.some(
-        key => key.purpose === 1 && key.type === 0
+        key => key.purpose === 1 && key.type === 0 && !key.disabledAt
       );
     } catch (error) {
       console.error('Error checking encryption key:', error);

@@ -16,6 +16,8 @@ import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-moda
 interface PrivateFeedSettingsProps {
   /** If true, automatically open the reset dialog when component mounts */
   openReset?: boolean
+  /** Callback when reset dialog is opened (for clearing URL params) */
+  onResetOpened?: () => void
 }
 
 /**
@@ -24,7 +26,7 @@ interface PrivateFeedSettingsProps {
  * Settings section for managing private feeds.
  * Implements PRD §4.1 - Enable Private Feed UI
  */
-export function PrivateFeedSettings({ openReset = false }: PrivateFeedSettingsProps) {
+export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
   const { user } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [isEnabled, setIsEnabled] = useState(false)
@@ -111,8 +113,10 @@ export function PrivateFeedSettings({ openReset = false }: PrivateFeedSettingsPr
   useEffect(() => {
     if (openReset && isEnabled && !isLoading) {
       setShowResetDialog(true)
+      // Notify parent to clear URL param to prevent dialog re-opening
+      onResetOpened?.()
     }
-  }, [openReset, isEnabled, isLoading])
+  }, [openReset, isEnabled, isLoading, onResetOpened])
 
   const handleStartEnable = async () => {
     // Check if we already have the key stored in secure storage

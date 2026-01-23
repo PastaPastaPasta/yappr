@@ -8,8 +8,10 @@ import {
   TrashIcon,
   EyeIcon,
   EyeSlashIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import { useAppStore, useSettingsStore, ThreadPost, PostVisibility } from '@/lib/store'
+import type { Post } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -550,39 +552,81 @@ export function ComposeModal() {
   }, [isComposeOpen, user])
 
   // Check for inherited encryption when replying to a post (PRD §5.5)
+  // Extracted as a callback for retry functionality
+  const checkInheritedEncryption = useCallback(async (postToCheck: Post) => {
+    setInheritedEncryptionLoading(true)
+    setInheritedEncryptionError(false)
+    try {
+      // Check if parent is a private post
+      if (isPrivatePost(postToCheck)) {
+        // Import getEncryptionSource dynamically
+        const { getEncryptionSource } = await import('@/lib/services/post-service')
+        const encryptionSource = await getEncryptionSource(postToCheck.id)
+        if (encryptionSource) {
+          setInheritedEncryption(encryptionSource)
+        } else {
+          // Failed to get encryption source for private post - block posting
+          setInheritedEncryptionError(true)
+          setInheritedEncryption(null)
+        }
+      } else {
+        setInheritedEncryption(null)
+      }
+    } catch (error) {
+      console.error('Failed to check inherited encryption:', error)
+      // Error fetching encryption source for private post - block posting
+      if (isPrivatePost(postToCheck)) {
+        setInheritedEncryptionError(true)
+      }
+      setInheritedEncryption(null)
+    } finally {
+      setInheritedEncryptionLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (isComposeOpen && replyingTo) {
-      setInheritedEncryptionLoading(true)
-      setInheritedEncryptionError(false)
-      const checkInheritedEncryption = async () => {
+      // Track cancellation for stale async results
+      let cancelled = false
+
+      const doCheck = async () => {
+        setInheritedEncryptionLoading(true)
+        setInheritedEncryptionError(false)
         try {
-          // Check if parent is a private post
           if (isPrivatePost(replyingTo)) {
-            // Import getEncryptionSource dynamically
             const { getEncryptionSource } = await import('@/lib/services/post-service')
             const encryptionSource = await getEncryptionSource(replyingTo.id)
+            // Check if replyingTo changed while we were fetching
+            if (cancelled) return
             if (encryptionSource) {
               setInheritedEncryption(encryptionSource)
             } else {
-              // Failed to get encryption source for private post - block posting
               setInheritedEncryptionError(true)
               setInheritedEncryption(null)
             }
           } else {
+            if (cancelled) return
             setInheritedEncryption(null)
           }
         } catch (error) {
           console.error('Failed to check inherited encryption:', error)
-          // Error fetching encryption source for private post - block posting
+          if (cancelled) return
           if (isPrivatePost(replyingTo)) {
             setInheritedEncryptionError(true)
           }
           setInheritedEncryption(null)
         } finally {
-          setInheritedEncryptionLoading(false)
+          if (!cancelled) {
+            setInheritedEncryptionLoading(false)
+          }
         }
       }
-      checkInheritedEncryption()
+      doCheck().catch((err) => console.error('Failed to check inherited encryption:', err))
+
+      // Cleanup: mark as cancelled if replyingTo changes
+      return () => {
+        cancelled = true
+      }
     } else {
       // Reset when not replying
       setInheritedEncryption(null)
@@ -1236,6 +1280,31 @@ export function ComposeModal() {
                               <span className="text-sm text-gray-500 dark:text-gray-400">
                                 Checking encryption inheritance...
                               </span>
+                            </motion.div>
+                          )}
+
+                          {/* Inherited encryption error state */}
+                          {inheritedEncryptionError && replyingTo && isPrivatePost(replyingTo) && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                            >
+                              <div className="flex items-center gap-2">
+                                <ExclamationTriangleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
+                                <span className="text-sm text-red-700 dark:text-red-300">
+                                  Unable to determine encryption inheritance — replies to this private post cannot be posted right now
+                                </span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => replyingTo && checkInheritedEncryption(replyingTo)}
+                                disabled={inheritedEncryptionLoading}
+                                className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 shrink-0"
+                              >
+                                Retry
+                              </Button>
                             </motion.div>
                           )}
 

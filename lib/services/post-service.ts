@@ -8,7 +8,7 @@ import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, type Doc
 import type { DocumentsQuery } from '@dashevo/wasm-sdk';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 import { retryAsync } from '../retry-utils';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { paginateCount } from './pagination-utils';
 
 export interface PostDocument {
   $id: string;
@@ -1431,7 +1431,7 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get replies to posts owned by a specific user (for notification queries).
    * Uses the replyToPostOwner index: [replyToPostOwnerId, $createdAt]
-   * Paginates through all results to return complete list.
+   * Limited to 100 most recent replies for notification purposes.
    * @param userId - Identity ID of the post owner
    * @param since - Only return replies created after this timestamp (optional)
    */
@@ -1442,21 +1442,20 @@ class PostService extends BaseDocumentService<Post> {
 
       const sinceTimestamp = since?.getTime() || 0;
 
-      const { documents } = await paginateFetchAll(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: 'post',
-          where: [
-            ['replyToPostOwnerId', '==', userId],
-            ['$createdAt', '>', sinceTimestamp]
-          ],
-          orderBy: [['replyToPostOwnerId', 'asc'], ['$createdAt', 'desc']]
-        }),
-        (doc) => this.transformDocument(doc)
-      );
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [
+          ['replyToPostOwnerId', '==', userId],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        // Match replyToPostOwner index: [replyToPostOwnerId: asc, $createdAt: asc]
+        orderBy: [['replyToPostOwnerId', 'asc'], ['$createdAt', 'asc']],
+        limit: 100
+      });
 
-      return documents;
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting replies to my posts:', error);
       return [];
