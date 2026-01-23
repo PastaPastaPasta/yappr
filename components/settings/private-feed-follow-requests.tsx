@@ -336,7 +336,7 @@ export function PrivateFeedFollowRequests() {
                     variant="default"
                     size="sm"
                     onClick={() => handleApprove(request)}
-                    disabled={processingId === request.id}
+                    disabled={processingId !== null}
                     className="bg-green-600 hover:bg-green-700"
                   >
                     {processingId === request.id ? (
@@ -353,7 +353,7 @@ export function PrivateFeedFollowRequests() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleIgnore(request)}
-                    disabled={processingId === request.id}
+                    disabled={processingId !== null}
                   >
                     <XMarkIcon className="h-4 w-4 mr-1" />
                     Ignore
