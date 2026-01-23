@@ -74,9 +74,8 @@ export function usePrivateFeedRequest({
 
     const unsubscribe = subscribeToPrivateFeedRequestStatus(() => {
       const cached = getPrivateFeedRequestStatus(cacheKey)
-      if (cached) {
-        setStatus(cached)
-      }
+      // Reset to 'none' when cache entry is deleted/expired
+      setStatus(cached ?? 'none')
     })
 
     return unsubscribe
@@ -139,10 +138,14 @@ export function usePrivateFeedRequest({
                 )
               } else {
                 // Base64
-                const binary = atob(encryptionKey.data)
-                encryptionPublicKey = new Uint8Array(binary.length)
-                for (let i = 0; i < binary.length; i++) {
-                  encryptionPublicKey[i] = binary.charCodeAt(i)
+                try {
+                  const binary = atob(encryptionKey.data)
+                  encryptionPublicKey = new Uint8Array(binary.length)
+                  for (let i = 0; i < binary.length; i++) {
+                    encryptionPublicKey[i] = binary.charCodeAt(i)
+                  }
+                } catch {
+                  console.error('Failed to decode encryption key as base64')
                 }
               }
             } else if (encryptionKey.data instanceof Uint8Array) {
@@ -290,7 +293,7 @@ export function usePrivateFeedRequest({
     } finally {
       setIsProcessing(false)
     }
-  }, [currentUserId, ownerId, cacheKey])
+  }, [currentUserId, ownerId, updateStatus])
 
   /**
    * Dismiss the encryption key modal without completing the request
