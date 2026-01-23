@@ -103,8 +103,9 @@ class PostService extends BaseDocumentService<Post> {
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
-    const encryptedContent = rawEncryptedContent ? this.normalizeBytes(rawEncryptedContent) : undefined;
-    const nonce = rawNonce ? this.normalizeBytes(rawNonce) : undefined;
+    // normalizeBytes returns null on decode failure to avoid treating malformed data as encrypted
+    const encryptedContent = rawEncryptedContent ? this.normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
+    const nonce = rawNonce ? this.normalizeBytes(rawNonce) ?? undefined : undefined;
 
     // Return a basic Post object - additional data will be loaded separately
     const post: Post = {
@@ -1012,9 +1013,10 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Normalize bytes from SDK response (may be base64 string, Uint8Array, or regular array)
+   * Normalize bytes from SDK response (may be base64 string, Uint8Array, or regular array).
+   * Returns null on decode failure to prevent malformed data from being treated as valid encrypted content.
    */
-  private normalizeBytes(value: unknown): Uint8Array {
+  private normalizeBytes(value: unknown): Uint8Array | null {
     if (value instanceof Uint8Array) {
       return value;
     }
@@ -1042,7 +1044,7 @@ class PostService extends BaseDocumentService<Post> {
       }
     }
     console.warn('Unable to normalize bytes in post-service:', value);
-    return new Uint8Array(0);
+    return null;
   }
 
   /**

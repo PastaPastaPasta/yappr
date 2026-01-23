@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import {
   getPrivateFeedRequestStatus,
@@ -67,6 +67,33 @@ export function usePrivateFeedRequest({
   const [status, setStatus] = useState<PrivateFeedRequestStatus>(getInitialStatus)
   const [isProcessing, setIsProcessing] = useState(false)
   const [needsEncryptionKey, setNeedsEncryptionKey] = useState(false)
+
+  // Ref to track timeout IDs for cleanup on unmount
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Helper to schedule a delayed status update with cleanup
+  const scheduleStatusReset = useCallback((newStatus: PrivateFeedRequestStatus, delayMs: number) => {
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    timeoutRef.current = setTimeout(() => {
+      timeoutRef.current = null
+      setStatus(newStatus)
+      if (cacheKey) {
+        deletePrivateFeedRequestStatus(cacheKey)
+      }
+    }, delayMs)
+  }, [cacheKey])
 
   // Subscribe to cache changes so all posts from same author update together
   useEffect(() => {
@@ -185,18 +212,18 @@ export function usePrivateFeedRequest({
         updateStatus('error')
         toast.error(result.error || 'Failed to request access')
         // Reset to none after error so user can retry
-        setTimeout(() => updateStatus('none'), 2000)
+        scheduleStatusReset('none', 2000)
       }
     } catch (error) {
       console.error('Error requesting access:', error)
       updateStatus('error')
       toast.error('Failed to request access')
       // Reset to none after error so user can retry
-      setTimeout(() => updateStatus('none'), 2000)
+      scheduleStatusReset('none', 2000)
     } finally {
       setIsProcessing(false)
     }
-  }, [currentUserId, ownerId, onRequireAuth, updateStatus])
+  }, [currentUserId, ownerId, onRequireAuth, updateStatus, scheduleStatusReset])
 
   /**
    * Request access - main entry point
@@ -257,17 +284,17 @@ export function usePrivateFeedRequest({
       } else {
         updateStatus('error')
         toast.error(result.error || 'Failed to request access')
-        setTimeout(() => updateStatus('none'), 2000)
+        scheduleStatusReset('none', 2000)
       }
     } catch (error) {
       console.error('Error requesting access after key addition:', error)
       updateStatus('error')
       toast.error('Failed to request access')
-      setTimeout(() => updateStatus('none'), 2000)
+      scheduleStatusReset('none', 2000)
     } finally {
       setIsProcessing(false)
     }
-  }, [currentUserId, ownerId, updateStatus])
+  }, [currentUserId, ownerId, updateStatus, scheduleStatusReset])
 
   /**
    * Cancel a pending request

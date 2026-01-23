@@ -239,6 +239,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   /**
    * Get reposts of posts owned by a specific user (for notification queries).
    * Uses the postOwnerReposts index: [postOwnerId, $createdAt]
+   * Paginates through all results to return complete list.
    * @param userId - Identity ID of the post owner
    * @param since - Only return reposts created after this timestamp (optional)
    */
@@ -248,19 +249,21 @@ class RepostService extends BaseDocumentService<RepostDocument> {
 
       const sinceTimestamp = since?.getTime() || 0;
 
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'repost',
-        where: [
-          ['postOwnerId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']],
-        limit: 100
-      });
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'repost',
+          where: [
+            ['postOwnerId', '==', userId],
+            ['$createdAt', '>', sinceTimestamp]
+          ],
+          orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
 
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+      return documents;
     } catch (error) {
       console.error('Error getting reposts of my posts:', error);
       return [];
