@@ -69,14 +69,6 @@
         ]
       },
       {
-        "name": "timeline",
-        "properties": [
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
         "name": "replyToPost",
         "properties": [
           {
@@ -108,19 +100,42 @@
             "$createdAt": "asc"
           }
         ]
+      },
+      {
+        "name": "quotedPostAndOwner",
+        "unique": true,
+        "properties": [
+          {
+            "quotedPostId": "asc"
+          },
+          {
+            "$ownerId": "asc"
+          }
+        ]
+      },
+      {
+        "name": "quotedPostOwnerAndTime",
+        "properties": [
+          {
+            "quotedPostOwnerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
       }
     ],
     "required": [
       "$createdAt",
-      "content"
+      "language"
     ],
     "properties": {
       "content": {
         "type": "string",
         "position": 0,
         "maxLength": 500,
-        "minLength": 1,
-        "description": "Post content (public content or teaser for private posts)"
+        "minLength": 0,
+        "description": "Post content (public content or teaser for private posts). Empty for pure reposts."
       },
       "mediaUrl": {
         "type": "string",
@@ -189,6 +204,15 @@
         "position": 9,
         "byteArray": true,
         "description": "Identity ID of the parent post owner (for efficient notification queries on replies)",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "quotedPostOwnerId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 10,
+        "byteArray": true,
+        "description": "Identity ID of the quoted post owner (for notification queries)",
         "contentMediaType": "application/x.dash.dpp.identifier"
       }
     },
@@ -323,62 +347,6 @@
     "description": "Tracks which users' block lists this user inherits (hard blocks). One per user.",
     "additionalProperties": false
   },
-  "avatar": {
-    "type": "object",
-    "indices": [
-      {
-        "name": "owner",
-        "unique": true,
-        "properties": [
-          {
-            "$ownerId": "asc"
-          }
-        ]
-      },
-      {
-        "name": "updatedAt",
-        "properties": [
-          {
-            "$updatedAt": "asc"
-          }
-        ]
-      }
-    ],
-    "required": [
-      "$updatedAt",
-      "version",
-      "data"
-    ],
-    "properties": {
-      "data": {
-        "type": "string",
-        "position": 1,
-        "maxLength": 128,
-        "minLength": 16,
-        "description": "Encoded avatar feature data"
-      },
-      "style": {
-        "enum": [
-          "realistic",
-          "cartoon",
-          "anime",
-          "pixel"
-        ],
-        "type": "string",
-        "position": 2,
-        "description": "Rendering style for the avatar"
-      },
-      "version": {
-        "type": "integer",
-        "maximum": 10,
-        "minimum": 1,
-        "position": 0,
-        "description": "Avatar format version"
-      }
-    },
-    "description": "User avatar customization data",
-    "additionalProperties": false
-  },
   "follow": {
     "type": "object",
     "indices": [
@@ -436,83 +404,6 @@
     "description": "A follow relationship between users",
     "additionalProperties": false
   },
-  "repost": {
-    "type": "object",
-    "indices": [
-      {
-        "name": "postAndOwner",
-        "unique": true,
-        "properties": [
-          {
-            "postId": "asc"
-          },
-          {
-            "$ownerId": "asc"
-          }
-        ]
-      },
-      {
-        "name": "ownerReposts",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "postReposts",
-        "properties": [
-          {
-            "postId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "postOwnerReposts",
-        "properties": [
-          {
-            "postOwnerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      }
-    ],
-    "mutable": false,
-    "required": [
-      "$createdAt",
-      "postId"
-    ],
-    "properties": {
-      "postId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
-        "position": 0,
-        "byteArray": true,
-        "description": "ID of the reposted post",
-        "contentMediaType": "application/x.dash.dpp.identifier"
-      },
-      "postOwnerId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
-        "position": 1,
-        "byteArray": true,
-        "description": "Identity ID of the post owner (for efficient notification queries)",
-        "contentMediaType": "application/x.dash.dpp.identifier"
-      }
-    },
-    "description": "A repost/retweet of a post",
-    "additionalProperties": false
-  },
   "profile": {
     "type": "object",
     "indices": [
@@ -522,14 +413,6 @@
         "properties": [
           {
             "$ownerId": "asc"
-          }
-        ]
-      },
-      {
-        "name": "createdAt",
-        "properties": [
-          {
-            "$createdAt": "asc"
           }
         ]
       }
@@ -629,150 +512,6 @@
       }
     },
     "description": "A bookmarked post",
-    "additionalProperties": false
-  },
-  "notification": {
-    "type": "object",
-    "indices": [
-      {
-        "name": "ownerNotifications",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "unreadNotifications",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "read": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      }
-    ],
-    "required": [
-      "$createdAt",
-      "type",
-      "fromUserId"
-    ],
-    "properties": {
-      "read": {
-        "type": "boolean",
-        "position": 3,
-        "description": "Whether the notification has been read"
-      },
-      "type": {
-        "enum": [
-          "like",
-          "repost",
-          "follow",
-          "reply",
-          "mention",
-          "quote",
-          "privateFeedRequest",
-          "privateFeedApproved",
-          "privateFeedRevoked"
-        ],
-        "type": "string",
-        "position": 0,
-        "description": "Type of notification"
-      },
-      "postId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
-        "position": 2,
-        "byteArray": true,
-        "description": "Related post ID (if applicable)",
-        "contentMediaType": "application/x.dash.dpp.identifier"
-      },
-      "fromUserId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
-        "position": 1,
-        "byteArray": true,
-        "description": "Identity ID of the user who triggered the notification",
-        "contentMediaType": "application/x.dash.dpp.identifier"
-      }
-    },
-    "description": "A notification for a user",
-    "additionalProperties": false
-  },
-  "directMessage": {
-    "type": "object",
-    "indices": [
-      {
-        "name": "conversation",
-        "properties": [
-          {
-            "conversationId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "senderMessages",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      }
-    ],
-    "required": [
-      "$createdAt",
-      "recipientId",
-      "conversationId",
-      "encryptedContent"
-    ],
-    "properties": {
-      "read": {
-        "type": "boolean",
-        "position": 3,
-        "description": "Whether the message has been read"
-      },
-      "recipientId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
-        "position": 0,
-        "byteArray": true,
-        "description": "Identity ID of the recipient",
-        "contentMediaType": "application/x.dash.dpp.identifier"
-      },
-      "conversationId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
-        "position": 1,
-        "byteArray": true,
-        "description": "Unique conversation ID",
-        "contentMediaType": "application/x.dash.dpp.identifier"
-      },
-      "encryptedContent": {
-        "type": "string",
-        "position": 2,
-        "maxLength": 2048,
-        "description": "Encrypted message content"
-      }
-    },
-    "description": "A direct message between users",
     "additionalProperties": false
   },
   "followRequest": {

@@ -195,6 +195,9 @@ interface SettingsState {
   /** Potato Mode: Disable visual effects like backdrop blur for better performance on older devices */
   potatoMode: boolean
   setPotatoMode: (enabled: boolean) => void
+  /** Preferred language for the For You feed */
+  feedLanguage: string
+  setFeedLanguage: (language: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -218,6 +221,8 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       potatoMode: false, // Disabled by default - blur effects enabled
       setPotatoMode: (enabled) => set({ potatoMode: enabled }),
+      feedLanguage: 'en', // Default to English
+      setFeedLanguage: (language) => set({ feedLanguage: language }),
     }),
     {
       name: 'yappr-settings',

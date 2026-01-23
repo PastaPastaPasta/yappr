@@ -61,6 +61,7 @@ function FeedPage() {
   const [isHydrated, setIsHydrated] = useState(false)
   const { setComposeOpen } = useAppStore()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const feedLanguage = useSettingsStore((s) => s.feedLanguage)
   const { user } = useAuth()
   const { open: openLoginPrompt } = useLoginPromptModal()
   const postsState = useAsyncState<any[]>(null)
@@ -216,7 +217,7 @@ function FeedPage() {
           const hasResolvedUsername = !!(post.author?.username && !post.author.username.startsWith('user_'))
           return {
             id: post.id,
-            content: post.content || 'No content',
+            content: post.content || '',  // Empty for pure reposts - UI handles display
             author: {
               id: post.author?.id || 'unknown',
               // Don't use fake username format - leave empty for display components to handle
@@ -368,7 +369,7 @@ function FeedPage() {
 
           return {
             id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
-            content: data.content || 'No content',
+            content: data.content || '',  // Empty for pure reposts - UI handles display
             author: {
               id: authorIdStr,
               // Don't use fake username format - leave empty for display components to handle
@@ -482,7 +483,8 @@ function FeedPage() {
         const firstBatchRaw = await dashClient.queryPosts({
           limit: 20,
           forceRefresh,
-          startAfter: currentStartAfter
+          startAfter: currentStartAfter,
+          language: feedLanguage
         })
 
         if (firstBatchRaw.length === 0) {
@@ -529,7 +531,8 @@ function FeedPage() {
                 const bgRawPosts = await dashClient.queryPosts({
                   limit: 20,
                   forceRefresh: false,
-                  startAfter: bgCurrentStartAfter
+                  startAfter: bgCurrentStartAfter,
+                  language: feedLanguage
                 })
 
                 bgLastBatchSize = bgRawPosts.length
@@ -788,7 +791,7 @@ function FeedPage() {
     } finally {
       setLoading(false)
     }
-  }, [enrichProgressively, activeTab, user?.identityId])
+  }, [enrichProgressively, activeTab, user?.identityId, feedLanguage])
 
   // Load more posts (pagination)
   const loadMore = useCallback(async () => {
@@ -888,7 +891,7 @@ function FeedPage() {
 
           return {
             id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
-            content: data.content || 'No content',
+            content: data.content || '',  // Empty for pure reposts - UI handles display
             author: {
               id: authorIdStr,
               username: '',

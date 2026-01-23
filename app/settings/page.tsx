@@ -67,6 +67,8 @@ function SettingsPage() {
   const setNotificationSettings = useSettingsStore((s) => s.setNotificationSettings)
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
+  const feedLanguage = useSettingsStore((s) => s.feedLanguage)
+  const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -539,6 +541,36 @@ function SettingsPage() {
           >
             <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
           </Switch.Root>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-4">Feed Language</h3>
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Choose the language for the &quot;For You&quot; feed. Posts in other languages will not appear.
+          </p>
+          <select
+            value={feedLanguage}
+            onChange={(e) => setFeedLanguage(e.target.value)}
+            className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+          >
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="ar">Arabic</option>
+            <option value="hi">Hindi</option>
+            <option value="it">Italian</option>
+            <option value="nl">Dutch</option>
+            <option value="pl">Polish</option>
+            <option value="tr">Turkish</option>
+          </select>
         </div>
       </div>
     </div>

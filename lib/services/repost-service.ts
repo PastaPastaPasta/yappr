@@ -1,54 +1,76 @@
-import { BaseDocumentService } from './document-service';
+import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 
+/**
+ * Repost document - now stored as a post with quotedPostId and empty content.
+ * This interface represents the repost data for compatibility with existing code.
+ */
 export interface RepostDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
-  postId: string;
-  postOwnerId?: string;
+  postId: string;  // The quotedPostId (the post being reposted)
+  postOwnerId?: string;  // The quotedPostOwnerId
 }
 
-class RepostService extends BaseDocumentService<RepostDocument> {
-  constructor() {
-    super('repost');
-  }
+/**
+ * Repost Service
+ *
+ * Reposts are now stored as post documents with:
+ * - quotedPostId: ID of the post being reposted
+ * - quotedPostOwnerId: Owner of the quoted post (for notifications)
+ * - content: Empty string (distinguishes pure repost from quote tweet)
+ * - language: Required (use 'en' as default if not specified)
+ */
+class RepostService {
+  private contractId = YAPPR_CONTRACT_ID;
+  private documentType = 'post';
 
-  protected transformDocument(doc: Record<string, unknown>): RepostDocument {
+  /**
+   * Transform a post document into RepostDocument format.
+   * Only transforms posts that are reposts (have quotedPostId + empty content).
+   */
+  private transformToRepostDocument(doc: Record<string, unknown>): RepostDocument | null {
     const data = (doc.data || doc) as Record<string, unknown>;
 
-    // Convert postId
-    const rawPostId = data.postId || doc.postId;
-    const postId = rawPostId ? identifierToBase58(rawPostId) : '';
-    if (rawPostId && !postId) {
-      console.error('RepostService: Invalid postId format:', rawPostId);
+    // Check if this is a repost (has quotedPostId)
+    const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
+    if (!rawQuotedPostId) return null;
+
+    // Check if content is empty (pure repost vs quote tweet)
+    const content = (data.content || doc.content || '') as string;
+    if (content && content.trim() !== '') return null;
+
+    const quotedPostId = identifierToBase58(rawQuotedPostId);
+    if (!quotedPostId) {
+      console.error('RepostService: Invalid quotedPostId format:', rawQuotedPostId);
+      return null;
     }
 
-    // Convert postOwnerId (optional field)
-    const rawPostOwnerId = data.postOwnerId || doc.postOwnerId;
-    const postOwnerId = rawPostOwnerId ? identifierToBase58(rawPostOwnerId) : undefined;
-    if (rawPostOwnerId && !postOwnerId) {
-      console.error('RepostService: Invalid postOwnerId format:', rawPostOwnerId);
-    }
+    // Convert quotedPostOwnerId
+    const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
+    const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) : undefined;
 
     return {
       $id: (doc.$id || doc.id) as string,
       $ownerId: (doc.$ownerId || doc.ownerId) as string,
       $createdAt: (doc.$createdAt || doc.createdAt) as number,
-      postId: postId || '',
-      postOwnerId: postOwnerId || undefined,
+      postId: quotedPostId,
+      postOwnerId: quotedPostOwnerId || undefined,
     };
   }
 
   /**
-   * Repost a post
+   * Repost a post.
+   * Creates a post document with empty content and quotedPostId.
    * @param postId - ID of the post being reposted
    * @param ownerId - Identity ID of the user reposting
    * @param postOwnerId - Identity ID of the post author (for efficient notification queries)
+   * @param language - Language code (defaults to 'en')
    */
-  async repostPost(postId: string, ownerId: string, postOwnerId?: string): Promise<boolean> {
+  async repostPost(postId: string, ownerId: string, postOwnerId?: string, language: string = 'en'): Promise<boolean> {
     try {
       // Check if already reposted
       const existing = await this.getRepost(postId, ownerId);
@@ -57,14 +79,16 @@ class RepostService extends BaseDocumentService<RepostDocument> {
         return true;
       }
 
-      // Build document data
+      // Build document data - a post with empty content + quotedPostId
       const documentData: Record<string, unknown> = {
-        postId: stringToIdentifierBytes(postId)
+        content: '',  // Empty content marks this as a pure repost
+        quotedPostId: stringToIdentifierBytes(postId),
+        language: language,  // Required field
       };
 
-      // Add postOwnerId if provided (for notification queries)
+      // Add quotedPostOwnerId if provided (for notification queries)
       if (postOwnerId) {
-        documentData.postOwnerId = stringToIdentifierBytes(postOwnerId);
+        documentData.quotedPostOwnerId = stringToIdentifierBytes(postOwnerId);
       }
 
       // Use state transition service for creation
@@ -83,7 +107,8 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   }
 
   /**
-   * Remove repost
+   * Remove repost.
+   * Finds and deletes the post document that represents the repost.
    */
   async removeRepost(postId: string, ownerId: string): Promise<boolean> {
     try {
@@ -109,7 +134,8 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   }
 
   /**
-   * Check if post is reposted by user
+   * Check if post is reposted by user.
+   * Uses the quotedPostAndOwner index.
    */
   async isReposted(postId: string, ownerId: string): Promise<boolean> {
     const repost = await this.getRepost(postId, ownerId);
@@ -117,20 +143,33 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   }
 
   /**
-   * Get repost by post and owner
+   * Get repost by post and owner.
+   * Queries the quotedPostAndOwner index.
    */
   async getRepost(postId: string, ownerId: string): Promise<RepostDocument | null> {
     try {
-      // Pass identifier as base58 string - the SDK handles conversion
-      const result = await this.query({
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+
+      // Query using the quotedPostAndOwner index
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
         where: [
-          ['postId', '==', postId],
+          ['quotedPostId', '==', postId],
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
       });
 
-      return result.documents.length > 0 ? result.documents[0] : null;
+      const documents = normalizeSDKResponse(response);
+
+      // Filter for pure reposts (empty content) and transform
+      for (const doc of documents) {
+        const repost = this.transformToRepostDocument(doc);
+        if (repost) return repost;
+      }
+
+      return null;
     } catch (error) {
       console.error('Error getting repost:', error);
       return null;
@@ -139,6 +178,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
 
   /**
    * Get reposts for a post.
+   * Uses the quotedPostAndOwner index, filters for empty content.
    * Paginates through all results to return complete list.
    */
   async getPostReposts(postId: string): Promise<RepostDocument[]> {
@@ -149,17 +189,18 @@ class RepostService extends BaseDocumentService<RepostDocument> {
         sdk,
         () => ({
           dataContractId: this.contractId,
-          documentTypeName: 'repost',
+          documentTypeName: 'post',
           where: [
-            ['postId', '==', postId],
-            ['$createdAt', '>', 0]
+            ['quotedPostId', '==', postId],
+            ['$ownerId', '>', '']  // Need second field for index
           ],
-          orderBy: [['$createdAt', 'asc']]
+          orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']]
         }),
-        (doc) => this.transformDocument(doc)
+        (doc) => this.transformToRepostDocument(doc)
       );
 
-      return documents;
+      // Filter out nulls (quote tweets with content)
+      return documents.filter((d): d is RepostDocument => d !== null);
     } catch (error) {
       console.error('Error getting post reposts:', error);
       return [];
@@ -168,6 +209,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
 
   /**
    * Get user's reposts.
+   * Uses the ownerAndTime index, filters for posts with quotedPostId and empty content.
    * Paginates through all results to return complete list.
    */
   async getUserReposts(userId: string): Promise<RepostDocument[]> {
@@ -178,17 +220,18 @@ class RepostService extends BaseDocumentService<RepostDocument> {
         sdk,
         () => ({
           dataContractId: this.contractId,
-          documentTypeName: 'repost',
+          documentTypeName: 'post',
           where: [
             ['$ownerId', '==', userId],
             ['$createdAt', '>', 0]
           ],
-          orderBy: [['$createdAt', 'desc']]
+          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']]
         }),
-        (doc) => this.transformDocument(doc)
+        (doc) => this.transformToRepostDocument(doc)
       );
 
-      return documents;
+      // Filter out nulls (posts that aren't reposts or are quote tweets)
+      return documents.filter((d): d is RepostDocument => d !== null);
     } catch (error) {
       console.error('Error getting user reposts:', error);
       return [];
@@ -204,8 +247,8 @@ class RepostService extends BaseDocumentService<RepostDocument> {
   }
 
   /**
-   * Get reposts for multiple posts in a single batch query
-   * Uses 'in' operator for efficient querying
+   * Get reposts for multiple posts in a single batch query.
+   * Uses 'in' operator for efficient querying.
    *
    * TODO: This query uses 'in' clause which doesn't support reliable pagination.
    * The SDK returns incomplete results when subtrees are empty but still count against the limit.
@@ -218,18 +261,26 @@ class RepostService extends BaseDocumentService<RepostDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use 'in' operator for batch query on postId
-      // Must include orderBy to match the postReposts index: [postId, $createdAt]
+      // Use 'in' operator for batch query on quotedPostId
+      // Must include orderBy to match the quotedPostAndOwner index
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
-        documentTypeName: 'repost',
-        where: [['postId', 'in', postIds]],
-        orderBy: [['postId', 'asc']],
+        documentTypeName: 'post',
+        where: [['quotedPostId', 'in', postIds]],
+        orderBy: [['quotedPostId', 'asc']],
         limit: 100
       });
 
       const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+
+      // Transform and filter for pure reposts only
+      const reposts: RepostDocument[] = [];
+      for (const doc of documents) {
+        const repost = this.transformToRepostDocument(doc);
+        if (repost) reposts.push(repost);
+      }
+
+      return reposts;
     } catch (error) {
       console.error('Error getting reposts batch:', error);
       return [];
@@ -238,7 +289,7 @@ class RepostService extends BaseDocumentService<RepostDocument> {
 
   /**
    * Get reposts of posts owned by a specific user (for notification queries).
-   * Uses the postOwnerReposts index: [postOwnerId, $createdAt]
+   * Uses the quotedPostOwnerAndTime index.
    * Limited to 100 most recent reposts for notification purposes.
    * @param userId - Identity ID of the post owner
    * @param since - Only return reposts created after this timestamp (optional)
@@ -251,18 +302,26 @@ class RepostService extends BaseDocumentService<RepostDocument> {
 
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
-        documentTypeName: 'repost',
+        documentTypeName: 'post',
         where: [
-          ['postOwnerId', '==', userId],
+          ['quotedPostOwnerId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        // Match postOwnerReposts index: [postOwnerId: asc, $createdAt: asc]
-        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']],
+        // Match quotedPostOwnerAndTime index: [quotedPostOwnerId: asc, $createdAt: asc]
+        orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'asc']],
         limit: 100
       });
 
       const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+
+      // Transform and filter for pure reposts only
+      const reposts: RepostDocument[] = [];
+      for (const doc of documents) {
+        const repost = this.transformToRepostDocument(doc);
+        if (repost) reposts.push(repost);
+      }
+
+      return reposts;
     } catch (error) {
       console.error('Error getting reposts of my posts:', error);
       return [];

@@ -698,7 +698,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               mentionValidations={mentionValidations}
               onFailedMentionClick={handleFailedMentionClick}
             />
-          ) : (
+          ) : post.content ? (
             <PostContent
               content={post.content}
               className="mt-1"
@@ -707,7 +707,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               mentionValidations={mentionValidations}
               onFailedMentionClick={handleFailedMentionClick}
             />
-          )}
+          ) : null}
 
           {/* Quoted post - show skeleton while loading, then actual content */}
           {post.quotedPostId && !post.quotedPost && (

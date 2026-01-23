@@ -20,6 +20,7 @@ export interface PostDocument {
   replyToId?: string;
   replyToPostOwnerId?: string;
   quotedPostId?: string;
+  quotedPostOwnerId?: string;
   firstMentionId?: string;
   primaryHashtag?: string;
   language?: string;
@@ -97,6 +98,10 @@ class PostService extends BaseDocumentService<Post> {
     const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
     const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) || undefined : undefined;
 
+    // Convert quotedPostOwnerId from base64 to base58 for consistent storage
+    const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
+    const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
+
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
     const epoch = (data.epoch ?? doc.epoch) as number | undefined;
@@ -128,6 +133,7 @@ class PostService extends BaseDocumentService<Post> {
       // Expose IDs for lazy loading at component level
       replyToId: replyToId || undefined,
       quotedPostId: quotedPostId || undefined,
+      quotedPostOwnerId: quotedPostOwnerId || undefined,
       // Private feed fields
       encryptedContent,
       epoch,
@@ -404,6 +410,7 @@ class PostService extends BaseDocumentService<Post> {
       replyToId?: string;
       replyToPostOwnerId?: string;
       quotedPostId?: string;
+      quotedPostOwnerId?: string;
       firstMentionId?: string;
       primaryHashtag?: string;
       language?: string;
@@ -452,29 +459,40 @@ class PostService extends BaseDocumentService<Post> {
       data.content = content;
     }
 
+    // Language is required - default to 'en' if not provided
+    data.language = options.language || 'en';
+
     // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.replyToId) data.replyToPostId = options.replyToId;
     if (options.replyToPostOwnerId) data.replyToPostOwnerId = options.replyToPostOwnerId;
     if (options.quotedPostId) data.quotedPostId = options.quotedPostId;
+    if (options.quotedPostOwnerId) data.quotedPostOwnerId = options.quotedPostOwnerId;
     if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
     if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
-    if (options.language) data.language = options.language || 'en';
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     return this.create(ownerId, data);
   }
 
   /**
-   * Get timeline posts
+   * Get timeline posts.
+   * Uses the languageTimeline index: [language, $createdAt].
+   * @param language - Language code to filter by (defaults to 'en')
+   * @param options - Query options
    */
-  async getTimeline(options: QueryOptions = {}): Promise<DocumentResult<Post>> {
+  async getTimeline(options: QueryOptions & { language?: string } = {}): Promise<DocumentResult<Post>> {
+    const { language = 'en', ...queryOptions } = options;
+
     const defaultOptions: QueryOptions = {
-      // Need a where clause on orderBy field for Dash Platform to respect ordering
-      where: [['$createdAt', '>', 0]],
-      orderBy: [['$createdAt', 'desc']],
+      // Use languageTimeline index: [language, $createdAt]
+      where: [
+        ['language', '==', language],
+        ['$createdAt', '>', 0]
+      ],
+      orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
       limit: 20,
-      ...options
+      ...queryOptions
     };
 
     return this.query(defaultOptions);
@@ -1458,6 +1476,45 @@ class PostService extends BaseDocumentService<Post> {
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting replies to my posts:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get quotes of posts owned by a specific user (for notification queries).
+   * Uses the quotedPostOwnerAndTime index: [quotedPostOwnerId, $createdAt]
+   * Returns posts with non-empty content (quote tweets, not pure reposts).
+   * Limited to 100 most recent quotes for notification purposes.
+   * @param userId - Identity ID of the post owner
+   * @param since - Only return quotes created after this timestamp (optional)
+   */
+  async getQuotesOfMyPosts(userId: string, since?: Date): Promise<Post[]> {
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+
+      const sinceTimestamp = since?.getTime() || 0;
+
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [
+          ['quotedPostOwnerId', '==', userId],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        // Match quotedPostOwnerAndTime index: [quotedPostOwnerId: asc, $createdAt: asc]
+        orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'asc']],
+        limit: 100
+      });
+
+      const documents = normalizeSDKResponse(response);
+
+      // Transform and filter for quote tweets only (non-empty content)
+      return documents
+        .map((doc) => this.transformDocument(doc))
+        .filter((post) => post.content && post.content.trim() !== '');
+    } catch (error) {
+      console.error('Error getting quotes of my posts:', error);
       return [];
     }
   }

@@ -187,20 +187,24 @@ export class DashPlatformClient {
   }
   
   /**
-   * Query posts with caching
+   * Query posts with caching.
+   * Uses the languageTimeline index: [language, $createdAt].
+   * @param options.language - Language code to filter by (defaults to 'en')
    */
   async queryPosts(options?: {
     limit?: number
     startAfter?: any
     authorId?: string
     forceRefresh?: boolean
+    language?: string
   }) {
     try {
       // Create cache key based on options
       const cacheKey = JSON.stringify({
         limit: options?.limit || 20,
         authorId: options?.authorId,
-        startAfter: options?.startAfter
+        startAfter: options?.startAfter,
+        language: options?.language || 'en'
       })
       
       // Check if there's already a pending query for this exact request
@@ -257,22 +261,24 @@ export class DashPlatformClient {
    */
   private async _executePostsQuery(contractId: string, options: any, cacheKey: string): Promise<any[]> {
     try {
-      
+
       // Build where clause
       const where: any[] = []
+      let orderBy: any[] = []
+
       if (options?.authorId) {
-        // Query by $ownerId (system field)
+        // Query by $ownerId (system field) using ownerAndTime index
         where.push(['$ownerId', '==', options.authorId])
-      }
-
-      // Dash Platform requires a where clause on the orderBy field for ordering to work.
-      // Add a range query on $createdAt that matches all documents if no other filter.
-      if (where.length === 0) {
         where.push(['$createdAt', '>', 0])
+        orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']]
+      } else {
+        // Use languageTimeline index: [language, $createdAt]
+        // The old timeline index was removed - we now require language filter
+        const language = options?.language || 'en'
+        where.push(['language', '==', language])
+        where.push(['$createdAt', '>', 0])
+        orderBy = [['language', 'asc'], ['$createdAt', 'desc']]
       }
-
-      // Build order by clause - most recent first
-      const orderBy = [['$createdAt', 'desc']]
       
       try {
         // Use EvoSDK documents facade
