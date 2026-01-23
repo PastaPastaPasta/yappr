@@ -131,7 +131,8 @@ async function attemptEncryptionKeyDerivation(
 
     if (matches) {
       // Convert to WIF and store
-      const wif = privateKeyToWif(derivedKey, 'testnet', true)
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+      const wif = privateKeyToWif(derivedKey, network, true)
       storeEncryptionKey(identityId, wif)
       storeEncryptionKeyType(identityId, 'derived')
       console.log('Auth: Encryption key derived and stored')

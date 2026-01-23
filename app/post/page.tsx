@@ -37,7 +37,9 @@ function PostDetailContent() {
   })
 
   // Check if user can reply to private posts
-  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post)
+  // For replies in private feeds, use the parent post owner as the feed owner
+  const feedOwnerId = parentPost?.author.id || post?.author.id
+  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, feedOwnerId)
 
   const handleReply = () => {
     if (!post || !canReplyToPrivate) return

@@ -67,7 +67,8 @@ export function AddEncryptionKeyModal({
       // Derive encryption key using HKDF
       const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
       const encryptionKeyBytes = deriveEncryptionKey(authPrivateKey, user.identityId)
-      const encryptionKeyWif = privateKeyToWif(encryptionKeyBytes, 'testnet', true)
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+      const encryptionKeyWif = privateKeyToWif(encryptionKeyBytes, network, true)
 
       setPrivateKeyBytes(encryptionKeyBytes)
       setPrivateKeyWif(encryptionKeyWif)

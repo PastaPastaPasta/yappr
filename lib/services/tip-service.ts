@@ -170,7 +170,7 @@ class TipService {
       // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
       if (postId) {
-        await this.createTipPost(senderId, postId, amountCredits, message);
+        await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
       }
 
       return {
@@ -193,7 +193,7 @@ class TipService {
 
         // Create tip post (amount is known even if confirmation timed out)
         if (postId) {
-          await this.createTipPost(senderId, postId, amountCredits, message);
+          await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
         }
 
         return {
@@ -239,6 +239,7 @@ class TipService {
   private async createTipPost(
     senderId: string,
     postId: string,
+    postOwnerId: string,
     amountCredits: number,
     tipMessage?: string
   ): Promise<void> {
@@ -250,7 +251,8 @@ class TipService {
         : `tip:${amountCredits}`;
 
       await postService.createPost(senderId, content, {
-        replyToId: postId
+        replyToId: postId,
+        replyToPostOwnerId: postOwnerId
       });
 
       console.log('Tip post created successfully');

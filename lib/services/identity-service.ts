@@ -403,7 +403,9 @@ class IdentityService {
       keyToAdd.privateKeyHex = Array.from(encryptionPrivateKey)
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
-      console.log('Key to add (JSON):', JSON.stringify(keyToAdd, null, 2));
+      // Log without sensitive data
+      const keyToLog = { ...keyToAdd, privateKeyHex: '<redacted>' };
+      console.log('Key to add (JSON):', JSON.stringify(keyToLog, null, 2));
 
       // Update the identity using evo-sdk facade API
       console.log('Calling sdk.identities.update...');
@@ -563,7 +565,9 @@ class IdentityService {
       keyToAdd.privateKeyHex = Array.from(transferPrivateKey)
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
-      console.log('Key to add (JSON):', JSON.stringify(keyToAdd, null, 2));
+      // Log without sensitive data
+      const keyToLog = { ...keyToAdd, privateKeyHex: '<redacted>' };
+      console.log('Key to add (JSON):', JSON.stringify(keyToLog, null, 2));
 
       // Update the identity using evo-sdk facade API
       console.log('Calling sdk.identities.update...');

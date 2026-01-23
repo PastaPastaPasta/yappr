@@ -337,10 +337,10 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     }
   }, [isPrivate, post, user])
 
-  // Reset state when post changes to avoid stale decryption data
+  // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
     setState({ status: 'idle' })
-  }, [post.id])
+  }, [post.id, user?.identityId])
 
   useEffect(() => {
     if (isPrivate && state.status === 'idle') {

@@ -155,10 +155,10 @@ export async function validateKey(
     }
   }
 
-  // Step 4: Find key on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
-  const targetKey = identityData.publicKeys.find((key) => key.purpose === purpose && key.type === 0)
+  // Step 4: Find all candidate keys on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
+  const candidateKeys = identityData.publicKeys.filter((key) => key.purpose === purpose && key.type === 0)
 
-  if (!targetKey) {
+  if (candidateKeys.length === 0) {
     return {
       isValid: false,
       error: `No ${purposeName} key found on your identity.`,
@@ -167,29 +167,29 @@ export async function validateKey(
     }
   }
 
-  // Step 5: Parse on-chain public key data
-  const onChainPubKeyBytes = parsePublicKeyData(targetKey.data)
-
-  // Step 6: Compare derived public key with on-chain public key
-  if (onChainPubKeyBytes) {
-    const matches = areEqual(derivedPubKey, onChainPubKeyBytes)
-
-    if (!matches) {
-      return {
-        isValid: false,
-        error: `This key does not match the ${purposeName} key on your identity`,
-        errorType: 'KEY_MISMATCH',
+  // Step 5: Check each candidate key for a match
+  for (const targetKey of candidateKeys) {
+    const onChainPubKeyBytes = parsePublicKeyData(targetKey.data)
+    if (onChainPubKeyBytes) {
+      const matches = areEqual(derivedPubKey, onChainPubKeyBytes)
+      if (matches) {
+        // Key is valid - found a match
+        return {
+          isValid: true,
+          privateKey: keyBytes,
+          publicKey: derivedPubKey,
+          keyId: targetKey.id,
+          matchType,
+        }
       }
     }
   }
 
-  // Key is valid
+  // No matching key found among candidates
   return {
-    isValid: true,
-    privateKey: keyBytes,
-    publicKey: derivedPubKey,
-    keyId: targetKey.id,
-    matchType,
+    isValid: false,
+    error: `This key does not match the ${purposeName} key on your identity`,
+    errorType: 'KEY_MISMATCH',
   }
 }
 
@@ -272,10 +272,10 @@ export async function validateKeyBytes(
     }
   }
 
-  // Step 3: Find key on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
-  const targetKey = identityData.publicKeys.find((key) => key.purpose === purpose && key.type === 0)
+  // Step 3: Find all candidate keys on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
+  const candidateKeys = identityData.publicKeys.filter((key) => key.purpose === purpose && key.type === 0)
 
-  if (!targetKey) {
+  if (candidateKeys.length === 0) {
     return {
       isValid: false,
       error: `No ${purposeName} key found on your identity.`,
@@ -284,28 +284,28 @@ export async function validateKeyBytes(
     }
   }
 
-  // Step 4: Parse on-chain public key data
-  const onChainPubKeyBytes = parsePublicKeyData(targetKey.data)
-
-  // Step 5: Compare derived public key with on-chain public key
-  if (onChainPubKeyBytes) {
-    const matches = areEqual(derivedPubKey, onChainPubKeyBytes)
-
-    if (!matches) {
-      return {
-        isValid: false,
-        error: `This key does not match the ${purposeName} key on your identity`,
-        errorType: 'KEY_MISMATCH',
+  // Step 4: Check each candidate key for a match
+  for (const targetKey of candidateKeys) {
+    const onChainPubKeyBytes = parsePublicKeyData(targetKey.data)
+    if (onChainPubKeyBytes) {
+      const matches = areEqual(derivedPubKey, onChainPubKeyBytes)
+      if (matches) {
+        // Key is valid - found a match
+        return {
+          isValid: true,
+          privateKey: keyBytes,
+          publicKey: derivedPubKey,
+          keyId: targetKey.id,
+          matchType,
+        }
       }
     }
   }
 
-  // Key is valid
+  // No matching key found among candidates
   return {
-    isValid: true,
-    privateKey: keyBytes,
-    publicKey: derivedPubKey,
-    keyId: targetKey.id,
-    matchType,
+    isValid: false,
+    error: `This key does not match the ${purposeName} key on your identity`,
+    errorType: 'KEY_MISMATCH',
   }
 }
