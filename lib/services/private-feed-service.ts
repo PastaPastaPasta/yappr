@@ -31,7 +31,7 @@ import {
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { privateFeedNotificationService } from './private-feed-notification-service';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
-import { queryDocuments, identifierToBase58 } from './sdk-helpers';
+import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
@@ -87,37 +87,6 @@ function fromBase64(base64: string): Uint8Array {
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return bytes;
-}
-
-/**
- * Convert identifier to 32-byte Uint8Array for cryptographic operations
- */
-function identifierToBytes(identifier: string): Uint8Array {
-  // Decode base58 identifier to bytes
-  // Use a simple base58 decode - identifiers are 32 bytes
-  const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-  const ALPHABET_MAP = new Map<string, number>();
-  for (let i = 0; i < ALPHABET.length; i++) {
-    ALPHABET_MAP.set(ALPHABET[i], i);
-  }
-
-  let num = BigInt(0);
-  for (const char of identifier) {
-    const value = ALPHABET_MAP.get(char);
-    if (value === undefined) {
-      throw new Error(`Invalid base58 character: ${char}`);
-    }
-    num = num * BigInt(58) + BigInt(value);
-  }
-
-  // Convert to 32-byte array (big-endian)
-  const bytes = new Uint8Array(32);
-  for (let i = 31; i >= 0; i--) {
-    bytes[i] = Number(num & BigInt(0xff));
-    num = num >> BigInt(8);
-  }
-
   return bytes;
 }
 

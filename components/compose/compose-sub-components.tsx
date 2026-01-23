@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials, formatTime } from '@/lib/utils'
+import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import { useAuth } from '@/contexts/auth-context'
@@ -465,34 +466,6 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
       </div>
     </div>
   )
-}
-
-/**
- * Convert identifier to 32-byte Uint8Array for cryptographic operations
- */
-function identifierToBytes(identifier: string): Uint8Array {
-  const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-  const ALPHABET_MAP = new Map<string, number>()
-  for (let i = 0; i < ALPHABET.length; i++) {
-    ALPHABET_MAP.set(ALPHABET[i], i)
-  }
-
-  let num = BigInt(0)
-  for (const char of identifier) {
-    const value = ALPHABET_MAP.get(char)
-    if (value === undefined) {
-      throw new Error(`Invalid base58 character: ${char}`)
-    }
-    num = num * BigInt(58) + BigInt(value)
-  }
-
-  const bytes = new Uint8Array(32)
-  for (let i = 31; i >= 0; i--) {
-    bytes[i] = Number(num & BigInt(0xff))
-    num = num >> BigInt(8)
-  }
-
-  return bytes
 }
 
 interface ReplyContextProps {

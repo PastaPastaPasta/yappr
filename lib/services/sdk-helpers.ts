@@ -368,6 +368,39 @@ export function transformDocumentWithField<T extends BaseDocumentFields>(
 }
 
 /**
+ * Base58 alphabet and map for identifier conversion.
+ * Module-level constants to avoid rebuilding on each call.
+ */
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const BASE58_ALPHABET_MAP = new Map<string, number>();
+for (let i = 0; i < BASE58_ALPHABET.length; i++) {
+  BASE58_ALPHABET_MAP.set(BASE58_ALPHABET[i], i);
+}
+
+/**
+ * Convert a base58 identifier string to a 32-byte Uint8Array.
+ * Used for cryptographic operations that require the raw bytes of an identifier.
+ */
+export function identifierToBytes(identifier: string): Uint8Array {
+  let num = BigInt(0);
+  for (const char of identifier) {
+    const value = BASE58_ALPHABET_MAP.get(char);
+    if (value === undefined) {
+      throw new Error(`Invalid base58 character: ${char}`);
+    }
+    num = num * BigInt(58) + BigInt(value);
+  }
+
+  const bytes = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    bytes[i] = Number(num & BigInt(0xff));
+    num = num >> BigInt(8);
+  }
+
+  return bytes;
+}
+
+/**
  * Generic in-flight request deduplicator.
  * Prevents duplicate concurrent requests by sharing a single promise
  * for the same key.
