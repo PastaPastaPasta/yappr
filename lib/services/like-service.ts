@@ -1,7 +1,7 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator, identifierToBase58 } from './sdk-helpers';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
+import { paginateFetchAll } from './pagination-utils';
 
 export interface LikeDocument {
   $id: string;
@@ -12,8 +12,6 @@ export interface LikeDocument {
 }
 
 class LikeService extends BaseDocumentService<LikeDocument> {
-  private countUserLikesDeduplicator = new RequestDeduplicator<string, number>();
-
   constructor() {
     super('like');
   }
@@ -167,66 +165,6 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       console.error('Error getting post likes:', error);
       return [];
     }
-  }
-
-  /**
-   * Get user's likes.
-   * Paginates through all results to return complete list.
-   */
-  async getUserLikes(userId: string): Promise<LikeDocument[]> {
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-      const { documents } = await paginateFetchAll(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: 'like',
-          where: [
-            ['$ownerId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['$createdAt', 'asc']]
-        }),
-        (doc) => this.transformDocument(doc)
-      );
-
-      return documents;
-    } catch (error) {
-      console.error('Error getting user likes:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Count likes given by a user.
-   * Paginates through all results for accurate count.
-   * Deduplicates in-flight requests.
-   */
-  async countUserLikes(userId: string): Promise<number> {
-    return this.countUserLikesDeduplicator.dedupe(userId, async () => {
-      try {
-        const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'like',
-            where: [
-              ['$ownerId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            orderBy: [['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
-      } catch (error) {
-        console.error('Error counting user likes:', error);
-        return 0;
-      }
-    });
   }
 
   /**
