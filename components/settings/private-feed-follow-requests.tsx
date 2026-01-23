@@ -218,7 +218,7 @@ export function PrivateFeedFollowRequests() {
     }
   }
 
-  const handleIgnore = async (request: FollowRequestUser) => {
+  const handleIgnore = (request: FollowRequestUser) => {
     if (!user?.identityId || processingId) return
 
     // For now, just remove from UI (the request remains on-chain but is hidden)
