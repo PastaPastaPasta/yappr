@@ -45,7 +45,7 @@ const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
   { key: 'reply', label: 'Replies' },
   { key: 'follow', label: 'Follows' },
   { key: 'mention', label: 'Mentions' },
-  { key: 'privateFeed', label: 'Private Feed' }
+  { key: 'privateFeed', label: 'Private' }
 ]
 
 const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
