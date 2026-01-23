@@ -114,6 +114,19 @@ export function EncryptionKeyModal() {
     }
   }, [isOpen, user, autoRecoveryStatus, attemptAutoRecovery])
 
+  // Reset all local state when modal closes (handles both cancel and success paths)
+  useEffect(() => {
+    if (!isOpen) {
+      setEncryptionKeyInput('')
+      setError(null)
+      setNoKeyOnIdentity(false)
+      setShowLostKeyModal(false)
+      setAutoRecoveryStatus('idle')
+      setAutoRecoveryMessage('')
+      hasAttemptedRecovery.current = false
+    }
+  }, [isOpen])
+
   const actionDescription = getEncryptionKeyActionDescription(action)
 
   const validateAndStoreKey = useCallback(async () => {
@@ -160,14 +173,7 @@ export function EncryptionKeyModal() {
   }, [user, encryptionKeyInput, close, onSuccess])
 
   const handleClose = useCallback(() => {
-    setEncryptionKeyInput('')
-    setError(null)
-    setNoKeyOnIdentity(false)
-    setShowLostKeyModal(false)
-    // Reset auto-recovery state for next open
-    setAutoRecoveryStatus('idle')
-    setAutoRecoveryMessage('')
-    hasAttemptedRecovery.current = false
+    // State is reset by the useEffect when isOpen becomes false
     close()
   }, [close])
 
@@ -222,6 +228,7 @@ export function EncryptionKeyModal() {
                   >
                     <button
                       onClick={handleClose}
+                      aria-label="Close"
                       className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                     >
                       <XMarkIcon className="h-5 w-5" />

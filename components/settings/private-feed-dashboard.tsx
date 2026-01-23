@@ -152,8 +152,9 @@ export function PrivateFeedDashboard() {
     loadDashboardData().catch(err => console.error('Failed to load dashboard:', err))
   }, [loadDashboardData])
 
-  // Calculate epoch usage percentage
-  const epochUsagePercent = ((currentEpoch - 1) / (MAX_EPOCH - 1)) * 100
+  // Calculate epoch usage percentage with clamping to avoid NaN/overflow
+  const rawEpochPercent = MAX_EPOCH > 1 ? ((currentEpoch - 1) / (MAX_EPOCH - 1)) * 100 : 0
+  const epochUsagePercent = Math.max(0, Math.min(100, rawEpochPercent))
   const isEpochWarning = epochUsagePercent > 90
 
   // Don't render anything if private feed is not enabled

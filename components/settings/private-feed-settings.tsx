@@ -169,10 +169,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
       if (result.success) {
         toast.success('Private feed enabled successfully!')
-        setIsEnabled(true)
-        setEnabledDate(new Date())
         setShowKeyInput(false)
         setEncryptionKeyInput('')
+        // Refresh all status to ensure consistent UI state
+        await checkPrivateFeedStatus()
       } else {
         setKeyError(result.error || 'Failed to enable private feed')
         toast.error(result.error || 'Failed to enable private feed')

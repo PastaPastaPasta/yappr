@@ -347,7 +347,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
       if (currentRequestId !== requestIdRef.current) return
 
-      if (result.success && result.content) {
+      if (result.success && result.content !== undefined) {
         setState({ status: 'decrypted', content: result.content })
       } else {
         setState({ status: 'locked' })

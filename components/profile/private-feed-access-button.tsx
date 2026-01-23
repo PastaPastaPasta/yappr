@@ -216,6 +216,7 @@ export function PrivateFeedAccessButton({
               )}
             </Button>
             <button
+              type="button"
               onClick={() => setShowCancelOption(false)}
               className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
@@ -230,6 +231,7 @@ export function PrivateFeedAccessButton({
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
               <button
+                type="button"
                 data-testid="access-pending"
                 onClick={() => setShowCancelOption(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"

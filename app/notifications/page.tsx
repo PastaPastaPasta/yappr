@@ -111,9 +111,17 @@ function NotificationsPage() {
     return notifs.filter(n => n.type === tabFilter)
   }
 
-  // Get unread count for a specific filter
+  // Get unread count for a specific filter, respecting user settings
   const getUnreadCountForTab = (tabFilter: NotificationFilter) => {
-    const unread = notifications.filter(n => !n.read)
+    const unread = notifications.filter(n => {
+      if (n.read) return false
+      // Respect notification settings (private feed notifications always count)
+      const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
+      if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
+        return false
+      }
+      return true
+    })
     return getFilteredByTab(unread, tabFilter).length
   }
 
@@ -126,7 +134,15 @@ function NotificationsPage() {
     // Check if this notification type is enabled in settings
     return notificationSettings[settingKey as keyof typeof notificationSettings]
   })
-  const unreadCount = notifications.filter(n => !n.read).length
+  // Overall unread count respecting user settings
+  const unreadCount = notifications.filter(n => {
+    if (n.read) return false
+    const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
+    if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
+      return false
+    }
+    return true
+  }).length
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
