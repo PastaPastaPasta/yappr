@@ -112,10 +112,15 @@ function AuthLoadingSpinner(): JSX.Element {
  * Attempt to derive encryption key and check if it matches the identity.
  * If it matches, stores the key and marks it as 'derived'.
  * Returns the derived key bytes if successful, null otherwise.
+ *
+ * @param identityId - The identity to derive key for
+ * @param authPrivateKey - The authentication private key bytes
+ * @param isSessionActive - Callback to check if session is still active for this identity
  */
 async function attemptEncryptionKeyDerivation(
   identityId: string,
-  authPrivateKey: Uint8Array
+  authPrivateKey: Uint8Array,
+  isSessionActive: () => boolean
 ): Promise<Uint8Array | null> {
   try {
     const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } =
@@ -130,6 +135,13 @@ async function attemptEncryptionKeyDerivation(
     const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId, 1)
 
     if (matches) {
+      // Check if session is still active before storing keys
+      // This prevents resurrecting keys after logout
+      if (!isSessionActive()) {
+        console.log('Auth: Session ended before key derivation completed, skipping storage')
+        return null
+      }
+
       // Convert to WIF and store
       const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
       const wif = privateKeyToWif(derivedKey, network, true)
@@ -266,6 +278,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Attempt key derivation for encryption key (background, non-blocking)
       // This auto-derives and stores the encryption key if it matches identity
       // Use fire-and-forget IIFE so this doesn't block login
+      // Capture identityId to check session is still active when derivation completes
+      const loginIdentityId = identityId
       ;(async () => {
         try {
           const { parsePrivateKey } = await import('@/lib/crypto/wif')
@@ -278,8 +292,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
             // Try to derive encryption key
+            // Pass session check callback to prevent storing keys after logout
             console.log('Auth: Attempting encryption key derivation...')
-            const derivedEncKey = await attemptEncryptionKeyDerivation(identityId, authPrivateKeyBytes)
+            const isSessionActive = () => {
+              const savedSession = localStorage.getItem('yappr_session')
+              if (!savedSession) return false
+              try {
+                const sessionData = JSON.parse(savedSession)
+                return sessionData.user?.identityId === loginIdentityId
+              } catch {
+                return false
+              }
+            }
+            const derivedEncKey = await attemptEncryptionKeyDerivation(identityId, authPrivateKeyBytes, isSessionActive)
 
             if (!derivedEncKey) {
               // Derivation didn't match - user has external key, will need to enter it manually

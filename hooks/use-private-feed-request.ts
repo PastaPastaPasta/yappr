@@ -71,14 +71,22 @@ export function usePrivateFeedRequest({
   // Ref to track timeout IDs for cleanup on unmount
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Cleanup timeout on unmount
+  // Cleanup timeout on cacheKey change or unmount
+  // This prevents pending timeouts from corrupting state when switching users/profiles
   useEffect(() => {
+    // Clear any existing timeout when cacheKey changes
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
       }
     }
-  }, [])
+  }, [cacheKey])
 
   // Helper to schedule a delayed status update with cleanup
   const scheduleStatusReset = useCallback((newStatus: PrivateFeedRequestStatus, delayMs: number) => {

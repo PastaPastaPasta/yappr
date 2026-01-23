@@ -99,7 +99,7 @@ class PostService extends BaseDocumentService<Post> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const epoch = (data.epoch || doc.epoch) as number | undefined;
+    const epoch = (data.epoch ?? doc.epoch) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)

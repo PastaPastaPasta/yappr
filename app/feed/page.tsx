@@ -24,6 +24,38 @@ import { identifierToBase58 } from '@/lib/services/sdk-helpers'
 import { Button } from '@/components/ui/button'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 
+/**
+ * Helper to normalize byte arrays from SDK (may be base64 string, hex string, Uint8Array, or regular array)
+ * Used for converting encryptedContent, nonce, and other byte fields to Uint8Array
+ */
+function normalizeBytes(value: unknown): Uint8Array | undefined {
+  if (!value) return undefined
+  if (value instanceof Uint8Array) return value
+  if (Array.isArray(value)) return new Uint8Array(value)
+  if (typeof value === 'string') {
+    // Try base64 decode first
+    try {
+      const binary = atob(value)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+      return bytes
+    } catch {
+      // Might be hex - validate even length for proper decoding
+      if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
+        const bytes = new Uint8Array(value.length / 2)
+        for (let i = 0; i < bytes.length; i++) {
+          bytes[i] = parseInt(value.substr(i * 2, 2), 16)
+        }
+        return bytes
+      }
+      return undefined
+    }
+  }
+  return undefined
+}
+
 function FeedPage() {
   const router = useRouter()
   const [isHydrated, setIsHydrated] = useState(false)
@@ -209,7 +241,11 @@ function FeedPage() {
           reposted: post.reposted || false,
           bookmarked: post.bookmarked || false,
           replyToId: post.replyToId || undefined,
-          quotedPostId: post.quotedPostId || undefined
+          quotedPostId: post.quotedPostId || undefined,
+          // Private feed fields
+          encryptedContent: post.encryptedContent ? normalizeBytes(post.encryptedContent) : undefined,
+          epoch: post.epoch as number | undefined,
+          nonce: post.nonce ? normalizeBytes(post.nonce) : undefined
         }
         })
 
@@ -308,35 +344,6 @@ function FeedPage() {
         const dashClient = getDashPlatformClient()
 
         const currentStartAfter = pagination?.startAfter
-
-        // Helper to normalize byte arrays from SDK (may be base64 string, hex string, Uint8Array, or regular array)
-        const normalizeBytes = (value: unknown): Uint8Array | undefined => {
-          if (!value) return undefined
-          if (value instanceof Uint8Array) return value
-          if (Array.isArray(value)) return new Uint8Array(value)
-          if (typeof value === 'string') {
-            // Try base64 decode first
-            try {
-              const binary = atob(value)
-              const bytes = new Uint8Array(binary.length)
-              for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i)
-              }
-              return bytes
-            } catch {
-              // Might be hex - validate even length for proper decoding
-              if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
-                const bytes = new Uint8Array(value.length / 2)
-                for (let i = 0; i < bytes.length; i++) {
-                  bytes[i] = parseInt(value.substr(i * 2, 2), 16)
-                }
-                return bytes
-              }
-              return undefined
-            }
-          }
-          return undefined
-        }
 
         // Helper to transform a raw document to our post format
         const transformRawPost = (doc: any) => {
@@ -874,6 +881,11 @@ function FeedPage() {
           const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
           const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) : undefined
 
+          // Extract private feed fields if present
+          const rawEncryptedContent = data.encryptedContent || doc.encryptedContent
+          const epoch = (data.epoch ?? doc.epoch) as number | undefined
+          const rawNonce = data.nonce || doc.nonce
+
           return {
             id: doc.$id || doc.id || Math.random().toString(36).substr(2, 9),
             content: data.content || 'No content',
@@ -898,7 +910,11 @@ function FeedPage() {
             reposted: false,
             bookmarked: false,
             replyToId: replyToId || undefined,
-            quotedPostId: quotedPostId || undefined
+            quotedPostId: quotedPostId || undefined,
+            // Private feed fields
+            encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) : undefined,
+            epoch,
+            nonce: rawNonce ? normalizeBytes(rawNonce) : undefined
           }
         })
 
