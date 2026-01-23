@@ -157,22 +157,26 @@ export function usePrivateFeedRequest({
           if (encryptionKey?.data) {
             // Convert to Uint8Array
             if (typeof encryptionKey.data === 'string') {
-              // Base64 or hex
-              if (/^[0-9a-fA-F]+$/.test(encryptionKey.data)) {
-                const hexPairs = encryptionKey.data.match(/.{1,2}/g) || []
+              const keyStr = encryptionKey.data
+              // Use length to differentiate hex vs base64:
+              // 33-byte key: hex = 66 chars, base64 = 44 chars
+              const isLikelyHex = keyStr.length === 66 && /^[0-9a-fA-F]+$/.test(keyStr)
+
+              if (isLikelyHex) {
+                const hexPairs = keyStr.match(/.{1,2}/g) || []
                 encryptionPublicKey = new Uint8Array(
                   hexPairs.map(byte => parseInt(byte, 16))
                 )
               } else {
-                // Base64
+                // Try base64 decode
                 try {
-                  const binary = atob(encryptionKey.data)
+                  const binary = atob(keyStr)
                   encryptionPublicKey = new Uint8Array(binary.length)
                   for (let i = 0; i < binary.length; i++) {
                     encryptionPublicKey[i] = binary.charCodeAt(i)
                   }
                 } catch {
-                  console.error('Failed to decode encryption key as base64')
+                  console.error('Failed to decode encryption key as base64:', keyStr.substring(0, 20) + '...')
                 }
               }
             } else if (encryptionKey.data instanceof Uint8Array) {
