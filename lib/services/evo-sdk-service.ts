@@ -1,5 +1,5 @@
 import { EvoSDK } from '@dashevo/evo-sdk';
-import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID } from '../constants';
+import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '../constants';
 
 export interface EvoSdkConfig {
   network: 'testnet' | 'mainnet';
@@ -96,44 +96,44 @@ class EvoSdkService {
 
   /**
    * Preload contracts to cache them and avoid repeated fetches
+   * Fetches all contracts in parallel for faster initialization
    */
   private async _preloadContracts(): Promise<void> {
     if (!this.config || !this.sdk) {
       return;
     }
 
-    try {
-      console.log('EvoSdkService: Preloading contracts...');
+    console.log('EvoSdkService: Preloading contracts in parallel...');
 
-      // Preload yappr contract
-      const yapprContractId = this.config.contractId;
-      try {
-        await this.sdk.contracts.fetch(yapprContractId);
-        console.log('EvoSdkService: Yappr contract cached');
-      } catch (error) {
-        console.log('EvoSdkService: Yappr contract not found (expected for local development)');
+    // Build list of contracts to fetch
+    const contractsToFetch: Array<{ id: string; name: string }> = [
+      { id: this.config.contractId, name: 'Yappr' },
+      { id: DPNS_CONTRACT_ID, name: 'DPNS' },
+      { id: YAPPR_PROFILE_CONTRACT_ID, name: 'Profile' },
+    ];
+
+    // Add DM contract if configured
+    if (YAPPR_DM_CONTRACT_ID && !YAPPR_DM_CONTRACT_ID.includes('PLACEHOLDER')) {
+      contractsToFetch.push({ id: YAPPR_DM_CONTRACT_ID, name: 'DM' });
+    }
+
+    // Fetch all contracts in parallel
+    const results = await Promise.allSettled(
+      contractsToFetch.map(async ({ id, name }) => {
+        await this.sdk!.contracts.fetch(id);
+        return name;
+      })
+    );
+
+    // Log results
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const contract = contractsToFetch[i];
+      if (result.status === 'fulfilled') {
+        console.log(`EvoSdkService: ${contract.name} contract cached`);
+      } else {
+        console.log(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
       }
-
-      // Preload DPNS contract
-      try {
-        await this.sdk.contracts.fetch(DPNS_CONTRACT_ID);
-        console.log('EvoSdkService: DPNS contract cached');
-      } catch (error) {
-        console.log('EvoSdkService: DPNS contract fetch failed:', error);
-      }
-
-      // Preload DM contract (if registered)
-      if (YAPPR_DM_CONTRACT_ID && !YAPPR_DM_CONTRACT_ID.includes('PLACEHOLDER')) {
-        try {
-          await this.sdk.contracts.fetch(YAPPR_DM_CONTRACT_ID);
-          console.log('EvoSdkService: DM contract cached');
-        } catch (error) {
-          console.log('EvoSdkService: DM contract fetch failed:', error);
-        }
-      }
-
-    } catch (error) {
-      console.error('EvoSdkService: Error during contract preload:', error);
     }
   }
 

@@ -124,8 +124,8 @@ export function useProgressiveEnrichment(
     // Check if this request is still valid
     const isValid = () => enrichmentIdRef.current === requestId
 
-    // Extract IDs
-    const postIds = posts.map(p => p.id)
+    // Extract IDs (deduplicate to prevent "duplicate values for In query" errors)
+    const postIds = Array.from(new Set(posts.map(p => p.id).filter(Boolean)))
     const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
 
     // Collect parent post IDs for replies

@@ -15,6 +15,7 @@ import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
+import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
 import {
   unifiedProfileService,
   DICEBEAR_STYLES,
@@ -162,16 +163,54 @@ function CreateProfilePage() {
     } catch (error: unknown) {
       console.error('Failed to create profile:', error)
 
+      const errorMessage = extractErrorMessage(error)
+
       // Check if it's a duplicate profile error
-      const errorMessage = error instanceof Error ? error.message : String(error)
       if (errorMessage.includes('duplicate unique properties') ||
           errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
         setTimeout(() => {
           router.push(`/user?id=${user?.identityId}`)
         }, 2000)
+        return
+      }
+
+      // Check if it's a timeout error - the profile might have been created successfully
+      if (isTimeoutError(error) && user) {
+        toast.loading('Request timed out. Checking if profile was created...', { duration: 3000 })
+
+        // Wait a moment for the network to propagate, then check if profile exists
+        await new Promise(resolve => setTimeout(resolve, 2000))
+
+        try {
+          const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+          const { cacheManager } = await import('@/lib/cache-manager')
+
+          // Clear cache to ensure we get fresh data from the network
+          cacheManager.invalidateByTag(`user:${user.identityId}`)
+
+          const profile = await unifiedProfileService.getProfile(user.identityId)
+
+          if (profile) {
+            // Profile was actually created despite the timeout
+            toast.dismiss()
+            if (migrationStatus === 'needs_migration') {
+              toast.success('Profile migrated successfully!')
+            } else {
+              toast.success('Profile created successfully!')
+            }
+            router.push('/')
+            return
+          }
+        } catch (checkError) {
+          console.error('Error checking for profile:', checkError)
+        }
+
+        // Profile doesn't exist - show helpful timeout error
+        toast.dismiss()
+        toast.error('Request timed out. Please try again.')
       } else {
-        toast.error(error instanceof Error ? error.message : 'Failed to create profile')
+        toast.error('Failed to create profile. Please try again.')
       }
     } finally {
       setIsSubmitting(false)

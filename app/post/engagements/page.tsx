@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
+import { useSettingsStore } from '@/lib/store'
 
 type TabType = 'quotes' | 'reposts' | 'likes'
 
@@ -37,6 +38,7 @@ function EngagementsPageContent() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const postId = searchParams.get('id')
 
   const [activeTab, setActiveTab] = useState<TabType>('likes')
@@ -351,7 +353,7 @@ function EngagementsPageContent() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl">
+          <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3">
               <div className="flex items-center gap-3">
                 <button

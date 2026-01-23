@@ -9,7 +9,7 @@ import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 
 const inter = Inter({ subsets: ['latin'] })
 
-const basePath = process.env.GITHUB_PAGES === 'true' ? '/yappr' : ''
+const basePath = process.env.BASE_PATH || ''
 
 export const metadata: Metadata = {
   title: 'Yappr - Share Your Voice',

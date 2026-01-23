@@ -14,8 +14,14 @@ const getGitInfo = () => {
 
 const gitInfo = getGitInfo()
 
+// For deployments requiring a base path (e.g., username.github.io/repo)
+// Set BASE_PATH=/yappr when needed, otherwise defaults to root
+const basePath = process.env.BASE_PATH || ''
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  basePath,
+  assetPrefix: basePath,
   trailingSlash: true,
   generateBuildId: async () => gitInfo.commitHash,
   env: {

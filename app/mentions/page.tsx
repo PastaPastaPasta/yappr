@@ -14,12 +14,14 @@ import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { useSettingsStore } from '@/lib/store'
 
 function MentionsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const userId = searchParams.get('user')
   const { user: currentUser } = useAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -140,7 +142,7 @@ function MentionsPageContent() {
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
           {/* Header */}
-          <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+          <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}

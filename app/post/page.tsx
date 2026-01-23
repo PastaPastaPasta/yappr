@@ -11,7 +11,7 @@ import { ComposeModal } from '@/components/compose/compose-modal'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { usePostDetail } from '@/hooks/use-post-detail'
-import { useAppStore } from '@/lib/store'
+import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 
 function PostDetailContent() {
@@ -20,6 +20,7 @@ function PostDetailContent() {
   const postId = searchParams.get('id')
   const { user } = useAuth()
   const { setReplyingTo, setComposeOpen } = useAppStore()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   // All post loading and enrichment handled by hook
   // Uses cached post data for instant navigation when available
@@ -66,7 +67,7 @@ function PostDetailContent() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}

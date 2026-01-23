@@ -37,6 +37,7 @@ const dpns_convert_to_homograph_safe = (input: string): string => {
   }
 }
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
+import { useSettingsStore } from '@/lib/store'
 
 interface FollowingUser {
   id: string
@@ -56,6 +57,7 @@ function FollowingPage() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const followingState = useAsyncState<FollowingUser[]>(null)
   // Extract stable setter functions to avoid infinite loop in useCallback dependencies
   const { setLoading, setError, setData } = followingState
@@ -129,10 +131,15 @@ function FollowingPage() {
       
       // Batch fetch all usernames, best usernames, profiles, and follower/following counts
       const [allUsernamesData, bestUsernamesMap, profiles, followerCounts, followingCounts] = await Promise.all([
-        // Fetch all usernames for each identity (for "Also known as" feature)
+        // Fetch all usernames for each identity (for "Also known as" feature), sorted consistently
         Promise.all(identityIds.map(async (id) => {
           try {
             const usernames = await dpnsService.getAllUsernames(id)
+            if (usernames.length > 1) {
+              // Sort usernames: contested first, then shortest, then alphabetically
+              const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+              return { id, usernames: sortedUsernames }
+            }
             return { id, usernames }
           } catch (error) {
             console.error(`Failed to get all usernames for ${id}:`, error)
@@ -307,8 +314,17 @@ function FollowingPage() {
 
   // Search for DPNS users
   const searchUsers = useCallback(async () => {
-    if (!searchQuery.trim()) {
+    const trimmedQuery = searchQuery.trim()
+    if (!trimmedQuery) {
       setSearchResults([])
+      setSearchError(null)
+      return
+    }
+
+    // Require at least 3 characters to search (like DashPay)
+    if (trimmedQuery.length < 3) {
+      setSearchResults([])
+      setSearchError(null)
       return
     }
 
@@ -434,7 +450,7 @@ function FollowingPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl">
+        <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">

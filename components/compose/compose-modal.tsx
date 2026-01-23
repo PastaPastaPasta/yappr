@@ -9,7 +9,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
 } from '@heroicons/react/24/outline'
-import { useAppStore, ThreadPost, PostVisibility } from '@/lib/store'
+import { useAppStore, useSettingsStore, ThreadPost, PostVisibility } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -39,6 +39,7 @@ import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import type { EncryptionSource } from '@/lib/services/post-service'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
+import { MentionAutocomplete } from './mention-autocomplete'
 
 const CHARACTER_LIMIT = 500
 
@@ -378,29 +379,53 @@ function ThreadPostEditor({
               )}
             </div>
           ) : (
-            <textarea
-              ref={ref}
-              value={post.content}
-              onChange={(e) => onContentChange(e.target.value)}
-              onFocus={onActivate}
-              onKeyDown={(e) => {
-                // Formatting shortcuts
-                if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-                  e.preventDefault()
-                  handleInsertFormat('**')
-                } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
-                  e.preventDefault()
-                  handleInsertFormat('*')
+            <div className="relative">
+              <textarea
+                ref={ref}
+                value={post.content}
+                onChange={(e) => onContentChange(e.target.value)}
+                onFocus={onActivate}
+                onKeyDown={(e) => {
+                  // Formatting shortcuts
+                  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+                    e.preventDefault()
+                    handleInsertFormat('**')
+                  } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+                    e.preventDefault()
+                    handleInsertFormat('*')
+                  }
+                }}
+                placeholder={
+                  index === 0
+                    ? "What's on your mind?"
+                    : 'Continue your thread...'
                 }
-              }}
-              placeholder={
-                index === 0
-                  ? "What's on your mind?"
-                  : 'Continue your thread...'
-              }
-              className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
-              style={{ height: 'auto' }}
-            />
+                className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                style={{ height: 'auto' }}
+              />
+              <MentionAutocomplete
+                textareaRef={ref}
+                content={post.content}
+                onSelect={(username, start, end) => {
+                  // Replace @partial with @username (keep the @, add space after)
+                  const newContent =
+                    post.content.substring(0, start) +
+                    '@' + username + ' ' +
+                    post.content.substring(end)
+                  onContentChange(newContent)
+
+                  // Restore focus and position cursor after the mention
+                  requestAnimationFrame(() => {
+                    const textarea = ref.current
+                    if (textarea) {
+                      textarea.focus()
+                      const newPos = start + 1 + username.length + 1 // @username + space
+                      textarea.setSelectionRange(newPos, newPos)
+                    }
+                  })
+                }}
+              />
+            </div>
           )}
 
           {/* Footer with formatting hints and character count - hide for posted */}
@@ -443,6 +468,7 @@ export function ComposeModal() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const isMac = usePlatformDetection()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -1023,7 +1049,7 @@ export function ComposeModal() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12"
+                className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
               >
                 <Dialog.Content asChild>
                   <motion.div

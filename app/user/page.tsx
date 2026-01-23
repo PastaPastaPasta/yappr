@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense, useCallback } from 'react'
+import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon,
@@ -40,11 +40,13 @@ import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/component
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { useTipModal } from '@/hooks/use-tip-modal'
 import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import { mentionService } from '@/lib/services/mention-service'
 import { cn } from '@/lib/utils'
 import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 import { UsernameModal } from '@/components/dpns/username-modal'
+import { useSettingsStore } from '@/lib/store'
 
 interface ProfileData {
   displayName: string
@@ -66,6 +68,7 @@ function UserProfileContent() {
   const userId = searchParams.get('id')
   const { user: currentUser } = useAuth()
   const { requireAuth } = useRequireAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const isOwnProfile = currentUser?.identityId === userId
 
@@ -110,8 +113,12 @@ function UserProfileContent() {
   // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
 
+  // Tip modal
+  const { openForUser: openTipModal } = useTipModal()
+
   // Tab state for Posts/Mentions
   const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
+  const [postFilter, setPostFilter] = useState<'posts' | 'replies'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
@@ -125,6 +132,13 @@ function UserProfileContent() {
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: currentUser?.identityId
   })
+
+  // Filter posts based on selected filter (original posts vs replies)
+  const filteredPosts = useMemo(() => {
+    return postFilter === 'posts'
+      ? posts.filter(p => !p.replyToId && !p.repostedBy)
+      : posts.filter(p => p.replyToId && !p.repostedBy)
+  }, [posts, postFilter])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
@@ -325,20 +339,23 @@ function UserProfileContent() {
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
 
-        // Try to resolve DPNS usernames (fetch all, use first as primary)
+        // Try to resolve DPNS usernames (fetch all, sort, use best as primary)
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
           const usernames = await dpnsService.getAllUsernames(userId)
           if (usernames.length > 0) {
-            setAllUsernames(usernames)
-            setUsername(usernames[0])
+            // Sort usernames: contested first, then shortest, then alphabetically
+            // This matches the selection logic used in other pages (resolveUsername, resolveUsernamesBatch)
+            const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+            setAllUsernames(sortedUsernames)
+            setUsername(sortedUsernames[0])
             setHasDpns(true)
             // Update posts with hasDpns flag
             setPosts(currentPosts => currentPosts.map(post => ({
               ...post,
               author: {
                 ...post.author,
-                username: usernames[0],
+                username: sortedUsernames[0],
                 hasDpns: true
               } as any
             })))
@@ -613,12 +630,13 @@ function UserProfileContent() {
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Reset mentions and private feed state when user changes
+  // Reset mentions, post filter, and private feed state when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
     setMentionCount(null)
     setActiveTab('posts')
+    setPostFilter('posts')
     setHasPrivateFeed(false)
     setIsPrivateFollower(false)
   }, [userId])
@@ -675,17 +693,30 @@ function UserProfileContent() {
     setEditSocialLinks([])
   }
 
+  const handleTipUser = () => {
+    const authedUser = requireAuth('tip')
+    if (!authedUser || !userId) return
+    openTipModal({
+      id: userId,
+      displayName: profile?.displayName,
+      username: username || undefined,
+    })
+  }
+
   // Refresh DPNS usernames after registration
   const refreshUsernames = useCallback(async () => {
     if (!userId) return
     try {
       const { dpnsService } = await import('@/lib/services/dpns-service')
-      // Clear cache to get fresh data
-      dpnsService.clearCache(userId)
+      // Clear cache to get fresh data (pass undefined for username, userId for identityId)
+      dpnsService.clearCache(undefined, userId)
       const usernames = await dpnsService.getAllUsernames(userId)
       if (usernames.length > 0) {
-        setAllUsernames(usernames)
-        setUsername(usernames[0])
+        // Sort usernames: contested first, then shortest, then alphabetically
+        // This matches the selection logic used in loadProfileData and resolveUsernamesBatch
+        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+        setAllUsernames(sortedUsernames)
+        setUsername(sortedUsernames[0])
         setHasDpns(true)
       } else {
         // No usernames found, reset state
@@ -767,7 +798,7 @@ function UserProfileContent() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl">
+          <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
@@ -899,6 +930,27 @@ function UserProfileContent() {
                     )
                   ) : (
                     <div className="flex gap-2 items-center">
+                      <Tooltip.Provider>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <button
+                              onClick={handleTipUser}
+                              aria-label={`Tip ${profile?.displayName || username || 'user'}`}
+                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 transition-colors group"
+                            >
+                              <CurrencyDollarIcon className="h-4 w-4 group-hover:text-amber-500" />
+                            </button>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content
+                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                              sideOffset={5}
+                            >
+                              Tip with credits
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </Tooltip.Provider>
                       <Tooltip.Provider>
                         <Tooltip.Root>
                           <Tooltip.Trigger asChild>
@@ -1318,19 +1370,47 @@ function UserProfileContent() {
               {/* Tab Content */}
               {activeTab === 'posts' ? (
                 // Posts Tab
-                posts.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500">
-                    <p>No posts yet</p>
+                <>
+                  {/* Post Filter Pills */}
+                  <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                    <button
+                      onClick={() => setPostFilter('posts')}
+                      className={cn(
+                        'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
+                        postFilter === 'posts'
+                          ? 'bg-yappr-500 text-white'
+                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      )}
+                    >
+                      Posts
+                    </button>
+                    <button
+                      onClick={() => setPostFilter('replies')}
+                      className={cn(
+                        'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
+                        postFilter === 'replies'
+                          ? 'bg-yappr-500 text-white'
+                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      )}
+                    >
+                      Replies
+                    </button>
                   </div>
-                ) : (
-                  <div>
-                    {posts.map((post) => (
-                      <PostCard
-                        key={post.id}
-                        post={post}
-                        enrichment={getPostEnrichment(post)}
-                      />
-                    ))}
+
+                  {/* Posts List */}
+                  {filteredPosts.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                      <p>{postFilter === 'posts' ? 'No original posts yet' : 'No replies yet'}</p>
+                    </div>
+                  ) : (
+                    <div>
+                      {filteredPosts.map((post) => (
+                        <PostCard
+                          key={post.id}
+                          post={post}
+                          enrichment={getPostEnrichment(post)}
+                        />
+                      ))}
 
                     {/* Load More button */}
                     {(hasMore || hasMoreReposts) && (
@@ -1343,10 +1423,11 @@ function UserProfileContent() {
                         >
                           {isLoadingMore ? 'Loading...' : 'Load more posts'}
                         </Button>
+                      </div>
+                    )}
                     </div>
                   )}
-                </div>
-              )
+                </>
               ) : (
                 // Mentions Tab
                 mentionsLoading ? (

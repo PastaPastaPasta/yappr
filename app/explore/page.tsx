@@ -11,6 +11,7 @@ import { formatNumber } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
+import { useSettingsStore } from '@/lib/store'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import type { Post } from '@/lib/types'
@@ -25,6 +26,7 @@ interface RawPostDocument {
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [searchResults, setSearchResults] = useState<Post[]>([])
@@ -128,7 +130,7 @@ export default function ExplorePage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+          <header className={`sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
@@ -27,8 +27,23 @@ type PaymentTab = 'credits' | 'crypto'
 type KeySource = 'prefilled' | 'manual' | null
 
 export function TipModal() {
-  const { isOpen, post, close } = useTipModal()
+  const { isOpen, post, recipient, close } = useTipModal()
   const { user, refreshBalance } = useAuth()
+
+  // Derive recipient info from either post.author or direct recipient
+  const recipientInfo = useMemo(() => {
+    if (post) {
+      return {
+        id: post.author.id,
+        displayName: post.author.displayName,
+        username: post.author.username,
+      }
+    }
+    if (recipient) {
+      return recipient
+    }
+    return null
+  }, [post, recipient])
 
   const [amount, setAmount] = useState('')
   const [tipMessage, setTipMessage] = useState('')
@@ -61,13 +76,13 @@ export function TipModal() {
 
   // Fetch recipient's payment URIs when modal opens
   useEffect(() => {
-    if (isOpen && post) {
+    if (isOpen && recipientInfo) {
       import('@/lib/services/unified-profile-service')
-        .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(post.author.id))
+        .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(recipientInfo.id))
         .then(uris => setPaymentUris(uris))
         .catch(() => setPaymentUris([]))
     }
-  }, [isOpen, post])
+  }, [isOpen, recipientInfo])
 
   // Check for stored transfer key when modal opens
   useEffect(() => {
@@ -153,7 +168,7 @@ export function TipModal() {
   }
 
   const handleSendTip = async () => {
-    if (!user || !post) return
+    if (!user || !recipientInfo) return
 
     setState('processing')
 
@@ -161,6 +176,7 @@ export function TipModal() {
     const credits = tipService.dashToCredits(dashAmount)
 
     // Store key for potential save-for-later prompt
+    // postId is null for user-only tipping (no tip post will be created)
     const keyToUse = transferKey
     if (keySource === 'manual') {
       usedTransferKeyRef.current = keyToUse
@@ -168,8 +184,8 @@ export function TipModal() {
 
     const result = await tipService.sendTip(
       user.identityId,
-      post.author.id,
-      post.id,
+      recipientInfo.id,
+      post?.id || null,
       credits,
       keyToUse,
       tipMessage.trim() || undefined
@@ -241,10 +257,10 @@ export function TipModal() {
     setSelectedQrPayment(null)
   }
 
-  if (!post) return null
+  if (!recipientInfo) return null
 
   const dashAmount = parseFloat(amount) || 0
-  const recipientName = post.author.displayName || post.author.username || 'this user'
+  const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
 
   return (
     <>
