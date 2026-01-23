@@ -161,7 +161,21 @@ export function parsePrivateKey(input: string): ParsedPrivateKey {
   // Try WIF first (more specific format)
   if (isLikelyWif(trimmed)) {
     const decoded = wifToPrivateKey(trimmed)
-    const network = decoded.prefix === MAINNET_WIF_PREFIX ? 'mainnet' : 'testnet'
+
+    // Validate that the prefix is a known Dash WIF prefix
+    // Reject unknown prefixes rather than silently defaulting to testnet
+    let network: 'testnet' | 'mainnet'
+    if (decoded.prefix === MAINNET_WIF_PREFIX) {
+      network = 'mainnet'
+    } else if (decoded.prefix === TESTNET_WIF_PREFIX) {
+      network = 'testnet'
+    } else {
+      throw new Error(
+        `Unsupported WIF prefix: 0x${decoded.prefix.toString(16)}. ` +
+        `Expected Dash mainnet (0x${MAINNET_WIF_PREFIX.toString(16)}) or testnet (0x${TESTNET_WIF_PREFIX.toString(16)})`
+      )
+    }
+
     return {
       privateKey: decoded.privateKey,
       format: 'wif',

@@ -39,6 +39,9 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
   const isPrivate = post ? isPrivatePost(post) : false
 
   useEffect(() => {
+    // Abort flag to prevent stale async updates when dependencies change
+    let aborted = false
+
     // If post not loaded yet, stay in loading state
     if (!post) {
       setIsLoading(true)
@@ -71,6 +74,7 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
         if (!rootPostOwnerId && post.replyToId) {
           const { getEncryptionSource } = await import('@/lib/services/post-service')
           const encryptionSource = await getEncryptionSource(post.replyToId)
+          if (aborted) return
           if (encryptionSource) {
             feedOwnerId = encryptionSource.ownerId
           }
@@ -78,27 +82,33 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
 
         // If current user is the feed owner, can always reply
         if (user.identityId === feedOwnerId) {
-          setCanDecrypt(true)
+          if (!aborted) setCanDecrypt(true)
           return
         }
 
         // Check if user has access to decrypt
         const { privateFeedFollowerService } = await import('@/lib/services')
         const canDecryptPost = await privateFeedFollowerService.canDecrypt(feedOwnerId)
-        setCanDecrypt(canDecryptPost)
+        if (!aborted) setCanDecrypt(canDecryptPost)
       } catch (error) {
         console.error('Error checking private post access:', error)
-        setCanDecrypt(false)
+        if (!aborted) setCanDecrypt(false)
       } finally {
-        setIsLoading(false)
+        if (!aborted) setIsLoading(false)
       }
     }
 
     checkAccess().catch(error => {
       console.error('Error in checkAccess:', error)
-      setCanDecrypt(false)
-      setIsLoading(false)
+      if (!aborted) {
+        setCanDecrypt(false)
+        setIsLoading(false)
+      }
     })
+
+    return () => {
+      aborted = true
+    }
   }, [post, isPrivate, user, rootPostOwnerId])
 
   // Determine reason

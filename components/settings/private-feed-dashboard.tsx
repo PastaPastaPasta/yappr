@@ -92,8 +92,9 @@ export function PrivateFeedDashboard() {
       // Build recent activity from grants (approvals) and rekey documents (revocations)
       const activity: ActivityItem[] = []
 
-      // Add approved followers as activity
-      for (const follower of followers.slice(0, 5)) {
+      // Add approved followers as activity (sort by grantedAt descending to get most recent)
+      const sortedFollowers = [...followers].sort((a, b) => b.grantedAt - a.grantedAt)
+      for (const follower of sortedFollowers.slice(0, 5)) {
         let username: string | undefined
         let displayName = `User ${follower.recipientId.slice(-6)}`
 
