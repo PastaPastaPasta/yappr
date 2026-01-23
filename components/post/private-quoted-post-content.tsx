@@ -145,10 +145,11 @@ export function PrivateQuotedPostContent({
     }
   }, [quotedPost, user])
 
-  // Reset state when quoted post or user changes to avoid stale decryption data
+  // Reset state when quoted post encryption data or user changes
+  // Must watch all encryption-relevant fields to avoid stale decryption data
   useEffect(() => {
     setState({ status: 'idle' })
-  }, [quotedPost.id, user?.identityId])
+  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.epoch, quotedPost.nonce, user?.identityId])
 
   // Attempt decryption on mount
   useEffect(() => {

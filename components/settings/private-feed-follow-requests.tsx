@@ -221,10 +221,14 @@ export function PrivateFeedFollowRequests() {
   const handleIgnore = (request: FollowRequestUser) => {
     if (!user?.identityId || processingId) return
 
-    // For now, just remove from UI (the request remains on-chain but is hidden)
+    // Remove from UI only - the request remains on-chain and will reappear on refresh
+    // This is intentional: blockchain data is immutable, so we can only hide locally
     // User can approve later if they change their mind
     setRequests(prev => prev.filter(r => r.id !== request.id))
-    toast.success('Request ignored')
+    toast('Request hidden for this session', {
+      icon: '👁️',
+      duration: 3000,
+    })
   }
 
   if (isLoading) {
