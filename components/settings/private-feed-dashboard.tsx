@@ -213,11 +213,11 @@ export function PrivateFeedDashboard() {
             <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mt-1">Pending</p>
           </div>
 
-          {/* Private Posts */}
+          {/* Private Posts (recent sample) */}
           <div data-testid="private-posts-stat" className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 p-4 rounded-xl text-center">
             <DocumentTextIcon className="h-6 w-6 mx-auto mb-2 text-purple-600 dark:text-purple-400" />
             <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">{privatePostCount}</p>
-            <p className="text-xs text-purple-600/70 dark:text-purple-400/70">&nbsp;</p>
+            <p className="text-xs text-purple-600/70 dark:text-purple-400/70">(recent)</p>
             <p className="text-xs font-medium text-purple-600 dark:text-purple-400 mt-1">Private Posts</p>
           </div>
         </div>

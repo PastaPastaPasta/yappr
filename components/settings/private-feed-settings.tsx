@@ -141,9 +141,12 @@ export function PrivateFeedSettings({ openReset = false }: PrivateFeedSettingsPr
     setKeyError(null)
 
     try {
+      // Normalize input (trim whitespace) before validation
+      const trimmedKey = encryptionKeyInput.trim()
+
       // Validate the key matches the encryption key on identity
       const { validateEncryptionKey } = await import('@/lib/crypto/key-validation')
-      const validation = await validateEncryptionKey(encryptionKeyInput, user.identityId)
+      const validation = await validateEncryptionKey(trimmedKey, user.identityId)
 
       if (!validation.isValid || !validation.privateKey) {
         setKeyError(validation.error || 'Invalid key')

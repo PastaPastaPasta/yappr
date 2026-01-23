@@ -109,12 +109,24 @@ export function isLikelyHex(input: string): boolean {
 }
 
 /**
- * Parse hex string to Uint8Array
+ * Parse hex string to Uint8Array.
+ * Validates input before conversion to prevent silent corruption.
  */
 export function hexToBytes(hex: string): Uint8Array {
   let cleanHex = hex.trim()
   if (cleanHex.startsWith('0x') || cleanHex.startsWith('0X')) {
     cleanHex = cleanHex.slice(2)
+  }
+
+  // Validate hex string
+  if (cleanHex.length === 0) {
+    throw new Error('Empty hex string')
+  }
+  if (cleanHex.length % 2 !== 0) {
+    throw new Error('Hex string must have even length')
+  }
+  if (!/^[0-9a-fA-F]+$/.test(cleanHex)) {
+    throw new Error('Invalid hex characters')
   }
 
   const bytes = new Uint8Array(cleanHex.length / 2)

@@ -186,9 +186,9 @@ export function KeyBackupModal() {
                 </div>
               </div>
 
-              <h1 className="text-2xl font-bold text-center mb-2">Backup Your Keys</h1>
+              <h1 className="text-2xl font-bold text-center mb-2">Backup Your Key</h1>
               <p className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
-                Save an encrypted copy of your keys to Dash Platform.
+                Save an encrypted copy of your key to Dash Platform.
                 This lets you sign in with just your username and password.
               </p>
 

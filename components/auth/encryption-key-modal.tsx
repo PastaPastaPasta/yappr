@@ -123,9 +123,12 @@ export function EncryptionKeyModal() {
     setError(null)
 
     try {
+      // Normalize input (trim whitespace) before validation
+      const trimmedKey = encryptionKeyInput.trim()
+
       // Validate the key matches the encryption key on identity
       const { validateEncryptionKey } = await import('@/lib/crypto/key-validation')
-      const validation = await validateEncryptionKey(encryptionKeyInput, user.identityId)
+      const validation = await validateEncryptionKey(trimmedKey, user.identityId)
 
       if (!validation.isValid) {
         setError(validation.error || 'Invalid key')
@@ -138,7 +141,7 @@ export function EncryptionKeyModal() {
 
       // Key is valid - store it (storeEncryptionKey handles conversion to WIF)
       const { storeEncryptionKey } = await import('@/lib/secure-storage')
-      storeEncryptionKey(user.identityId, encryptionKeyInput.trim())
+      storeEncryptionKey(user.identityId, trimmedKey)
 
       toast.success('Encryption key saved')
       setEncryptionKeyInput('')

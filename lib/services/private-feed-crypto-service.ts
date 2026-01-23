@@ -115,7 +115,8 @@ function decodeUint16BE(buf: Uint8Array, offset: number): number {
 }
 
 function decodeUint32BE(buf: Uint8Array, offset: number): number {
-  return (buf[offset] << 24) | (buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3];
+  // Use >>> 0 to convert to unsigned 32-bit integer (prevents negative values when high bit is set)
+  return ((buf[offset] << 24) | (buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3]) >>> 0;
 }
 
 /**
