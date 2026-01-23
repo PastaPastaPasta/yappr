@@ -155,9 +155,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           documentTypeName: 'like',
           where: [
             ['postId', '==', postId],
-            ['$createdAt', '>', 0]
+            ['$ownerId', '>', '']
           ],
-          orderBy: [['$createdAt', 'asc']]
+          orderBy: [['$ownerId', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );

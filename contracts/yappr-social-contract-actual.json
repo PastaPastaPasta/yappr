@@ -26,17 +26,6 @@
         ]
       },
       {
-        "name": "postLikes",
-        "properties": [
-          {
-            "postId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
         "name": "postOwnerLikes",
         "properties": [
           {
