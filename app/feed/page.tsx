@@ -972,6 +972,20 @@ function FeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab])
 
+  // Handle post deletion - removes post from local state
+  const handlePostDelete = useCallback((postId: string) => {
+    postsState.setData((prevData: FeedItem[] | null) => {
+      if (!prevData) return prevData
+      return prevData.filter(item => {
+        if (isFeedReplyContext(item)) {
+          // Remove if either the original post or reply matches
+          return item.originalPost.id !== postId && item.reply.id !== postId
+        }
+        return item.id !== postId
+      })
+    })
+  }, [postsState])
+
   // Filter posts to exclude blocked users and replies (on For You tab) using enrichment state
   // This replaces the previous async getBlockedUserIds() calls and avoids duplicate queries
   const filteredPosts = useMemo(() => {
@@ -1171,6 +1185,7 @@ function FeedPage() {
                         replyEnrichment={getPostEnrichment(item.reply)}
                         originalPostEnrichment={getPostEnrichment(item.originalPost)}
                         isOwnPost={user?.identityId === item.reply.author.id}
+                        onDelete={handlePostDelete}
                       />
                     </ErrorBoundary>
                   )
@@ -1182,6 +1197,7 @@ function FeedPage() {
                       post={item}
                       isOwnPost={user?.identityId === item.author.id}
                       enrichment={getPostEnrichment(item)}
+                      onDelete={handlePostDelete}
                     />
                   </ErrorBoundary>
                 )
