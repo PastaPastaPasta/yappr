@@ -14,6 +14,7 @@ export type LoginPromptAction =
   | 'block'
   | 'message'
   | 'view_following'
+  | 'delete'
   | 'generic'
 
 interface LoginPromptModalStore {
@@ -62,6 +63,8 @@ export function getActionDescription(action: LoginPromptAction): string {
       return 'send messages'
     case 'view_following':
       return 'see posts from people you follow'
+    case 'delete':
+      return 'delete posts'
     case 'generic':
     default:
       return 'perform this action'

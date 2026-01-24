@@ -354,6 +354,28 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
+   * Delete a post by its ID.
+   * Only the post owner can delete their own posts.
+   */
+  async deletePost(postId: string, ownerId: string): Promise<boolean> {
+    try {
+      const { stateTransitionService } = await import('./state-transition-service');
+
+      const result = await stateTransitionService.deleteDocument(
+        this.contractId,
+        this.documentType,
+        postId,
+        ownerId
+      );
+
+      return result.success;
+    } catch (error) {
+      console.error('Error deleting post:', error);
+      return false;
+    }
+  }
+
+  /**
    * Create a new post
    */
   async createPost(

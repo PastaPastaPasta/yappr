@@ -14,6 +14,7 @@ import {
   EllipsisHorizontalIcon,
   CurrencyDollarIcon,
   PencilSquareIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
@@ -274,6 +275,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const { setReplyingTo, setComposeOpen, setQuotingPost } = useAppStore()
   const { open: openTipModal } = useTipModal()
   const { open: openHashtagRecoveryModal } = useHashtagRecoveryModal()
@@ -466,6 +468,36 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     openMentionRecoveryModal(post, username)
   }
 
+  const handleDelete = async () => {
+    const authedUser = requireAuth('delete')
+    if (!authedUser) return
+
+    if (deleteLoading) return
+
+    // Confirm deletion
+    if (!window.confirm('Are you sure you want to delete this post? This action cannot be undone.')) {
+      return
+    }
+
+    setDeleteLoading(true)
+
+    try {
+      const { postService } = await import('@/lib/services/post-service')
+      const success = await postService.deletePost(post.id, authedUser.identityId)
+
+      if (!success) throw new Error('Delete operation failed')
+
+      toast.success('Post deleted')
+      // Navigate back or refresh the feed
+      router.push('/')
+    } catch (error) {
+      console.error('Delete error:', error)
+      toast.error('Failed to delete post. Please try again.')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   const handleCardClick = (e: React.MouseEvent) => {
     const url = `/post?id=${post.id}`
 
@@ -607,6 +639,16 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   >
                     View post engagements
                   </DropdownMenu.Item>
+                  {isOwnPost && (
+                    <DropdownMenu.Item
+                      onClick={(e) => { e.stopPropagation(); handleDelete().catch(console.error); }}
+                      disabled={deleteLoading}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                      {deleteLoading ? 'Deleting...' : 'Delete post'}
+                    </DropdownMenu.Item>
+                  )}
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
                     disabled={blockLoading}
