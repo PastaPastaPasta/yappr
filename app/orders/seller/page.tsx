@@ -111,13 +111,13 @@ function SellerOrdersPage() {
             try {
               const [status, username] = await Promise.all([
                 orderStatusService.getLatestStatus(order.id),
-                dpnsService.resolveUsername(order.ownerId)
+                dpnsService.resolveUsername(order.buyerId)
               ])
               if (status) {
                 statusMap.set(order.id, status)
               }
               if (username) {
-                usernameMap.set(order.ownerId, username)
+                usernameMap.set(order.buyerId, username)
               }
             } catch (e) {
               // Ignore errors
@@ -230,7 +230,7 @@ function SellerOrdersPage() {
                           <h3 className="font-medium">
                             Order from{' '}
                             <span className="text-yappr-500">
-                              @{buyerUsernames.get(order.ownerId) || (order.ownerId ? formatOrderId(order.ownerId) : 'Unknown')}
+                              @{buyerUsernames.get(order.buyerId) || formatOrderId(order.buyerId)}
                             </span>
                           </h3>
                           <p className="text-sm text-gray-500">
