@@ -46,18 +46,23 @@ export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProp
           side="bottom"
           align="start"
           sideOffset={8}
-          className="z-[100] animate-in fade-in-0 zoom-in-95"
+          className="z-[100] animate-in fade-in-0 zoom-in-95 rounded-lg shadow-lg"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <Picker
-            data={data}
-            onEmojiSelect={handleEmojiSelect}
-            theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
-            previewPosition="none"
-            skinTonePosition="search"
-            maxFrequentRows={2}
-            perLine={8}
-          />
+          <div
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+          >
+            <Picker
+              data={data}
+              onEmojiSelect={handleEmojiSelect}
+              theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+              previewPosition="none"
+              skinTonePosition="search"
+              maxFrequentRows={2}
+              perLine={8}
+            />
+          </div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
