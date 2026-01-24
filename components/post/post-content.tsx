@@ -10,6 +10,26 @@ import { useLinkPreview, extractFirstUrl, stripTrailingPunctuation } from '@/hoo
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { MentionLink } from './mention-link'
+import { cn } from '@/lib/utils'
+
+/**
+ * Checks if content consists only of emoji characters (and optional whitespace).
+ * Used to display emoji-only posts with larger text.
+ */
+function isEmojiOnly(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+
+  // Match emoji characters including:
+  // - Basic emojis and presentation symbols
+  // - Skin tone modifiers
+  // - ZWJ sequences (family, profession emojis)
+  // - Flag emojis (regional indicators)
+  // - Variation selectors
+  // Note: \p{Emoji} includes digits 0-9, so we exclude those explicitly
+  const emojiRegex = /^(?:[\p{Emoji_Presentation}\p{Extended_Pictographic}]|\p{Emoji}\uFE0F)[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\uFE0F\u200D\s]*$/u
+  return emojiRegex.test(trimmed)
+}
 
 interface PostContentProps {
   content: string
@@ -49,6 +69,9 @@ export function PostContent({
   disableLinkPreview = false
 }: PostContentProps) {
   const linkPreviews = useSettingsStore((s) => s.linkPreviews)
+
+  // Check if content is emoji-only for large emoji display
+  const isEmojiOnlyContent = useMemo(() => isEmojiOnly(content), [content])
 
   // Extract first URL for preview
   const firstUrl = useMemo(() => extractFirstUrl(content), [content])
@@ -339,7 +362,10 @@ export function PostContent({
 
   return (
     <div className={className}>
-      <div className="whitespace-pre-wrap break-words">
+      <div className={cn(
+        "whitespace-pre-wrap break-words",
+        isEmojiOnlyContent && "text-4xl leading-snug"
+      )}>
         {parsedContent.map((part, index) => {
           if (part.type === 'bold') {
             return (
