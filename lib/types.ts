@@ -48,8 +48,6 @@ export interface Post {
   reposted?: boolean
   bookmarked?: boolean
   media?: Media[]
-  replyToId?: string    // ID of parent post (for fetching if replyTo not populated)
-  replyTo?: Post
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)
   quotedPost?: Post
@@ -63,6 +61,30 @@ export interface Post {
   nonce?: Uint8Array             // Random nonce for encryption
 }
 
+/** A reply to a post or another reply */
+export interface Reply {
+  id: string
+  author: User
+  content: string
+  createdAt: Date
+  likes: number
+  reposts: number
+  replies: number
+  views: number
+  liked?: boolean
+  reposted?: boolean
+  bookmarked?: boolean
+  media?: Media[]
+  parentId: string        // ID of post or reply being replied to
+  parentOwnerId: string   // Owner of parent (for notifications)
+  parentContent?: Post | Reply  // Lazy-loaded parent
+  _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
+  // Private feed fields (present when reply is encrypted)
+  encryptedContent?: Uint8Array
+  epoch?: number
+  nonce?: Uint8Array
+}
+
 /** Pre-fetched enrichment data to avoid N+1 queries in feed */
 export interface PostEnrichment {
   authorIsBlocked: boolean
@@ -72,7 +94,7 @@ export interface PostEnrichment {
 
 /** Reply thread structure for threaded post display */
 export interface ReplyThread {
-  post: Post
+  content: Reply                // The reply (could be nested)
   isAuthorThread: boolean       // true if same author as main post
   isThreadContinuation: boolean // true if continues previous author reply
   nestedReplies: ReplyThread[]  // 2nd level replies (depth limited)
@@ -211,26 +233,6 @@ export interface BlockFollowData {
   $ownerId: string
   $revision?: number
   followedUserIds: string[] // Decoded list of user IDs being followed
-}
-
-// Feed item that shows an original post with context that a followed user replied to it
-export interface FeedReplyContext {
-  type: 'reply_context'
-  originalPost: Post
-  reply: Post
-  replier: {
-    id: string
-    username?: string
-    displayName?: string
-  }
-}
-
-// Union type for all items that can appear in a feed
-export type FeedItem = Post | FeedReplyContext
-
-// Type guard to check if a feed item is a reply context
-export function isFeedReplyContext(item: FeedItem): item is FeedReplyContext {
-  return 'type' in item && item.type === 'reply_context'
 }
 
 // DPNS Multi-Username Registration Types
