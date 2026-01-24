@@ -63,23 +63,28 @@ export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProp
           side="bottom"
           align="start"
           sideOffset={8}
-          className="z-[100] animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          collisionPadding={16}
+          className="z-[200] animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
           onOpenAutoFocus={(e) => {
-            // Prevent auto-focus stealing from the textarea
             e.preventDefault()
           }}
         >
-          <div className="rounded-xl shadow-xl overflow-hidden border border-gray-200 dark:border-gray-700">
+          <div
+            className="rounded-xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900"
+            style={{ maxHeight: '350px' }}
+          >
             <Picker
               data={data}
               onEmojiSelect={handleEmojiSelect}
               theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
               previewPosition="none"
               skinTonePosition="search"
-              maxFrequentRows={2}
+              maxFrequentRows={1}
               perLine={8}
-              emojiSize={24}
-              emojiButtonSize={32}
+              emojiSize={22}
+              emojiButtonSize={28}
+              navPosition="bottom"
+              searchPosition="sticky"
             />
           </div>
         </Popover.Content>
