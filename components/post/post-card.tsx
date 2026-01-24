@@ -482,11 +482,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       if (!success) throw new Error('Delete operation failed')
 
       toast.success('Post deleted')
-      // Notify parent to remove post from list, or navigate if no callback provided
+      // Notify parent to remove post from list if callback provided
       if (onDelete) {
         onDelete(post.id)
-      } else {
-        router.push('/')
       }
     })
   }
