@@ -3,7 +3,7 @@
  */
 
 // Contract IDs
-export const YAPPR_CONTRACT_ID = '4ZmDw6puyaH2WhTFK3T19dFutKd96ewVb78SScHGgLak' // Testnet - v7 optimized (removed avatar/repost/notification/directMessage, reposts merged into posts)
+export const YAPPR_CONTRACT_ID = 'DDLnp9tRVUS8FUrngzvqZV2tpyFhWQSASQqozQoUh4r8' // Testnet - v8
 export const YAPPR_PROFILE_CONTRACT_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 export const YAPPR_DM_CONTRACT_ID = 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
 // YAPPR_BLOCK_CONTRACT_ID removed - block, blockFilter, blockFollow document types now in YAPPR_CONTRACT_ID
