@@ -6,8 +6,9 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { identityService } from '@/lib/services/identity-service'
+import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
+import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
 import toast from 'react-hot-toast'
 
 import { UsernameEntryStep } from './steps/username-entry-step'
@@ -22,21 +23,28 @@ interface DpnsRegistrationWizardProps {
   hasExistingUsernames?: boolean
 }
 
-interface IdentityPublicKey {
-  id: number
-  securityLevel: number
-  disabledAt?: number
-}
-
 /**
- * Find a suitable key for DPNS registration (CRITICAL or HIGH security level).
- * Security levels: MASTER=0, CRITICAL=1, HIGH=2, MEDIUM=3
+ * Convert identity public keys to the format expected by findMatchingKeyIndex.
+ * Handles both string (base64) and Uint8Array formats for the data field.
  */
-function findDpnsSuitableKey(publicKeys: IdentityPublicKey[]): IdentityPublicKey | undefined {
-  return publicKeys.find((key) => {
-    const isEnabled = !key.disabledAt
-    const hasSufficientSecurityLevel = key.securityLevel === 1 || key.securityLevel === 2
-    return isEnabled && hasSufficientSecurityLevel
+function convertToKeyInfo(keys: IdentityPublicKey[]): IdentityPublicKeyInfo[] {
+  return keys.map((key) => {
+    let data: Uint8Array
+    if (key.data instanceof Uint8Array) {
+      data = key.data
+    } else if (typeof key.data === 'string') {
+      // Base64 decode
+      data = Uint8Array.from(atob(key.data), (c) => c.charCodeAt(0))
+    } else {
+      data = new Uint8Array()
+    }
+    return {
+      id: key.id,
+      type: key.type,
+      purpose: key.purpose,
+      securityLevel: key.securityLevel ?? key.security_level ?? 0,
+      data,
+    }
   })
 }
 
@@ -134,9 +142,24 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         return
       }
 
-      const suitableKey = findDpnsSuitableKey(identity.publicKeys)
-      if (!suitableKey) {
-        toast.error('No suitable key found. DPNS requires CRITICAL or HIGH security level key.')
+      // Determine network from environment
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+
+      // Convert identity public keys to the format expected by findMatchingKeyIndex
+      const keyInfos = convertToKeyInfo(identity.publicKeys)
+
+      // Find which key matches the user's private key
+      const matchedKey = findMatchingKeyIndex(privateKey, keyInfos, network)
+      if (!matchedKey) {
+        toast.error('Your private key does not match any key on this identity.')
+        setStep('review')
+        return
+      }
+
+      // Verify the matched key has sufficient security level for DPNS (CRITICAL or HIGH)
+      if (matchedKey.securityLevel !== 1 && matchedKey.securityLevel !== 2) {
+        const levelName = getSecurityLevelName(matchedKey.securityLevel)
+        toast.error(`Your key has ${levelName} security level. DPNS requires CRITICAL or HIGH security level.`)
         setStep('review')
         return
       }
@@ -144,7 +167,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       const registrations = availableUsernames.map((u) => ({
         label: u.label,
         identityId,
-        publicKeyId: suitableKey.id,
+        publicKeyId: matchedKey.keyId,
         privateKeyWif: privateKey,
       }))
 
