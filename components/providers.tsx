@@ -9,6 +9,7 @@ import { LoginPromptModal } from '@/components/auth/login-prompt-modal'
 import { TipModal } from '@/components/post/tip-modal'
 import { HashtagRecoveryModal } from '@/components/post/hashtag-recovery-modal'
 import { MentionRecoveryModal } from '@/components/post/mention-recovery-modal'
+import { DeleteConfirmationModal } from '@/components/post/delete-confirmation-modal'
 import { DashPayContactsModal } from '@/components/contacts/dashpay-contacts-modal'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -28,6 +29,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <TipModal />
           <HashtagRecoveryModal />
           <MentionRecoveryModal />
+          <DeleteConfirmationModal />
           <DashPayContactsModal />
         </AuthProvider>
       </SdkProvider>
