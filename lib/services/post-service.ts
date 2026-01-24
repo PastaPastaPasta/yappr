@@ -738,6 +738,10 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count all posts on the platform - paginates through all results.
+   * Uses the languageTimeline index [language, $createdAt] to scan posts.
+   * Note: Currently only counts English posts (language='en') since most posts
+   * use the default language. For accurate total counts across all languages,
+   * would need to iterate through all language codes or add a dedicated index.
    * Deduplicates in-flight requests.
    */
   async countAllPosts(): Promise<number> {
@@ -747,13 +751,18 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
+        // Use languageTimeline index: [language, $createdAt]
+        // This requires a language prefix to use the index
         const { count } = await paginateCount(
           sdk,
           () => ({
             dataContractId: this.contractId,
             documentTypeName: 'post',
-            where: [['$createdAt', '>', 0]],
-            orderBy: [['$createdAt', 'asc']]
+            where: [
+              ['language', '==', 'en'],
+              ['$createdAt', '>', 0]
+            ],
+            orderBy: [['language', 'asc'], ['$createdAt', 'asc']]
           }),
           { maxResults: 10000 } // Higher limit for platform-wide count
         );
@@ -1252,7 +1261,9 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count unique authors across all posts
-   * Paginates through all posts and counts unique $ownerId values
+   * Paginates through all posts and counts unique $ownerId values.
+   * Uses the languageTimeline index [language, $createdAt] to scan posts.
+   * Note: Currently only counts authors of English posts (language='en').
    */
   async countUniqueAuthors(): Promise<number> {
     // Use a constant key since this counts all unique authors
@@ -1266,11 +1277,15 @@ class PostService extends BaseDocumentService<Post> {
           const PAGE_SIZE = 100;
 
           while (true) {
+            // Use languageTimeline index: [language, $createdAt]
             const queryParams: DocumentsQuery = {
               dataContractId: this.contractId,
               documentTypeName: 'post',
-              where: [['$createdAt', '>', 0]],
-              orderBy: [['$createdAt', 'asc']],
+              where: [
+                ['language', '==', 'en'],
+                ['$createdAt', '>', 0]
+              ],
+              orderBy: [['language', 'asc'], ['$createdAt', 'asc']],
               limit: PAGE_SIZE,
               startAfter
             };
@@ -1355,6 +1370,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get post counts per author
    * Returns a Map of authorId -> post count
+   * Uses the languageTimeline index [language, $createdAt] to scan posts.
+   * Note: Currently only counts English posts (language='en').
    */
   async getAuthorPostCounts(): Promise<Map<string, number>> {
     const authorCounts = new Map<string, number>();
@@ -1368,11 +1385,15 @@ class PostService extends BaseDocumentService<Post> {
       const MAX_POSTS = 10000; // Limit to prevent excessive queries
 
       while (totalProcessed < MAX_POSTS) {
+        // Use languageTimeline index: [language, $createdAt]
         const queryParams: DocumentsQuery = {
           dataContractId: this.contractId,
           documentTypeName: 'post',
-          where: [['$createdAt', '>', 0]],
-          orderBy: [['$createdAt', 'desc']],
+          where: [
+            ['language', '==', 'en'],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
           limit: PAGE_SIZE,
           startAfter
         };
@@ -1413,8 +1434,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get posts that quote a specific post.
    * NOTE: The contract lacks a quotedPostId index, so this uses client-side
-   * filtering of recent posts. For production, a contract migration adding
-   * the index would improve efficiency.
+   * filtering of recent posts. Uses languageTimeline index to scan.
+   * For production, a contract migration adding the index would improve efficiency.
    */
   async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
     const limit = options.limit || 50;
@@ -1423,12 +1444,16 @@ class PostService extends BaseDocumentService<Post> {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
 
-      // Scan recent posts - without an index we have to filter client-side
+      // Scan recent posts using languageTimeline index - without a dedicated index
+      // we have to filter client-side
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
-        where: [['$createdAt', '>', 0]],
-        orderBy: [['$createdAt', 'desc']],
+        where: [
+          ['language', '==', 'en'],
+          ['$createdAt', '>', 0]
+        ],
+        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
         limit: 100 // Scan recent posts
       });
 

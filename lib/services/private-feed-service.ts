@@ -842,7 +842,8 @@ class PrivateFeedService {
           dataContractId: this.contractId,
           documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
           where: [['$ownerId', '==', ownerId]],
-          orderBy: [['leafIndex', 'asc']],
+          // Use ownerAndLeaf index: [$ownerId, leafIndex] - must include all index fields in orderBy
+          orderBy: [['$ownerId', 'asc'], ['leafIndex', 'asc']],
           limit: 100,
           ...(startAfter && { startAfter }),
         }),
