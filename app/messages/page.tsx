@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -648,17 +649,22 @@ function MessagesPage() {
                   >
                     <ArrowLeftIcon className="h-5 w-5" />
                   </button>
-                  <div className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
-                    <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold truncate">
-                      {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 12)}...`}
-                    </p>
-                  </div>
+                  <Link
+                    href={`/user?id=${selectedConversation.participantId}`}
+                    className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+                  >
+                    <div className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                      <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold truncate">
+                        {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 12)}...`}
+                      </p>
+                    </div>
+                  </Link>
                 </div>
                 
                 <div className="flex items-center gap-2">
