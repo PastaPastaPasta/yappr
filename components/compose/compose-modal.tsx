@@ -36,6 +36,7 @@ import {
   getDialogDescription,
 } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
+import { EmojiPicker } from './emoji-picker'
 
 const CHARACTER_LIMIT = 500
 
@@ -260,6 +261,27 @@ function ThreadPostEditor({
     })
   }
 
+  const handleInsertEmoji = (emoji: string) => {
+    const textarea = ref.current
+    if (!textarea) return
+
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const content = post.content
+
+    // Insert emoji at cursor position, replacing any selected text
+    const newContent = content.substring(0, start) + emoji + content.substring(end)
+    const newCursorPos = start + emoji.length
+
+    onContentChange(newContent)
+
+    // Restore focus and cursor position after React re-renders
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(newCursorPos, newCursorPos)
+    })
+  }
+
   const isPosted = !!post.postedPostId
 
   return (
@@ -344,6 +366,8 @@ function ThreadPostEditor({
               >
                 <span className="text-sm">#</span>
               </FormatButton>
+              <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
+              <EmojiPicker onEmojiSelect={handleInsertEmoji} />
 
               {/* Remove button for thread posts */}
               {!isOnly && (
