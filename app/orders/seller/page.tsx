@@ -230,7 +230,7 @@ function SellerOrdersPage() {
                           <h3 className="font-medium">
                             Order from{' '}
                             <span className="text-yappr-500">
-                              @{buyerUsernames.get(order.ownerId) || formatOrderId(order.ownerId)}
+                              @{buyerUsernames.get(order.ownerId) || (order.ownerId ? formatOrderId(order.ownerId) : 'Unknown')}
                             </span>
                           </h3>
                           <p className="text-sm text-gray-500">
