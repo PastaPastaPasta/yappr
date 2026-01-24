@@ -27,7 +27,11 @@ function isEmojiOnly(text: string): boolean {
   // - Flag emojis (regional indicators)
   // - Variation selectors
   // Note: \p{Emoji} includes digits 0-9, so we exclude those explicitly
-  const emojiRegex = /^(?:[\p{Emoji_Presentation}\p{Extended_Pictographic}]|\p{Emoji}\uFE0F)[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\uFE0F\u200D\s]*$/u
+  // Using RegExp constructor to avoid TS1501 error with es5 target
+  const emojiRegex = new RegExp(
+    '^(?:[\\p{Emoji_Presentation}\\p{Extended_Pictographic}]|\\p{Emoji}\\uFE0F)[\\p{Emoji}\\p{Emoji_Modifier}\\p{Emoji_Component}\\uFE0F\\u200D\\s]*$',
+    'u'
+  )
   return emojiRegex.test(trimmed)
 }
 
