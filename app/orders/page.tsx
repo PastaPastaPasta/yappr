@@ -157,7 +157,7 @@ function OrdersPage() {
               {orders.map((order, index) => {
                 const status = orderStatuses.get(order.id)
                 const store = stores.get(order.storeId)
-                const canReview = status?.status === 'delivered' && !reviewedOrders.has(order.id)
+                const canReview = !reviewedOrders.has(order.id)
 
                 return (
                   <OrderCard
