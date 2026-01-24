@@ -4,11 +4,14 @@ import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS } from './payment-icons'
+import { DashPaymentWatcher } from './dash-payment-watcher'
+import { isDashScheme } from '@/lib/services/insight-api-service'
 import type { ParsedPaymentUri } from '@/lib/types'
 
 // Get scheme color for QR code styling
 const PAYMENT_COLORS: Record<string, string> = {
   'dash:': '#008DE4',
+  'tdash:': '#008DE4',
   'bitcoin:': '#F7931A',
   'litecoin:': '#345D9D',
   'ethereum:': '#627EEA',
@@ -29,9 +32,19 @@ interface PaymentQRCodeProps {
   paymentUri: ParsedPaymentUri
   onBack?: () => void
   size?: number
+  watchForTransaction?: boolean
+  onTransactionDetected?: (txid: string, amountDash: number) => void
+  onWatchTimeout?: () => void
 }
 
-export function PaymentQRCode({ paymentUri, onBack, size = 200 }: PaymentQRCodeProps) {
+export function PaymentQRCode({
+  paymentUri,
+  onBack,
+  size = 200,
+  watchForTransaction = false,
+  onTransactionDetected,
+  onWatchTimeout
+}: PaymentQRCodeProps) {
   const [copied, setCopied] = useState(false)
 
   const schemeColor = PAYMENT_COLORS[paymentUri.scheme.toLowerCase()] || '#6B7280'
@@ -41,6 +54,9 @@ export function PaymentQRCode({ paymentUri, onBack, size = 200 }: PaymentQRCodeP
   const address = paymentUri.uri.includes(':')
     ? paymentUri.uri.split(':')[1].split('?')[0]
     : paymentUri.uri
+
+  // Check if this is a Dash scheme and watching is enabled
+  const shouldWatch = watchForTransaction && isDashScheme(paymentUri.scheme)
 
   const handleCopy = async () => {
     try {
@@ -111,6 +127,17 @@ export function PaymentQRCode({ paymentUri, onBack, size = 200 }: PaymentQRCodeP
           {address}
         </p>
       </div>
+
+      {/* Transaction watcher for Dash payments */}
+      {shouldWatch && (
+        <DashPaymentWatcher
+          scheme={paymentUri.scheme}
+          address={address}
+          enabled={true}
+          onDetected={onTransactionDetected}
+          onTimeout={onWatchTimeout}
+        />
+      )}
 
       {/* Action buttons */}
       <div className="flex gap-2">

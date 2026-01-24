@@ -16,6 +16,17 @@ export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
 
+// Insight API configuration for transaction detection
+export const INSIGHT_API_URLS = {
+  testnet: 'https://insight.testnet.networks.dash.org/insight-api',
+  mainnet: 'https://insight.dash.org/insight-api'
+} as const
+
+export const INSIGHT_API_CONFIG = {
+  pollIntervalMs: 3000,
+  timeoutMs: 120000
+} as const
+
 // Document types
 // Note: AVATAR, REPOST, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
 // - avatar: now in unified profile contract

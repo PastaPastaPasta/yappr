@@ -31,6 +31,7 @@ When completing a task, commit the changes automatically unless directed otherwi
 - Use `@ts-ignore` or `@ts-expect-error` to bypass TypeScript errors
 - Add `any` types to avoid proper typing
 - Rename unused variables with `_` prefix just to quiet the linter
+- Use `void` to silence floating promise warnings (e.g., `void someAsyncFn()`)
 - Use other suppression patterns that hide problems rather than fix them
 
 **Instead:**
@@ -38,6 +39,7 @@ When completing a task, commit the changes automatically unless directed otherwi
 - If a variable is unused, remove it entirely
 - If a type is wrong, correct the type properly
 - If code triggers a legitimate warning, refactor the code
+- For floating promises, add proper `.catch()` error handling
 
 Linter rules exist to catch real problems. Suppression comments should be rare exceptions with clear justification, not a standard way to make warnings disappear.
 

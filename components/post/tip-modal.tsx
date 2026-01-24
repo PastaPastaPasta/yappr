@@ -12,6 +12,7 @@ import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { identityService } from '@/lib/services/identity-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
+import { isDashScheme } from '@/lib/services/insight-api-service'
 import type { ParsedPaymentUri } from '@/lib/types'
 import {
   getTransferKey,
@@ -58,6 +59,10 @@ export function TipModal() {
   const [activeTab, setActiveTab] = useState<PaymentTab>('credits')
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
+
+  // Dash transaction detection for crypto tab
+  const [detectedCryptoTxid, setDetectedCryptoTxid] = useState<string | null>(null)
+  const [detectedCryptoAmount, setDetectedCryptoAmount] = useState<number | null>(null)
 
   // Transfer key persistence
   const [keySource, setKeySource] = useState<KeySource>(null)
@@ -111,6 +116,8 @@ export function TipModal() {
       setShowQrDialog(false)
       setKeySource(null)
       usedTransferKeyRef.current = null
+      setDetectedCryptoTxid(null)
+      setDetectedCryptoAmount(null)
     }
   }, [isOpen])
 
@@ -249,6 +256,8 @@ export function TipModal() {
   const handleShowQr = (paymentUri: ParsedPaymentUri) => {
     setSelectedQrPayment(paymentUri)
     setShowQrDialog(true)
+    setDetectedCryptoTxid(null)
+    setDetectedCryptoAmount(null)
   }
 
   // Handle closing QR dialog
@@ -256,6 +265,15 @@ export function TipModal() {
     setShowQrDialog(false)
     setSelectedQrPayment(null)
   }
+
+  // Handle detected Dash transaction in crypto tab
+  const handleCryptoTransactionDetected = (txid: string, amountDash: number) => {
+    setDetectedCryptoTxid(txid)
+    setDetectedCryptoAmount(amountDash)
+  }
+
+  // Check if the selected payment is a Dash scheme
+  const isSelectedDashPayment = selectedQrPayment && isDashScheme(selectedQrPayment.scheme)
 
   if (!recipientInfo) return null
 
@@ -637,6 +655,8 @@ export function TipModal() {
       onClose={handleCloseQrDialog}
       paymentUri={selectedQrPayment}
       recipientName={recipientName}
+      watchForTransaction={!!isSelectedDashPayment}
+      onTransactionDetected={handleCryptoTransactionDetected}
     />
   </>
   )
