@@ -174,7 +174,7 @@ function NotificationsPage() {
                           <Link
                             href={`/post?id=${notification.post.id}`}
                             onClick={(e) => e.stopPropagation()}
-                            className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
+                            className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3 break-words"
                           >
                             {notification.post.content}
                           </Link>
