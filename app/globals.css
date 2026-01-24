@@ -52,3 +52,14 @@
     padding-top: env(safe-area-inset-top, 0);
   }
 }
+
+/* Emoji picker styles */
+em-emoji-picker {
+  --em-rgb-background: 255, 255, 255;
+  max-height: 350px;
+  border-radius: 0.75rem;
+}
+
+.dark em-emoji-picker {
+  --em-rgb-background: 23, 23, 23;
+}

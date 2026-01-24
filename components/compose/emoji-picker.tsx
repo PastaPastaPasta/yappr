@@ -68,23 +68,25 @@ export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProp
           onOpenAutoFocus={(e) => {
             e.preventDefault()
           }}
+          onPointerDownOutside={(e) => {
+            // Prevent closing when scrolling inside the picker
+            const target = e.target as HTMLElement
+            if (target.closest('em-emoji-picker')) {
+              e.preventDefault()
+            }
+          }}
         >
-          <div
-            className="rounded-xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900"
-            style={{ maxHeight: '350px' }}
-          >
+          <div className="rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700">
             <Picker
               data={data}
               onEmojiSelect={handleEmojiSelect}
               theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
               previewPosition="none"
-              skinTonePosition="search"
+              skinTonePosition="none"
               maxFrequentRows={1}
               perLine={8}
               emojiSize={22}
               emojiButtonSize={28}
-              navPosition="bottom"
-              searchPosition="sticky"
             />
           </div>
         </Popover.Content>
