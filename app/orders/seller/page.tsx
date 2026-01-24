@@ -20,7 +20,10 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
+import { dpnsService } from '@/lib/services'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
+import toast from 'react-hot-toast'
+import { ClipboardIcon } from '@heroicons/react/24/outline'
 import type { StoreOrder, OrderStatusUpdate, OrderStatus, OrderPayload } from '@/lib/types'
 
 /**
@@ -62,6 +65,7 @@ function SellerOrdersPage() {
   const [orders, setOrders] = useState<StoreOrder[]>([])
   const [orderPayloads, setOrderPayloads] = useState<Map<string, OrderPayload>>(new Map())
   const [orderStatuses, setOrderStatuses] = useState<Map<string, OrderStatusUpdate>>(new Map())
+  const [buyerUsernames, setBuyerUsernames] = useState<Map<string, string>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null)
 
@@ -98,15 +102,22 @@ function SellerOrdersPage() {
         )
         setOrderPayloads(payloadMap)
 
-        // Load latest status for each order
+        // Load latest status for each order and resolve buyer usernames
         const statusMap = new Map<string, OrderStatusUpdate>()
+        const usernameMap = new Map<string, string>()
 
         await Promise.all(
           sellerOrders.map(async (order) => {
             try {
-              const status = await orderStatusService.getLatestStatus(order.id)
+              const [status, username] = await Promise.all([
+                orderStatusService.getLatestStatus(order.id),
+                dpnsService.resolveUsername(order.ownerId)
+              ])
               if (status) {
                 statusMap.set(order.id, status)
+              }
+              if (username) {
+                usernameMap.set(order.ownerId, username)
               }
             } catch (e) {
               // Ignore errors
@@ -115,6 +126,7 @@ function SellerOrdersPage() {
         )
 
         setOrderStatuses(statusMap)
+        setBuyerUsernames(usernameMap)
       } catch (error) {
         console.error('Failed to load seller orders:', error)
       } finally {
@@ -216,7 +228,10 @@ function SellerOrdersPage() {
                         <OrderStatusBadge status={status?.status} showLabel={false} />
                         <div className="text-left">
                           <h3 className="font-medium">
-                            Order #{formatOrderId(order.id)}
+                            Order from{' '}
+                            <span className="text-yappr-500">
+                              @{buyerUsernames.get(order.ownerId) || formatOrderId(order.ownerId)}
+                            </span>
                           </h3>
                           <p className="text-sm text-gray-500">
                             {formatDate(order.createdAt)}
@@ -238,6 +253,23 @@ function SellerOrdersPage() {
                     {/* Expanded Details */}
                     {isExpanded && (
                       <div className="mt-4 space-y-4">
+                        {/* Order ID */}
+                        <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+                          <p className="text-sm font-medium mb-1">Order ID</p>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigator.clipboard.writeText(order.id)
+                                .then(() => toast.success('Order ID copied'))
+                                .catch(() => toast.error('Failed to copy'))
+                            }}
+                            className="flex items-center gap-2 text-sm font-mono text-gray-600 dark:text-gray-400 hover:text-yappr-500 transition-colors"
+                          >
+                            <span className="break-all">{order.id}</span>
+                            <ClipboardIcon className="h-4 w-4 flex-shrink-0" />
+                          </button>
+                        </div>
+
                         {/* Order Payload Details */}
                         {payload ? (
                           <>
