@@ -20,16 +20,14 @@ function isEmojiOnly(text: string): boolean {
   const trimmed = text.trim()
   if (trimmed.length === 0) return false
 
-  // Match emoji characters including:
-  // - Basic emojis and presentation symbols
-  // - Skin tone modifiers
-  // - ZWJ sequences (family, profession emojis)
-  // - Flag emojis (regional indicators)
-  // - Variation selectors
-  // Note: \p{Emoji} includes digits 0-9, so we exclude those explicitly
+  // Match complete emoji sequences only (excludes digits/symbols that \p{Emoji} includes):
+  // - Base: \p{Extended_Pictographic} (actual pictorial emojis)
+  // - Optional: skin tone modifier or variation selector
+  // - Optional: ZWJ-linked sequences (family, profession emojis)
+  // - Only whitespace allowed between emoji sequences
   // Using RegExp constructor to avoid TS1501 error with es5 target
   const emojiRegex = new RegExp(
-    '^(?:[\\p{Emoji_Presentation}\\p{Extended_Pictographic}]|\\p{Emoji}\\uFE0F)[\\p{Emoji}\\p{Emoji_Modifier}\\p{Emoji_Component}\\uFE0F\\u200D\\s]*$',
+    '^(?:\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?(?:\\u200D\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?)*\\s*)+$',
     'u'
   )
   return emojiRegex.test(trimmed)
