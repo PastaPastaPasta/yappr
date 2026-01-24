@@ -10,6 +10,28 @@ import { useLinkPreview, extractFirstUrl, stripTrailingPunctuation } from '@/hoo
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { MentionLink } from './mention-link'
+import { cn } from '@/lib/utils'
+
+/**
+ * Checks if content consists only of emoji characters (and optional whitespace).
+ * Used to display emoji-only posts with larger text.
+ */
+function isEmojiOnly(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+
+  // Match complete emoji sequences only (excludes digits/symbols that \p{Emoji} includes):
+  // - Base: \p{Extended_Pictographic} (actual pictorial emojis)
+  // - Optional: skin tone modifier or variation selector
+  // - Optional: ZWJ-linked sequences (family, profession emojis)
+  // - Only whitespace allowed between emoji sequences
+  // Using RegExp constructor to avoid TS1501 error with es5 target
+  const emojiRegex = new RegExp(
+    '^(?:\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?(?:\\u200D\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?)*\\s*)+$',
+    'u'
+  )
+  return emojiRegex.test(trimmed)
+}
 
 interface PostContentProps {
   content: string
@@ -49,6 +71,9 @@ export function PostContent({
   disableLinkPreview = false
 }: PostContentProps) {
   const linkPreviews = useSettingsStore((s) => s.linkPreviews)
+
+  // Check if content is emoji-only for large emoji display
+  const isEmojiOnlyContent = useMemo(() => isEmojiOnly(content), [content])
 
   // Extract first URL for preview
   const firstUrl = useMemo(() => extractFirstUrl(content), [content])
@@ -339,7 +364,10 @@ export function PostContent({
 
   return (
     <div className={className}>
-      <div className="whitespace-pre-wrap break-words">
+      <div className={cn(
+        "whitespace-pre-wrap break-words",
+        isEmojiOnlyContent && "text-4xl leading-snug"
+      )}>
         {parsedContent.map((part, index) => {
           if (part.type === 'bold') {
             return (
