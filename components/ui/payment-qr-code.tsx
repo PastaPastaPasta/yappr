@@ -131,7 +131,7 @@ export function PaymentQRCode({
       </div>
 
       {/* Transaction watcher for Dash payments */}
-      {shouldWatch ? (
+      {shouldWatch && (
         <DashPaymentWatcher
           scheme={paymentUri.scheme}
           address={address}
@@ -140,11 +140,7 @@ export function PaymentQRCode({
           onTimeout={onWatchTimeout}
           onDone={onDone}
         />
-      ) : watchForTransaction ? (
-        <div className="p-3 bg-red-100 rounded text-sm">
-          Debug: watchForTransaction=true but isDashScheme({paymentUri.scheme})=false
-        </div>
-      ) : null}
+      )}
 
       {/* Action buttons */}
       <div className="flex gap-2">

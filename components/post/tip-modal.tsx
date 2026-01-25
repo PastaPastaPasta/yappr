@@ -649,24 +649,13 @@ export function TipModal() {
       </AnimatePresence>
     </Dialog.Root>
 
-    {/* Debug output */}
-    {showQrDialog && (
-      <div className="fixed bottom-4 left-4 z-[100] bg-black text-white p-2 text-xs font-mono max-w-xs">
-        <div>showQrDialog: {String(showQrDialog)}</div>
-        <div>selectedQrPayment: {selectedQrPayment ? 'exists' : 'null'}</div>
-        <div>scheme: {selectedQrPayment?.scheme || 'N/A'}</div>
-        <div>isDashScheme: {selectedQrPayment ? String(isDashScheme(selectedQrPayment.scheme)) : 'N/A'}</div>
-        <div>isSelectedDashPayment: {String(!!isSelectedDashPayment)}</div>
-      </div>
-    )}
-
     {/* QR Code Dialog - opens on top of the tip modal */}
     <PaymentQRCodeDialog
       isOpen={showQrDialog}
       onClose={handleCloseQrDialog}
       paymentUri={selectedQrPayment}
       recipientName={recipientName}
-      watchForTransaction={!!isSelectedDashPayment}
+      watchForTransaction={true}
       onTransactionDetected={handleCryptoTransactionDetected}
       onDone={handleCloseQrDialog}
     />
