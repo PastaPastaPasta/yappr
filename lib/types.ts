@@ -345,7 +345,7 @@ export interface VariantAxis {
 export interface VariantCombination {
   key: string // e.g., "Blue|Large"
   price: number // Price in smallest currency unit
-  stock: number
+  stock?: number // Optional - if undefined, inventory is not tracked (unlimited)
   sku?: string
   imageUrl?: string
 }

@@ -91,7 +91,10 @@ function AddItemPage() {
           const stocks: Record<string, string> = {}
           for (const combo of item.variants.combinations) {
             prices[combo.key] = fromSmallestUnit(combo.price, itemCurrency).toFixed(decimals)
-            stocks[combo.key] = combo.stock.toString()
+            // Only set stock if defined (undefined means unlimited/not tracked)
+            if (combo.stock !== undefined && combo.stock !== null) {
+              stocks[combo.key] = combo.stock.toString()
+            }
           }
           setCombinationPrices(prices)
           setCombinationStocks(stocks)
@@ -172,7 +175,7 @@ function AddItemPage() {
         const variantCombinations: VariantCombination[] = combinations.map(key => ({
           key,
           price: combinationPrices[key] ? toSmallestUnit(parseFloat(combinationPrices[key]), currency) : (priceInSmallestUnit || 0),
-          stock: combinationStocks[key] ? parseInt(combinationStocks[key], 10) : 0
+          stock: combinationStocks[key] ? parseInt(combinationStocks[key], 10) : undefined
         }))
         variants = { axes: variantAxes, combinations: variantCombinations }
       }

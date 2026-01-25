@@ -312,7 +312,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
         }
       }
 
-      if (matches && combo.stock > 0) {
+      // Include option if stock is undefined (unlimited) or > 0
+      if (matches && (combo.stock === undefined || combo.stock === null || combo.stock > 0)) {
         availableOptions.add(keyParts[axisIndex]);
       }
     }
@@ -348,12 +349,17 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
 
   /**
    * Check if item has inventory tracking enabled.
-   * Items without variants: tracked if stockQuantity is defined.
-   * Items with variants: always tracked (variants require stock field).
+   * For variants: tracked if at least one variant has stock defined.
+   * For base items: tracked if stockQuantity is defined.
    */
-  hasInventoryTracking(item: StoreItem): boolean {
+  hasInventoryTracking(item: StoreItem, variantKey?: string): boolean {
+    if (variantKey && item.variants) {
+      const combo = this.getCombination(item, variantKey);
+      return combo?.stock !== undefined && combo?.stock !== null;
+    }
     if (item.variants) {
-      return true; // Variants always have stock tracking
+      // Check if any variant has stock tracking
+      return item.variants.combinations.some(c => c.stock !== undefined && c.stock !== null);
     }
     return item.stockQuantity !== undefined && item.stockQuantity !== null;
   }
@@ -365,7 +371,13 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   getStock(item: StoreItem, variantKey?: string): number {
     if (variantKey && item.variants) {
       const combo = this.getCombination(item, variantKey);
-      if (combo) return combo.stock;
+      if (combo) {
+        // If variant stock is undefined, inventory is not tracked - return Infinity
+        if (combo.stock === undefined || combo.stock === null) {
+          return Infinity;
+        }
+        return combo.stock;
+      }
     }
     // If stockQuantity is undefined, inventory is not tracked - return Infinity
     if (item.stockQuantity === undefined || item.stockQuantity === null) {
@@ -376,12 +388,16 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
 
   /**
    * Check if item is out of stock.
-   * For items without variants: only out of stock if stockQuantity is explicitly set to 0.
-   * If stockQuantity is undefined, inventory is not tracked and item is considered available.
+   * For variants: out of stock only if ALL variants have stock explicitly set to 0.
+   * Variants with undefined stock are considered available (unlimited).
+   * For base items: out of stock only if stockQuantity is explicitly set to 0.
    */
   isOutOfStock(item: StoreItem): boolean {
     if (item.variants) {
-      return item.variants.combinations.every(c => c.stock <= 0);
+      // Out of stock only if ALL variants have stock defined AND all are 0 or less
+      return item.variants.combinations.every(c =>
+        c.stock !== undefined && c.stock !== null && c.stock <= 0
+      );
     }
     // If stockQuantity is undefined, inventory is not tracked - item is available
     if (item.stockQuantity === undefined || item.stockQuantity === null) {

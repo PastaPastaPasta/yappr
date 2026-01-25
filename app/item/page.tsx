@@ -152,8 +152,8 @@ function ItemDetailContent() {
 
   const hasInventoryTracking = useMemo(() => {
     if (!item) return false
-    return storeItemService.hasInventoryTracking(item)
-  }, [item])
+    return storeItemService.hasInventoryTracking(item, variantKey)
+  }, [item, variantKey])
 
   // Get current image (variant-specific or default)
   const images = useMemo(() => {
