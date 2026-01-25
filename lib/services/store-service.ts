@@ -11,7 +11,8 @@ import type {
   Store,
   StoreDocument,
   StoreStatus,
-  StoreContactMethods,
+  SocialLink,
+  LegacyStoreContactMethods,
   ParsedPaymentUri
 } from '../types';
 
@@ -37,13 +38,36 @@ class StoreService extends BaseDocumentService<Store> {
       }
     }
 
-    let contactMethods: StoreContactMethods | undefined;
+    let contactMethods: SocialLink[] | undefined;
     if (data.contactMethods) {
-      if (typeof data.contactMethods === 'object' && !Array.isArray(data.contactMethods)) {
-        contactMethods = data.contactMethods as StoreContactMethods;
+      if (Array.isArray(data.contactMethods)) {
+        // New format: SocialLink[]
+        contactMethods = data.contactMethods;
+      } else if (typeof data.contactMethods === 'object') {
+        // Legacy format: { email?: string, twitter?: string, ... } - convert to SocialLink[]
+        const legacy = data.contactMethods as LegacyStoreContactMethods;
+        contactMethods = [];
+        if (legacy.email) contactMethods.push({ platform: 'email', handle: legacy.email });
+        if (legacy.signal) contactMethods.push({ platform: 'signal', handle: legacy.signal });
+        if (legacy.twitter) contactMethods.push({ platform: 'twitter', handle: legacy.twitter });
+        if (legacy.telegram) contactMethods.push({ platform: 'telegram', handle: legacy.telegram });
+        if (contactMethods.length === 0) contactMethods = undefined;
       } else if (typeof data.contactMethods === 'string') {
         try {
-          contactMethods = JSON.parse(data.contactMethods);
+          const parsed = JSON.parse(data.contactMethods);
+          if (Array.isArray(parsed)) {
+            // New format stored as JSON string
+            contactMethods = parsed;
+          } else {
+            // Legacy format stored as JSON string - convert to SocialLink[]
+            const legacy = parsed as LegacyStoreContactMethods;
+            contactMethods = [];
+            if (legacy.email) contactMethods.push({ platform: 'email', handle: legacy.email });
+            if (legacy.signal) contactMethods.push({ platform: 'signal', handle: legacy.signal });
+            if (legacy.twitter) contactMethods.push({ platform: 'twitter', handle: legacy.twitter });
+            if (legacy.telegram) contactMethods.push({ platform: 'telegram', handle: legacy.telegram });
+            if (contactMethods.length === 0) contactMethods = undefined;
+          }
         } catch {
           console.error('Failed to parse contactMethods:', data.contactMethods);
         }
@@ -117,7 +141,7 @@ class StoreService extends BaseDocumentService<Store> {
       defaultCurrency?: string;
       policies?: string;
       location?: string;
-      contactMethods?: StoreContactMethods;
+      contactMethods?: SocialLink[];
       supportedRegions?: string[];
     }
   ): Promise<Store> {
@@ -155,7 +179,7 @@ class StoreService extends BaseDocumentService<Store> {
       defaultCurrency: string;
       policies: string;
       location: string;
-      contactMethods: StoreContactMethods;
+      contactMethods: SocialLink[];
       supportedRegions: string[];
     }>
   ): Promise<Store> {

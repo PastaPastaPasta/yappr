@@ -10,7 +10,8 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeService } from '@/lib/services/store-service'
-import type { StoreContactMethods, ParsedPaymentUri } from '@/lib/types'
+import { SocialLinksInput } from '@/components/profile/social-links-input'
+import type { SocialLink, ParsedPaymentUri } from '@/lib/types'
 
 function CreateStorePage() {
   const router = useRouter()
@@ -34,10 +35,8 @@ function CreateStorePage() {
   const [policies, setPolicies] = useState('')
   const [status, setStatus] = useState<'active' | 'paused' | 'closed'>('active')
 
-  // Contact methods
-  const [email, setEmail] = useState('')
-  const [twitter, setTwitter] = useState('')
-  const [telegram, setTelegram] = useState('')
+  // Contact methods as social links
+  const [contactLinks, setContactLinks] = useState<SocialLink[]>([])
 
   // Payment URIs - preserve existing when editing (managed via Settings tab)
   const [existingPaymentUris, setExistingPaymentUris] = useState<ParsedPaymentUri[]>([])
@@ -68,12 +67,8 @@ function CreateStorePage() {
         setPolicies(store.policies || '')
         setStatus(store.status || 'active')
 
-        // Contact methods
-        if (store.contactMethods) {
-          setEmail(store.contactMethods.email || '')
-          setTwitter(store.contactMethods.twitter || '')
-          setTelegram(store.contactMethods.telegram || '')
-        }
+        // Contact methods - already in SocialLink[] format
+        setContactLinks(store.contactMethods || [])
 
         // Supported regions
         if (store.supportedRegions && store.supportedRegions.length > 0) {
@@ -103,12 +98,6 @@ function CreateStorePage() {
     setError(null)
 
     try {
-      // Build contact methods
-      const contactMethods: StoreContactMethods = {}
-      if (email) contactMethods.email = email
-      if (twitter) contactMethods.twitter = twitter
-      if (telegram) contactMethods.telegram = telegram
-
       const storeData = {
         name: name.trim(),
         status, // Required field - preserves existing status when editing
@@ -118,7 +107,7 @@ function CreateStorePage() {
         location: location.trim() || undefined,
         defaultCurrency,
         policies: policies.trim() || undefined,
-        contactMethods: Object.keys(contactMethods).length > 0 ? contactMethods : undefined,
+        contactMethods: contactLinks.length > 0 ? contactLinks : undefined,
         supportedRegions: supportedRegions.length > 0 ? supportedRegions : undefined
       }
 
@@ -293,40 +282,13 @@ function CreateStorePage() {
             {/* Contact Methods */}
             <div className="space-y-4">
               <h2 className="text-lg font-semibold">Contact Methods</h2>
-              <p className="text-sm text-gray-500">How buyers can reach you</p>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="store@example.com"
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Twitter</label>
-                  <input
-                    type="text"
-                    value={twitter}
-                    onChange={(e) => setTwitter(e.target.value)}
-                    placeholder="@handle"
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Telegram</label>
-                  <input
-                    type="text"
-                    value={telegram}
-                    onChange={(e) => setTelegram(e.target.value)}
-                    placeholder="@handle"
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                  />
-                </div>
-              </div>
+              <SocialLinksInput
+                links={contactLinks}
+                onChange={setContactLinks}
+                maxLinks={10}
+                label="Contact Options"
+                description="How buyers can reach you"
+              />
             </div>
 
             {/* Shipping Regions */}

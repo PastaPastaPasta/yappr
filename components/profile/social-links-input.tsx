@@ -9,10 +9,15 @@ interface SocialLinksInputProps {
   onChange: (links: SocialLink[]) => void
   maxLinks?: number
   disabled?: boolean
+  allowedPlatforms?: string[]
+  label?: string
+  description?: string
 }
 
 // Supported social platforms
 const SOCIAL_PLATFORMS = [
+  { id: 'email', label: 'Email', placeholder: 'email@example.com' },
+  { id: 'signal', label: 'Signal', placeholder: 'phone or username' },
   { id: 'twitter', label: 'Twitter/X', placeholder: '@username' },
   { id: 'github', label: 'GitHub', placeholder: 'username' },
   { id: 'discord', label: 'Discord', placeholder: 'username#1234' },
@@ -43,8 +48,17 @@ export function SocialLinksInput({
   onChange,
   maxLinks = 10,
   disabled = false,
+  allowedPlatforms,
+  label = 'Social Links',
+  description = 'Add links to your social media profiles',
 }: SocialLinksInputProps) {
-  const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>('twitter')
+  // Filter platforms based on allowedPlatforms prop
+  const availablePlatforms = allowedPlatforms
+    ? SOCIAL_PLATFORMS.filter(p => allowedPlatforms.includes(p.id))
+    : SOCIAL_PLATFORMS
+
+  const defaultPlatform = availablePlatforms[0]?.id as SocialPlatform || 'twitter'
+  const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>(defaultPlatform)
   const [handle, setHandle] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -85,10 +99,10 @@ export function SocialLinksInput({
   return (
     <div className="space-y-3">
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-        Social Links
+        {label}
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Add links to your social media profiles
+        {description}
       </p>
 
       {/* Existing links */}
@@ -130,7 +144,7 @@ export function SocialLinksInput({
                        focus:ring-2 focus:ring-blue-500 focus:border-transparent
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {SOCIAL_PLATFORMS.map(platform => (
+            {availablePlatforms.map(platform => (
               <option key={platform.id} value={platform.id}>
                 {platform.label}
               </option>

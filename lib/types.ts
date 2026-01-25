@@ -278,8 +278,9 @@ export type OrderStatus = 'pending' | 'payment_received' | 'processing' | 'shipp
 // Shipping rate type values
 export type ShippingRateType = 'flat' | 'weight_tiered' | 'price_tiered'
 
-// Contact methods for a store
-export interface StoreContactMethods {
+// Contact methods for a store - uses same SocialLink format as profiles
+// Legacy StoreContactMethods type kept for backward compatibility parsing
+export interface LegacyStoreContactMethods {
   email?: string
   signal?: string
   twitter?: string
@@ -302,7 +303,7 @@ export interface StoreDocument {
   defaultCurrency?: string
   policies?: string
   location?: string
-  contactMethods?: string // JSON string of StoreContactMethods
+  contactMethods?: string // JSON string of SocialLink[] (or legacy StoreContactMethods object)
   supportedRegions?: string // JSON string of string[]
 }
 
@@ -321,7 +322,7 @@ export interface Store {
   defaultCurrency?: string
   policies?: string
   location?: string
-  contactMethods?: StoreContactMethods
+  contactMethods?: SocialLink[]
   supportedRegions?: string[]
   // Enriched fields
   ownerUsername?: string
