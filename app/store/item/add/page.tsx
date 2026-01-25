@@ -17,6 +17,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
 
 function AddItemPage() {
@@ -63,15 +64,18 @@ function AddItemPage() {
         }
 
         // Populate form fields
+        const itemCurrency = item.currency || 'USD'
+        const decimals = getCurrencyDecimals(itemCurrency)
+
         setTitle(item.title || '')
         setDescription(item.description || '')
-        setCurrency(item.currency || 'USD')
+        setCurrency(itemCurrency)
         setCategory(item.category || '')
         setImageUrls(item.imageUrls || [])
 
-        // Convert price from cents to dollars for display
+        // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
-          setBasePrice((item.basePrice / 100).toFixed(2))
+          setBasePrice(fromSmallestUnit(item.basePrice, itemCurrency).toFixed(decimals))
         }
         if (item.stockQuantity !== undefined) {
           setStockQuantity(item.stockQuantity.toString())
@@ -86,7 +90,7 @@ function AddItemPage() {
           const prices: Record<string, string> = {}
           const stocks: Record<string, string> = {}
           for (const combo of item.variants.combinations) {
-            prices[combo.key] = (combo.price / 100).toFixed(2)
+            prices[combo.key] = fromSmallestUnit(combo.price, itemCurrency).toFixed(decimals)
             stocks[combo.key] = combo.stock.toString()
           }
           setCombinationPrices(prices)
@@ -160,14 +164,14 @@ function AddItemPage() {
     setError(null)
 
     try {
-      const priceInCents = basePrice ? Math.round(parseFloat(basePrice) * 100) : undefined
+      const priceInSmallestUnit = basePrice ? toSmallestUnit(parseFloat(basePrice), currency) : undefined
 
       // Build variants if enabled
       let variants: ItemVariants | undefined
       if (hasVariants && variantAxes.length > 0 && combinations.length > 0) {
         const variantCombinations: VariantCombination[] = combinations.map(key => ({
           key,
-          price: combinationPrices[key] ? Math.round(parseFloat(combinationPrices[key]) * 100) : (priceInCents || 0),
+          price: combinationPrices[key] ? toSmallestUnit(parseFloat(combinationPrices[key]), currency) : (priceInSmallestUnit || 0),
           stock: combinationStocks[key] ? parseInt(combinationStocks[key], 10) : 0
         }))
         variants = { axes: variantAxes, combinations: variantCombinations }
@@ -181,7 +185,7 @@ function AddItemPage() {
       const itemData = {
         title: title.trim(),
         description: description.trim() || undefined,
-        basePrice: hasVariants ? undefined : priceInCents,
+        basePrice: hasVariants ? undefined : priceInSmallestUnit,
         currency: currency || undefined,
         imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
         category: category.trim() || undefined,
@@ -434,7 +438,7 @@ function AddItemPage() {
                                   value={combinationPrices[key] || ''}
                                   onChange={(e) => setCombinationPrices({ ...combinationPrices, [key]: e.target.value })}
                                   placeholder="0.00"
-                                  step="0.01"
+                                  step={getCurrencyStep(currency)}
                                   min="0"
                                   className="w-24 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
                                 />
@@ -470,7 +474,7 @@ function AddItemPage() {
                         value={basePrice}
                         onChange={(e) => setBasePrice(e.target.value)}
                         placeholder="0.00"
-                        step="0.01"
+                        step={getCurrencyStep(currency)}
                         min="0"
                         className="w-full pl-8 pr-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       />
