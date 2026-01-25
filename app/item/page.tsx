@@ -150,6 +150,11 @@ function ItemDetailContent() {
     return storeItemService.getStock(item, variantKey)
   }, [item, variantKey])
 
+  const hasInventoryTracking = useMemo(() => {
+    if (!item) return false
+    return storeItemService.hasInventoryTracking(item)
+  }, [item])
+
   // Get current image (variant-specific or default)
   const images = useMemo(() => {
     if (!item) return []
@@ -225,7 +230,7 @@ function ItemDetailContent() {
     )
   }
 
-  const isOutOfStock = currentStock === 0
+  const isOutOfStock = hasInventoryTracking && currentStock === 0
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
@@ -322,9 +327,11 @@ function ItemDetailContent() {
             )}
 
             {/* Stock Status */}
-            <div className={`text-sm ${isOutOfStock ? 'text-red-500' : 'text-green-600'}`}>
-              {isOutOfStock ? 'Out of stock' : `${currentStock} in stock`}
-            </div>
+            {hasInventoryTracking && (
+              <div className={`text-sm ${isOutOfStock ? 'text-red-500' : 'text-green-600'}`}>
+                {isOutOfStock ? 'Out of stock' : `${currentStock} in stock`}
+              </div>
+            )}
 
             {/* Quantity */}
             {!isOutOfStock && (
@@ -334,7 +341,7 @@ function ItemDetailContent() {
                   value={quantity}
                   onChange={setQuantity}
                   min={1}
-                  max={currentStock}
+                  max={hasInventoryTracking ? currentStock : 99}
                 />
               </div>
             )}
