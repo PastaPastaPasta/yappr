@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { SocialLink } from '@/lib/types'
 
@@ -57,10 +57,25 @@ export function SocialLinksInput({
     ? SOCIAL_PLATFORMS.filter(p => allowedPlatforms.includes(p.id))
     : SOCIAL_PLATFORMS
 
-  const defaultPlatform = availablePlatforms[0]?.id as SocialPlatform || 'twitter'
-  const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>(defaultPlatform)
+  // Get default platform from available platforms, or fall back to first global platform
+  const getDefaultPlatform = (): SocialPlatform => {
+    if (availablePlatforms.length > 0) {
+      return availablePlatforms[0].id as SocialPlatform
+    }
+    return SOCIAL_PLATFORMS[0].id as SocialPlatform
+  }
+
+  const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>(getDefaultPlatform())
   const [handle, setHandle] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Sync selectedPlatform when allowedPlatforms changes
+  useEffect(() => {
+    const validPlatforms = availablePlatforms.map(p => p.id)
+    if (!validPlatforms.includes(selectedPlatform)) {
+      setSelectedPlatform(getDefaultPlatform())
+    }
+  }, [allowedPlatforms])
 
   const handleAddLink = () => {
     if (!handle.trim()) {

@@ -24,15 +24,21 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
   useEffect(() => {
     if (!review.reviewerId) return
 
-    // Fetch username if not provided
-    if (!username) {
+    // Reset state from props when reviewerId changes (handles component reuse)
+    const initialUsername = review.reviewerUsername || null
+    const initialDisplayName = review.reviewerDisplayName || null
+    setUsername(initialUsername)
+    setDisplayName(initialDisplayName)
+
+    // Fetch username if not provided in props
+    if (!initialUsername) {
       dpnsService.resolveUsername(review.reviewerId)
         .then(name => setUsername(name))
         .catch(err => console.error('Failed to resolve username:', err))
     }
 
-    // Fetch display name if not provided
-    if (!displayName) {
+    // Fetch display name if not provided in props
+    if (!initialDisplayName) {
       unifiedProfileService.getProfile(review.reviewerId)
         .then(profile => {
           if (profile?.displayName) {
@@ -41,7 +47,7 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
         })
         .catch(err => console.error('Failed to fetch profile:', err))
     }
-  }, [review.reviewerId, username, displayName])
+  }, [review.reviewerId, review.reviewerUsername, review.reviewerDisplayName])
 
   const renderStars = (rating: number) => {
     const stars = []
