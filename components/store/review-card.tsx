@@ -9,6 +9,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { formatDate } from '@/lib/utils/format'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { StoreReview } from '@/lib/types'
 
 interface ReviewCardProps {
@@ -18,14 +19,29 @@ interface ReviewCardProps {
 
 export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
   const [username, setUsername] = useState<string | null>(review.reviewerUsername || null)
+  const [displayName, setDisplayName] = useState<string | null>(review.reviewerDisplayName || null)
 
   useEffect(() => {
-    if (username || !review.reviewerId) return
+    if (!review.reviewerId) return
 
-    dpnsService.resolveUsername(review.reviewerId)
-      .then(name => setUsername(name))
-      .catch(err => console.error('Failed to resolve username:', err))
-  }, [review.reviewerId, username])
+    // Fetch username if not provided
+    if (!username) {
+      dpnsService.resolveUsername(review.reviewerId)
+        .then(name => setUsername(name))
+        .catch(err => console.error('Failed to resolve username:', err))
+    }
+
+    // Fetch display name if not provided
+    if (!displayName) {
+      unifiedProfileService.getProfile(review.reviewerId)
+        .then(profile => {
+          if (profile?.displayName) {
+            setDisplayName(profile.displayName)
+          }
+        })
+        .catch(err => console.error('Failed to fetch profile:', err))
+    }
+  }, [review.reviewerId, username, displayName])
 
   const renderStars = (rating: number) => {
     const stars = []
@@ -51,13 +67,14 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
         <ProfileHoverCard
           userId={review.reviewerId}
           username={username}
+          displayName={displayName || undefined}
           avatarUrl={review.reviewerAvatar}
         >
           <Link href={`/user?id=${review.reviewerId}`} className="flex-shrink-0">
             <UserAvatar
               userId={review.reviewerId}
               size="md"
-              alt={username || 'Reviewer'}
+              alt={username || displayName || 'Reviewer'}
               preloadedUrl={review.reviewerAvatar}
             />
           </Link>
@@ -70,7 +87,7 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
             <ProfileHoverCard
               userId={review.reviewerId}
               username={username}
-              displayName={review.reviewerDisplayName}
+              displayName={displayName || undefined}
               avatarUrl={review.reviewerAvatar}
             >
               <Link
@@ -79,11 +96,11 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
               >
                 {username
                   ? `@${username}`
-                  : review.reviewerDisplayName || `${review.reviewerId.slice(0, 8)}...`}
+                  : displayName || `${review.reviewerId.slice(0, 8)}...`}
               </Link>
             </ProfileHoverCard>
-            {username && review.reviewerDisplayName && review.reviewerDisplayName !== username && (
-              <span className="text-sm text-gray-500 truncate">{review.reviewerDisplayName}</span>
+            {username && displayName && displayName !== username && (
+              <span className="text-sm text-gray-500 truncate">{displayName}</span>
             )}
             <span className="text-gray-300 dark:text-gray-600">·</span>
             <div className="flex">{renderStars(review.rating)}</div>
