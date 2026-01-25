@@ -43,9 +43,6 @@ function CreateStorePage() {
   // Payment URIs - preserve existing when editing (managed via Settings tab)
   const [existingPaymentUris, setExistingPaymentUris] = useState<ParsedPaymentUri[]>([])
 
-  // Supported regions
-  const [supportedRegions, setSupportedRegions] = useState<string[]>(['USA'])
-
   // Load existing store data in edit mode
   useEffect(() => {
     if (!sdkReady || !isEditMode || !storeId) return
@@ -71,11 +68,6 @@ function CreateStorePage() {
 
         // Contact methods - already in SocialLink[] format
         setContactLinks(store.contactMethods || [])
-
-        // Supported regions
-        if (store.supportedRegions && store.supportedRegions.length > 0) {
-          setSupportedRegions(store.supportedRegions)
-        }
 
         // Preserve all existing payment URIs (managed via Settings tab)
         if (store.paymentUris && store.paymentUris.length > 0) {
@@ -118,8 +110,7 @@ function CreateStorePage() {
         location: location.trim() || undefined,
         defaultCurrency,
         policies: serializedPolicies || undefined,
-        contactMethods: contactLinks.length > 0 ? contactLinks : undefined,
-        supportedRegions: supportedRegions.length > 0 ? supportedRegions : undefined
+        contactMethods: contactLinks.length > 0 ? contactLinks : undefined
       }
 
       if (isEditMode && storeId) {
@@ -140,31 +131,6 @@ function CreateStorePage() {
       setError(err instanceof Error ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} store`)
     } finally {
       setIsSubmitting(false)
-    }
-  }
-
-  const regionOptions = [
-    { value: 'USA', label: 'United States' },
-    { value: 'Canada', label: 'Canada' },
-    { value: 'Mexico', label: 'Mexico' },
-    { value: 'EU', label: 'European Union' },
-    { value: 'UK', label: 'United Kingdom' },
-    { value: 'Australia', label: 'Australia' },
-    { value: 'Worldwide', label: 'Worldwide' }
-  ]
-
-  const toggleRegion = (region: string) => {
-    if (region === 'Worldwide') {
-      setSupportedRegions(['Worldwide'])
-    } else {
-      setSupportedRegions(prev => {
-        const filtered = prev.filter(r => r !== 'Worldwide')
-        if (filtered.includes(region)) {
-          return filtered.filter(r => r !== region)
-        } else {
-          return [...filtered, region]
-        }
-      })
     }
   }
 
@@ -300,29 +266,6 @@ function CreateStorePage() {
                 label="Contact Options"
                 description="How buyers can reach you"
               />
-            </div>
-
-            {/* Shipping Regions */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold">Shipping Regions</h2>
-              <p className="text-sm text-gray-500">Where you ship to</p>
-
-              <div className="flex flex-wrap gap-2">
-                {regionOptions.map((region) => (
-                  <button
-                    key={region.value}
-                    type="button"
-                    onClick={() => toggleRegion(region.value)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                      supportedRegions.includes(region.value)
-                        ? 'bg-yappr-500 text-white'
-                        : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                    }`}
-                  >
-                    {region.label}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {/* Policies */}

@@ -74,19 +74,6 @@ class StoreService extends BaseDocumentService<Store> {
       }
     }
 
-    let supportedRegions: string[] | undefined;
-    if (data.supportedRegions) {
-      if (Array.isArray(data.supportedRegions)) {
-        supportedRegions = data.supportedRegions;
-      } else if (typeof data.supportedRegions === 'string') {
-        try {
-          supportedRegions = JSON.parse(data.supportedRegions);
-        } catch {
-          console.error('Failed to parse supportedRegions:', data.supportedRegions);
-        }
-      }
-    }
-
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
@@ -101,8 +88,7 @@ class StoreService extends BaseDocumentService<Store> {
       defaultCurrency: data.defaultCurrency,
       policies: data.policies,
       location: data.location,
-      contactMethods,
-      supportedRegions
+      contactMethods
     };
   }
 
@@ -142,7 +128,6 @@ class StoreService extends BaseDocumentService<Store> {
       policies?: string;
       location?: string;
       contactMethods?: SocialLink[];
-      supportedRegions?: string[];
     }
   ): Promise<Store> {
     const documentData: Record<string, unknown> = {
@@ -158,7 +143,6 @@ class StoreService extends BaseDocumentService<Store> {
     if (data.policies) documentData.policies = data.policies;
     if (data.location) documentData.location = data.location;
     if (data.contactMethods) documentData.contactMethods = JSON.stringify(data.contactMethods);
-    if (data.supportedRegions) documentData.supportedRegions = JSON.stringify(data.supportedRegions);
 
     return this.create(ownerId, documentData);
   }
@@ -180,7 +164,6 @@ class StoreService extends BaseDocumentService<Store> {
       policies: string;
       location: string;
       contactMethods: SocialLink[];
-      supportedRegions: string[];
     }>
   ): Promise<Store> {
     const documentData: Record<string, unknown> = {};
@@ -195,7 +178,6 @@ class StoreService extends BaseDocumentService<Store> {
     if (data.policies !== undefined) documentData.policies = data.policies;
     if (data.location !== undefined) documentData.location = data.location;
     if (data.contactMethods !== undefined) documentData.contactMethods = JSON.stringify(data.contactMethods);
-    if (data.supportedRegions !== undefined) documentData.supportedRegions = JSON.stringify(data.supportedRegions);
 
     return this.update(storeId, ownerId, documentData);
   }

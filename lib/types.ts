@@ -310,7 +310,6 @@ export interface StoreDocument {
   policies?: string
   location?: string
   contactMethods?: string // JSON string of SocialLink[] (or legacy StoreContactMethods object)
-  supportedRegions?: string // JSON string of string[]
 }
 
 // Parsed store for UI display
@@ -329,7 +328,6 @@ export interface Store {
   policies?: string
   location?: string
   contactMethods?: SocialLink[]
-  supportedRegions?: string[]
   // Enriched fields
   ownerUsername?: string
   ownerDisplayName?: string

@@ -202,8 +202,7 @@ function StoreManagePage() {
       defaultCurrency: store.defaultCurrency,
       policies: store.policies,
       location: store.location,
-      contactMethods: store.contactMethods,
-      supportedRegions: store.supportedRegions
+      contactMethods: store.contactMethods
     })
     setStore(updatedStore)
     setShowPaymentModal(false)
@@ -226,8 +225,7 @@ function StoreManagePage() {
         defaultCurrency: store.defaultCurrency,
         policies: store.policies,
         location: store.location,
-        contactMethods: store.contactMethods,
-        supportedRegions: store.supportedRegions
+        contactMethods: store.contactMethods
       })
       setStore(updatedStore)
     } catch (error) {
@@ -580,8 +578,7 @@ function StoreManagePage() {
                               defaultCurrency: store.defaultCurrency,
                               policies: store.policies,
                               location: store.location,
-                              contactMethods: store.contactMethods,
-                              supportedRegions: store.supportedRegions
+                              contactMethods: store.contactMethods
                             })
                             setStore(updated)
                           } catch (error) {
@@ -644,20 +641,6 @@ function StoreManagePage() {
                 )}
               </div>
 
-              <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-                <h3 className="font-medium mb-4">Supported Regions</h3>
-                {store.supportedRegions && store.supportedRegions.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {store.supportedRegions.map((region) => (
-                      <span key={region} className="px-3 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm">
-                        {region}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500">No regions specified</p>
-                )}
-              </div>
             </div>
           )}
         </main>
