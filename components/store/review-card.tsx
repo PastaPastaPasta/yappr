@@ -65,22 +65,23 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          {/* Header: Name, username, stars, date */}
+          {/* Header: DPNS username (primary), display name (secondary), stars, date */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <ProfileHoverCard
               userId={review.reviewerId}
               username={username}
+              displayName={review.reviewerDisplayName}
               avatarUrl={review.reviewerAvatar}
             >
               <Link
                 href={`/user?id=${review.reviewerId}`}
                 className="font-semibold text-gray-900 dark:text-gray-100 hover:underline truncate"
               >
-                {review.reviewerDisplayName || username || 'Anonymous'}
+                {username ? `@${username}` : 'Anonymous'}
               </Link>
             </ProfileHoverCard>
-            {username && (
-              <span className="text-sm text-gray-500 truncate">@{username}</span>
+            {review.reviewerDisplayName && review.reviewerDisplayName !== username && (
+              <span className="text-sm text-gray-500 truncate">{review.reviewerDisplayName}</span>
             )}
             <span className="text-gray-300 dark:text-gray-600">·</span>
             <div className="flex">{renderStars(review.rating)}</div>
