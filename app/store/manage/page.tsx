@@ -191,10 +191,19 @@ function StoreManagePage() {
       label: data.label
     }
     const currentUris = store.paymentUris || []
+    // Preserve all existing fields during update (SDK replace operation)
     const updatedStore = await storeService.updateStore(store.id, user.identityId, {
       name: store.name,
+      description: store.description,
+      logoUrl: store.logoUrl,
+      bannerUrl: store.bannerUrl,
       status: store.status,
-      paymentUris: [...currentUris, newUri]
+      paymentUris: [...currentUris, newUri],
+      defaultCurrency: store.defaultCurrency,
+      policies: store.policies,
+      location: store.location,
+      contactMethods: store.contactMethods,
+      supportedRegions: store.supportedRegions
     })
     setStore(updatedStore)
     setShowPaymentModal(false)
@@ -206,10 +215,19 @@ function StoreManagePage() {
 
     try {
       const updatedUris = store.paymentUris.filter((_, i) => i !== index)
+      // Preserve all existing fields during update (SDK replace operation)
       const updatedStore = await storeService.updateStore(store.id, user.identityId, {
         name: store.name,
+        description: store.description,
+        logoUrl: store.logoUrl,
+        bannerUrl: store.bannerUrl,
         status: store.status,
-        paymentUris: updatedUris
+        paymentUris: updatedUris,
+        defaultCurrency: store.defaultCurrency,
+        policies: store.policies,
+        location: store.location,
+        contactMethods: store.contactMethods,
+        supportedRegions: store.supportedRegions
       })
       setStore(updatedStore)
     } catch (error) {
@@ -551,7 +569,20 @@ function StoreManagePage() {
                         onChange={async (e) => {
                           const newStatus = e.target.value as 'active' | 'paused' | 'closed'
                           try {
-                            const updated = await storeService.updateStore(store.id, user!.identityId, { name: store.name, status: newStatus })
+                            // Preserve all existing fields during update (SDK replace operation)
+                            const updated = await storeService.updateStore(store.id, user!.identityId, {
+                              name: store.name,
+                              description: store.description,
+                              logoUrl: store.logoUrl,
+                              bannerUrl: store.bannerUrl,
+                              status: newStatus,
+                              paymentUris: store.paymentUris,
+                              defaultCurrency: store.defaultCurrency,
+                              policies: store.policies,
+                              location: store.location,
+                              contactMethods: store.contactMethods,
+                              supportedRegions: store.supportedRegions
+                            })
                             setStore(updated)
                           } catch (error) {
                             console.error('Failed to update status:', error)
