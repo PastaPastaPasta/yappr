@@ -39,8 +39,7 @@ function CreateStorePage() {
   const [twitter, setTwitter] = useState('')
   const [telegram, setTelegram] = useState('')
 
-  // Payment URIs - preserve existing when editing
-  const [dashAddress, setDashAddress] = useState('')
+  // Payment URIs - preserve existing when editing (managed via Settings tab)
   const [existingPaymentUris, setExistingPaymentUris] = useState<ParsedPaymentUri[]>([])
 
   // Supported regions
@@ -81,14 +80,9 @@ function CreateStorePage() {
           setSupportedRegions(store.supportedRegions)
         }
 
-        // Preserve all existing payment URIs
+        // Preserve all existing payment URIs (managed via Settings tab)
         if (store.paymentUris && store.paymentUris.length > 0) {
           setExistingPaymentUris(store.paymentUris)
-          // Extract Dash address for display
-          const dashUri = store.paymentUris.find(u => u.scheme === 'dash:')
-          if (dashUri) {
-            setDashAddress(dashUri.uri.replace('dash:', ''))
-          }
         }
       } catch (err) {
         console.error('Failed to load store:', err)
@@ -115,16 +109,6 @@ function CreateStorePage() {
       if (twitter) contactMethods.twitter = twitter
       if (telegram) contactMethods.telegram = telegram
 
-      // Build payment URIs (only for create, or if user added a new Dash address)
-      const paymentUris: ParsedPaymentUri[] = []
-      if (dashAddress && !isEditMode) {
-        paymentUris.push({
-          scheme: 'dash:',
-          uri: `dash:${dashAddress}`,
-          label: 'Dash'
-        })
-      }
-
       const storeData = {
         name: name.trim(),
         status, // Required field - preserves existing status when editing
@@ -147,10 +131,8 @@ function CreateStorePage() {
         await storeService.updateStore(storeId, user.identityId, updateData)
         router.push('/store/manage')
       } else {
-        await storeService.createStore(user.identityId, {
-          ...storeData,
-          paymentUris: paymentUris.length > 0 ? paymentUris : undefined
-        })
+        // Payment methods are added later via the Settings tab
+        await storeService.createStore(user.identityId, storeData)
         router.push('/store')
       }
     } catch (err) {
@@ -344,23 +326,6 @@ function CreateStorePage() {
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
-              </div>
-            </div>
-
-            {/* Payment */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold">Payment</h2>
-              <p className="text-sm text-gray-500">Where to receive payments</p>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Dash Address</label>
-                <input
-                  type="text"
-                  value={dashAddress}
-                  onChange={(e) => setDashAddress(e.target.value)}
-                  placeholder="X..."
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
-                />
               </div>
             </div>
 
