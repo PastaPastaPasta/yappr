@@ -597,5 +597,35 @@
     },
     "description": "A review of a store from a buyer who completed an order",
     "additionalProperties": false
+  },
+  "savedAddress": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "owner",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "encryptedPayload"
+    ],
+    "properties": {
+      "encryptedPayload": {
+        "type": "array",
+        "maxItems": 5000,
+        "minItems": 1,
+        "position": 0,
+        "byteArray": true,
+        "description": "ECIES encrypted JSON array of saved addresses"
+      }
+    },
+    "description": "Encrypted saved shipping addresses (one document per user)",
+    "additionalProperties": false
   }
 }

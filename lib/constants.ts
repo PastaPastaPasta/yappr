@@ -63,7 +63,8 @@ export const STOREFRONT_DOCUMENT_TYPES = {
   SHIPPING_ZONE: 'shippingZone',
   STORE_ORDER: 'storeOrder',
   ORDER_STATUS_UPDATE: 'orderStatusUpdate',
-  STORE_REVIEW: 'storeReview'
+  STORE_REVIEW: 'storeReview',
+  SAVED_ADDRESS: 'savedAddress'
 } as const
 
 // DPNS

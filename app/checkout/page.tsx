@@ -6,7 +6,15 @@ import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { AddressForm, ShippingSelector, PaymentSelector, PolicyAgreement, OrderReview } from '@/components/checkout'
+import {
+  AddressForm,
+  ShippingSelector,
+  PaymentSelector,
+  PolicyAgreement,
+  OrderReview,
+  SaveAddressPrompt,
+  SavedAddressModal
+} from '@/components/checkout'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -17,7 +25,9 @@ import { storeOrderService } from '@/lib/services/store-order-service'
 import { privateFeedCryptoService } from '@/lib/services/private-feed-crypto-service'
 import { identityService } from '@/lib/services/identity-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
-import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy } from '@/lib/types'
+import { savedAddressService } from '@/lib/services/saved-address-service'
+import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
+import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
 
 /**
  * Normalize key data from various formats to Uint8Array
@@ -80,6 +90,15 @@ function CheckoutPage() {
   const [txid, setTxid] = useState('')
   const [notes, setNotes] = useState('')
 
+  // Saved addresses
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([])
+  const [selectedSavedAddressId, setSelectedSavedAddressId] = useState<string | null>(null)
+  const [showSavePrompt, setShowSavePrompt] = useState(false)
+  const [isSavingAddress, setIsSavingAddress] = useState(false)
+  const [showAddressModal, setShowAddressModal] = useState(false)
+  const [userHasEncryptionKey, setUserHasEncryptionKey] = useState(false)
+  const [userEncryptionPubKey, setUserEncryptionPubKey] = useState<Uint8Array | null>(null)
+
   // Load store and cart items
   useEffect(() => {
     if (!sdkReady) return
@@ -123,6 +142,48 @@ function CheckoutPage() {
 
     loadData().catch(console.error)
   }, [sdkReady, storeId, router])
+
+  // Load saved addresses
+  useEffect(() => {
+    if (!sdkReady || !user?.identityId) return
+
+    const loadSavedAddresses = async () => {
+      try {
+        // Check if user has encryption key
+        const hasKey = hasEncryptionKey(user.identityId)
+        setUserHasEncryptionKey(hasKey)
+
+        if (!hasKey) return
+
+        // Get user's encryption public key
+        const pubKey = await savedAddressService.getUserEncryptionPublicKey(user.identityId)
+        if (pubKey) {
+          setUserEncryptionPubKey(pubKey)
+        }
+
+        // Get user's encryption private key
+        const privKey = getEncryptionKeyBytes(user.identityId)
+        if (!privKey) return
+
+        // Load and decrypt saved addresses
+        const addresses = await savedAddressService.getDecryptedAddresses(user.identityId, privKey)
+        setSavedAddresses(addresses)
+
+        // Auto-select default if exists
+        const defaultAddr = savedAddressService.getDefaultAddress(addresses)
+        if (defaultAddr) {
+          setSelectedSavedAddressId(defaultAddr.id)
+          // Pre-fill form with default address
+          setShippingAddress(defaultAddr.address)
+          setBuyerContact(defaultAddr.contact)
+        }
+      } catch (error) {
+        console.error('Failed to load saved addresses:', error)
+      }
+    }
+
+    loadSavedAddresses().catch(console.error)
+  }, [sdkReady, user?.identityId])
 
   // Calculate shipping when address changes
   useEffect(() => {
@@ -178,7 +239,153 @@ function CheckoutPage() {
   const currency = cartItems[0]?.currency || 'USD'
 
   const handleAddressSubmit = () => {
+    // If using a saved address, go directly to shipping
+    if (selectedSavedAddressId) {
+      setStep('shipping')
+      return
+    }
+
+    // If user has encryption key and entered a new address, show save prompt
+    if (userHasEncryptionKey && userEncryptionPubKey) {
+      setShowSavePrompt(true)
+    } else {
+      setStep('shipping')
+    }
+  }
+
+  const handleSavedAddressSelect = (id: string | null) => {
+    setSelectedSavedAddressId(id)
+
+    if (id) {
+      // Fill form with selected address
+      const selected = savedAddresses.find((a) => a.id === id)
+      if (selected) {
+        setShippingAddress(selected.address)
+        setBuyerContact(selected.contact)
+      }
+    } else {
+      // Clear to defaults when selecting "Use a different address"
+      setShippingAddress({
+        name: '',
+        street: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: 'US'
+      })
+      setBuyerContact({})
+    }
+  }
+
+  const handleSaveAddress = async (label: string) => {
+    if (!user?.identityId || !userEncryptionPubKey) return
+
+    setIsSavingAddress(true)
+    try {
+      const privKey = getEncryptionKeyBytes(user.identityId)
+      if (!privKey) {
+        throw new Error('Encryption key not found')
+      }
+
+      const newAddress = await savedAddressService.addAddress(
+        user.identityId,
+        shippingAddress,
+        buyerContact,
+        label,
+        userEncryptionPubKey,
+        privKey
+      )
+
+      setSavedAddresses((prev) => [...prev, newAddress])
+      setShowSavePrompt(false)
+      setStep('shipping')
+    } catch (error) {
+      console.error('Failed to save address:', error)
+      // Continue anyway
+      setShowSavePrompt(false)
+      setStep('shipping')
+    } finally {
+      setIsSavingAddress(false)
+    }
+  }
+
+  const handleSkipSave = () => {
+    setShowSavePrompt(false)
     setStep('shipping')
+  }
+
+  // Modal handlers for managing saved addresses
+  const handleAddAddressFromModal = async (
+    address: ShippingAddress,
+    contact: BuyerContact,
+    label: string
+  ) => {
+    if (!user?.identityId || !userEncryptionPubKey) return
+
+    const privKey = getEncryptionKeyBytes(user.identityId)
+    if (!privKey) throw new Error('Encryption key not found')
+
+    const newAddress = await savedAddressService.addAddress(
+      user.identityId,
+      address,
+      contact,
+      label,
+      userEncryptionPubKey,
+      privKey
+    )
+
+    setSavedAddresses((prev) => [...prev, newAddress])
+  }
+
+  const handleUpdateAddressFromModal = async (
+    id: string,
+    updates: Partial<Pick<SavedAddress, 'label' | 'address' | 'contact' | 'isDefault'>>
+  ) => {
+    if (!user?.identityId || !userEncryptionPubKey) return
+
+    const privKey = getEncryptionKeyBytes(user.identityId)
+    if (!privKey) throw new Error('Encryption key not found')
+
+    const updated = await savedAddressService.updateAddress(
+      user.identityId,
+      id,
+      updates,
+      userEncryptionPubKey,
+      privKey
+    )
+
+    if (updated) {
+      setSavedAddresses((prev) =>
+        prev.map((a) => (a.id === id ? updated : updates.isDefault ? { ...a, isDefault: false } : a))
+      )
+    }
+  }
+
+  const handleDeleteAddressFromModal = async (id: string) => {
+    if (!user?.identityId || !userEncryptionPubKey) return
+
+    const privKey = getEncryptionKeyBytes(user.identityId)
+    if (!privKey) throw new Error('Encryption key not found')
+
+    await savedAddressService.removeAddress(user.identityId, id, userEncryptionPubKey, privKey)
+    setSavedAddresses((prev) => prev.filter((a) => a.id !== id))
+
+    // If we deleted the selected address, deselect it
+    if (selectedSavedAddressId === id) {
+      setSelectedSavedAddressId(null)
+    }
+  }
+
+  const handleSetDefaultFromModal = async (id: string) => {
+    if (!user?.identityId || !userEncryptionPubKey) return
+
+    const privKey = getEncryptionKeyBytes(user.identityId)
+    if (!privKey) throw new Error('Encryption key not found')
+
+    await savedAddressService.setDefault(user.identityId, id, userEncryptionPubKey, privKey)
+    setSavedAddresses((prev) =>
+      prev.map((a) => ({ ...a, isDefault: a.id === id }))
+    )
   }
 
   const handleShippingSubmit = () => {
@@ -354,31 +561,36 @@ function CheckoutPage() {
             </div>
 
             {/* Progress Steps */}
-            <div className="flex px-4 pb-4">
-              {['address', 'shipping', 'payment', 'policies', 'review'].map((s, i) => (
-                <div key={s} className="flex-1 flex items-center">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                      step === s
-                        ? 'bg-yappr-500 text-white'
-                        : ['address', 'shipping', 'payment', 'policies', 'review'].indexOf(step) > i
-                          ? 'bg-green-500 text-white'
-                          : 'bg-gray-200 dark:bg-gray-800 text-gray-500'
-                    }`}
-                  >
-                    {i + 1}
-                  </div>
-                  {i < 4 && (
+            <div className="flex items-center px-4 pb-4">
+              {['address', 'shipping', 'payment', 'policies', 'review'].map((s, i) => {
+                const steps = ['address', 'shipping', 'payment', 'policies', 'review']
+                const currentIndex = steps.indexOf(step)
+                const isComplete = currentIndex > i
+                const isCurrent = step === s
+
+                return (
+                  <div key={s} className="flex items-center flex-1 last:flex-none">
                     <div
-                      className={`flex-1 h-1 mx-2 ${
-                        ['address', 'shipping', 'payment', 'policies', 'review'].indexOf(step) > i
-                          ? 'bg-green-500'
-                          : 'bg-gray-200 dark:bg-gray-800'
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${
+                        isCurrent
+                          ? 'bg-yappr-500 text-white'
+                          : isComplete
+                            ? 'bg-green-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-800 text-gray-500'
                       }`}
-                    />
-                  )}
-                </div>
-              ))}
+                    >
+                      {i + 1}
+                    </div>
+                    {i < 4 && (
+                      <div
+                        className={`flex-1 h-0.5 mx-2 ${
+                          isComplete ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800'
+                        }`}
+                      />
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </header>
 
@@ -389,14 +601,40 @@ function CheckoutPage() {
           )}
 
           {/* Address Step */}
-          {step === 'address' && (
+          {step === 'address' && !showSavePrompt && (
             <AddressForm
               address={shippingAddress}
               contact={buyerContact}
               onAddressChange={setShippingAddress}
               onContactChange={setBuyerContact}
               onSubmit={handleAddressSubmit}
+              savedAddresses={savedAddresses}
+              selectedSavedAddressId={selectedSavedAddressId}
+              onSavedAddressSelect={handleSavedAddressSelect}
+              onManageSavedAddresses={() => setShowAddressModal(true)}
             />
+          )}
+
+          {/* Save Address Prompt */}
+          {step === 'address' && showSavePrompt && (
+            <div className="p-4">
+              <div className="mb-4">
+                <h2 className="text-lg font-medium">Shipping to:</h2>
+                <p className="text-gray-600 dark:text-gray-400 mt-1">
+                  {shippingAddress.name}<br />
+                  {shippingAddress.street}<br />
+                  {shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}<br />
+                  {shippingAddress.country}
+                </p>
+              </div>
+              <SaveAddressPrompt
+                onSave={handleSaveAddress}
+                onSkip={handleSkipSave}
+                isSaving={isSavingAddress}
+                hasEncryptionKey={userHasEncryptionKey}
+                onSetupEncryption={() => router.push('/settings?section=privacy')}
+              />
+            </div>
           )}
 
           {/* Shipping Step */}
@@ -455,6 +693,17 @@ function CheckoutPage() {
       </div>
 
       <RightSidebar />
+
+      {/* Saved Address Management Modal */}
+      <SavedAddressModal
+        isOpen={showAddressModal}
+        onClose={() => setShowAddressModal(false)}
+        addresses={savedAddresses}
+        onAdd={handleAddAddressFromModal}
+        onUpdate={handleUpdateAddressFromModal}
+        onDelete={handleDeleteAddressFromModal}
+        onSetDefault={handleSetDefaultFromModal}
+      />
     </div>
   )
 }

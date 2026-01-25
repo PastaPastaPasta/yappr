@@ -113,3 +113,6 @@ export type {
 // Note: Private feed notification documents cannot be created due to ownership constraints
 // (actor can't sign documents owned by recipient). Notifications are derived by polling
 // followRequest documents and grant status instead. See notification-service.ts.
+
+// Saved address service (encrypted shipping addresses)
+export { savedAddressService } from './saved-address-service';

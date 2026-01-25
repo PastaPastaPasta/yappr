@@ -623,3 +623,29 @@ export interface StoreRatingSummary {
     5: number
   }
 }
+
+// Saved address for encrypted storage
+export interface SavedAddress {
+  id: string               // UUID
+  label: string            // "Home", "Work", etc.
+  address: ShippingAddress
+  contact: BuyerContact
+  isDefault?: boolean
+  createdAt: number
+}
+
+// Payload structure stored encrypted on-chain
+export interface SavedAddressPayload {
+  version: number          // Schema version
+  addresses: SavedAddress[]
+}
+
+// Document from platform
+export interface SavedAddressDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  $updatedAt?: number
+  $revision?: number
+  encryptedPayload: Uint8Array
+}
