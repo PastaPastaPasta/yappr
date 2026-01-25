@@ -5,7 +5,6 @@ import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS } from './payment-icons'
 import { DashPaymentWatcher } from './dash-payment-watcher'
-import { isDashScheme } from '@/lib/services/insight-api-service'
 import type { ParsedPaymentUri } from '@/lib/types'
 
 // Get scheme color for QR code styling
@@ -57,8 +56,8 @@ export function PaymentQRCode({
     ? paymentUri.uri.split(':')[1].split('?')[0]
     : paymentUri.uri
 
-  // Check if this is a Dash scheme and watching is enabled
-  const shouldWatch = watchForTransaction && isDashScheme(paymentUri.scheme)
+  // Enable watching if requested (DashPaymentWatcher handles scheme check internally)
+  const shouldWatch = watchForTransaction
 
   const handleCopy = async () => {
     try {
