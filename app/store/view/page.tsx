@@ -65,6 +65,8 @@ function StoreDetailContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'items' | 'reviews' | 'policies'>('items')
   const [cartItemCount, setCartItemCount] = useState(0)
+  const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
+  const [ownerUsername, setOwnerUsername] = useState<string | null>(null)
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -97,6 +99,26 @@ function StoreDetailContent() {
         // Parse store policies
         if (storeData) {
           setStorePolicies(parseStorePolicies(storeData.policies))
+
+          // Fetch owner profile and username
+          try {
+            const { unifiedProfileService } = await import('@/lib/services')
+            const { dpnsService } = await import('@/lib/services/dpns-service')
+
+            const [ownerProfile, ownerUname] = await Promise.all([
+              unifiedProfileService.getProfile(storeData.ownerId).catch(() => null),
+              dpnsService.resolveUsername(storeData.ownerId).catch(() => null)
+            ])
+
+            if (ownerProfile?.displayName) {
+              setOwnerDisplayName(ownerProfile.displayName)
+            }
+            if (ownerUname) {
+              setOwnerUsername(ownerUname)
+            }
+          } catch (ownerErr) {
+            console.error('Failed to load store owner info:', ownerErr)
+          }
         }
       } catch (error) {
         console.error('Failed to load store:', error)
@@ -260,6 +282,16 @@ function StoreDetailContent() {
                       {store.location}
                     </div>
                   )}
+                  {/* Store Owner */}
+                  <button
+                    onClick={() => router.push(`/user?id=${store.ownerId}`)}
+                    className="mt-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                  >
+                    by{' '}
+                    <span className="font-medium text-gray-700 dark:text-gray-200">
+                      {ownerUsername ? `@${ownerUsername}` : ownerDisplayName || `User ${store.ownerId.slice(-6)}`}
+                    </span>
+                  </button>
                 </div>
               </div>
 
