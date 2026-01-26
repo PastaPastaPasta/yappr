@@ -87,13 +87,21 @@ export default function StoreBrowsePage() {
       return
     }
 
+    let cancelled = false
+
     const checkBlockedOwners = async () => {
       const ownerIds = stores.map(store => store.ownerId)
       const blocked = await checkBlockedForAuthors(user.identityId, ownerIds)
-      setBlockedOwners(blocked)
+      if (!cancelled) {
+        setBlockedOwners(blocked)
+      }
     }
 
     checkBlockedOwners().catch(console.error)
+
+    return () => {
+      cancelled = true
+    }
   }, [user?.identityId, stores])
 
   // Filter stores by search query and block status
