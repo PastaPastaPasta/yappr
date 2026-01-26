@@ -70,8 +70,11 @@ function ItemDetailContent() {
     }
   }, [])
 
-  // Subscribe to cart changes
+  // Subscribe to cart changes and initialize count
   useEffect(() => {
+    // Initialize with current count immediately
+    setCartItemCount(cartService.getItemCount())
+    // Then subscribe to future changes
     const unsubscribe = cartService.subscribe(() => {
       setCartItemCount(cartService.getItemCount())
     })

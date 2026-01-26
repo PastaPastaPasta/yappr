@@ -132,17 +132,22 @@ function OrdersPage() {
                     ? normalizeKeyData(sellerEncryptionKey.data)
                     : null
 
-                  const payload = await storeOrderService.decryptOrderPayload(
-                    order.encryptedPayload,
-                    order.nonce,
-                    order.storeId,
-                    buyerPrivKey,
-                    sellerPubKey,
-                    true // isBuyer
-                  )
+                  // Skip decryption if seller public key is missing
+                  if (!sellerPubKey) {
+                    console.warn(`Skipping order ${order.id} decryption: seller public key not found`)
+                  } else {
+                    const payload = await storeOrderService.decryptOrderPayload(
+                      order.encryptedPayload,
+                      order.nonce,
+                      order.storeId,
+                      buyerPrivKey,
+                      sellerPubKey,
+                      true // isBuyer
+                    )
 
-                  if (payload) {
-                    payloadMap.set(order.id, payload)
+                    if (payload) {
+                      payloadMap.set(order.id, payload)
+                    }
                   }
                 } catch (decryptError) {
                   console.warn(`Failed to decrypt order ${order.id}:`, decryptError)
