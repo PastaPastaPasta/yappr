@@ -55,23 +55,31 @@ function OrdersPage() {
   const [reviewModalData, setReviewModalData] = useState<{ order: StoreOrder; store: Store } | null>(null)
 
   // Refresh just the order statuses (lightweight refresh)
+  // Merges new statuses into existing map to preserve data on transient failures
   const refreshStatuses = useCallback(async (orderList: StoreOrder[]) => {
     if (orderList.length === 0) return
 
-    const statusMap = new Map<string, OrderStatusUpdate>()
+    const updates: Array<{ orderId: string; status: OrderStatusUpdate }> = []
     await Promise.all(
       orderList.map(async (order) => {
         try {
           const status = await orderStatusService.getLatestStatus(order.id)
           if (status) {
-            statusMap.set(order.id, status)
+            updates.push({ orderId: order.id, status })
           }
         } catch (e) {
-          // Ignore errors
+          // Ignore errors - preserve existing status for this order
         }
       })
     )
-    setOrderStatuses(statusMap)
+    // Merge updates into existing map
+    setOrderStatuses(prev => {
+      const merged = new Map(prev)
+      for (const { orderId, status } of updates) {
+        merged.set(orderId, status)
+      }
+      return merged
+    })
   }, [])
 
   // Load orders

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, Suspense } from 'react'
+import { useState, useEffect, useMemo, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -59,6 +59,16 @@ function ItemDetailContent() {
   const [variantSelections, setVariantSelections] = useState<Record<string, string>>({})
   const [addedToCart, setAddedToCart] = useState(false)
   const [cartItemCount, setCartItemCount] = useState(0)
+  const addedToCartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (addedToCartTimeoutRef.current) {
+        clearTimeout(addedToCartTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -198,8 +208,12 @@ function ItemDetailContent() {
     cartService.addStoreItem(item, variantKey, quantity)
     setAddedToCart(true)
 
+    // Clear any existing timeout before setting a new one
+    if (addedToCartTimeoutRef.current) {
+      clearTimeout(addedToCartTimeoutRef.current)
+    }
     // Reset after animation
-    setTimeout(() => setAddedToCart(false), 2000)
+    addedToCartTimeoutRef.current = setTimeout(() => setAddedToCart(false), 2000)
   }
 
   if (isLoading) {
@@ -247,15 +261,17 @@ function ItemDetailContent() {
             <div className="flex items-center justify-between p-4">
               <button
                 onClick={() => router.back()}
+                aria-label="Go back"
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
-                <ArrowLeftIcon className="h-5 w-5" />
+                <ArrowLeftIcon className="h-5 w-5" aria-hidden="true" />
               </button>
               <button
                 onClick={() => router.push('/cart')}
+                aria-label="View cart"
                 className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
-                <ShoppingCartIcon className="h-6 w-6" />
+                <ShoppingCartIcon className="h-6 w-6" aria-hidden="true" />
                 {cartItemCount > 0 && (
                   <span className="absolute -top-1 -right-1 w-5 h-5 bg-yappr-500 text-white text-xs rounded-full flex items-center justify-center">
                     {cartItemCount}

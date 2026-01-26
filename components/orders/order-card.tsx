@@ -50,7 +50,8 @@ export function OrderCard({
       <div
         onClick={onToggle}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          // Only trigger when the wrapper itself has focus, not child buttons
+          if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault()
             onToggle()
           }
@@ -127,16 +128,21 @@ export function OrderCard({
             {status.trackingCarrier && `${status.trackingCarrier}: `}
             {status.trackingNumber}
           </p>
-          {status.trackingCarrier && (
-            <a
-              href={orderStatusService.getTrackingUrl(status.trackingCarrier, status.trackingNumber) || '#'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-yappr-500 hover:underline mt-1 inline-block"
-            >
-              Track Package
-            </a>
-          )}
+          {(() => {
+            const trackingUrl = status.trackingCarrier
+              ? orderStatusService.getTrackingUrl(status.trackingCarrier, status.trackingNumber)
+              : null
+            return trackingUrl ? (
+              <a
+                href={trackingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-yappr-500 hover:underline mt-1 inline-block"
+              >
+                Track Package
+              </a>
+            ) : null
+          })()}
         </div>
       )}
 
