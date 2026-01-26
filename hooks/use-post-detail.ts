@@ -208,7 +208,17 @@ export function usePostDetail({
 
     try {
       // Load post (transformDocument returns post with defaults, no enrichment)
+      // Try post first, then reply if not found (replies are a separate document type)
       loadedPost = await postService.getPostById(postId, { skipEnrichment: true })
+
+      if (!loadedPost) {
+        // Not a post - check if it's a reply
+        const reply = await replyService.getReplyById(postId, { skipEnrichment: true })
+        if (reply) {
+          // Treat the reply as the main "post" for this detail view
+          loadedPost = reply as Post
+        }
+      }
 
       if (!isCurrent()) return
 
