@@ -8,6 +8,7 @@ import { generateAvatarDataUri } from './avatar-generator';
 // Approved payment URI schemes (whitelist)
 export const APPROVED_PAYMENT_SCHEMES = [
   'dash:',           // Dash
+  'tdash:',          // Dash (Testnet)
   'bitcoin:',        // Bitcoin
   'litecoin:',       // Litecoin
   'ethereum:',       // Ethereum

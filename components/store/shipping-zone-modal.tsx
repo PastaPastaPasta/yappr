@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { XMarkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
+import { getCurrencyStep, getCurrencyDecimals, toSmallestUnit, fromSmallestUnit } from '@/lib/utils/format'
 import type { ShippingZone, ShippingPricingConfig, SubtotalMultiplier } from '@/lib/types'
 
 type RateType = 'flat' | 'weight_tiered' | 'price_tiered'
@@ -41,6 +42,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
   const [weightUnit, setWeightUnit] = useState('lb')
   const [currency, setCurrency] = useState('USD')
   const [countryPattern, setCountryPattern] = useState('')
+  const [isWorldwide, setIsWorldwide] = useState(false)
   const [priority, setPriority] = useState('0')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [multipliers, setMultipliers] = useState<MultiplierRow[]>([])
@@ -50,23 +52,27 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
   // Pre-fill form when editing
   useEffect(() => {
     if (zone) {
+      const zoneCurrency = zone.currency || 'USD'
+      const decimals = getCurrencyDecimals(zoneCurrency)
+
       setName(zone.name || '')
       setRateType(zone.rateType || 'flat')
-      setBaseRate(zone.flatRate ? (zone.flatRate / 100).toString() : '')
-      setCurrency(zone.currency || 'USD')
+      setBaseRate(zone.flatRate ? fromSmallestUnit(zone.flatRate, zoneCurrency).toFixed(decimals) : '')
+      setCurrency(zoneCurrency)
       setCountryPattern(zone.countryPattern || '')
+      setIsWorldwide(!zone.countryPattern)
       setPriority(zone.priority?.toString() || '0')
 
       // Parse existing pricing config from tiers
       if (zone.tiers && !Array.isArray(zone.tiers)) {
         const config = zone.tiers as ShippingPricingConfig
-        setWeightRate(config.weightRate ? (config.weightRate / 100).toString() : '')
+        setWeightRate(config.weightRate ? fromSmallestUnit(config.weightRate, zoneCurrency).toFixed(decimals) : '')
         setWeightUnit(config.weightUnit || 'lb')
 
         if (config.subtotalMultipliers && config.subtotalMultipliers.length > 0) {
           setMultipliers(config.subtotalMultipliers.map(m => ({
             id: generateId(),
-            upTo: m.upTo !== null ? (m.upTo / 100).toString() : '',
+            upTo: m.upTo !== null ? fromSmallestUnit(m.upTo, zoneCurrency).toFixed(decimals) : '',
             percent: m.percent.toString()
           })))
         } else {
@@ -86,6 +92,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
       setWeightUnit('lb')
       setCurrency('USD')
       setCountryPattern('')
+      setIsWorldwide(false)
       setPriority('0')
       setMultipliers([])
     }
@@ -112,16 +119,16 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
 
     setIsSubmitting(true)
     try {
-      const baseRateInCents = baseRate ? Math.round(parseFloat(baseRate) * 100) : 0
-      const weightRateInCents = weightRate ? Math.round(parseFloat(weightRate) * 100) : 0
+      const baseRateInSmallestUnit = baseRate ? toSmallestUnit(parseFloat(baseRate), currency) : 0
+      const weightRateInSmallestUnit = weightRate ? toSmallestUnit(parseFloat(weightRate), currency) : 0
 
       // Build combined pricing config if we have weight rate or multipliers
       let tiers: ShippingPricingConfig | undefined
-      if (weightRateInCents > 0 || multipliers.length > 0) {
+      if (weightRateInSmallestUnit > 0 || multipliers.length > 0) {
         const subtotalMultipliers: SubtotalMultiplier[] = multipliers
           .filter(m => m.percent !== '')
           .map(m => ({
-            upTo: m.upTo !== '' ? Math.round(parseFloat(m.upTo) * 100) : null,
+            upTo: m.upTo !== '' ? toSmallestUnit(parseFloat(m.upTo), currency) : null,
             percent: parseInt(m.percent, 10)
           }))
           // Sort by upTo ascending (null goes last)
@@ -132,8 +139,8 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
           })
 
         tiers = {}
-        if (weightRateInCents > 0) {
-          tiers.weightRate = weightRateInCents
+        if (weightRateInSmallestUnit > 0) {
+          tiers.weightRate = weightRateInSmallestUnit
           tiers.weightUnit = weightUnit
         }
         if (subtotalMultipliers.length > 0) {
@@ -144,10 +151,10 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
       await onSave({
         name: name.trim(),
         rateType,
-        flatRate: baseRateInCents || undefined,
+        flatRate: baseRateInSmallestUnit || undefined,
         tiers,
         currency,
-        countryPattern: countryPattern.trim() || undefined,
+        countryPattern: isWorldwide ? undefined : (countryPattern.trim() || undefined),
         priority: Math.max(0, priority ? parseInt(priority, 10) : 0)
       })
       // Reset form
@@ -156,6 +163,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
       setWeightRate('')
       setWeightUnit('lb')
       setCountryPattern('')
+      setIsWorldwide(false)
       setPriority('0')
       setMultipliers([])
     } finally {
@@ -197,17 +205,33 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
 
           {/* Country Pattern */}
           <div>
-            <label className="block text-sm font-medium mb-2">Country Pattern (optional)</label>
-            <input
-              type="text"
-              value={countryPattern}
-              onChange={(e) => setCountryPattern(e.target.value)}
-              placeholder="e.g., US, US|CA, US.IL"
-              className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Examples: US, US|CA, US.IL (state), US.6 (zip prefix), CA.K (postal prefix)
-            </p>
+            <label className="block text-sm font-medium mb-2">Region</label>
+            <label className="flex items-center gap-2 mb-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isWorldwide}
+                onChange={(e) => {
+                  setIsWorldwide(e.target.checked)
+                  if (e.target.checked) setCountryPattern('')
+                }}
+                className="w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+              />
+              <span className="text-sm">Worldwide (ships to all countries)</span>
+            </label>
+            {!isWorldwide && (
+              <>
+                <input
+                  type="text"
+                  value={countryPattern}
+                  onChange={(e) => setCountryPattern(e.target.value)}
+                  placeholder="e.g., US, US|CA, US.IL"
+                  className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Examples: US, US|CA, US.IL (state), US.6 (zip prefix), CA.K (postal prefix)
+                </p>
+              </>
+            )}
           </div>
 
           {/* Priority */}
@@ -248,7 +272,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                     value={baseRate}
                     onChange={(e) => setBaseRate(e.target.value)}
                     placeholder="0.00"
-                    step="0.01"
+                    step={getCurrencyStep(currency)}
                     min="0"
                     className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
@@ -280,7 +304,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                     value={weightRate}
                     onChange={(e) => setWeightRate(e.target.value)}
                     placeholder="0.00"
-                    step="0.01"
+                    step={getCurrencyStep(currency)}
                     min="0"
                     className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
@@ -326,7 +350,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                         value={m.upTo}
                         onChange={(e) => updateMultiplier(m.id, 'upTo', e.target.value)}
                         placeholder={index === multipliers.length - 1 ? 'Above' : '0.00'}
-                        step="0.01"
+                        step={getCurrencyStep(currency)}
                         min="0"
                         disabled={index === multipliers.length - 1 && m.upTo === ''}
                         className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"

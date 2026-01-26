@@ -11,9 +11,22 @@ interface PaymentQRCodeDialogProps {
   onClose: () => void
   paymentUri: ParsedPaymentUri | null
   recipientName?: string
+  watchForTransaction?: boolean
+  onTransactionDetected?: (txid: string, amountDash: number) => void
+  onWatchTimeout?: () => void
+  onDone?: () => void
 }
 
-export function PaymentQRCodeDialog({ isOpen, onClose, paymentUri, recipientName }: PaymentQRCodeDialogProps) {
+export function PaymentQRCodeDialog({
+  isOpen,
+  onClose,
+  paymentUri,
+  recipientName,
+  watchForTransaction = false,
+  onTransactionDetected,
+  onWatchTimeout,
+  onDone
+}: PaymentQRCodeDialogProps) {
   if (!paymentUri) return null
 
   const displayName = recipientName || 'this user'
@@ -58,6 +71,10 @@ export function PaymentQRCodeDialog({ isOpen, onClose, paymentUri, recipientName
                     <PaymentQRCode
                       paymentUri={paymentUri}
                       size={200}
+                      watchForTransaction={watchForTransaction}
+                      onTransactionDetected={onTransactionDetected}
+                      onWatchTimeout={onWatchTimeout}
+                      onDone={onDone}
                     />
                   </motion.div>
                 </Dialog.Content>

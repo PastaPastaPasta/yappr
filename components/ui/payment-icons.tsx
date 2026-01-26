@@ -5,6 +5,7 @@ import { CurrencyDollarIcon } from '@heroicons/react/24/outline'
 // Payment scheme to display name mapping
 export const PAYMENT_SCHEME_LABELS: Record<string, string> = {
   'dash:': 'Dash',
+  'tdash:': 'Dash (Testnet)',
   'bitcoin:': 'Bitcoin',
   'litecoin:': 'Litecoin',
   'ethereum:': 'Ethereum',
@@ -24,6 +25,7 @@ export const PAYMENT_SCHEME_LABELS: Record<string, string> = {
 // Simple colored circle icons for each payment scheme
 const PAYMENT_COLORS: Record<string, string> = {
   'dash:': '#008DE4',      // Dash blue
+  'tdash:': '#008DE4',     // Dash testnet (same color)
   'bitcoin:': '#F7931A',   // Bitcoin orange
   'litecoin:': '#345D9D',  // Litecoin blue
   'ethereum:': '#627EEA',  // Ethereum purple
@@ -84,6 +86,7 @@ function getSchemeAbbreviation(scheme: string): string {
   const lowerScheme = scheme.toLowerCase()
   switch (lowerScheme) {
     case 'dash:': return 'D'
+    case 'tdash:': return 'tD'
     case 'bitcoin:': return 'B'
     case 'litecoin:': return 'L'
     case 'ethereum:': return 'E'

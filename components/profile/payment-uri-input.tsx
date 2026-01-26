@@ -14,6 +14,7 @@ interface PaymentUriInputProps {
 // Helper to get scheme display name
 const SCHEME_LABELS: Record<string, string> = {
   'dash:': 'Dash',
+  'tdash:': 'tDash',
   'bitcoin:': 'Bitcoin',
   'litecoin:': 'Litecoin',
   'ethereum:': 'Ethereum',

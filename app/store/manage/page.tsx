@@ -20,6 +20,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { ShippingZoneModal, PaymentMethodModal } from '@/components/store'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
@@ -54,6 +55,12 @@ function StoreManagePage() {
   const [editingZone, setEditingZone] = useState<ShippingZone | null>(null)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [showEncryptionKeyModal, setShowEncryptionKeyModal] = useState(false)
+
+  // Delete confirmation state
+  const [deleteItemId, setDeleteItemId] = useState<string | null>(null)
+  const [deleteZoneId, setDeleteZoneId] = useState<string | null>(null)
+  const [deletePaymentIndex, setDeletePaymentIndex] = useState<number | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Load store data
   useEffect(() => {
@@ -126,25 +133,33 @@ function StoreManagePage() {
     loadData().catch(console.error)
   }, [sdkReady, storeId, user?.identityId, router])
 
-  const handleDeleteItem = async (itemId: string) => {
-    if (!user?.identityId || !confirm('Are you sure you want to delete this item?')) return
+  const handleDeleteItem = async () => {
+    if (!user?.identityId || !deleteItemId) return
 
     try {
-      await storeItemService.delete(itemId, user.identityId)
-      setItems(items.filter(i => i.id !== itemId))
+      setIsDeleting(true)
+      await storeItemService.delete(deleteItemId, user.identityId)
+      setItems(items.filter(i => i.id !== deleteItemId))
+      setDeleteItemId(null)
     } catch (error) {
       console.error('Failed to delete item:', error)
+    } finally {
+      setIsDeleting(false)
     }
   }
 
-  const handleDeleteZone = async (zoneId: string) => {
-    if (!user?.identityId || !confirm('Are you sure you want to delete this shipping zone?')) return
+  const handleDeleteZone = async () => {
+    if (!user?.identityId || !deleteZoneId) return
 
     try {
-      await shippingZoneService.deleteZone(zoneId, user.identityId)
-      setZones(zones.filter(z => z.id !== zoneId))
+      setIsDeleting(true)
+      await shippingZoneService.deleteZone(deleteZoneId, user.identityId)
+      setZones(zones.filter(z => z.id !== deleteZoneId))
+      setDeleteZoneId(null)
     } catch (error) {
       console.error('Failed to delete zone:', error)
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -191,29 +206,48 @@ function StoreManagePage() {
       label: data.label
     }
     const currentUris = store.paymentUris || []
+    // Preserve all existing fields during update (SDK replace operation)
     const updatedStore = await storeService.updateStore(store.id, user.identityId, {
       name: store.name,
+      description: store.description,
+      logoUrl: store.logoUrl,
+      bannerUrl: store.bannerUrl,
       status: store.status,
-      paymentUris: [...currentUris, newUri]
+      paymentUris: [...currentUris, newUri],
+      defaultCurrency: store.defaultCurrency,
+      policies: store.policies,
+      location: store.location,
+      contactMethods: store.contactMethods
     })
     setStore(updatedStore)
     setShowPaymentModal(false)
   }
 
-  const handleRemovePayment = async (index: number) => {
-    if (!user?.identityId || !store?.id || !store.paymentUris) return
-    if (!confirm('Remove this payment method?')) return
+  const handleRemovePayment = async () => {
+    if (!user?.identityId || !store?.id || !store.paymentUris || deletePaymentIndex === null) return
 
     try {
-      const updatedUris = store.paymentUris.filter((_, i) => i !== index)
+      setIsDeleting(true)
+      const updatedUris = store.paymentUris.filter((_, i) => i !== deletePaymentIndex)
+      // Preserve all existing fields during update (SDK replace operation)
       const updatedStore = await storeService.updateStore(store.id, user.identityId, {
         name: store.name,
+        description: store.description,
+        logoUrl: store.logoUrl,
+        bannerUrl: store.bannerUrl,
         status: store.status,
-        paymentUris: updatedUris
+        paymentUris: updatedUris,
+        defaultCurrency: store.defaultCurrency,
+        policies: store.policies,
+        location: store.location,
+        contactMethods: store.contactMethods
       })
       setStore(updatedStore)
+      setDeletePaymentIndex(null)
     } catch (error) {
       console.error('Failed to remove payment method:', error)
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -449,7 +483,7 @@ function StoreManagePage() {
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
                           <button
-                            onClick={() => handleDeleteItem(item.id)}
+                            onClick={() => setDeleteItemId(item.id)}
                             className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg"
                           >
                             <TrashIcon className="h-4 w-4 text-red-500" />
@@ -513,7 +547,7 @@ function StoreManagePage() {
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
                           <button
-                            onClick={() => handleDeleteZone(zone.id)}
+                            onClick={() => setDeleteZoneId(zone.id)}
                             className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg"
                           >
                             <TrashIcon className="h-4 w-4 text-red-500" />
@@ -551,7 +585,19 @@ function StoreManagePage() {
                         onChange={async (e) => {
                           const newStatus = e.target.value as 'active' | 'paused' | 'closed'
                           try {
-                            const updated = await storeService.updateStore(store.id, user!.identityId, { name: store.name, status: newStatus })
+                            // Preserve all existing fields during update (SDK replace operation)
+                            const updated = await storeService.updateStore(store.id, user!.identityId, {
+                              name: store.name,
+                              description: store.description,
+                              logoUrl: store.logoUrl,
+                              bannerUrl: store.bannerUrl,
+                              status: newStatus,
+                              paymentUris: store.paymentUris,
+                              defaultCurrency: store.defaultCurrency,
+                              policies: store.policies,
+                              location: store.location,
+                              contactMethods: store.contactMethods
+                            })
                             setStore(updated)
                           } catch (error) {
                             console.error('Failed to update status:', error)
@@ -594,7 +640,7 @@ function StoreManagePage() {
                           <p className="text-sm text-gray-500 font-mono truncate">{uri.uri}</p>
                         </div>
                         <button
-                          onClick={() => handleRemovePayment(i)}
+                          onClick={() => setDeletePaymentIndex(i)}
                           className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg ml-2"
                         >
                           <TrashIcon className="h-4 w-4 text-red-500" />
@@ -613,20 +659,6 @@ function StoreManagePage() {
                 )}
               </div>
 
-              <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-                <h3 className="font-medium mb-4">Supported Regions</h3>
-                {store.supportedRegions && store.supportedRegions.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {store.supportedRegions.map((region) => (
-                      <span key={region} className="px-3 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm">
-                        {region}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500">No regions specified</p>
-                )}
-              </div>
             </div>
           )}
         </main>
@@ -662,6 +694,40 @@ function StoreManagePage() {
           setHasEncryptionKey(true)
         }}
         context="store"
+      />
+
+      {/* Delete Confirmation Dialogs */}
+      <ConfirmDialog
+        isOpen={deleteItemId !== null}
+        onClose={() => setDeleteItemId(null)}
+        onConfirm={handleDeleteItem}
+        title="Delete Product"
+        message="Are you sure you want to delete this product? This action cannot be undone."
+        confirmText="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+      />
+
+      <ConfirmDialog
+        isOpen={deleteZoneId !== null}
+        onClose={() => setDeleteZoneId(null)}
+        onConfirm={handleDeleteZone}
+        title="Delete Shipping Zone"
+        message="Are you sure you want to delete this shipping zone? This action cannot be undone."
+        confirmText="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+      />
+
+      <ConfirmDialog
+        isOpen={deletePaymentIndex !== null}
+        onClose={() => setDeletePaymentIndex(null)}
+        onConfirm={handleRemovePayment}
+        title="Remove Payment Method"
+        message="Are you sure you want to remove this payment method?"
+        confirmText="Remove"
+        variant="danger"
+        isLoading={isDeleting}
       />
     </div>
   )

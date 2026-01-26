@@ -15,7 +15,7 @@ import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { ReviewCard } from '@/components/store'
+import { ReviewCard, PoliciesDisplay } from '@/components/store'
 import { formatPrice } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -24,7 +24,8 @@ import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { cartService } from '@/lib/services/cart-service'
-import type { Store, StoreItem, StoreReview, StoreRatingSummary } from '@/lib/types'
+import { parseStorePolicies } from '@/lib/utils/policies'
+import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy } from '@/lib/types'
 
 function LoadingFallback() {
   return (
@@ -60,9 +61,12 @@ function StoreDetailContent() {
   const [items, setItems] = useState<StoreItem[]>([])
   const [reviews, setReviews] = useState<StoreReview[]>([])
   const [ratingSummary, setRatingSummary] = useState<StoreRatingSummary | null>(null)
+  const [storePolicies, setStorePolicies] = useState<StorePolicy[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'items' | 'reviews'>('items')
+  const [activeTab, setActiveTab] = useState<'items' | 'reviews' | 'policies'>('items')
   const [cartItemCount, setCartItemCount] = useState(0)
+  const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
+  const [ownerUsername, setOwnerUsername] = useState<string | null>(null)
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -91,6 +95,31 @@ function StoreDetailContent() {
         setItems(itemsData.items.filter(i => i.status === 'active'))
         setReviews(reviewsData.reviews)
         setRatingSummary(ratingData)
+
+        // Parse store policies
+        if (storeData) {
+          setStorePolicies(parseStorePolicies(storeData.policies))
+
+          // Fetch owner profile and username
+          try {
+            const { unifiedProfileService } = await import('@/lib/services')
+            const { dpnsService } = await import('@/lib/services/dpns-service')
+
+            const [ownerProfile, ownerUname] = await Promise.all([
+              unifiedProfileService.getProfile(storeData.ownerId).catch(() => null),
+              dpnsService.resolveUsername(storeData.ownerId).catch(() => null)
+            ])
+
+            if (ownerProfile?.displayName) {
+              setOwnerDisplayName(ownerProfile.displayName)
+            }
+            if (ownerUname) {
+              setOwnerUsername(ownerUname)
+            }
+          } catch (ownerErr) {
+            console.error('Failed to load store owner info:', ownerErr)
+          }
+        }
       } catch (error) {
         console.error('Failed to load store:', error)
       } finally {
@@ -253,6 +282,16 @@ function StoreDetailContent() {
                       {store.location}
                     </div>
                   )}
+                  {/* Store Owner */}
+                  <button
+                    onClick={() => router.push(`/user?id=${store.ownerId}`)}
+                    className="mt-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                  >
+                    by{' '}
+                    <span className="font-medium text-gray-700 dark:text-gray-200">
+                      {ownerUsername ? `@${ownerUsername}` : ownerDisplayName || `User ${store.ownerId.slice(-6)}`}
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -287,6 +326,19 @@ function StoreDetailContent() {
             >
               Reviews ({reviews.length})
               {activeTab === 'reviews' && (
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-yappr-500 rounded-full" />
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('policies')}
+              className={`flex-1 py-3 text-center font-medium transition-colors relative ${
+                activeTab === 'policies'
+                  ? 'text-gray-900 dark:text-white'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Policies
+              {activeTab === 'policies' && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-yappr-500 rounded-full" />
               )}
             </button>
@@ -345,7 +397,7 @@ function StoreDetailContent() {
                 })
               )}
             </div>
-          ) : (
+          ) : activeTab === 'reviews' ? (
             <div className="divide-y divide-gray-200 dark:divide-gray-800">
               {reviews.length === 0 ? (
                 <div className="py-12 text-center">
@@ -357,6 +409,8 @@ function StoreDetailContent() {
                 ))
               )}
             </div>
+          ) : (
+            <PoliciesDisplay policies={storePolicies} />
           )}
         </main>
       </div>

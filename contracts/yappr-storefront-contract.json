@@ -80,12 +80,6 @@
         "position": 9,
         "maxLength": 1000,
         "description": "JSON object of contact methods (email, signal, twitter, telegram)"
-      },
-      "supportedRegions": {
-        "type": "string",
-        "position": 10,
-        "maxLength": 500,
-        "description": "JSON array of supported region codes"
       }
     },
     "description": "A merchant store profile (one per user)",
@@ -602,6 +596,36 @@
       }
     },
     "description": "A review of a store from a buyer who completed an order",
+    "additionalProperties": false
+  },
+  "savedAddress": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "owner",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "encryptedPayload"
+    ],
+    "properties": {
+      "encryptedPayload": {
+        "type": "array",
+        "maxItems": 5000,
+        "minItems": 1,
+        "position": 0,
+        "byteArray": true,
+        "description": "ECIES encrypted JSON array of saved addresses"
+      }
+    },
+    "description": "Encrypted saved shipping addresses (one document per user)",
     "additionalProperties": false
   }
 }

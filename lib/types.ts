@@ -266,6 +266,12 @@ export interface UsernameRegistrationResult {
 // Storefront Types
 // ============================================================================
 
+// Store policy for arbitrary seller-defined policies
+export interface StorePolicy {
+  name: string     // Policy title, e.g., "Return Policy"
+  content: string  // Policy text
+}
+
 // Store status values
 export type StoreStatus = 'active' | 'paused' | 'closed'
 
@@ -278,8 +284,9 @@ export type OrderStatus = 'pending' | 'payment_received' | 'processing' | 'shipp
 // Shipping rate type values
 export type ShippingRateType = 'flat' | 'weight_tiered' | 'price_tiered'
 
-// Contact methods for a store
-export interface StoreContactMethods {
+// Contact methods for a store - uses same SocialLink format as profiles
+// Legacy StoreContactMethods type kept for backward compatibility parsing
+export interface LegacyStoreContactMethods {
   email?: string
   signal?: string
   twitter?: string
@@ -302,8 +309,7 @@ export interface StoreDocument {
   defaultCurrency?: string
   policies?: string
   location?: string
-  contactMethods?: string // JSON string of StoreContactMethods
-  supportedRegions?: string // JSON string of string[]
+  contactMethods?: string // JSON string of SocialLink[] (or legacy StoreContactMethods object)
 }
 
 // Parsed store for UI display
@@ -321,8 +327,7 @@ export interface Store {
   defaultCurrency?: string
   policies?: string
   location?: string
-  contactMethods?: StoreContactMethods
-  supportedRegions?: string[]
+  contactMethods?: SocialLink[]
   // Enriched fields
   ownerUsername?: string
   ownerDisplayName?: string
@@ -340,7 +345,7 @@ export interface VariantAxis {
 export interface VariantCombination {
   key: string // e.g., "Blue|Large"
   price: number // Price in smallest currency unit
-  stock: number
+  stock?: number // Optional - if undefined, inventory is not tracked (unlimited)
   sku?: string
   imageUrl?: string
 }
@@ -617,4 +622,30 @@ export interface StoreRatingSummary {
     4: number
     5: number
   }
+}
+
+// Saved address for encrypted storage
+export interface SavedAddress {
+  id: string               // UUID
+  label: string            // "Home", "Work", etc.
+  address: ShippingAddress
+  contact: BuyerContact
+  isDefault?: boolean
+  createdAt: number
+}
+
+// Payload structure stored encrypted on-chain
+export interface SavedAddressPayload {
+  version: number          // Schema version
+  addresses: SavedAddress[]
+}
+
+// Document from platform
+export interface SavedAddressDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  $updatedAt?: number
+  $revision?: number
+  encryptedPayload: Uint8Array
 }

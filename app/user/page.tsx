@@ -1556,6 +1556,13 @@ function UserProfileContent() {
         }}
         paymentUri={selectedQrPayment}
         recipientName={username || displayName}
+        watchForTransaction={true}
+        onDone={() => {
+          setSelectedQrPayment(null)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('tip')
+          window.history.replaceState({}, '', url.toString())
+        }}
       />
 
       {/* Username Registration Modal */}
