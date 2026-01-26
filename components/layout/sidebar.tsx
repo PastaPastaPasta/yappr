@@ -43,7 +43,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
     return [
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
-      { name: 'Following', href: '/following', icon: UserGroupIcon, activeIcon: UserGroupIconSolid },
+      { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
       { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
     ]
   }
