@@ -211,7 +211,7 @@ export function usePostDetail({
       }
 
       // Load direct replies (now from reply-service)
-      const repliesResult = await replyService.getReplies(postId, { skipEnrichment: true })
+      const repliesResult = await replyService.getReplies(postId)
       const directReplies = repliesResult.documents
 
       // Build author's thread chain recursively
@@ -223,7 +223,7 @@ export function usePostDetail({
       // Helper to recursively fetch author's thread continuation
       const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
         if (parentIds.length === 0) return []
-        const nestedMap = await replyService.getNestedReplies(parentIds, { skipEnrichment: true })
+        const nestedMap = await replyService.getNestedReplies(parentIds)
         const authorContinuations: Reply[] = []
 
         nestedMap.forEach((nested, parentId) => {
@@ -270,7 +270,7 @@ export function usePostDetail({
       const allIdsForNested = Array.from(new Set([...allDirectReplyIds, ...allThreadReplyIds]))
 
       const nestedRepliesMap = allIdsForNested.length > 0
-        ? await replyService.getNestedReplies(allIdsForNested, { skipEnrichment: true })
+        ? await replyService.getNestedReplies(allIdsForNested)
         : new Map<string, Reply[]>()
 
       // Build threaded reply tree
@@ -299,7 +299,7 @@ export function usePostDetail({
       // Set initial state immediately (with placeholder data)
       setState({ post: loadedPost, replies, replyThreads })
 
-      // Enrich the main post only (replies are already enriched by replyService)
+      // Enrich the main post (replies are enriched by replyService during loading)
       await enrich([loadedPost])
 
     } catch (err) {
