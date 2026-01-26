@@ -10,10 +10,14 @@ import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 
+type EncryptionKeyContext = 'private-feed' | 'store' | 'generic'
+
 interface AddEncryptionKeyModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess?: () => void
+  /** Context determines the messaging shown in the modal */
+  context?: EncryptionKeyContext
 }
 
 type Step = 'intro' | 'generate' | 'critical-key' | 'adding' | 'success' | 'error'
@@ -33,8 +37,57 @@ export function AddEncryptionKeyModal({
   isOpen,
   onClose,
   onSuccess,
+  context = 'generic',
 }: AddEncryptionKeyModalProps) {
   const { user } = useAuth()
+
+  // Context-specific messaging
+  const contextMessages = {
+    'private-feed': {
+      description: 'To use private feeds, you need an encryption key on your identity. This key is automatically recreated from your login key — unless your login key changes.',
+      backupReason: 'If your login key ever changes, this backup is the only way to recover your private feed content.',
+      benefits: [
+        'Keeps your private posts private',
+        'Lets you read private feeds you follow',
+        'Manages access securely behind the scenes',
+      ],
+      successItems: [
+        'Enable your private feed',
+        'Request access to others\' private feeds',
+        'View encrypted content from feeds you follow',
+      ],
+    },
+    'store': {
+      description: 'To receive orders, you need an encryption key on your identity. This allows buyers to securely send you their shipping details and order information.',
+      backupReason: 'If your login key ever changes, this backup is the only way to decrypt past order messages.',
+      benefits: [
+        'Receive encrypted shipping addresses from buyers',
+        'Securely communicate order details',
+        'Protect customer information',
+      ],
+      successItems: [
+        'Receive orders from buyers',
+        'View encrypted shipping addresses',
+        'Securely manage customer information',
+      ],
+    },
+    'generic': {
+      description: 'An encryption key allows you to send and receive encrypted messages on Dash Platform. This key is automatically recreated from your login key — unless your login key changes.',
+      backupReason: 'If your login key ever changes, this backup is the only way to decrypt past encrypted content.',
+      benefits: [
+        'Send and receive encrypted messages',
+        'Access encrypted content',
+        'Secure communications on Dash Platform',
+      ],
+      successItems: [
+        'Send and receive encrypted messages',
+        'Access encrypted content',
+        'Use features requiring encryption',
+      ],
+    },
+  }
+
+  const messages = contextMessages[context]
   const [step, setStep] = useState<Step>('intro')
   const [privateKeyWif, setPrivateKeyWif] = useState<string>('')
   const [privateKeyBytes, setPrivateKeyBytes] = useState<Uint8Array | null>(null)
@@ -195,8 +248,7 @@ export function AddEncryptionKeyModal({
             </Dialog.Title>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              To use private feeds, you need an encryption key on your identity.
-              This key is automatically recreated from your login key — unless your login key changes.
+              {messages.description}
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
@@ -206,8 +258,7 @@ export function AddEncryptionKeyModal({
                   <div className="text-sm text-amber-700 dark:text-amber-300 space-y-2">
                     <p className="font-medium">Why save a backup?</p>
                     <p>
-                      If your login key ever changes, this backup is the only way to recover
-                      your private feed content. The key will be shown once.
+                      {messages.backupReason} The key will be shown once.
                     </p>
                   </div>
                 </div>
@@ -216,18 +267,12 @@ export function AddEncryptionKeyModal({
               <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
                 <h4 className="font-medium mb-2 text-sm">What this key does:</h4>
                 <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
-                  <li className="flex gap-2">
-                    <span className="text-yappr-500">•</span>
-                    Keeps your private posts private
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-yappr-500">•</span>
-                    Lets you read private feeds you follow
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-yappr-500">•</span>
-                    Manages access securely behind the scenes
-                  </li>
+                  {messages.benefits.map((benefit, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="text-yappr-500">•</span>
+                      {benefit}
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>
@@ -263,7 +308,7 @@ export function AddEncryptionKeyModal({
                   <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                   <div className="text-sm text-amber-700 dark:text-amber-300">
                     <p className="font-bold">Why save this?</p>
-                    <p>If your login key ever changes, this backup is the only way to recover your private feed content.</p>
+                    <p>{messages.backupReason}</p>
                   </div>
                 </div>
               </div>
@@ -476,9 +521,9 @@ export function AddEncryptionKeyModal({
               <div className="text-sm text-gray-600 dark:text-gray-400 space-y-2">
                 <p>You can now:</p>
                 <ul className="list-disc ml-5 space-y-1">
-                  <li>Enable your private feed</li>
-                  <li>Request access to others&apos; private feeds</li>
-                  <li>View encrypted content from feeds you follow</li>
+                  {messages.successItems.map((item, i) => (
+                    <li key={i}>{item}</li>
+                  ))}
                 </ul>
               </div>
             </div>

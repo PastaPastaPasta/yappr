@@ -3,17 +3,29 @@
  */
 
 // Contract IDs
-export const YAPPR_CONTRACT_ID = '4ZmDw6puyaH2WhTFK3T19dFutKd96ewVb78SScHGgLak' // Testnet - v7 optimized (removed avatar/repost/notification/directMessage, reposts merged into posts)
+export const YAPPR_CONTRACT_ID = 'GgpXZ4m46MEFdeRudoXHxGtqmK6P2D3RUSZvjCLvpJMw' // Testnet - v9 (post/reply split)
 export const YAPPR_PROFILE_CONTRACT_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 export const YAPPR_DM_CONTRACT_ID = 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
 // YAPPR_BLOCK_CONTRACT_ID removed - block, blockFilter, blockFollow document types now in YAPPR_CONTRACT_ID
 export const DPNS_CONTRACT_ID = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec' // Testnet
+export const YAPPR_STOREFRONT_CONTRACT_ID = '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - Storefront contract v2 (with savedAddress)
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
+
+// Insight API configuration for transaction detection
+export const INSIGHT_API_URLS = {
+  testnet: 'https://insight.testnet.networks.dash.org/insight-api',
+  mainnet: 'https://insight.dash.org/insight-api'
+} as const
+
+export const INSIGHT_API_CONFIG = {
+  pollIntervalMs: 3000,
+  timeoutMs: 120000
+} as const
 
 // Document types
 // Note: AVATAR, REPOST, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
@@ -24,6 +36,7 @@ export const DEFAULT_NETWORK = 'testnet'
 export const DOCUMENT_TYPES = {
   PROFILE: 'profile',
   POST: 'post',
+  REPLY: 'reply',
   LIKE: 'like',
   FOLLOW: 'follow',
   BOOKMARK: 'bookmark',
@@ -41,6 +54,17 @@ export const DOCUMENT_TYPES = {
   PRIVATE_FEED_GRANT: 'privateFeedGrant',
   PRIVATE_FEED_REKEY: 'privateFeedRekey',
   PRIVATE_FEED_STATE: 'privateFeedState'
+} as const
+
+// Storefront document types (separate contract)
+export const STOREFRONT_DOCUMENT_TYPES = {
+  STORE: 'store',
+  STORE_ITEM: 'storeItem',
+  SHIPPING_ZONE: 'shippingZone',
+  STORE_ORDER: 'storeOrder',
+  ORDER_STATUS_UPDATE: 'orderStatusUpdate',
+  STORE_REVIEW: 'storeReview',
+  SAVED_ADDRESS: 'savedAddress'
 } as const
 
 // DPNS

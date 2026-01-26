@@ -16,6 +16,7 @@ import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { TREE_CAPACITY } from '@/lib/services'
+import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 
 interface PrivateFollower {
   id: string
@@ -43,6 +44,7 @@ export function PrivateFeedFollowers() {
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -127,7 +129,7 @@ export function PrivateFeedFollowers() {
 
   useEffect(() => {
     loadFollowers().catch((err) => console.error('Failed to load private followers:', err))
-  }, [loadFollowers])
+  }, [loadFollowers, refreshKey])
 
   // Filter followers based on search query
   useEffect(() => {

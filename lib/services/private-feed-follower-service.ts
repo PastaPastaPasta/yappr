@@ -9,7 +9,6 @@
  * Operations:
  * - requestAccess(): Request access to a user's private feed
  * - cancelRequest(): Cancel a pending follow request
- * - getPendingRequests(): Get user's pending requests
  * - canDecrypt(): Check if user can decrypt a feed owner's posts
  * - decryptPost(): Decrypt a private post
  * - catchUp(): Apply rekey documents to catch up on key state
@@ -203,42 +202,6 @@ class PrivateFeedFollowerService {
   }
 
   /**
-   * Get all pending requests made by the current user
-   *
-   * @param myId - The requester's identity ID
-   */
-  async getPendingRequests(myId: string): Promise<FollowRequestDocument[]> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const { documents } = await paginateFetchAll<FollowRequestDocument>(
-        sdk,
-        (startAfter) => ({
-          dataContractId: this.contractId,
-          documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
-          where: [['$ownerId', '==', myId]],
-          orderBy: [['$createdAt', 'desc']],
-          limit: 100,
-          ...(startAfter && { startAfter }),
-        }),
-        (doc) => ({
-          $id: doc.$id as string,
-          $ownerId: doc.$ownerId as string,
-          $createdAt: doc.$createdAt as number,
-          targetId: doc.targetId as string,
-          publicKey: doc.publicKey ? this.normalizeBytes(doc.publicKey) : undefined,
-        }),
-        { maxResults: 1024 } // SPEC allows up to 1024 followers
-      );
-
-      return documents;
-    } catch (error) {
-      console.error('Error fetching pending requests:', error);
-      return [];
-    }
-  }
-
-  /**
    * Get all follow requests targeting a feed owner (for owner to review)
    *
    * @param ownerId - The feed owner's identity ID
@@ -253,7 +216,8 @@ class PrivateFeedFollowerService {
           dataContractId: this.contractId,
           documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
           where: [['targetId', '==', ownerId]],
-          orderBy: [['$createdAt', 'desc']],
+          // Use target index: [targetId, $createdAt] - must include all index fields in orderBy
+          orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']],
           limit: 100,
           ...(startAfter && { startAfter }),
         }),

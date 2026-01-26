@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon,
+  BuildingStorefrontIcon,
   CalendarIcon,
   MapPinIcon,
   LinkIcon,
@@ -34,7 +35,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import type { Post, ParsedPaymentUri, SocialLink } from '@/lib/types'
+import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
@@ -128,16 +129,23 @@ function UserProfileContent() {
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const [isPrivateFollower, setIsPrivateFollower] = useState(false)
 
+  // Store state
+  const [userStore, setUserStore] = useState<Store | null>(null)
+
   // Progressive enrichment for post metadata (likes, reposts, etc.)
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: currentUser?.identityId
   })
 
-  // Filter posts based on selected filter (original posts vs replies)
+  // Filter posts - all posts are now top-level (replies are a separate document type)
+  // The 'replies' filter currently shows no results until we implement replyService.getUserReplies()
   const filteredPosts = useMemo(() => {
-    return postFilter === 'posts'
-      ? posts.filter(p => !p.replyToId && !p.repostedBy)
-      : posts.filter(p => p.replyToId && !p.repostedBy)
+    if (postFilter === 'posts') {
+      return posts.filter(p => !p.repostedBy)
+    }
+    // 'replies' filter - would need replyService.getUserReplies() implementation
+    // For now, return empty since posts no longer contain replies
+    return []
   }, [posts, postFilter])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
@@ -236,6 +244,17 @@ function UserProfileContent() {
           console.error('Failed to check private feed status:', e)
           setHasPrivateFeed(false)
           setIsPrivateFollower(false)
+        }
+
+        // Check if user has a store
+        try {
+          const { storeService } = await import('@/lib/services/store-service')
+          const store = await storeService.getByOwner(userId)
+          setUserStore(store)
+        } catch (e) {
+          // Store check is non-critical
+          console.error('Failed to check store status:', e)
+          setUserStore(null)
         }
 
         // Process posts - postService.getUserPosts() returns already-transformed Post objects
@@ -636,7 +655,7 @@ function UserProfileContent() {
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Reset mentions, post filter, and private feed state when user changes
+  // Reset mentions, post filter, private feed, and store state when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
@@ -645,6 +664,7 @@ function UserProfileContent() {
     setPostFilter('posts')
     setHasPrivateFeed(false)
     setIsPrivateFollower(false)
+    setUserStore(null)
   }, [userId])
 
   const handleFollow = async () => {
@@ -1140,6 +1160,30 @@ function UserProfileContent() {
                           {hasDpns ? 'Register More' : 'Register Username'}
                         </button>
                       )}
+                      {/* Store Badge */}
+                      {userStore && userStore.status === 'active' && (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <button
+                                onClick={() => router.push(`/store/view?id=${userStore.id}`)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
+                              >
+                                <BuildingStorefrontIcon className="h-3 w-3" />
+                                {userStore.name}
+                              </button>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                Visit {displayName}&apos;s store
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
+                      )}
                       {/* Private Feed Badge */}
                       {hasPrivateFeed && (
                         <Tooltip.Provider>
@@ -1512,6 +1556,13 @@ function UserProfileContent() {
         }}
         paymentUri={selectedQrPayment}
         recipientName={username || displayName}
+        watchForTransaction={true}
+        onDone={() => {
+          setSelectedQrPayment(null)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('tip')
+          window.history.replaceState({}, '', url.toString())
+        }}
       />
 
       {/* Username Registration Modal */}

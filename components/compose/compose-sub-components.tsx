@@ -272,21 +272,9 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
       // Check if this request is stale
       if (currentRequestId !== requestIdRef.current) return
 
-      // For replies to private posts, we need to find the encryption source owner
-      // (PRD §5.5 - inherited encryption)
-      // The post.author.id is the reply author, but encryption may have been done
-      // with a different user's CEK (the root private post owner)
-      let encryptionSourceOwnerId = post.author.id
-
-      if (post.replyToId) {
-        // This is a reply - check if encryption was inherited from parent
-        const { getEncryptionSource } = await import('@/lib/services/post-service')
-        const encryptionSource = await getEncryptionSource(post.replyToId)
-        if (encryptionSource) {
-          // Encryption is inherited from parent thread
-          encryptionSourceOwnerId = encryptionSource.ownerId
-        }
-      }
+      // For posts, the encryption source is always the post author
+      // (Replies use inherited encryption but that's handled by reply-service)
+      const encryptionSourceOwnerId = post.author.id
 
       // Check if this request is stale after async operations
       if (currentRequestId !== requestIdRef.current) return

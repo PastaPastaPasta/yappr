@@ -139,52 +139,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const initialReposted = progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false
   const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
 
-  // ReplyTo: use post.replyTo if available, otherwise build from progressive enrichment
-  const replyTo = useMemo(() => {
-    if (post.replyTo) return post.replyTo
-    if (!progressiveEnrichment?.replyTo) return undefined
-
-    const { id, authorId, authorUsername } = progressiveEnrichment.replyTo
-    return {
-      id,
-      author: {
-        id: authorId,
-        username: authorUsername || '',
-        displayName: authorUsername || 'Unknown User',
-        avatar: '',
-        followers: 0,
-        following: 0,
-        verified: false,
-        joinedAt: new Date()
-      },
-      content: '',
-      createdAt: new Date(),
-      likes: 0,
-      reposts: 0,
-      replies: 0,
-      views: 0
-    }
-  }, [post.replyTo, progressiveEnrichment?.replyTo])
-
-  // Get display text for replyTo author
-  // Priority: DPNS username > Profile display name > Truncated identity ID
-  const replyToDisplay = useMemo(() => {
-    if (!replyTo) return { text: '', showAt: false }
-    const { username, displayName: replyDisplayName, id } = replyTo.author
-
-    // Has DPNS username (non-placeholder)
-    if (username && !username.startsWith('user_')) {
-      return { text: username, showAt: true }
-    }
-
-    // Has real profile display name
-    if (hasRealProfile(replyDisplayName)) {
-      return { text: replyDisplayName, showAt: false }
-    }
-
-    // Fallback to truncated identity ID
-    return { text: `${id.slice(0, 8)}...${id.slice(-6)}`, showAt: false }
-  }, [replyTo])
+  // Posts no longer have replyTo information - replies are a separate document type
+  // This is kept for the hideReplyTo prop and future reply card compatibility
+  const replyTo: Post | undefined = undefined
+  const replyToDisplay = { text: '', showAt: false }
 
   // Memoize enriched post for use in compose/tip modals and caching
   // Includes all resolved values so cached posts display correctly
@@ -640,18 +598,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             </div>
           </div>
 
-          {replyTo && !isTipPost && !hideReplyTo && (
-            <Link
-              href={`/post?id=${replyTo.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="text-sm text-gray-500 hover:underline mt-1 block"
-            >
-              Replying to <span className="text-yappr-500">
-                {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
-              </span>
-            </Link>
-          )}
-
           {/* Tip post - show tip badge with recipient and message */}
           {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
           {isTipPost ? (
@@ -663,15 +609,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       <CurrencyDollarIcon className="h-4 w-4" />
                       <span>
                         Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
-                        {replyTo && (
-                          <> to <Link
-                            href={`/user?id=${replyTo.author.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-semibold hover:underline"
-                          >
-                            {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
-                          </Link></>
-                        )}
                       </span>
                     </div>
                   </Tooltip.Trigger>

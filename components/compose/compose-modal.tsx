@@ -807,11 +807,6 @@ export function ComposeModal() {
 
         console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
-        // Build unified post creation options
-        const replyToPostOwnerId = i === 0 && replyingTo
-          ? replyingTo.author.id
-          : previousPostId ? authedUser.identityId : undefined
-
         // Determine encryption options
         let encryptionOptions: import('@/lib/services/post-service').EncryptionOptions | undefined
 
@@ -833,21 +828,35 @@ export function ComposeModal() {
           }
         }
 
-        // Use unified postService.createPost for all post types
-        const result = await retryPostCreation(async () => {
-          const { postService } = await import('@/lib/services')
+        // Determine if this is a reply (to existing post/reply) or a top-level post
+        // - If replyingTo is set: all posts in thread are replies
+        // - If replyingTo is not set: first post is a top-level post, subsequent are replies
+        const isReply = (i === 0 && replyingTo) || (i > 0 && previousPostId)
+        const parentId = i === 0 && replyingTo ? replyingTo.id : previousPostId
+        const parentOwnerId = i === 0 && replyingTo
+          ? replyingTo.author.id
+          : previousPostId ? authedUser.identityId : undefined
 
+        const result = await retryPostCreation(async () => {
           // Check for sync required errors before they get wrapped by retry
           try {
-            const post = await postService.createPost(authedUser.identityId, postContent, {
-              replyToId: previousPostId || undefined,
-              replyToPostOwnerId,
-              quotedPostId: i === 0 ? quotingPost?.id : undefined,
-              encryption: encryptionOptions,
-            })
-
-            // Return the post data directly - retryPostCreation wraps it in { success, data }
-            return { postId: post.id, document: post }
+            if (isReply && parentId && parentOwnerId) {
+              // Create a reply
+              const { replyService } = await import('@/lib/services/reply-service')
+              const reply = await replyService.createReply(authedUser.identityId, postContent, parentId, parentOwnerId, {
+                encryption: encryptionOptions,
+              })
+              return { postId: reply.id, document: reply, isReply: true }
+            } else {
+              // Create a top-level post
+              const { postService } = await import('@/lib/services')
+              const post = await postService.createPost(authedUser.identityId, postContent, {
+                quotedPostId: i === 0 ? quotingPost?.id : undefined,
+                quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
+                encryption: encryptionOptions,
+              })
+              return { postId: post.id, document: post, isReply: false }
+            }
           } catch (error) {
             // Check if this is a sync required error - handle it specially
             const errorMsg = error instanceof Error ? error.message : String(error)
@@ -963,13 +972,23 @@ export function ComposeModal() {
                 })
             }
 
-            // Dispatch event for first post
+            // Dispatch event for first post/reply
             if (i === 0) {
-              window.dispatchEvent(
-                new CustomEvent('post-created', {
-                  detail: { post: result.data },
-                })
-              )
+              const eventData = result.data as Record<string, unknown> | undefined
+              const wasReply = eventData?.isReply
+              if (wasReply) {
+                window.dispatchEvent(
+                  new CustomEvent('reply-created', {
+                    detail: { reply: eventData?.document },
+                  })
+                )
+              } else {
+                window.dispatchEvent(
+                  new CustomEvent('post-created', {
+                    detail: { post: eventData?.document },
+                  })
+                )
+              }
             }
           } else {
             // Post created but no ID returned - treat as failure for threading

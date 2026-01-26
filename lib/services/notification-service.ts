@@ -171,13 +171,13 @@ class NotificationService {
   }
 
   /**
-   * Get replies to user's posts since timestamp (for notification queries).
-   * Uses the replyToPostOwner index via postService.getRepliesToMyPosts()
+   * Get replies to user's content since timestamp (for notification queries).
+   * Uses the parentOwnerAndTime index via replyService.getRepliesToMyContent()
    */
   async getReplyNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     try {
-      const { postService } = await import('./post-service');
-      const replies = await postService.getRepliesToMyPosts(userId, new Date(sinceTimestamp));
+      const { replyService } = await import('./reply-service');
+      const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp));
 
       return replies
         .filter(reply => reply.author.id !== userId) // Exclude self-replies
@@ -185,7 +185,7 @@ class NotificationService {
           id: `reply-${reply.id}`,
           type: 'reply' as const,
           fromUserId: reply.author.id,
-          postId: reply.id, // The reply post itself
+          postId: reply.id, // The reply itself
           createdAt: reply.createdAt.getTime()
         }));
     } catch (error) {

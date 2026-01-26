@@ -257,6 +257,7 @@ export function TipModal() {
     setSelectedQrPayment(null)
   }
 
+
   if (!recipientInfo) return null
 
   const dashAmount = parseFloat(amount) || 0
@@ -637,6 +638,8 @@ export function TipModal() {
       onClose={handleCloseQrDialog}
       paymentUri={selectedQrPayment}
       recipientName={recipientName}
+      watchForTransaction={true}
+      onDone={handleCloseQrDialog}
     />
   </>
   )

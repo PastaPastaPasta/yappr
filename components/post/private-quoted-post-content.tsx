@@ -61,22 +61,9 @@ export function PrivateQuotedPostContent({
       const { privateFeedFollowerService } = await import('@/lib/services')
       const { privateFeedKeyStore } = await import('@/lib/services')
 
-      // For replies to private posts, we need to find the encryption source owner
-      // (PRD §5.5 - inherited encryption)
-      // The quotedPost.author.id is the reply author, but encryption may have been done
-      // with a different user's CEK (the root private post owner)
-      let encryptionSourceOwnerId = quotedPost.author.id
-
-      if (quotedPost.replyToId) {
-        // This is a reply - check if encryption was inherited from parent
-        const { getEncryptionSource } = await import('@/lib/services/post-service')
-        const encryptionSource = await getEncryptionSource(quotedPost.replyToId)
-        if (encryptionSource) {
-          // Encryption is inherited from parent thread
-          encryptionSourceOwnerId = encryptionSource.ownerId
-          console.log('Quoted post decryption: inherited encryption from', encryptionSourceOwnerId)
-        }
-      }
+      // For quoted posts, the encryption source is always the post author
+      // (Replies use inherited encryption but quoted posts are always top-level posts)
+      const encryptionSourceOwnerId = quotedPost.author.id
 
       // Check if user is the encryption source owner (can decrypt with their own feed keys)
       const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId

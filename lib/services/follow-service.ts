@@ -129,7 +129,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
             ['followingId', '==', userId],
             ['$createdAt', '>', 0]
           ],
-          orderBy: [['$createdAt', 'asc']]
+          // Use followers index: [followingId, $createdAt] - must include all index fields in orderBy
+          orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );
@@ -158,7 +159,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
             ['$ownerId', '==', userId],
             ['$createdAt', '>', 0]
           ],
-          orderBy: [['$createdAt', 'asc']]
+          // Use following index: [$ownerId, $createdAt] - must include all index fields in orderBy
+          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );
@@ -237,7 +239,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
               ['followingId', '==', userId],
               ['$createdAt', '>', 0]
             ],
-            orderBy: [['$createdAt', 'asc']]
+            // Use followers index: [followingId, $createdAt]
+            orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']]
           })
         );
 
@@ -269,7 +272,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
               ['$ownerId', '==', userId],
               ['$createdAt', '>', 0]
             ],
-            orderBy: [['$createdAt', 'asc']]
+            // Use following index: [$ownerId, $createdAt]
+            orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
           })
         );
 

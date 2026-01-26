@@ -250,12 +250,11 @@ class TipService {
         ? `tip:${amountCredits}\n${tipMessage}`
         : `tip:${amountCredits}`;
 
-      await postService.createPost(senderId, content, {
-        replyToId: postId,
-        replyToPostOwnerId: postOwnerId
-      });
+      // Tips are created as replies to the tipped post
+      const { replyService } = await import('./reply-service');
+      await replyService.createReply(senderId, content, postId, postOwnerId);
 
-      console.log('Tip post created successfully');
+      console.log('Tip reply created successfully');
     } catch (error) {
       // Log but don't fail the tip - the credit transfer already succeeded
       console.error('Failed to create tip post:', error);

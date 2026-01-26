@@ -36,6 +36,7 @@ import { PrivateFeedFollowRequests } from '@/components/settings/private-feed-fo
 import { PrivateFeedFollowers } from '@/components/settings/private-feed-followers'
 import { PrivateFeedDashboard } from '@/components/settings/private-feed-dashboard'
 import { BlockListSettings } from '@/components/settings/block-list-settings'
+import { SavedAddressesSettings } from '@/components/settings/saved-addresses-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
@@ -464,6 +465,11 @@ function SettingsPage() {
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
         <BlockedUsersSettings />
       </div>
+
+      {/* Saved Addresses Section */}
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <SavedAddressesSettings />
+      </div>
     </div>
   )
 
@@ -584,7 +590,7 @@ function SettingsPage() {
     // Clear the URL param when opening the reset dialog to prevent re-open on re-render
     const handleResetDialogOpened = () => {
       if (shouldOpenReset) {
-        router.replace('/settings?tab=privateFeed', { scroll: false })
+        router.replace('/settings?section=privateFeed', { scroll: false })
       }
     }
 

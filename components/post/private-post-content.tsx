@@ -168,15 +168,9 @@ export function PrivatePostContent({
         return
       }
 
-      // For replies, determine the encryption source owner (PRD §5.5)
-      let encryptionSourceOwnerId = post.author.id
-      if (post.replyToId) {
-        const { getEncryptionSource } = await import('@/lib/services/post-service')
-        const encryptionSource = await getEncryptionSource(post.replyToId)
-        if (encryptionSource) {
-          encryptionSourceOwnerId = encryptionSource.ownerId
-        }
-      }
+      // For posts, the encryption source is always the post author
+      // (Replies use inherited encryption but that's handled separately)
+      const encryptionSourceOwnerId = post.author.id
 
       // Attempt to recover follower keys from grant
       const { privateFeedFollowerService } = await import('@/lib/services')
@@ -251,22 +245,9 @@ export function PrivatePostContent({
       const { privateFeedFollowerService } = await import('@/lib/services')
       const { privateFeedKeyStore } = await import('@/lib/services')
 
-      // For replies to private posts, we need to find the encryption source owner
-      // (PRD §5.5 - inherited encryption)
-      // The post.author.id is the reply author, but encryption may have been done
-      // with a different user's CEK (the root private post owner)
-      let encryptionSourceOwnerId = post.author.id
-
-      if (post.replyToId) {
-        // This is a reply - check if encryption was inherited from parent
-        const { getEncryptionSource } = await import('@/lib/services/post-service')
-        const encryptionSource = await getEncryptionSource(post.replyToId)
-        if (encryptionSource) {
-          // Encryption is inherited from parent thread
-          encryptionSourceOwnerId = encryptionSource.ownerId
-          console.log('Reply decryption: inherited encryption from', encryptionSourceOwnerId)
-        }
-      }
+      // For posts, the encryption source is always the post author
+      // (Replies use inherited encryption but that's handled by reply-service)
+      const encryptionSourceOwnerId = post.author.id
 
       // Check if user is the encryption source owner (can decrypt with their own feed keys)
       const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
@@ -715,8 +696,8 @@ export function PrivatePostContent({
               </button>
             )}
             {/* Request Access button for no-keys (non-owner), or pending badge for pending requests */}
-            {/* Don't show request button on replies - access is based on root post owner's credentials */}
-            {(state.reason === 'no-keys' || state.reason === 'pending' || isPending) && !post.replyToId && !isOwner && renderRequestButton()}
+            {/* Posts always show request button for non-owners (replies don't reach this component) */}
+            {(state.reason === 'no-keys' || state.reason === 'pending' || isPending) && !isOwner && renderRequestButton()}
           </div>
         </div>
 

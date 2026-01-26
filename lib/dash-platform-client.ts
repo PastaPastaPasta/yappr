@@ -108,9 +108,8 @@ export class DashPlatformClient {
       const { postService } = await import('./services/post-service')
 
       // Create the post using the post service
+      // Note: replies are now a separate document type created via replyService
       const post = await postService.createPost(identityId, content.trim(), {
-        replyToId: options?.replyToPostId,
-        replyToPostOwnerId: options?.replyToPostOwnerId,
         quotedPostId: options?.quotedPostId,
         mediaUrl: options?.mediaUrl,
         primaryHashtag: options?.primaryHashtag?.replace('#', ''),

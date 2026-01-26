@@ -66,19 +66,9 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
     const checkAccess = async () => {
       setIsLoading(true)
       try {
-        // Resolve the actual feed owner for inherited encryption
-        // If rootPostOwnerId is provided, use it; otherwise walk the chain
-        let feedOwnerId = rootPostOwnerId || post.author.id
-
-        // For private posts that are replies, find the actual encryption source owner
-        if (!rootPostOwnerId && post.replyToId) {
-          const { getEncryptionSource } = await import('@/lib/services/post-service')
-          const encryptionSource = await getEncryptionSource(post.replyToId)
-          if (aborted) return
-          if (encryptionSource) {
-            feedOwnerId = encryptionSource.ownerId
-          }
-        }
+        // For posts, the feed owner is always the post author
+        // (Replies use inherited encryption but that's handled separately)
+        const feedOwnerId = rootPostOwnerId || post.author.id
 
         // If current user is the feed owner, can always reply
         if (user.identityId === feedOwnerId) {

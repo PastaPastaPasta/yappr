@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { LockClosedIcon, LockOpenIcon, CheckIcon, XMarkIcon, ClockIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -34,6 +34,7 @@ export function PrivateFeedAccessButton({
   const [status, setStatus] = useState<PrivateFeedStatus>('loading')
   const [isProcessing, setIsProcessing] = useState(false)
   const [showCancelOption, setShowCancelOption] = useState(false)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Use the shared hook for request logic
   const {
@@ -76,6 +77,13 @@ export function PrivateFeedAccessButton({
 
   useEffect(() => {
     loadStatus().catch(err => console.error('Failed to load status:', err))
+
+    // Cleanup: clear any pending timeouts on unmount
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
   }, [loadStatus])
 
   // Handle requesting access - delegates to hook
@@ -83,7 +91,10 @@ export function PrivateFeedAccessButton({
     await requestAccess()
     // If request succeeded, the hook shows a toast and we reload status
     // Use a small delay to allow the transaction to propagate
-    setTimeout(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    timeoutRef.current = setTimeout(() => {
       loadStatus().catch(console.error)
     }, 1000)
   }
@@ -103,6 +114,12 @@ export function PrivateFeedAccessButton({
         setShowCancelOption(false)
         toast.success('Request cancelled')
       } else {
+        // If no pending request exists, update status to reflect reality
+        // This handles race conditions where the request was already processed
+        if (result.error?.toLowerCase().includes('no pending request')) {
+          setStatus('none')
+          setShowCancelOption(false)
+        }
         toast.error(result.error || 'Failed to cancel request')
       }
     } catch (error) {
@@ -117,7 +134,10 @@ export function PrivateFeedAccessButton({
   const handleAddKeySuccess = useCallback(async () => {
     await onKeyAdded()
     // Reload status after key addition and request
-    setTimeout(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    timeoutRef.current = setTimeout(() => {
       loadStatus().catch(console.error)
     }, 1000)
   }, [onKeyAdded, loadStatus])

@@ -6,8 +6,7 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
-import { FeedReplyContext } from '@/components/post/feed-reply-context'
-import { FeedItem, isFeedReplyContext } from '@/lib/types'
+import { Post } from '@/lib/types'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { ComposeModal } from '@/components/compose/compose-modal'
@@ -71,7 +70,7 @@ function FeedPage() {
   const [lastPostId, setLastPostId] = useState<string | null>(null)
   const [followingNextWindow, setFollowingNextWindow] = useState<{ start: Date; end: Date; windowHours: number } | null>(null)
   // State for auto-refresh: pending new posts and the timestamp of the newest displayed post
-  const [pendingNewPosts, setPendingNewPosts] = useState<FeedItem[]>([])
+  const [pendingNewPosts, setPendingNewPosts] = useState<Post[]>([])
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null)
   // Initialize tab from localStorage synchronously to avoid double-loading
   const [activeTab, setActiveTab] = useState<'forYou' | 'following'>(() => {
@@ -241,7 +240,6 @@ function FeedPage() {
           liked: post.liked || false,
           reposted: post.reposted || false,
           bookmarked: post.bookmarked || false,
-          replyToId: post.replyToId || undefined,
           quotedPostId: post.quotedPostId || undefined,
           // Private feed fields
           encryptedContent: post.encryptedContent ? normalizeBytes(post.encryptedContent) : undefined,
@@ -351,12 +349,8 @@ function FeedPage() {
           const data = doc.data || doc
           const authorIdStr = doc.$ownerId || doc.ownerId || 'unknown'
 
-          // replyToPostId comes as base64 from SDK v3 toJSON()
+          // quotedPostId comes as base64 from SDK v3 toJSON()
           // Convert to base58 for consistent handling
-          const rawReplyToId = data.replyToPostId || doc.replyToPostId
-          const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) : undefined
-
-          // quotedPostId also comes as base64 from SDK v3 toJSON()
           const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
           const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) : undefined
 
@@ -393,7 +387,6 @@ function FeedPage() {
             liked: false,
             reposted: false,
             bookmarked: false,
-            replyToId: replyToId || undefined,
             quotedPostId: quotedPostId || undefined,
             // Private feed fields
             encryptedContent,
@@ -495,10 +488,9 @@ function FeedPage() {
         } else {
           // Transform first batch
           const firstBatchPosts = firstBatchRaw.map(transformRawPost)
-          const firstBatchNonReplies = firstBatchPosts.filter((p: any) => !p.replyToId)
           const firstBatchCursor = firstBatchRaw[firstBatchRaw.length - 1].$id || firstBatchRaw[firstBatchRaw.length - 1].id
 
-          console.log(`Feed: First batch has ${firstBatchNonReplies.length} non-reply posts`)
+          console.log(`Feed: First batch has ${firstBatchPosts.length} posts`)
 
           // Set initial posts IMMEDIATELY (before any enrichment)
           posts = firstBatchPosts
@@ -508,23 +500,23 @@ function FeedPage() {
           // Enrich first batch with reposts and quotes in background (non-blocking)
           enrichPostsWithRepostsAndQuotes(firstBatchPosts).then(() => {
             // Force a re-render to show repost/quote data
-            setData((current: FeedItem[] | null) => current ? [...current] : null)
+            setData((current: Post[] | null) => current ? [...current] : null)
           }).catch(err => {
             console.error('Feed: Error enriching first batch:', err)
           })
 
           // If we need more posts, fetch them in background (non-blocking)
-          if (firstBatchNonReplies.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
-            console.log(`Feed: Only ${firstBatchNonReplies.length} non-reply posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`)
+          if (firstBatchPosts.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
+            console.log(`Feed: Only ${firstBatchPosts.length} posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`)
 
             // Start background fetch (don't await - let it run async)
             const fetchMoreInBackground = async () => {
               let bgCurrentStartAfter = firstBatchCursor
               let bgFetchIteration = 1 // Already did iteration 1
-              let allNonReplyCount = firstBatchNonReplies.length
+              let allPostCount = firstBatchPosts.length
               let bgLastBatchSize = firstBatchRaw.length
 
-              while (allNonReplyCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS && bgLastBatchSize === 20) {
+              while (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS && bgLastBatchSize === 20) {
                 bgFetchIteration++
                 console.log(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`)
 
@@ -545,37 +537,29 @@ function FeedPage() {
 
                 // Transform background batch (enrich in background, don't block)
                 const bgPosts = bgRawPosts.map(transformRawPost)
-                const bgNonReplies = bgPosts.filter((p: any) => !p.replyToId)
 
                 // Enrich in background (non-blocking)
                 enrichPostsWithRepostsAndQuotes(bgPosts).then(() => {
                   // Force re-render to show repost/quote data
-                  setData((current: FeedItem[] | null) => current ? [...current] : null)
+                  setData((current: Post[] | null) => current ? [...current] : null)
                 }).catch(err => {
                   console.error('Feed: Error enriching background batch:', err)
                 })
-                allNonReplyCount += bgNonReplies.length
+                allPostCount += bgPosts.length
 
                 // Update cursor
                 const lastPost = bgRawPosts[bgRawPosts.length - 1]
                 bgCurrentStartAfter = lastPost.$id || lastPost.id
 
                 // Append to existing posts (progressive update)
-                setData((currentItems: FeedItem[] | null) => {
+                setData((currentItems: Post[] | null) => {
                   if (!currentItems) return bgPosts
-                  const existingIds = new Set(currentItems.map((item: any) =>
-                    isFeedReplyContext(item) ? item.reply.id : item.id
-                  ))
+                  const existingIds = new Set(currentItems.map((item: Post) => item.id))
                   const newItems = bgPosts.filter((p: any) => !existingIds.has(p.id))
 
                   // Sort merged items by timestamp
-                  const allItems = [...currentItems, ...newItems].sort((a: FeedItem, b: FeedItem) => {
-                    const getTime = (item: FeedItem): number => {
-                      if (isFeedReplyContext(item)) {
-                        return item.reply.createdAt instanceof Date
-                          ? item.reply.createdAt.getTime()
-                          : new Date(item.reply.createdAt).getTime()
-                      }
+                  const allItems = [...currentItems, ...newItems].sort((a: Post, b: Post) => {
+                    const getTime = (item: Post): number => {
                       const post = item as any
                       if (post.repostTimestamp instanceof Date) return post.repostTimestamp.getTime()
                       if (post.createdAt instanceof Date) return post.createdAt.getTime()
@@ -594,14 +578,14 @@ function FeedPage() {
                 // Update pagination cursor
                 setLastPostId(bgCurrentStartAfter)
 
-                if (allNonReplyCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
-                  console.log(`Feed: Only ${allNonReplyCount} non-reply posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
+                if (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
+                  console.log(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
                 }
               }
 
               // Update has more based on final state
               setHasMore(bgLastBatchSize === 20)
-              console.log(`Feed: Background fetch complete. Total non-replies: ${allNonReplyCount}`)
+              console.log(`Feed: Background fetch complete. Total posts: ${allPostCount}`)
             }
 
             // Fire and forget - don't block initial render
@@ -614,68 +598,10 @@ function FeedPage() {
         // Note: Reposts and quoted posts are now enriched via enrichPostsWithRepostsAndQuotes helper
       }
 
-      // For Following tab: Build reply context items for replies from followed users
-      // Instead of showing replies directly, show the original post with context
-      let feedItems: FeedItem[] = posts
-
-      if (activeTab === 'following') {
-        try {
-          const { postService } = await import('@/lib/services')
-
-          // Separate replies from non-reply posts
-          const replies = posts.filter((p: any) => p.replyToId)
-          const nonReplies = posts.filter((p: any) => !p.replyToId)
-
-          if (replies.length > 0) {
-            // Get unique parent post IDs
-            const parentPostIds = Array.from(new Set(replies.map((r: any) => r.replyToId))) as string[]
-
-            // Fetch parent posts
-            const parentPosts = await postService.getPostsByIds(parentPostIds)
-            const parentPostMap = new Map(parentPosts.map(p => [p.id, p]))
-
-            // Build reply context items
-            const replyContextItems: FeedItem[] = replies
-              .filter((reply: any) => parentPostMap.has(reply.replyToId))
-              .map((reply: any) => {
-                const originalPost = parentPostMap.get(reply.replyToId)
-                if (!originalPost) return null
-                return {
-                  type: 'reply_context' as const,
-                  originalPost,
-                  reply,
-                  replier: {
-                    id: reply.author.id,
-                    username: reply.author.username,
-                    displayName: reply.author.displayName
-                  }
-                }
-              })
-              .filter((item): item is NonNullable<typeof item> => item !== null)
-
-            // Merge non-replies with reply contexts
-            feedItems = [...nonReplies, ...replyContextItems]
-            console.log(`Feed: Built ${replyContextItems.length} reply contexts from ${replies.length} replies`)
-          }
-        } catch (replyContextError) {
-          console.error('Feed: Error building reply contexts:', replyContextError)
-          // Fall back to filtering out replies
-          feedItems = posts.filter((p: any) => !p.replyToId)
-        }
-      }
-
-      // Sort feed items by timestamp
-      // For reply contexts, use the reply's timestamp for sorting
-      // For regular posts, use repostTimestamp if available, otherwise createdAt
-      const sortedFeedItems = feedItems.sort((a: FeedItem, b: FeedItem) => {
-        const getTime = (item: FeedItem): number => {
-          if (isFeedReplyContext(item)) {
-            // Use reply timestamp for sorting reply contexts
-            return item.reply.createdAt instanceof Date
-              ? item.reply.createdAt.getTime()
-              : new Date(item.reply.createdAt).getTime()
-          }
-          // Regular post
+      // Sort posts by timestamp
+      // For posts with repostTimestamp, use that for sorting, otherwise use createdAt
+      const sortedPosts = posts.sort((a: Post, b: Post) => {
+        const getTime = (item: Post): number => {
           const post = item as any
           if (post.repostTimestamp instanceof Date) return post.repostTimestamp.getTime()
           if (post.createdAt instanceof Date) return post.createdAt.getTime()
@@ -691,7 +617,7 @@ function FeedPage() {
         setHasMore(followingCursor !== null)
 
         // For following feed: empty window doesn't mean done, just skip to next window
-        if (sortedFeedItems.length === 0) {
+        if (sortedPosts.length === 0) {
           console.log('Feed: No posts in this time window, cursor points to next window')
           if (!isPaginating) {
             setData([])
@@ -700,12 +626,8 @@ function FeedPage() {
         }
       } else {
         // For You feed: empty means done
-        // Filter to non-reply posts for determining if feed is empty
-        const nonReplyFeedItems = sortedFeedItems.filter(item =>
-          isFeedReplyContext(item) ? false : !(item as any).replyToId
-        )
-        if (nonReplyFeedItems.length === 0) {
-          console.log('Feed: No non-reply posts found on platform')
+        if (sortedPosts.length === 0) {
+          console.log('Feed: No posts found on platform')
           if (!isPaginating) {
             setData([])
           }
@@ -724,35 +646,24 @@ function FeedPage() {
       // PROGRESSIVE LOADING: Show posts IMMEDIATELY with skeleton placeholders
       // Enrichment data (usernames, avatars, stats) will fill in progressively
       if (isPaginating) {
-        setData((currentItems: FeedItem[] | null) => {
+        setData((currentItems: Post[] | null) => {
           // Deduplicate - filter out items that already exist
-          const existingIds = new Set((currentItems || []).map(item =>
-            isFeedReplyContext(item) ? item.reply.id : item.id
-          ))
-          const newItems = sortedFeedItems.filter(item => {
-            const id = isFeedReplyContext(item) ? item.reply.id : item.id
-            return !existingIds.has(id)
-          })
+          const existingIds = new Set((currentItems || []).map(item => item.id))
+          const newItems = sortedPosts.filter(item => !existingIds.has(item.id))
           const allItems = [...(currentItems || []), ...newItems]
-          console.log(`Feed: Appended ${newItems.length} new items (${sortedFeedItems.length - newItems.length} duplicates filtered)`)
+          console.log(`Feed: Appended ${newItems.length} new items (${sortedPosts.length - newItems.length} duplicates filtered)`)
           return allItems
         })
       } else {
-        setData(sortedFeedItems)
+        setData(sortedPosts)
         // Track the newest post timestamp for auto-refresh feature
-        if (sortedFeedItems.length > 0) {
-          const getItemTimestamp = (item: FeedItem): number => {
-            if (isFeedReplyContext(item)) {
-              return item.reply.createdAt instanceof Date
-                ? item.reply.createdAt.getTime()
-                : new Date(item.reply.createdAt).getTime()
-            }
-            const post = item as any
-            return post.createdAt instanceof Date
-              ? post.createdAt.getTime()
-              : new Date(post.createdAt).getTime()
+        if (sortedPosts.length > 0) {
+          const getItemTimestamp = (item: Post): number => {
+            return item.createdAt instanceof Date
+              ? item.createdAt.getTime()
+              : new Date(item.createdAt).getTime()
           }
-          const newestTimestamp = Math.max(...sortedFeedItems.map(getItemTimestamp))
+          const newestTimestamp = Math.max(...sortedPosts.map(getItemTimestamp))
           setNewestPostTimestamp(newestTimestamp)
           // Clear any pending new posts when doing a fresh load
           setPendingNewPosts([])
@@ -762,15 +673,11 @@ function FeedPage() {
       // Start progressive enrichment (non-blocking)
       // This will update enrichmentState as data loads, triggering re-renders
       // Blocked users will be filtered via enrichmentState.blockStatus in render
-      // Extract all posts from feed items for enrichment
-      const postsToEnrich = sortedFeedItems.flatMap(item =>
-        isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-      )
-      enrichProgressively(postsToEnrich)
+      enrichProgressively(sortedPosts)
 
       // Cache the raw feed items (enrichment is progressive, not cached)
-      if (!isPaginating && sortedFeedItems.length > 0) {
-        cacheManager.set('feed', cacheKey, sortedFeedItems)
+      if (!isPaginating && sortedPosts.length > 0) {
+        cacheManager.set('feed', cacheKey, sortedPosts)
       }
 
     } catch (error) {
@@ -879,8 +786,6 @@ function FeedPage() {
         const transformedPosts = newPosts.map((doc: any) => {
           const data = doc.data || doc
           const authorIdStr = doc.$ownerId || doc.ownerId || 'unknown'
-          const rawReplyToId = data.replyToPostId || doc.replyToPostId
-          const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) : undefined
           const rawQuotedPostId = data.quotedPostId || doc.quotedPostId
           const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) : undefined
 
@@ -912,7 +817,6 @@ function FeedPage() {
             liked: false,
             reposted: false,
             bookmarked: false,
-            replyToId: replyToId || undefined,
             quotedPostId: quotedPostId || undefined,
             // Private feed fields
             encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) : undefined,
@@ -921,25 +825,16 @@ function FeedPage() {
           }
         })
 
-        // Filter out replies for For You tab
-        const filteredNewPosts = activeTab === 'forYou'
-          ? transformedPosts.filter((p: any) => !p.replyToId)
-          : transformedPosts
-
         // Sort by createdAt descending (newest first)
-        filteredNewPosts.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())
+        transformedPosts.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())
 
         // Deduplicate against existing posts and already pending posts
         const existingIds = new Set([
-          ...(postsState.data || []).map(item =>
-            isFeedReplyContext(item) ? item.reply.id : item.id
-          ),
-          ...pendingNewPosts.map(item =>
-            isFeedReplyContext(item) ? item.reply.id : item.id
-          )
+          ...(postsState.data || []).map((item: Post) => item.id),
+          ...pendingNewPosts.map((item: Post) => item.id)
         ])
 
-        const uniqueNewPosts = filteredNewPosts.filter((p: any) => !existingIds.has(p.id))
+        const uniqueNewPosts = transformedPosts.filter((p: any) => !existingIds.has(p.id))
 
         if (uniqueNewPosts.length > 0) {
           console.log(`Feed: ${uniqueNewPosts.length} unique new posts to show`)
@@ -956,31 +851,22 @@ function FeedPage() {
     if (pendingNewPosts.length === 0) return
 
     // Get the newest timestamp from pending posts
-    const getItemTimestamp = (item: FeedItem): number => {
-      if (isFeedReplyContext(item)) {
-        return item.reply.createdAt instanceof Date
-          ? item.reply.createdAt.getTime()
-          : new Date(item.reply.createdAt).getTime()
-      }
-      const post = item as any
-      return post.createdAt instanceof Date
-        ? post.createdAt.getTime()
-        : new Date(post.createdAt).getTime()
+    const getItemTimestamp = (item: Post): number => {
+      return item.createdAt instanceof Date
+        ? item.createdAt.getTime()
+        : new Date(item.createdAt).getTime()
     }
 
     const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getItemTimestamp))
 
     // Prepend pending posts to current feed
-    postsState.setData((currentItems: FeedItem[] | null) => {
+    postsState.setData((currentItems: Post[] | null) => {
       const existing = currentItems || []
       return [...pendingNewPosts, ...existing]
     })
 
     // Start enrichment for the new posts
-    const postsToEnrich = pendingNewPosts.flatMap(item =>
-      isFeedReplyContext(item) ? [item.originalPost, item.reply] : [item]
-    )
-    enrichProgressively(postsToEnrich)
+    enrichProgressively(pendingNewPosts)
 
     // Update the newest timestamp
     setNewestPostTimestamp(newestPendingTimestamp)
@@ -1031,30 +917,14 @@ function FeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab])
 
-  // Filter posts to exclude blocked users and replies (on For You tab) using enrichment state
+  // Filter posts to exclude blocked users using enrichment state
   // This replaces the previous async getBlockedUserIds() calls and avoids duplicate queries
   const filteredPosts = useMemo(() => {
     if (!postsState.data) return null
 
-    return postsState.data.filter(item => {
-      // Handle FeedReplyContext items
-      if (isFeedReplyContext(item)) {
-        // Filter if either the original post author or replier is blocked
-        if (enrichmentState.blockStatus.size > 0) {
-          if (enrichmentState.blockStatus.get(item.originalPost.author.id)) return false
-          if (enrichmentState.blockStatus.get(item.reply.author.id)) return false
-        }
-        return true
-      }
-
-      // Handle regular Post items
-      const post = item
+    return postsState.data.filter(post => {
       // Filter blocked users
       if (enrichmentState.blockStatus.size > 0 && enrichmentState.blockStatus.get(post.author.id)) {
-        return false
-      }
-      // Filter replies from For You tab (they have replyToId)
-      if (activeTab === 'forYou' && post.replyToId) {
         return false
       }
       return true
@@ -1216,35 +1086,15 @@ function FeedPage() {
             emptyDescription={activeTab === 'following' ? "Follow some people to see their posts here!" : "Be the first to share something!"}
           >
             <div>
-              {filteredPosts?.map((item) => {
-                // Get unique key for the item
-                const key = isFeedReplyContext(item) ? `reply-ctx-${item.reply.id}` : item.id
-
-                if (isFeedReplyContext(item)) {
-                  return (
-                    <ErrorBoundary key={key} level="component">
-                      <FeedReplyContext
-                        originalPost={item.originalPost}
-                        reply={item.reply}
-                        replier={item.replier}
-                        replyEnrichment={getPostEnrichment(item.reply)}
-                        originalPostEnrichment={getPostEnrichment(item.originalPost)}
-                        isOwnPost={user?.identityId === item.reply.author.id}
-                      />
-                    </ErrorBoundary>
-                  )
-                }
-
-                return (
-                  <ErrorBoundary key={key} level="component">
-                    <PostCard
-                      post={item}
-                      isOwnPost={user?.identityId === item.author.id}
-                      enrichment={getPostEnrichment(item)}
-                    />
-                  </ErrorBoundary>
-                )
-              })}
+              {filteredPosts?.map((post) => (
+                <ErrorBoundary key={post.id} level="component">
+                  <PostCard
+                    post={post}
+                    isOwnPost={user?.identityId === post.author.id}
+                    enrichment={getPostEnrichment(post)}
+                  />
+                </ErrorBoundary>
+              ))}
               {hasMore && filteredPosts && filteredPosts.length > 0 && (
                 <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
                   <button

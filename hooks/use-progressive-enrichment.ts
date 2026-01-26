@@ -128,10 +128,6 @@ export function useProgressiveEnrichment(
     const postIds = Array.from(new Set(posts.map(p => p.id).filter(Boolean)))
     const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
 
-    // Collect parent post IDs for replies
-    const postsWithReplyTo = posts.filter(p => p.replyToId)
-    const parentPostIds = Array.from(new Set(postsWithReplyTo.map(p => p.replyToId).filter((id): id is string => !!id)))
-
     // Set loading phase
     setEnrichmentState(prev => ({ ...prev, phase: 'loading' }))
 
@@ -244,40 +240,6 @@ export function useProgressiveEnrichment(
           followStatus: mergeMaps(prev.followStatus, followStatus)
         }))
       }
-    }
-
-    // Priority 6: ReplyTo data (for replies and tips)
-    if (parentPostIds.length > 0) {
-      postService.getParentPostOwners(parentPostIds).then(async (parentOwnerMap) => {
-        if (!isValid()) return
-
-        // Get unique parent owner IDs and resolve their usernames
-        const parentOwnerIds = Array.from(new Set(parentOwnerMap.values()))
-        const parentUsernameMap = parentOwnerIds.length > 0
-          ? await dpnsService.resolveUsernamesBatch(parentOwnerIds)
-          : new Map<string, string | null>()
-
-        // Build replyTo map for each post
-        const replyToMap = new Map<string, ReplyToData>()
-        for (const post of postsWithReplyTo) {
-          if (post.replyToId) {
-            const parentOwnerId = parentOwnerMap.get(post.replyToId)
-            if (parentOwnerId) {
-              const parentUsername = parentUsernameMap.get(parentOwnerId) ?? null
-              replyToMap.set(post.id, {
-                id: post.replyToId,
-                authorId: parentOwnerId,
-                authorUsername: parentUsername
-              })
-            }
-          }
-        }
-
-        setEnrichmentState(prev => ({
-          ...prev,
-          replyTo: mergeMaps(prev.replyTo, replyToMap)
-        }))
-      }).catch(err => console.error('Progressive enrichment: replyTo failed', err))
     }
 
     // Track completion using the SAME promises (no duplicate queries!)

@@ -17,8 +17,6 @@ export interface PostDocument {
   $updatedAt?: number;
   content: string;
   mediaUrl?: string;
-  replyToId?: string;
-  replyToPostOwnerId?: string;
   quotedPostId?: string;
   quotedPostOwnerId?: string;
   firstMentionId?: string;
@@ -58,8 +56,6 @@ class PostService extends BaseDocumentService<Post> {
 
   // Request deduplicators for batch/count operations
   private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();
-  private repliesDeduplicator = new RequestDeduplicator<string, Map<string, number>>();
-  private parentOwnersDeduplicator = new RequestDeduplicator<string, Map<string, string>>();
   private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>>();
   private countUserPostsDeduplicator = new RequestDeduplicator<string, number>();
   private countAllPostsDeduplicator = new RequestDeduplicator<string, number>();
@@ -89,10 +85,6 @@ class PostService extends BaseDocumentService<Post> {
     // Content and other fields may be in data or at root level
     const content = (data.content || doc.content || '') as string;
     const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
-
-    // Convert replyToPostId from base64 to base58 for consistent storage
-    const rawReplyToId = data.replyToPostId || doc.replyToPostId;
-    const replyToId = rawReplyToId ? identifierToBase58(rawReplyToId) || undefined : undefined;
 
     // Convert quotedPostId from base64 to base58 for consistent storage
     const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
@@ -131,7 +123,6 @@ class PostService extends BaseDocumentService<Post> {
         url: mediaUrl
       }] : undefined,
       // Expose IDs for lazy loading at component level
-      replyToId: replyToId || undefined,
       quotedPostId: quotedPostId || undefined,
       quotedPostOwnerId: quotedPostOwnerId || undefined,
       // Private feed fields
@@ -180,71 +171,6 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Batch fetch parent posts to get their owner IDs.
-   * Deduplicates in-flight requests.
-   * Returns a Map of postId -> ownerId
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  async getParentPostOwners(parentPostIds: string[]): Promise<Map<string, string>> {
-    if (parentPostIds.length === 0) {
-      return new Map<string, string>();
-    }
-
-    const cacheKey = RequestDeduplicator.createBatchKey(parentPostIds);
-    return this.parentOwnersDeduplicator.dedupe(cacheKey, () => this.fetchParentPostOwners(parentPostIds));
-  }
-
-  /** Internal: Actually fetch parent post owners */
-  private async fetchParentPostOwners(parentPostIds: string[]): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      // SDK v3 toJSON() returns base64 for byte array fields (like replyToPostId)
-      // but $id queries expect base58. Convert all IDs to base58 first.
-      const base58PostIds = parentPostIds
-        .map(id => identifierToBase58(id))
-        .filter((id): id is string => id !== null);
-
-      if (base58PostIds.length === 0) {
-        console.log('getParentPostOwners: No valid post IDs after conversion');
-        return result;
-      }
-
-      console.log('getParentPostOwners: Querying', base58PostIds.length, 'posts');
-
-      // Batch fetch parent posts using 'in' query with base58 IDs
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [['$id', 'in', base58PostIds]],
-        limit: base58PostIds.length
-      });
-
-      const documents = normalizeSDKResponse(response);
-
-      // Extract owner IDs (system fields are already base58 in v3)
-      for (const doc of documents) {
-        const postId = doc.$id as string;
-        const ownerId = doc.$ownerId as string;
-        if (postId && ownerId) {
-          result.set(postId, ownerId);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching parent post owners:', error);
-    }
-
-    return result;
-  }
-
-  /**
    * Batch enrich multiple posts efficiently.
    * Uses batch queries to minimize network requests.
    * Returns new Post objects with enriched data including _enrichment for N+1 avoidance.
@@ -256,11 +182,6 @@ class PostService extends BaseDocumentService<Post> {
       const postIds = posts.map(p => p.id);
       const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)));
 
-      // Collect parent post IDs from replies
-      const parentPostIds = Array.from(new Set(
-        posts.map(p => p.replyToId).filter((id): id is string => !!id)
-      ));
-
       // Get current user ID for block/follow status
       const currentUserId = this.getCurrentUserId();
 
@@ -269,7 +190,6 @@ class PostService extends BaseDocumentService<Post> {
         interactionsMap,
         usernameMap,
         profiles,
-        parentOwnerMap,
         blockStatusMap,
         followStatusMap,
         avatarUrlMap
@@ -278,7 +198,6 @@ class PostService extends BaseDocumentService<Post> {
         this.getBatchUserInteractions(postIds),
         dpnsService.resolveUsernamesBatch(authorIds),
         unifiedProfileService.getProfilesByIdentityIds(authorIds),
-        this.getParentPostOwners(parentPostIds),
         // Batch block/follow status (only if user is logged in)
         currentUserId
           ? blockService.checkBlockedBatch(currentUserId, authorIds)
@@ -295,12 +214,6 @@ class PostService extends BaseDocumentService<Post> {
         seedBlockStatusCache(currentUserId, blockStatusMap);
         seedFollowStatusCache(currentUserId, followStatusMap);
       }
-
-      // Resolve usernames for parent post owners
-      const parentOwnerIds = Array.from(new Set(parentOwnerMap.values()));
-      const parentUsernameMap = parentOwnerIds.length > 0
-        ? await dpnsService.resolveUsernamesBatch(parentOwnerIds)
-        : new Map<string, string>();
 
       // Build profile map for quick lookup
       const profileMap = new Map<string, Record<string, unknown>>();
@@ -323,34 +236,6 @@ class PostService extends BaseDocumentService<Post> {
         const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
         const authorAvatarUrl = avatarUrlMap.get(post.author.id) ?? '';
 
-        // Build replyTo if this is a reply
-        let replyTo = post.replyTo;
-        if (post.replyToId && !replyTo) {
-          const parentOwnerId = parentOwnerMap.get(post.replyToId);
-          if (parentOwnerId) {
-            const parentUsername = parentUsernameMap.get(parentOwnerId);
-            replyTo = {
-              id: post.replyToId,
-              author: {
-                id: parentOwnerId,
-                username: parentUsername || `${parentOwnerId.slice(0, 8)}...`,
-                displayName: parentUsername || 'Unknown User',
-                avatar: '',
-                followers: 0,
-                following: 0,
-                verified: false,
-                joinedAt: new Date()
-              },
-              content: '',
-              createdAt: new Date(),
-              likes: 0,
-              reposts: 0,
-              replies: 0,
-              views: 0
-            };
-          }
-        }
-
         return {
           ...post,
           likes: stats?.likes ?? post.likes,
@@ -360,7 +245,6 @@ class PostService extends BaseDocumentService<Post> {
           liked: interactions?.liked ?? post.liked,
           reposted: interactions?.reposted ?? post.reposted,
           bookmarked: interactions?.bookmarked ?? post.bookmarked,
-          replyTo,
           author: {
             ...post.author,
             username: username || post.author.username,
@@ -407,8 +291,6 @@ class PostService extends BaseDocumentService<Post> {
     content: string,
     options: {
       mediaUrl?: string;
-      replyToId?: string;
-      replyToPostOwnerId?: string;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
       firstMentionId?: string;
@@ -464,8 +346,6 @@ class PostService extends BaseDocumentService<Post> {
 
     // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
-    if (options.replyToId) data.replyToPostId = options.replyToId;
-    if (options.replyToPostOwnerId) data.replyToPostOwnerId = options.replyToPostOwnerId;
     if (options.quotedPostId) data.quotedPostId = options.quotedPostId;
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = options.quotedPostOwnerId;
     if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
@@ -738,6 +618,10 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count all posts on the platform - paginates through all results.
+   * Uses the languageTimeline index [language, $createdAt] to scan posts.
+   * Note: Currently only counts English posts (language='en') since most posts
+   * use the default language. For accurate total counts across all languages,
+   * would need to iterate through all language codes or add a dedicated index.
    * Deduplicates in-flight requests.
    */
   async countAllPosts(): Promise<number> {
@@ -747,13 +631,18 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
+        // Use languageTimeline index: [language, $createdAt]
+        // This requires a language prefix to use the index
         const { count } = await paginateCount(
           sdk,
           () => ({
             dataContractId: this.contractId,
             documentTypeName: 'post',
-            where: [['$createdAt', '>', 0]],
-            orderBy: [['$createdAt', 'asc']]
+            where: [
+              ['language', '==', 'en'],
+              ['$createdAt', '>', 0]
+            ],
+            orderBy: [['language', 'asc'], ['$createdAt', 'asc']]
           }),
           { maxResults: 10000 } // Higher limit for platform-wide count
         );
@@ -764,108 +653,6 @@ class PostService extends BaseDocumentService<Post> {
         return 0;
       }
     });
-  }
-
-  /**
-   * Get replies to a post.
-   * Awaits author resolution for all replies to prevent "Unknown User" race condition.
-   *
-   * @param postId - The parent post ID
-   * @param options - Query options (including skipEnrichment to disable auto-enrichment)
-   */
-  async getReplies(postId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Post>> {
-    const { skipEnrichment, ...queryOpts } = options;
-
-    // Pass identifier as base58 string - the SDK handles conversion
-    // Dash Platform requires a where clause on the orderBy field for ordering to work
-    const queryOptions: QueryOptions = {
-      where: [
-        ['replyToPostId', '==', postId],
-        ['$createdAt', '>', 0]
-      ],
-      orderBy: [['$createdAt', 'asc']],
-      limit: 20,
-      ...queryOpts
-    };
-
-    const result = await this.query(queryOptions);
-
-    // Await author resolution for all replies to prevent race condition
-    if (!skipEnrichment) {
-      await Promise.all(result.documents.map(post => this.resolvePostAuthor(post)));
-    }
-
-    return result;
-  }
-
-  /**
-   * Get nested replies for multiple parent posts.
-   * Returns a Map of parentPostId -> replies array.
-   * Used for building 2-level threaded reply trees.
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  async getNestedReplies(
-    parentPostIds: string[],
-    options: PostQueryOptions = {}
-  ): Promise<Map<string, Post[]>> {
-    if (parentPostIds.length === 0) {
-      return new Map();
-    }
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      // Query using 'in' operator on replyToPostId index
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [['replyToPostId', 'in', parentPostIds]],
-        orderBy: [['replyToPostId', 'asc']],
-        limit: 100
-      });
-
-      const documents = normalizeSDKResponse(response);
-
-      // Initialize result map
-      const result = new Map<string, Post[]>();
-      parentPostIds.forEach(id => result.set(id, []));
-
-      // Transform documents and group by parent
-      for (const doc of documents) {
-        const post = this.transformDocument(doc);
-        const parentId = post.replyToId;
-        if (parentId) {
-          const parentReplies = result.get(parentId);
-          if (parentReplies) {
-            parentReplies.push(post);
-          }
-        }
-      }
-
-      // Sort replies by createdAt ascending within each parent
-      result.forEach((replies) => {
-        replies.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-      });
-
-      // Resolve authors if not skipping enrichment
-      if (!options.skipEnrichment) {
-        const allPosts = Array.from(result.values()).flat();
-        await Promise.all(allPosts.map(p => this.resolvePostAuthor(p)));
-      }
-
-      return result;
-    } catch (error) {
-      console.error('Error getting nested replies:', error);
-      // Return empty arrays for all requested IDs
-      const result = new Map<string, Post[]>();
-      parentPostIds.forEach(id => result.set(id, []));
-      return result;
-    }
   }
 
   /**
@@ -938,24 +725,11 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count replies to a post
+   * Count replies to a post (uses reply-service)
    */
   private async countReplies(postId: string): Promise<number> {
-    try {
-      // Pass identifier as base58 string - the SDK handles conversion
-      // Dash Platform requires a where clause on the orderBy field for ordering to work
-      const result = await this.query({
-        where: [
-          ['replyToPostId', '==', postId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$createdAt', 'asc']],
-        limit: 100
-      });
-      return result.documents.length;
-    } catch (error) {
-      return 0;
-    }
+    const { replyService } = await import('./reply-service');
+    return replyService.countReplies(postId);
   }
 
   /**
@@ -1135,63 +909,6 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get reply counts for multiple posts in a single batch query.
-   * Deduplicates in-flight requests.
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  async getRepliesByPostIds(postIds: string[]): Promise<Map<string, number>> {
-    if (postIds.length === 0) {
-      return new Map<string, number>();
-    }
-
-    const cacheKey = RequestDeduplicator.createBatchKey(postIds);
-    return this.repliesDeduplicator.dedupe(cacheKey, () => this.fetchRepliesByPostIds(postIds));
-  }
-
-  /** Internal: Actually fetch reply counts */
-  private async fetchRepliesByPostIds(postIds: string[]): Promise<Map<string, number>> {
-    const result = new Map<string, number>();
-    postIds.forEach(id => result.set(id, 0));
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      // Use 'in' operator for batch query on replyToPostId
-      // Must include orderBy to match the replyToPost index: [replyToPostId, $createdAt]
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [['replyToPostId', 'in', postIds]],
-        orderBy: [['replyToPostId', 'asc']],
-        limit: 100
-      });
-
-      const documents = normalizeSDKResponse(response);
-
-      // Count replies per parent post
-      for (const doc of documents) {
-        // Handle different document structures from SDK
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const rawParentId = data.replyToPostId || doc.replyToPostId;
-        const parentId = rawParentId ? identifierToBase58(rawParentId) : null;
-
-        if (parentId && result.has(parentId)) {
-          result.set(parentId, (result.get(parentId) || 0) + 1);
-        }
-      }
-    } catch (error) {
-      console.error('Error getting replies batch:', error);
-    }
-
-    return result;
-  }
-
-  /**
    * Batch get stats for multiple posts using efficient batch queries.
    * Deduplicates in-flight requests: multiple callers with same postIds share one request.
    */
@@ -1214,16 +931,17 @@ class PostService extends BaseDocumentService<Post> {
     });
 
     try {
-      const [{ likeService }, { repostService }] = await Promise.all([
+      const [{ likeService }, { repostService }, { replyService }] = await Promise.all([
         import('./like-service'),
-        import('./repost-service')
+        import('./repost-service'),
+        import('./reply-service')
       ]);
 
       // 3 batch queries instead of 3*N queries
       const [likes, reposts, replyCounts] = await Promise.all([
         likeService.getLikesByPostIds(postIds),
         repostService.getRepostsByPostIds(postIds),
-        this.getRepliesByPostIds(postIds)
+        replyService.countRepliesByParentIds(postIds)
       ]);
 
       // Count likes per post
@@ -1252,7 +970,9 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count unique authors across all posts
-   * Paginates through all posts and counts unique $ownerId values
+   * Paginates through all posts and counts unique $ownerId values.
+   * Uses the languageTimeline index [language, $createdAt] to scan posts.
+   * Note: Currently only counts authors of English posts (language='en').
    */
   async countUniqueAuthors(): Promise<number> {
     // Use a constant key since this counts all unique authors
@@ -1266,11 +986,15 @@ class PostService extends BaseDocumentService<Post> {
           const PAGE_SIZE = 100;
 
           while (true) {
+            // Use languageTimeline index: [language, $createdAt]
             const queryParams: DocumentsQuery = {
               dataContractId: this.contractId,
               documentTypeName: 'post',
-              where: [['$createdAt', '>', 0]],
-              orderBy: [['$createdAt', 'asc']],
+              where: [
+                ['language', '==', 'en'],
+                ['$createdAt', '>', 0]
+              ],
+              orderBy: [['language', 'asc'], ['$createdAt', 'asc']],
               limit: PAGE_SIZE,
               startAfter
             };
@@ -1355,6 +1079,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get post counts per author
    * Returns a Map of authorId -> post count
+   * Uses the languageTimeline index [language, $createdAt] to scan posts.
+   * Note: Currently only counts English posts (language='en').
    */
   async getAuthorPostCounts(): Promise<Map<string, number>> {
     const authorCounts = new Map<string, number>();
@@ -1368,11 +1094,15 @@ class PostService extends BaseDocumentService<Post> {
       const MAX_POSTS = 10000; // Limit to prevent excessive queries
 
       while (totalProcessed < MAX_POSTS) {
+        // Use languageTimeline index: [language, $createdAt]
         const queryParams: DocumentsQuery = {
           dataContractId: this.contractId,
           documentTypeName: 'post',
-          where: [['$createdAt', '>', 0]],
-          orderBy: [['$createdAt', 'desc']],
+          where: [
+            ['language', '==', 'en'],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
           limit: PAGE_SIZE,
           startAfter
         };
@@ -1413,8 +1143,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get posts that quote a specific post.
    * NOTE: The contract lacks a quotedPostId index, so this uses client-side
-   * filtering of recent posts. For production, a contract migration adding
-   * the index would improve efficiency.
+   * filtering of recent posts. Uses languageTimeline index to scan.
+   * For production, a contract migration adding the index would improve efficiency.
    */
   async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
     const limit = options.limit || 50;
@@ -1423,12 +1153,16 @@ class PostService extends BaseDocumentService<Post> {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
 
-      // Scan recent posts - without an index we have to filter client-side
+      // Scan recent posts using languageTimeline index - without a dedicated index
+      // we have to filter client-side
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
-        where: [['$createdAt', '>', 0]],
-        orderBy: [['$createdAt', 'desc']],
+        where: [
+          ['language', '==', 'en'],
+          ['$createdAt', '>', 0]
+        ],
+        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
         limit: 100 // Scan recent posts
       });
 
@@ -1442,40 +1176,6 @@ class PostService extends BaseDocumentService<Post> {
       return quotePosts.slice(0, limit);
     } catch (error) {
       console.error('Error getting quote posts:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Get replies to posts owned by a specific user (for notification queries).
-   * Uses the replyToPostOwner index: [replyToPostOwnerId, $createdAt]
-   * Limited to 100 most recent replies for notification purposes.
-   * @param userId - Identity ID of the post owner
-   * @param since - Only return replies created after this timestamp (optional)
-   */
-  async getRepliesToMyPosts(userId: string, since?: Date): Promise<Post[]> {
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      const sinceTimestamp = since?.getTime() || 0;
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [
-          ['replyToPostOwnerId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        // Match replyToPostOwner index: [replyToPostOwnerId: asc, $createdAt: asc]
-        orderBy: [['replyToPostOwnerId', 'asc'], ['$createdAt', 'asc']],
-        limit: 100
-      });
-
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
-    } catch (error) {
-      console.error('Error getting replies to my posts:', error);
       return [];
     }
   }
@@ -1548,73 +1248,10 @@ class PostService extends BaseDocumentService<Post> {
   }
 }
 
-/**
- * Encryption source result for replies to private posts
- */
-export interface EncryptionSource {
-  ownerId: string;     // The feed owner whose CEK should be used
-  epoch: number;       // The epoch at which the root private post was created
-  inherited: boolean;  // True if encryption is inherited from parent
-}
-
-/**
- * Get the encryption source for a reply (PRD §5.5).
- *
- * Walks up the reply chain to find the root private post:
- * - If the parent is a private post, use that post author's CEK
- * - If the parent is public or if the parent's parent is private, recurse
- * - Returns null if this is a reply to a public thread
- *
- * This enables replies to private posts to inherit the same encryption,
- * so anyone who can see the parent can also see replies.
- */
-export async function getEncryptionSource(
-  replyToPostId: string,
-  depth: number = 0
-): Promise<EncryptionSource | null> {
-  // Prevent unbounded recursion (reasonable thread depth limit)
-  const MAX_DEPTH = 100;
-  if (depth >= MAX_DEPTH) {
-    console.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
-    return null;
-  }
-
-  try {
-    // Fetch the parent post (without enrichment - we only need encryption fields)
-    const parentPost = await postService.getPostById(replyToPostId, { skipEnrichment: true });
-
-    if (!parentPost) {
-      console.warn('Parent post not found:', replyToPostId);
-      return null;
-    }
-
-    // Check if parent is a private post
-    if (parentPost.encryptedContent && parentPost.epoch !== undefined && parentPost.nonce) {
-      // Parent is private - check if it's a reply to another private post
-      if (parentPost.replyToId) {
-        // Recurse to find the root private post
-        const rootSource = await getEncryptionSource(parentPost.replyToId, depth + 1);
-        if (rootSource) {
-          // Inherit from the root of the thread
-          return rootSource;
-        }
-      }
-
-      // This parent is the root private post - use its encryption
-      return {
-        ownerId: parentPost.author.id,
-        epoch: parentPost.epoch,
-        inherited: true
-      };
-    }
-
-    // Parent is public - no inherited encryption
-    return null;
-  } catch (error) {
-    console.error('Error getting encryption source:', error);
-    return null;
-  }
-}
+// Re-export EncryptionSource type and getEncryptionSource function from reply-service
+// for backward compatibility with existing code
+export type { EncryptionSource } from './reply-service';
+export { getEncryptionSource } from './reply-service';
 
 // Singleton instance
 export const postService = new PostService();

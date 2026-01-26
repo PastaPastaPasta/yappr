@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { formatTime } from '@/lib/utils'
+import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 
 interface FollowRequestUser {
   id: string
@@ -27,6 +28,7 @@ export function PrivateFeedFollowRequests() {
   const [isLoading, setIsLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
 
   const loadRequests = useCallback(async () => {
     if (!user?.identityId) {
@@ -197,6 +199,8 @@ export function PrivateFeedFollowRequests() {
         // Remove from local state
         setRequests(prev => prev.filter(r => r.id !== request.id))
         toast.success(`Approved ${request.username ? `@${request.username}` : request.displayName}`)
+        // Trigger refresh of sibling components (Dashboard, Followers list)
+        triggerRefresh()
       } else {
         // Check if this is a sync required error
         if (result.error?.startsWith('SYNC_REQUIRED:')) {

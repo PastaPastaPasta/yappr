@@ -26,7 +26,6 @@ function PostDetailContent() {
   // Uses cached post data for instant navigation when available
   const {
     post,
-    parentPost,
     replyThreads,
     isLoading,
     isLoadingReplies,
@@ -37,8 +36,8 @@ function PostDetailContent() {
   })
 
   // Check if user can reply to private posts
-  // For replies in private feeds, use the parent post owner as the feed owner
-  const feedOwnerId = parentPost?.author.id || post?.author.id
+  // Posts are top-level content, so the feed owner is the post author
+  const feedOwnerId = post?.author.id
   const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, feedOwnerId)
 
   const handleReply = () => {
@@ -88,12 +87,6 @@ function PostDetailContent() {
           </div>
         ) : post ? (
           <>
-            {parentPost && (
-              <div className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
-                <PostCard post={parentPost} hideReplyTo />
-              </div>
-            )}
-
             <div className="border-b border-gray-200 dark:border-gray-800">
               <PostCard post={post} enrichment={postEnrichment} hideReplyTo />
             </div>
@@ -147,7 +140,7 @@ function PostDetailContent() {
               ) : (
                 replyThreads.map((thread) => (
                   <ReplyThreadItem
-                    key={thread.post.id}
+                    key={thread.content.id}
                     thread={thread}
                     mainPostAuthorId={post.author.id}
                   />
