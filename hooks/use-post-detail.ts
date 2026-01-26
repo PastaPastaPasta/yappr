@@ -165,6 +165,8 @@ export function usePostDetail({
 
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
+  // Incrementing token to ignore stale async responses
+  const loadRequestIdRef = useRef(0)
 
   // Track if we used navigation data for initial render (computed once at mount)
   const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
@@ -191,6 +193,8 @@ export function usePostDetail({
     // Prevent duplicate loads
     if (loadedPostIdRef.current === postId) return
     loadedPostIdRef.current = postId
+    const requestId = ++loadRequestIdRef.current
+    const isCurrent = () => loadRequestIdRef.current === requestId
 
     // Only show main loading if no navigation data was available
     if (!usedNavigationDataRef.current) {
@@ -200,18 +204,48 @@ export function usePostDetail({
     setIsLoadingReplies(true)
     setError(null)
 
+    let loadedPost: Post | null = null
+
     try {
       // Load post (transformDocument returns post with defaults, no enrichment)
-      const loadedPost = await postService.getPostById(postId, { skipEnrichment: true })
+      loadedPost = await postService.getPostById(postId, { skipEnrichment: true })
+
+      if (!isCurrent()) return
 
       if (!loadedPost) {
         setState({ post: null, replies: [], replyThreads: [] })
+        setIsLoading(false)
         setIsLoadingReplies(false)
         return
       }
 
+      // Show the main post as soon as it's available
+      setState({ post: loadedPost, replies: [], replyThreads: [] })
+      setIsLoading(false)
+
+      // Enrich the main post without blocking replies or UI
+      enrich([loadedPost]).catch((err) => {
+        console.error('usePostDetail: Failed to enrich main post:', err)
+      })
+    } catch (err) {
+      if (!isCurrent()) return
+      console.error('usePostDetail: Failed to load post:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load post')
+      // Only clear state if we don't have navigation data to show
+      if (!usedNavigationDataRef.current) {
+        setState({ post: null, replies: [], replyThreads: [] })
+      }
+      setIsLoading(false)
+      setIsLoadingReplies(false)
+      return
+    }
+
+    if (!loadedPost) return
+
+    try {
       // Load direct replies (now from reply-service)
       const repliesResult = await replyService.getReplies(postId)
+      if (!isCurrent()) return
       const directReplies = repliesResult.documents
 
       // Build author's thread chain recursively
@@ -276,11 +310,6 @@ export function usePostDetail({
       // Build threaded reply tree
       const replyThreads = buildReplyTree(loadedPost, authorThreadChain, otherDirectReplies, nestedRepliesMap)
 
-      // Collect all nested replies for reference
-      const allNestedReplies = Array.from(nestedRepliesMap.values())
-        .flat()
-        .filter(r => !authorThreadIds.has(r.id))
-
       // All replies for backwards compat
       const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
@@ -296,22 +325,22 @@ export function usePostDetail({
         }
       }
 
-      // Set initial state immediately (with placeholder data)
-      setState({ post: loadedPost, replies, replyThreads })
+      // Update replies after they're ready, preserve any enriched main post
+      setState(current => {
+        const mergedPost = current.post
+          ? { ...current.post, quotedPost: loadedPost.quotedPost || current.post.quotedPost }
+          : loadedPost
 
-      // Enrich the main post (replies are enriched by replyService during loading)
-      await enrich([loadedPost])
-
+        return { post: mergedPost, replies, replyThreads }
+      })
     } catch (err) {
-      console.error('usePostDetail: Failed to load post:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load post')
-      // Only clear state if we don't have navigation data to show
-      if (!usedNavigationDataRef.current) {
-        setState({ post: null, replies: [], replyThreads: [] })
-      }
+      if (!isCurrent()) return
+      console.error('usePostDetail: Failed to load replies:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load replies')
     } finally {
-      setIsLoading(false)
-      setIsLoadingReplies(false)
+      if (isCurrent()) {
+        setIsLoadingReplies(false)
+      }
     }
   }, [postId, enabled, enrich])
 
