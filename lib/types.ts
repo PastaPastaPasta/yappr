@@ -55,6 +55,9 @@ export interface Post {
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it
   repostTimestamp?: Date  // When the repost was created (for timeline sorting)
+  // Reply fields (present when this Post object represents a Reply for display)
+  parentId?: string        // ID of post or reply being replied to (only on replies)
+  parentOwnerId?: string   // Owner of parent (only on replies)
   // Private feed fields (present when post is encrypted)
   encryptedContent?: Uint8Array  // XChaCha20-Poly1305 ciphertext
   epoch?: number                 // Revocation epoch at post creation

@@ -169,6 +169,28 @@ class ReplyService extends BaseDocumentService<Reply> {
   }
 
   /**
+   * Delete a reply by its ID.
+   * Only the reply owner can delete their own replies.
+   */
+  async deleteReply(replyId: string, ownerId: string): Promise<boolean> {
+    try {
+      const { stateTransitionService } = await import('./state-transition-service');
+
+      const result = await stateTransitionService.deleteDocument(
+        this.contractId,
+        this.documentType,
+        replyId,
+        ownerId
+      );
+
+      return result.success;
+    } catch (error) {
+      console.error('Error deleting reply:', error);
+      return false;
+    }
+  }
+
+  /**
    * Create a reply to a post or another reply
    *
    * @param ownerId - Identity ID of the reply author

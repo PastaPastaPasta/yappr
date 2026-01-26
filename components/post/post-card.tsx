@@ -448,13 +448,25 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     const authedUser = requireAuth('delete')
     if (!authedUser) return
 
+    // Check if this is a reply (has parentId) or a post
+    const isReply = Boolean(post.parentId)
+
     openDeleteModal(post, async () => {
-      const { postService } = await import('@/lib/services/post-service')
-      const success = await postService.deletePost(post.id, authedUser.identityId)
+      let success: boolean
+
+      if (isReply) {
+        // Use replyService for replies (document type 'reply')
+        const { replyService } = await import('@/lib/services/reply-service')
+        success = await replyService.deleteReply(post.id, authedUser.identityId)
+      } else {
+        // Use postService for posts (document type 'post')
+        const { postService } = await import('@/lib/services/post-service')
+        success = await postService.deletePost(post.id, authedUser.identityId)
+      }
 
       if (!success) throw new Error('Delete operation failed')
 
-      toast.success('Post deleted')
+      toast.success(isReply ? 'Reply deleted' : 'Post deleted')
       // Notify parent to remove post from list if callback provided
       if (onDelete) {
         onDelete(post.id)

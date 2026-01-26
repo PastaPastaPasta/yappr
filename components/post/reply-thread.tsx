@@ -7,6 +7,7 @@ import { PostCard } from './post-card'
 /**
  * Convert a Reply to a Post-like object for PostCard rendering.
  * This is a temporary adapter until PostCard is updated to handle both types.
+ * Preserves parentId/parentOwnerId so PostCard can detect replies for deletion.
  */
 function replyToPostLike(reply: Reply): Post {
   return {
@@ -26,6 +27,8 @@ function replyToPostLike(reply: Reply): Post {
     encryptedContent: reply.encryptedContent,
     epoch: reply.epoch,
     nonce: reply.nonce,
+    parentId: reply.parentId,
+    parentOwnerId: reply.parentOwnerId,
   }
 }
 
