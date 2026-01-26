@@ -1,6 +1,6 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
@@ -131,7 +131,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postId],
+          ['postId', '==', stringToIdentifierBytes(postId)],
           ['hashtag', '==', normalizedTag]
         ],
         limit: 1
@@ -156,7 +156,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postId],
+          ['postId', '==', stringToIdentifierBytes(postId)],
           ['hashtag', '>', '']  // Range query on string field for ordering
         ],
         orderBy: [['postId', 'asc'], ['hashtag', 'asc']],

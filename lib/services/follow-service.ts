@@ -1,6 +1,6 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
+import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField, normalizeSDKResponse } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
@@ -97,15 +97,20 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    */
   async getFollow(targetUserId: string, followerUserId: string): Promise<FollowDocument | null> {
     try {
-      const result = await this.query({
+      const sdk = await getEvoSdk();
+
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'follow',
         where: [
           ['$ownerId', '==', followerUserId],
-          ['followingId', '==', targetUserId]
+          ['followingId', '==', stringToIdentifierBytes(targetUserId)]
         ],
         limit: 1
       });
 
-      return result.documents.length > 0 ? result.documents[0] : null;
+      const documents = normalizeSDKResponse(response);
+      return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
       console.error('Error getting follow:', error);
       return null;
@@ -119,6 +124,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   async getFollowers(userId: string): Promise<FollowDocument[]> {
     try {
       const sdk = await getEvoSdk();
+      const userIdBytes = stringToIdentifierBytes(userId);
 
       const { documents } = await paginateFetchAll(
         sdk,
@@ -126,7 +132,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
           dataContractId: this.contractId,
           documentTypeName: 'follow',
           where: [
-            ['followingId', '==', userId],
+            ['followingId', '==', userIdBytes],
             ['$createdAt', '>', 0]
           ],
           // Use followers index: [followingId, $createdAt] - must include all index fields in orderBy
@@ -229,6 +235,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     return this.countFollowersDeduplicator.dedupe(userId, async () => {
       try {
         const sdk = await getEvoSdk();
+        const userIdBytes = stringToIdentifierBytes(userId);
 
         const { count } = await paginateCount(
           sdk,
@@ -236,7 +243,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
             dataContractId: this.contractId,
             documentTypeName: 'follow',
             where: [
-              ['followingId', '==', userId],
+              ['followingId', '==', userIdBytes],
               ['$createdAt', '>', 0]
             ],
             // Use followers index: [followingId, $createdAt]

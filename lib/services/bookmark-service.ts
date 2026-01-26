@@ -1,7 +1,8 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { transformDocumentWithField, stringToIdentifierBytes } from './sdk-helpers';
+import { transformDocumentWithField, stringToIdentifierBytes, normalizeSDKResponse } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
+import { getEvoSdk } from './evo-sdk-service';
 
 export interface BookmarkDocument {
   $id: string;
@@ -85,15 +86,20 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
    */
   async getBookmark(postId: string, ownerId: string): Promise<BookmarkDocument | null> {
     try {
-      const result = await this.query({
+      const sdk = await getEvoSdk();
+
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'bookmark',
         where: [
-          ['postId', '==', postId],
-          ['$ownerId', '==', ownerId]
+          ['$ownerId', '==', ownerId],
+          ['postId', '==', stringToIdentifierBytes(postId)]
         ],
         limit: 1
       });
 
-      return result.documents.length > 0 ? result.documents[0] : null;
+      const documents = normalizeSDKResponse(response);
+      return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
       console.error('Error getting bookmark:', error);
       return null;
@@ -150,16 +156,24 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     if (postIds.length === 0) return [];
 
     try {
-      const result = await this.query({
+      const sdk = await getEvoSdk();
+
+      // Convert postIds to byte arrays for SDK v3
+      const postIdBytes = postIds.map(id => stringToIdentifierBytes(id));
+
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'bookmark',
         where: [
           ['$ownerId', '==', userId],
-          ['postId', 'in', postIds]
+          ['postId', 'in', postIdBytes]
         ],
         orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
         limit: postIds.length
       });
 
-      return result.documents;
+      const documents = normalizeSDKResponse(response);
+      return documents.map(doc => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting user bookmarks for posts:', error);
       return [];

@@ -265,24 +265,40 @@ class ReplyService extends BaseDocumentService<Reply> {
   async getReplies(parentId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Reply>> {
     const { skipEnrichment, ...queryOpts } = options;
 
-    const queryOptions: QueryOptions = {
-      where: [
-        ['parentId', '==', parentId],
-        ['$createdAt', '>', 0]
-      ],
-      orderBy: [['parentId', 'asc'], ['$createdAt', 'asc']],
-      limit: 20,
-      ...queryOpts
-    };
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+      const parentIdBytes = stringToIdentifierBytes(parentId);
 
-    const result = await this.query(queryOptions);
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'reply',
+        where: [
+          ['parentId', '==', parentIdBytes],
+          ['$createdAt', '>', 0]
+        ],
+        orderBy: [['parentId', 'asc'], ['$createdAt', 'asc']],
+        limit: queryOpts.limit || 20,
+        ...(queryOpts.startAfter ? { startAfter: queryOpts.startAfter } : {})
+      });
 
-    // Resolve authors if not skipping enrichment
-    if (!skipEnrichment) {
-      await this.resolveAuthors(result.documents);
+      const documents = normalizeSDKResponse(response);
+      const result: DocumentResult<Reply> = {
+        documents: documents.map(doc => this.transformDocument(doc)),
+        nextCursor: undefined,
+        prevCursor: undefined
+      };
+
+      // Resolve authors if not skipping enrichment
+      if (!skipEnrichment) {
+        await this.resolveAuthors(result.documents);
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Error getting replies:', error);
+      return { documents: [], nextCursor: undefined, prevCursor: undefined };
     }
-
-    return result;
   }
 
   /**
@@ -333,7 +349,7 @@ class ReplyService extends BaseDocumentService<Reply> {
         dataContractId: this.contractId,
         documentTypeName: 'reply',
         where: [
-          ['parentOwnerId', '==', userId],
+          ['parentOwnerId', '==', stringToIdentifierBytes(userId)],
           ['$createdAt', '>', sinceTimestamp]
         ],
         orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'asc']],
@@ -416,15 +432,22 @@ class ReplyService extends BaseDocumentService<Reply> {
    */
   async countReplies(parentId: string): Promise<number> {
     try {
-      const result = await this.query({
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'reply',
         where: [
-          ['parentId', '==', parentId],
+          ['parentId', '==', stringToIdentifierBytes(parentId)],
           ['$createdAt', '>', 0]
         ],
         orderBy: [['parentId', 'asc'], ['$createdAt', 'asc']],
         limit: 100
       });
-      return result.documents.length;
+
+      const documents = normalizeSDKResponse(response);
+      return documents.length;
     } catch {
       return 0;
     }
@@ -452,10 +475,13 @@ class ReplyService extends BaseDocumentService<Reply> {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
 
+      // Convert parentIds to byte arrays for SDK v3
+      const parentIdBytes = parentIds.map(id => stringToIdentifierBytes(id));
+
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'reply',
-        where: [['parentId', 'in', parentIds]],
+        where: [['parentId', 'in', parentIdBytes]],
         orderBy: [['parentId', 'asc']],
         limit: 100
       });

@@ -147,13 +147,13 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use strings for identifiers in queries - SDK handles conversion
+      // Convert identifiers to byte arrays for SDK v3
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postId],
-          ['mentionedUserId', '==', mentionedUserId]
+          ['postId', '==', stringToIdentifierBytes(postId)],
+          ['mentionedUserId', '==', stringToIdentifierBytes(mentionedUserId)]
         ],
         limit: 1
       });
@@ -174,13 +174,12 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use byPost index - simple query by postId only
-      // SDK handles string to byte array conversion for identifier fields
+      // Convert postId to byte array for SDK v3
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [
-          ['postId', '==', postId]
+          ['postId', '==', stringToIdentifierBytes(postId)]
         ],
         limit: 100
       });
@@ -202,15 +201,16 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
   async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      const userIdBytes = stringToIdentifierBytes(userId);
 
-      // Use strings for identifiers in queries - SDK handles conversion
+      // Convert userId to byte array for SDK v3
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
           documentTypeName: this.documentType,
           where: [
-            ['mentionedUserId', '==', userId],
+            ['mentionedUserId', '==', userIdBytes],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
