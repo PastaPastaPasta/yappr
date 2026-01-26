@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
-import { identifierToBase58, normalizeSDKResponse, toUint8Array, stringToIdentifierBytes } from './sdk-helpers'
+import { identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
@@ -207,20 +207,14 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    */
   async getBlock(targetUserId: string, blockerId: string): Promise<BlockDocument | null> {
     try {
-      const sdk = await getEvoSdk()
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
+      const result = await this.query({
         where: [
           ['$ownerId', '==', blockerId],
-          ['blockedId', '==', stringToIdentifierBytes(targetUserId)]
+          ['blockedId', '==', targetUserId]
         ],
         limit: 1
       })
-
-      const documents = normalizeSDKResponse(response)
-      return documents.length > 0 ? this.transformDocument(documents[0]) : null
+      return result.documents[0] || null
     } catch (error) {
       console.error('Error getting block:', error)
       return null

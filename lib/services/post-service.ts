@@ -1164,7 +1164,9 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Get posts that quote a specific post.
-   * Uses the quotedPostAndOwner index: [quotedPostId, $ownerId]
+   * NOTE: The contract lacks a quotedPostId index, so this uses client-side
+   * filtering of recent posts. Uses languageTimeline index to scan.
+   * For production, a contract migration adding the index would improve efficiency.
    */
   async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
     const limit = options.limit || 50;
@@ -1172,27 +1174,28 @@ class PostService extends BaseDocumentService<Post> {
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
-      const quotedPostIdBytes = stringToIdentifierBytes(quotedPostId);
 
-      // Use quotedPostAndOwner index for efficient lookup
+      // Scan recent posts using languageTimeline index - without a dedicated index
+      // we have to filter client-side
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostId', '==', quotedPostIdBytes],
-          ['$ownerId', '>', '']  // Need second field for index
+          ['language', '==', 'en'],
+          ['$createdAt', '>', 0]
         ],
-        orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
-        limit
+        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
+        limit: 100 // Scan recent posts
       });
 
       const documents = normalizeSDKResponse(response);
 
-      // Transform and filter for quote tweets only (non-empty content)
-      // Pure reposts have empty content
-      return documents
+      // Filter for posts that quote the target post and transform
+      const quotePosts = documents
         .map(doc => this.transformDocument(doc))
-        .filter(post => post.content && post.content.trim() !== '');
+        .filter(post => post.quotedPostId === quotedPostId);
+
+      return quotePosts.slice(0, limit);
     } catch (error) {
       console.error('Error getting quote posts:', error);
       return [];
@@ -1218,7 +1221,7 @@ class PostService extends BaseDocumentService<Post> {
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostOwnerId', '==', stringToIdentifierBytes(userId)],
+          ['quotedPostOwnerId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
         // Match quotedPostOwnerAndTime index: [quotedPostOwnerId: asc, $createdAt: asc]

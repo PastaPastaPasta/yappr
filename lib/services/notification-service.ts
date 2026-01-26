@@ -1,7 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { normalizeSDKResponse, identifierToBase58, stringToIdentifierBytes } from './sdk-helpers';
+import { normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../types';
 
@@ -58,7 +58,7 @@ class NotificationService {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'follow',
         where: [
-          ['followingId', '==', stringToIdentifierBytes(userId)],
+          ['followingId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
         orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']],

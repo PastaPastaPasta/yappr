@@ -155,7 +155,7 @@ class RepostService {
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostId', '==', stringToIdentifierBytes(postId)],
+          ['quotedPostId', '==', postId],
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
@@ -184,7 +184,6 @@ class RepostService {
   async getPostReposts(postId: string): Promise<RepostDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const postIdBytes = stringToIdentifierBytes(postId);
 
       const { documents } = await paginateFetchAll(
         sdk,
@@ -192,7 +191,7 @@ class RepostService {
           dataContractId: this.contractId,
           documentTypeName: 'post',
           where: [
-            ['quotedPostId', '==', postIdBytes],
+            ['quotedPostId', '==', postId],
             ['$ownerId', '>', '']  // Need second field for index
           ],
           orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']]
@@ -262,15 +261,12 @@ class RepostService {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Convert postIds to byte arrays for SDK v3
-      const postIdBytes = postIds.map(id => stringToIdentifierBytes(id));
-
       // Use 'in' operator for batch query on quotedPostId
       // Must include orderBy to match the quotedPostAndOwner index
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
-        where: [['quotedPostId', 'in', postIdBytes]],
+        where: [['quotedPostId', 'in', postIds]],
         orderBy: [['quotedPostId', 'asc']],
         limit: 100
       });
@@ -308,7 +304,7 @@ class RepostService {
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostOwnerId', '==', stringToIdentifierBytes(userId)],
+          ['quotedPostOwnerId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
         // Match quotedPostOwnerAndTime index: [quotedPostOwnerId: asc, $createdAt: asc]

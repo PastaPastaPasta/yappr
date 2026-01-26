@@ -124,7 +124,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         dataContractId: this.contractId,
         documentTypeName: 'like',
         where: [
-          ['postId', '==', stringToIdentifierBytes(postId)],
+          ['postId', '==', postId],
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
@@ -145,7 +145,6 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   async getPostLikes(postId: string): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const postIdBytes = stringToIdentifierBytes(postId);
 
       const { documents } = await paginateFetchAll(
         sdk,
@@ -153,7 +152,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           dataContractId: this.contractId,
           documentTypeName: 'like',
           where: [
-            ['postId', '==', postIdBytes],
+            ['postId', '==', postId],
             ['$ownerId', '>', '']
           ],
           orderBy: [['$ownerId', 'asc']]
@@ -192,15 +191,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Convert postIds to byte arrays for SDK v3
-      const postIdBytes = postIds.map(id => stringToIdentifierBytes(id));
-
       // Use 'in' operator for batch query on postId
       // Must include orderBy to match the postLikes index: [postId, $createdAt]
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
-        where: [['postId', 'in', postIdBytes]],
+        where: [['postId', 'in', postIds]],
         orderBy: [['postId', 'asc']],
         limit: 100
       });
@@ -229,7 +225,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         dataContractId: this.contractId,
         documentTypeName: 'like',
         where: [
-          ['postOwnerId', '==', stringToIdentifierBytes(userId)],
+          ['postOwnerId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
         // Match postOwnerLikes index: [postOwnerId: asc, $createdAt: asc]
