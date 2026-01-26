@@ -351,6 +351,16 @@ function SellerOrdersPage() {
                                 <p className="text-sm text-gray-600 dark:text-gray-400">{payload.notes}</p>
                               </div>
                             )}
+
+                            {/* Refund Address */}
+                            {payload.refundAddress && (
+                              <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+                                <p className="text-sm font-medium mb-1">Refund Address</p>
+                                <p className="text-sm font-mono break-all text-gray-600 dark:text-gray-400">
+                                  {payload.refundAddress}
+                                </p>
+                              </div>
+                            )}
                           </>
                         ) : (
                           <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">

@@ -89,6 +89,7 @@ function CheckoutPage() {
   const [selectedPaymentUri, setSelectedPaymentUri] = useState<ParsedPaymentUri | null>(null)
   const [txid, setTxid] = useState('')
   const [notes, setNotes] = useState('')
+  const [refundAddress, setRefundAddress] = useState('')
 
   // Saved addresses
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([])
@@ -452,7 +453,8 @@ function CheckoutPage() {
         shippingCost,
         selectedPaymentUri.uri,
         currency,
-        notes || undefined
+        notes || undefined,
+        refundAddress || undefined
       )
 
       // Add txid if provided
@@ -705,6 +707,9 @@ function CheckoutPage() {
               currency={currency}
               notes={notes}
               onNotesChange={setNotes}
+              refundAddress={refundAddress}
+              onRefundAddressChange={setRefundAddress}
+              paymentScheme={selectedPaymentUri?.scheme}
               onSubmit={handlePlaceOrder}
               isSubmitting={isSubmitting}
             />

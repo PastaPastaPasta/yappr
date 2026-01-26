@@ -132,7 +132,8 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     shippingCost: number,
     paymentUri: string,
     currency: string,
-    notes?: string
+    notes?: string,
+    refundAddress?: string
   ): OrderPayload {
     const orderItems: OrderItem[] = cartItems.map(item => ({
       itemId: item.itemId,
@@ -157,7 +158,8 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       total: subtotal + shippingCost,
       currency,
       paymentUri,
-      notes
+      notes,
+      refundAddress
     };
   }
 
