@@ -2,7 +2,7 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { Reply, User, PostQueryOptions } from '../types';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 
 export interface ReplyDocument {
@@ -212,8 +212,8 @@ class ReplyService extends BaseDocumentService<Reply> {
   ): Promise<Reply> {
     const PRIVATE_REPLY_PLACEHOLDER = '🔒';
     const data: Record<string, unknown> = {
-      parentId,
-      parentOwnerId,
+      parentId: stringToIdentifierBytes(parentId),
+      parentOwnerId: stringToIdentifierBytes(parentOwnerId),
     };
 
     // Handle encryption if provided

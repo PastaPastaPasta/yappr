@@ -23,7 +23,7 @@ export function migrateLegacyPolicies(text: string): StorePolicy[] {
  * Parse policies string (JSON array or legacy text) into StorePolicy[]
  */
 export function parseStorePolicies(raw: string | undefined): StorePolicy[] {
-  if (!raw || !raw.trim()) return []
+  if (!raw?.trim()) return []
 
   const trimmed = raw.trim()
 

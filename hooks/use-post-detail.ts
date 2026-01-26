@@ -297,6 +297,7 @@ export function usePostDetail({
       let currentThreadIds = authorThreadChain.map(r => r.id)
       while (currentThreadIds.length > 0) {
         const continuations = await fetchAuthorThreadContinuation(currentThreadIds)
+        if (!isCurrent()) return
         if (continuations.length === 0) break
 
         // Sort and add to chain
@@ -316,6 +317,7 @@ export function usePostDetail({
       const nestedRepliesMap = allIdsForNested.length > 0
         ? await replyService.getNestedReplies(allIdsForNested)
         : new Map<string, Reply[]>()
+      if (!isCurrent()) return
 
       // Build threaded reply tree
       const replyThreads = buildReplyTree(loadedPost, authorThreadChain, otherDirectReplies, nestedRepliesMap)
@@ -324,11 +326,13 @@ export function usePostDetail({
       const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
       // Fetch quoted posts for main post only (replies don't have quotes)
+      let quotedPost: Post | undefined
       if (loadedPost.quotedPostId) {
         try {
           const quotedPosts = await postService.getPostsByIds([loadedPost.quotedPostId])
+          if (!isCurrent()) return
           if (quotedPosts.length > 0) {
-            loadedPost.quotedPost = quotedPosts[0]
+            quotedPost = quotedPosts[0]
           }
         } catch (quoteError) {
           console.error('Failed to fetch quoted post:', quoteError)
@@ -336,10 +340,11 @@ export function usePostDetail({
       }
 
       // Update replies after they're ready, preserve any enriched main post
+      if (!isCurrent()) return
       setState(current => {
         const mergedPost = current.post
-          ? { ...current.post, quotedPost: loadedPost.quotedPost || current.post.quotedPost }
-          : loadedPost
+          ? { ...current.post, quotedPost: quotedPost ?? current.post.quotedPost }
+          : { ...loadedPost, quotedPost: quotedPost ?? loadedPost.quotedPost }
 
         return { post: mergedPost, replies, replyThreads }
       })

@@ -4,7 +4,7 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, type DocumentWhereClause } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, type DocumentWhereClause } from './sdk-helpers';
 import type { DocumentsQuery } from '@dashevo/wasm-sdk';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 import { retryAsync } from '../retry-utils';
@@ -368,8 +368,8 @@ class PostService extends BaseDocumentService<Post> {
 
     // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
-    if (options.quotedPostId) data.quotedPostId = options.quotedPostId;
-    if (options.quotedPostOwnerId) data.quotedPostOwnerId = options.quotedPostOwnerId;
+    if (options.quotedPostId) data.quotedPostId = stringToIdentifierBytes(options.quotedPostId);
+    if (options.quotedPostOwnerId) data.quotedPostOwnerId = stringToIdentifierBytes(options.quotedPostOwnerId);
     if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
     if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
