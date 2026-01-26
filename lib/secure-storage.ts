@@ -196,7 +196,7 @@ export const isRememberMe = (): boolean => {
  * Get the configured network from environment
  */
 const getConfiguredNetwork = (): 'testnet' | 'mainnet' => {
-  if (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_NETWORK) {
+  if (process?.env?.NEXT_PUBLIC_NETWORK) {
     return process.env.NEXT_PUBLIC_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
   }
   return 'testnet'

@@ -1,6 +1,6 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { transformDocumentWithField } from './sdk-helpers';
+import { transformDocumentWithField, stringToIdentifierBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 
 export interface BookmarkDocument {
@@ -36,7 +36,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
         this.contractId,
         this.documentType,
         ownerId,
-        { postId }
+        { postId: stringToIdentifierBytes(postId) }
       );
 
       return result.success;
