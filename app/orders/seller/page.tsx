@@ -225,9 +225,17 @@ function SellerOrdersPage() {
                     className="p-4"
                   >
                     {/* Order Header */}
-                    <button
+                    <div
                       onClick={() => setExpandedOrder(isExpanded ? null : order.id)}
-                      className="w-full flex items-center justify-between"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setExpandedOrder(isExpanded ? null : order.id)
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      className="w-full flex items-center justify-between cursor-pointer focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-inset rounded"
                     >
                       <div className="flex items-center gap-3">
                         <OrderStatusBadge status={status?.status} showLabel={false} />
@@ -259,7 +267,7 @@ function SellerOrdersPage() {
                           <ChevronDownIcon className="h-5 w-5 text-gray-400" />
                         )}
                       </div>
-                    </button>
+                    </div>
 
                     {/* Expanded Details */}
                     {isExpanded && (

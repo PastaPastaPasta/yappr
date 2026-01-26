@@ -41,6 +41,7 @@ function AddItemPage() {
   const [stockQuantity, setStockQuantity] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadedStoreId, setLoadedStoreId] = useState<string | null>(null)
 
   // Variant state
   const [hasVariants, setHasVariants] = useState(false)
@@ -72,6 +73,7 @@ function AddItemPage() {
         setCurrency(itemCurrency)
         setCategory(item.category || '')
         setImageUrls(item.imageUrls || [])
+        setLoadedStoreId(item.storeId)
 
         // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
@@ -197,10 +199,16 @@ function AddItemPage() {
         variants
       }
 
-      if (isEditMode && itemId && storeId) {
-        await storeItemService.updateItem(itemId, user.identityId, storeId, itemData)
-      } else if (storeId) {
-        await storeItemService.createItem(user.identityId, storeId, itemData)
+      // Use URL storeId or fall back to loaded item's storeId for edit mode
+      const effectiveStoreId = storeId || loadedStoreId
+
+      if (isEditMode && itemId && effectiveStoreId) {
+        await storeItemService.updateItem(itemId, user.identityId, effectiveStoreId, itemData)
+      } else if (effectiveStoreId) {
+        await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+      } else {
+        setError('Store ID is required')
+        return
       }
 
       router.push('/store/manage')

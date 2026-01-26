@@ -17,6 +17,7 @@ import {
   KeyIcon,
   CreditCardIcon
 } from '@heroicons/react/24/outline'
+import toast from 'react-hot-toast'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
@@ -173,9 +174,14 @@ function StoreManagePage() {
   }) => {
     if (!user?.identityId || !store?.id) return
 
-    const newZone = await shippingZoneService.createZone(user.identityId, store.id, data)
-    setZones([...zones, newZone])
-    setShowZoneModal(false)
+    try {
+      const newZone = await shippingZoneService.createZone(user.identityId, store.id, data)
+      setZones([...zones, newZone])
+      setShowZoneModal(false)
+    } catch (err) {
+      console.error('Failed to create shipping zone:', err)
+      toast.error('Failed to create shipping zone')
+    }
   }
 
   const handleUpdateZone = async (data: {
@@ -188,9 +194,14 @@ function StoreManagePage() {
   }) => {
     if (!user?.identityId || !editingZone) return
 
-    const updatedZone = await shippingZoneService.updateZone(editingZone.id, user.identityId, editingZone.storeId, data)
-    setZones(zones.map(z => z.id === editingZone.id ? updatedZone : z))
-    setEditingZone(null)
+    try {
+      const updatedZone = await shippingZoneService.updateZone(editingZone.id, user.identityId, editingZone.storeId, data)
+      setZones(zones.map(z => z.id === editingZone.id ? updatedZone : z))
+      setEditingZone(null)
+    } catch (err) {
+      console.error('Failed to update shipping zone:', err)
+      toast.error('Failed to update shipping zone')
+    }
   }
 
   const handleAddPayment = async (data: {

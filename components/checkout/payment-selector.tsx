@@ -44,9 +44,10 @@ export function PaymentSelector({
   // Handle payment selection - reset detected state when changing payment
   const handleSelect = useCallback((uri: ParsedPaymentUri | null) => {
     onSelect(uri)
+    onTxidChange('') // Clear any stale txid from previous payment method
     setDetectedAmount(null)
     setWasAutoFilled(false)
-  }, [onSelect])
+  }, [onSelect, onTxidChange])
 
   return (
     <div className="p-4 space-y-4">
