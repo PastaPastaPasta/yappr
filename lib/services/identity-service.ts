@@ -380,12 +380,6 @@ class IdentityService {
       const identityJson = identity.toJSON();
       console.log('Identity revision before update:', identityJson.revision);
 
-      // The evo-sdk facade's update method expects:
-      // - identityId: string
-      // - addPublicKeys: array of key objects (will be JSON stringified)
-      // - disablePublicKeyIds: array of key IDs to disable (optional)
-      // - privateKeyWif: the WIF-encoded private key for signing
-      //
       // Create signer for the identity update using the master key
       const signer = await signerService.createSigner(signingPrivateKeyWif);
 
