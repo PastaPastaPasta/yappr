@@ -55,6 +55,52 @@ function normalizeBytes(value: unknown): Uint8Array | undefined {
   return undefined
 }
 
+/**
+ * Helper to fetch content by IDs, trying posts first and then replies for any not found.
+ * Returns an array of Post objects (replies are converted to Post format for display).
+ */
+async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
+  if (ids.length === 0) return []
+
+  const { postService } = await import('@/lib/services')
+  const { replyService } = await import('@/lib/services/reply-service')
+
+  // First try to fetch as posts
+  const posts = await postService.getPostsByIds(ids)
+  const foundPostIds = new Set(posts.map(p => p.id))
+
+  // Find IDs that weren't found as posts
+  const missingIds = ids.filter(id => !foundPostIds.has(id))
+
+  if (missingIds.length === 0) {
+    return posts
+  }
+
+  // Try to fetch missing IDs as replies
+  const replies = await replyService.getRepliesByIds(missingIds)
+
+  // Convert replies to Post format for display
+  const convertedReplies: Post[] = replies.map(reply => ({
+    id: reply.id,
+    author: reply.author,
+    content: reply.content,
+    createdAt: reply.createdAt,
+    likes: reply.likes,
+    reposts: reply.reposts,
+    replies: reply.replies,
+    views: reply.views,
+    liked: reply.liked,
+    reposted: reply.reposted,
+    bookmarked: reply.bookmarked,
+    media: reply.media,
+    encryptedContent: reply.encryptedContent,
+    epoch: reply.epoch,
+    nonce: reply.nonce,
+  }))
+
+  return [...posts, ...convertedReplies]
+}
+
 function FeedPage() {
   const router = useRouter()
   const [isHydrated, setIsHydrated] = useState(false)
@@ -248,15 +294,14 @@ function FeedPage() {
         }
         })
 
-        // Fetch quoted posts for Following feed
+        // Fetch quoted posts for Following feed (may be posts or replies)
         try {
-          const { postService } = await import('@/lib/services')
           const quotedPostIds = posts
             .filter((p: any) => p.quotedPostId)
             .map((p: any) => p.quotedPostId)
 
           if (quotedPostIds.length > 0) {
-            const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+            const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
             const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
             for (const post of posts) {
@@ -273,7 +318,7 @@ function FeedPage() {
         try {
           const { followService } = await import('@/lib/services')
           const { repostService } = await import('@/lib/services/repost-service')
-          const { postService, unifiedProfileService } = await import('@/lib/services')
+          const { unifiedProfileService } = await import('@/lib/services')
 
           // Get list of followed user IDs
           const followedUsers = await followService.getFollowing(user.identityId)
@@ -292,13 +337,13 @@ function FeedPage() {
             }))
 
             if (allReposts.length > 0) {
-              // Get unique post IDs and fetch original posts
+              // Get unique post IDs and fetch original posts (may be posts or replies)
               const existingPostIds = new Set(posts.map((p: any) => p.id))
               const repostPostIds = Array.from(new Set(allReposts.map(r => r.postId)))
                 .filter(id => !existingPostIds.has(id)) // Don't duplicate posts already in feed
 
               if (repostPostIds.length > 0) {
-                const repostedPosts = await postService.getPostsByIds(repostPostIds)
+                const repostedPosts = await fetchPostsOrReplies(repostPostIds)
                 const repostedPostMap = new Map(repostedPosts.map(p => [p.id, p]))
 
                 // Fetch reposter profiles
@@ -447,15 +492,14 @@ function FeedPage() {
             console.error('Feed: Error fetching reposts:', repostError)
           }
 
-          // Fetch quoted posts
+          // Fetch quoted posts (may be posts or replies)
           try {
-            const { postService } = await import('@/lib/services')
             const quotedPostIds = postsToEnrich
               .filter((p: any) => p.quotedPostId)
               .map((p: any) => p.quotedPostId)
 
             if (quotedPostIds.length > 0) {
-              const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+              const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
               const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
               for (const post of postsToEnrich) {
