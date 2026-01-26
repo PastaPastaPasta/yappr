@@ -224,7 +224,9 @@ export function usePostDetail({
       setIsLoading(false)
 
       // Enrich the main post without blocking replies or UI
-      void enrich([loadedPost])
+      enrich([loadedPost]).catch((err) => {
+        console.error('usePostDetail: Failed to enrich main post:', err)
+      })
     } catch (err) {
       if (!isCurrent()) return
       console.error('usePostDetail: Failed to load post:', err)
