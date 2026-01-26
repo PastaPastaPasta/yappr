@@ -4,7 +4,6 @@ import { signerService, KeyPurpose } from './signer-service';
 import { wallet } from '@dashevo/evo-sdk';
 import { TipInfo } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
 
 export interface TipResult {
   success: boolean;
@@ -30,20 +29,6 @@ export const CREDITS_PER_DASH = 100_000_000_000;
 export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
-  /**
-   * Convert a WASM IdentityPublicKey to the format expected by signer-service
-   */
-  private wasmKeyToKeyData(wasmKey: WasmIdentityPublicKey): IdentityPublicKeyType {
-    return {
-      id: wasmKey.keyId,
-      type: wasmKey.keyTypeNumber,
-      purpose: wasmKey.purposeNumber,
-      securityLevel: wasmKey.securityLevelNumber,
-      data: wasmKey.data, // hex string from WASM key
-      readOnly: false,
-    };
-  }
-
   /**
    * Find a transfer key (purpose 3) from identity's WASM public keys
    * Optionally match by specific key ID
@@ -198,17 +183,13 @@ class TipService {
         keyId: transferKey.keyId
       }, null, 2));
 
-      // Convert WASM key to format expected by signer service
-      const keyData = this.wasmKeyToKeyData(transferKey);
-
       // Create signer with the transfer key
-      const { signer, identityKey: signingKey } = await signerService.createSignerAndKey(
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         transferKeyWif.trim(),
-        keyData
+        transferKey
       );
 
       console.log('Calling sdk.identities.creditTransfer...');
-      // The SDK 3.0.0 API expects: identity, recipientId, amount, signer, signingKey (optional)
       const result = await sdk.identities.creditTransfer({
         identity,
         recipientId,

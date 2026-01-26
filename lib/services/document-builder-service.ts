@@ -1,8 +1,8 @@
 /**
- * Document Builder Service - Builds WASM Document objects for SDK 3.0.0 SDK
+ * Document Builder Service - Builds WASM Document objects for the typed state transition API
  *
  * This service provides utilities for constructing Document objects
- * for use with the new typed state transition APIs in @dashevo/evo-sdk@3.0.0
+ * for use with the new typed state transition APIs in @dashevo/evo-sdk
  *
  * The new API requires Document WASM objects instead of plain data objects.
  *

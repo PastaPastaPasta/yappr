@@ -3,7 +3,6 @@ import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
 
 export interface StateTransitionResult {
   success: boolean;
@@ -79,7 +78,7 @@ class StateTransitionService {
   /**
    * Find the WASM identity public key that matches the stored private key.
    *
-   * This is critical for SDK 3.0.0 SDK: we must use the key that matches our signer's private key.
+   * This is critical for the typed API: we must use the key that matches our signer's private key.
    * The signer only has one private key, so we find which identity key it corresponds to.
    *
    * @param privateKeyWif - The stored private key in WIF format
@@ -144,21 +143,7 @@ class StateTransitionService {
   }
 
   /**
-   * Convert a WASM IdentityPublicKey to the format expected by signer-service
-   */
-  private wasmKeyToKeyData(wasmKey: WasmIdentityPublicKey): IdentityPublicKeyType {
-    return {
-      id: wasmKey.keyId,
-      type: wasmKey.keyTypeNumber,
-      purpose: wasmKey.purposeNumber,
-      securityLevel: wasmKey.securityLevelNumber,
-      data: wasmKey.data, // hex string from WASM key
-      readOnly: false,
-    };
-  }
-
-  /**
-   * Create a document using the SDK 3.0.0 API
+   * Create a document using the the typed API
    */
   async createDocument(
     contractId: string,
@@ -200,16 +185,13 @@ class StateTransitionService {
       );
       console.log('Built document for creation');
 
-      // Convert WASM key to format expected by signer service
-      const keyData = this.wasmKeyToKeyData(identityKey);
-
       // Create signer and identity key for the state transition
-      const { signer, identityKey: signingKey } = await signerService.createSignerAndKey(
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
-        keyData
+        identityKey
       );
 
-      // Create document using the SDK 3.0.0 API
+      // Create document using the the typed API
       await sdk.documents.create({
         document,
         identityKey: signingKey,
@@ -241,7 +223,7 @@ class StateTransitionService {
   }
 
   /**
-   * Update a document using the SDK 3.0.0 SDK API
+   * Update a document using the the typed API API
    */
   async updateDocument(
     contractId: string,
@@ -286,16 +268,13 @@ class StateTransitionService {
       );
       console.log('Built document for replacement');
 
-      // Convert WASM key to format expected by signer service
-      const keyData = this.wasmKeyToKeyData(identityKey);
-
       // Create signer and identity key for the state transition
-      const { signer, identityKey: signingKey } = await signerService.createSignerAndKey(
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
-        keyData
+        identityKey
       );
 
-      // Replace document using the SDK 3.0.0 API
+      // Replace document using the the typed API
       await sdk.documents.replace({
         document,
         identityKey: signingKey,
@@ -325,7 +304,7 @@ class StateTransitionService {
   }
 
   /**
-   * Delete a document using the SDK 3.0.0 SDK API
+   * Delete a document using the the typed API API
    */
   async deleteDocument(
     contractId: string,
@@ -363,16 +342,13 @@ class StateTransitionService {
       );
       console.log('Built document identifier for deletion');
 
-      // Convert WASM key to format expected by signer service
-      const keyData = this.wasmKeyToKeyData(identityKey);
-
       // Create signer and identity key for the state transition
-      const { signer, identityKey: signingKey } = await signerService.createSignerAndKey(
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
-        keyData
+        identityKey
       );
 
-      // Delete document using the SDK 3.0.0 API
+      // Delete document using the the typed API
       await sdk.documents.delete({
         document: documentForDelete,
         identityKey: signingKey,

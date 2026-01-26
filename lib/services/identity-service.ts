@@ -224,8 +224,7 @@ class IdentityService {
 
   /**
    * Validate that a private key has sufficient security level for identity updates
-   * Identity modifications REQUIRE a MASTER (0) security level key in SDK 3.0.0
-   * CRITICAL keys are NOT sufficient for identity updates.
+   * Identity modifications REQUIRE a MASTER (0) security level key    * CRITICAL keys are NOT sufficient for identity updates.
    *
    * @param privateKeyWif - The WIF-encoded private key to validate
    * @param identityId - The identity to validate against
@@ -390,7 +389,7 @@ class IdentityService {
       // Create signer for the identity update using the master key
       const signer = await signerService.createSigner(signingPrivateKeyWif);
 
-      // Update the identity using SDK 3.0.0 API
+      // Update the identity using typed API
       console.log('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({
@@ -541,7 +540,7 @@ class IdentityService {
       // Create signer for the identity update using the master key
       const signer = await signerService.createSigner(signingPrivateKeyWif);
 
-      // Update the identity using SDK 3.0.0 API
+      // Update the identity using typed API
       console.log('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({

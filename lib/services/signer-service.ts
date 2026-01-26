@@ -1,8 +1,8 @@
 /**
- * Signer Service - Manages IdentitySigner creation for SDK 3.0.0 SDK
+ * Signer Service - Manages IdentitySigner creation for the typed state transition API
  *
  * This service provides utilities for creating signers and identity public keys
- * for use with the new typed state transition APIs in @dashevo/evo-sdk@3.0.0
+ * for use with the new typed state transition APIs in @dashevo/evo-sdk
  *
  * IMPORTANT: We import WASM types from @dashevo/evo-sdk which re-exports them from
  * @dashevo/wasm-sdk. By calling getEvoSdk() first, we ensure the shared WASM module
@@ -15,6 +15,7 @@ import {
   IdentityPublicKey,
 } from '@dashevo/evo-sdk';
 import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
+import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -206,7 +207,6 @@ class SignerService {
    *
    * @param privateKeyWif - The private key in WIF format
    * @param keyData - The public key data from the identity
-   * @param network - The network ('testnet' or 'mainnet')
    * @returns Object containing signer and identityKey
    */
   async createSignerAndKey(
@@ -222,6 +222,41 @@ class SignerService {
     ]);
 
     return { signer, identityKey };
+  }
+
+  /**
+   * Convert a WASM IdentityPublicKey to the key data format
+   */
+  wasmKeyToKeyData(wasmKey: WasmIdentityPublicKey): IdentityPublicKeyType {
+    return {
+      id: wasmKey.keyId,
+      type: wasmKey.keyTypeNumber,
+      purpose: wasmKey.purposeNumber,
+      securityLevel: wasmKey.securityLevelNumber,
+      data: wasmKey.data, // hex string from WASM key
+      readOnly: false,
+    };
+  }
+
+  /**
+   * Create signer and identity key from a WASM public key
+   *
+   * This is the preferred method for creating signing credentials from
+   * identity keys obtained via identity.getPublicKeys().
+   *
+   * @param privateKeyWif - The private key in WIF format
+   * @param wasmKey - The WASM IdentityPublicKey from identity.getPublicKeys()
+   * @returns Object containing signer and identityKey
+   */
+  async createSignerFromWasmKey(
+    privateKeyWif: string,
+    wasmKey: WasmIdentityPublicKey
+  ): Promise<{
+    signer: InstanceType<typeof IdentitySigner>;
+    identityKey: InstanceType<typeof IdentityPublicKey>;
+  }> {
+    const keyData = this.wasmKeyToKeyData(wasmKey);
+    return this.createSignerAndKey(privateKeyWif, keyData);
   }
 }
 
