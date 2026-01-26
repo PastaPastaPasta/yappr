@@ -67,6 +67,7 @@ export class DashPlatformClient {
    */
   async createPost(content: string, options?: {
     replyToPostId?: string
+    replyToPostOwnerId?: string
     quotedPostId?: string
     mediaUrl?: string
     primaryHashtag?: string
@@ -100,110 +101,28 @@ export class DashPlatformClient {
     
     try {
       await this.ensureInitialized()
-      
+
       console.log('Creating post for identity:', identityId)
-      
-      // Get the private key from secure storage
-      const { getPrivateKey } = await import('./secure-storage')
-      const privateKeyWIF = getPrivateKey(identityId)
 
-      if (!privateKeyWIF) {
-        throw new Error('Private key not found. Please log in again.')
-      }
-      
-      // Create the post document using WASM SDK
-      // Note: The actual contract doesn't have authorId - it uses $ownerId system field
-      const postData: any = {
-        content: content.trim()
-      }
-      
-      // Convert replyToPostId if provided
-      if (options?.replyToPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.replyToPostId = Array.from(bs58.decode(options.replyToPostId))
-        } catch (e) {
-          console.error('Failed to decode replyToPostId:', e)
-          throw new Error('Invalid reply post ID format')
-        }
-      }
+      // Use the post service which goes through the new state-transition-service
+      const { postService } = await import('./services/post-service')
 
-      // Convert quotedPostId if provided
-      if (options?.quotedPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.quotedPostId = Array.from(bs58.decode(options.quotedPostId))
-        } catch (e) {
-          console.error('Failed to decode quotedPostId:', e)
-          throw new Error('Invalid quoted post ID format')
-        }
-      }
-      
-      // Add other optional fields
-      if (options?.mediaUrl) {
-        postData.mediaUrl = options.mediaUrl
-      }
-      
-      if (options?.primaryHashtag) {
-        postData.primaryHashtag = options.primaryHashtag.replace('#', '')
-      }
-      
-      // Add language (defaults to 'en' in the contract, but let's be explicit)
-      postData.language = 'en'
-      
-      console.log('Creating post with data:', postData)
-      
-      // Generate entropy (32 bytes) 
-      const entropy = new Uint8Array(32)
-      crypto.getRandomValues(entropy)
-      const entropyHex = Array.from(entropy)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-      
-      const contractId = YAPPR_CONTRACT_ID
-      
-      // Create the document using EvoSDK facade
-      let result
-      try {
-        result = await this.sdk.documents.create({
-          contractId,
-          type: 'post',
-          ownerId: identityId,
-          data: postData,
-          entropyHex,
-          privateKeyWif: privateKeyWIF
-        })
-      } catch (sdkError) {
-        console.error('SDK documents.create error:', sdkError)
-        console.error('Error type:', typeof sdkError)
-        console.error('Error details:', {
-          message: sdkError instanceof Error ? sdkError.message : String(sdkError),
-          stack: sdkError instanceof Error ? sdkError.stack : undefined,
-          keys: sdkError && typeof sdkError === 'object' ? Object.keys(sdkError) : []
-        })
-        throw sdkError
-      }
-      
+      // Create the post using the post service
+      // Note: replies are now a separate document type created via replyService
+      const post = await postService.createPost(identityId, content.trim(), {
+        quotedPostId: options?.quotedPostId,
+        mediaUrl: options?.mediaUrl,
+        primaryHashtag: options?.primaryHashtag?.replace('#', ''),
+        language: 'en'
+      })
+
       console.log('Post created successfully!')
-      
-      // Check if we got a valid result
-      if (!result) {
-        console.error('WASM SDK returned undefined/null result')
-        throw new Error('Post creation failed - no result returned from SDK')
-      }
-      
+
       // Invalidate posts cache since we created a new post
       this.postsCache.clear()
-      
-      // Convert result if needed
-      if (result && typeof result.toJSON === 'function') {
-        return result.toJSON()
-      }
-      
-      return result
-      
+
+      return post
+
     } catch (error) {
       console.error('Failed to create post:', error)
       throw error
@@ -267,20 +186,24 @@ export class DashPlatformClient {
   }
   
   /**
-   * Query posts with caching
+   * Query posts with caching.
+   * Uses the languageTimeline index: [language, $createdAt].
+   * @param options.language - Language code to filter by (defaults to 'en')
    */
   async queryPosts(options?: {
     limit?: number
     startAfter?: any
     authorId?: string
     forceRefresh?: boolean
+    language?: string
   }) {
     try {
       // Create cache key based on options
       const cacheKey = JSON.stringify({
         limit: options?.limit || 20,
         authorId: options?.authorId,
-        startAfter: options?.startAfter
+        startAfter: options?.startAfter,
+        language: options?.language || 'en'
       })
       
       // Check if there's already a pending query for this exact request
@@ -337,22 +260,24 @@ export class DashPlatformClient {
    */
   private async _executePostsQuery(contractId: string, options: any, cacheKey: string): Promise<any[]> {
     try {
-      
+
       // Build where clause
       const where: any[] = []
+      let orderBy: any[] = []
+
       if (options?.authorId) {
-        // Query by $ownerId (system field)
+        // Query by $ownerId (system field) using ownerAndTime index
         where.push(['$ownerId', '==', options.authorId])
-      }
-
-      // Dash Platform requires a where clause on the orderBy field for ordering to work.
-      // Add a range query on $createdAt that matches all documents if no other filter.
-      if (where.length === 0) {
         where.push(['$createdAt', '>', 0])
+        orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']]
+      } else {
+        // Use languageTimeline index: [language, $createdAt]
+        // The old timeline index was removed - we now require language filter
+        const language = options?.language || 'en'
+        where.push(['language', '==', language])
+        where.push(['$createdAt', '>', 0])
+        orderBy = [['language', 'asc'], ['$createdAt', 'desc']]
       }
-
-      // Build order by clause - most recent first
-      const orderBy = [['$createdAt', 'desc']]
       
       try {
         // Use EvoSDK documents facade

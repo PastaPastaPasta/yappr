@@ -14,6 +14,7 @@ import {
   EllipsisHorizontalIcon,
   CurrencyDollarIcon,
   PencilSquareIcon,
+  LockClosedIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
@@ -30,6 +31,8 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
+import { PrivatePostContent, isPrivatePost } from './private-post-content'
+import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
@@ -40,6 +43,7 @@ import { useMentionValidation } from '@/hooks/use-mention-validation'
 import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { tipService } from '@/lib/services/tip-service'
+import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
 type UsernameState = string | null | undefined
@@ -99,11 +103,13 @@ interface PostCardProps {
   enrichment?: ProgressiveEnrichment
   /** Hide the "Replying to" annotation (used on post detail pages where structure makes it clear) */
   hideReplyTo?: boolean
+  /** For replies to private posts, the root post owner ID to check access against */
+  rootPostOwnerId?: string
   /** Callback when post is successfully deleted - parent component should remove post from list */
   onDelete?: (postId: string) => void
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, hideReplyTo = false, onDelete }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, hideReplyTo = false, rootPostOwnerId, onDelete }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
@@ -137,52 +143,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const initialReposted = progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false
   const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
 
-  // ReplyTo: use post.replyTo if available, otherwise build from progressive enrichment
-  const replyTo = useMemo(() => {
-    if (post.replyTo) return post.replyTo
-    if (!progressiveEnrichment?.replyTo) return undefined
-
-    const { id, authorId, authorUsername } = progressiveEnrichment.replyTo
-    return {
-      id,
-      author: {
-        id: authorId,
-        username: authorUsername || '',
-        displayName: authorUsername || 'Unknown User',
-        avatar: '',
-        followers: 0,
-        following: 0,
-        verified: false,
-        joinedAt: new Date()
-      },
-      content: '',
-      createdAt: new Date(),
-      likes: 0,
-      reposts: 0,
-      replies: 0,
-      views: 0
-    }
-  }, [post.replyTo, progressiveEnrichment?.replyTo])
-
-  // Get display text for replyTo author
-  // Priority: DPNS username > Profile display name > Truncated identity ID
-  const replyToDisplay = useMemo(() => {
-    if (!replyTo) return { text: '', showAt: false }
-    const { username, displayName: replyDisplayName, id } = replyTo.author
-
-    // Has DPNS username (non-placeholder)
-    if (username && !username.startsWith('user_')) {
-      return { text: username, showAt: true }
-    }
-
-    // Has real profile display name
-    if (hasRealProfile(replyDisplayName)) {
-      return { text: replyDisplayName, showAt: false }
-    }
-
-    // Fallback to truncated identity ID
-    return { text: `${id.slice(0, 8)}...${id.slice(-6)}`, showAt: false }
-  }, [replyTo])
+  // Posts no longer have replyTo information - replies are a separate document type
+  // This is kept for the hideReplyTo prop and future reply card compatibility
+  const replyTo: Post | undefined = undefined
+  const replyToDisplay = { text: '', showAt: false }
 
   // Memoize enriched post for use in compose/tip modals and caching
   // Includes all resolved values so cached posts display correctly
@@ -298,6 +262,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
   })
 
+  // Check if user can reply to private posts (PRD §5.5)
+  // For replies, check access against root post owner, not the reply author
+  const { canReply: canReplyToPrivate, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
+
   // Sync local state with prop changes (reuses computed initial values)
   useEffect(() => {
     setLiked(initialLiked)
@@ -363,7 +331,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       const { likeService } = await import('@/lib/services/like-service')
       const success = wasLiked
         ? await likeService.unlikePost(post.id, authedUser.identityId)
-        : await likeService.likePost(post.id, authedUser.identityId)
+        : await likeService.likePost(post.id, authedUser.identityId, post.author.id)
 
       if (!success) throw new Error('Like operation failed')
     } catch (error) {
@@ -395,7 +363,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       const { repostService } = await import('@/lib/services/repost-service')
       const success = wasReposted
         ? await repostService.removeRepost(post.id, authedUser.identityId)
-        : await repostService.repostPost(post.id, authedUser.identityId)
+        : await repostService.repostPost(post.id, authedUser.identityId, post.author.id)
 
       if (!success) throw new Error('Repost operation failed')
       toast.success(wasReposted ? 'Removed repost' : 'Reposted!')
@@ -448,6 +416,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleReply = () => {
     if (!requireAuth('reply')) return
+    // Check if user can reply to private posts (PRD §5.5)
+    if (!canReplyToPrivate) {
+      toast.error(cantReplyReason || "Can't reply to this post")
+      return
+    }
     setReplyingTo(enrichedPost)
     setComposeOpen(true)
   }
@@ -601,6 +574,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
+              {isPrivatePost(post) && (
+                <span className="flex items-center gap-0.5 text-gray-500 mr-1">
+                  <LockClosedIcon className="h-3.5 w-3.5" />
+                </span>
+              )}
               <span className="text-gray-500 text-sm">{formatTime(post.createdAt)}</span>
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
@@ -652,18 +630,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             </div>
           </div>
 
-          {replyTo && !isTipPost && !hideReplyTo && (
-            <Link
-              href={`/post?id=${replyTo.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="text-sm text-gray-500 hover:underline mt-1 block"
-            >
-              Replying to <span className="text-yappr-500">
-                {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
-              </span>
-            </Link>
-          )}
-
           {/* Tip post - show tip badge with recipient and message */}
           {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
           {isTipPost ? (
@@ -675,15 +641,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       <CurrencyDollarIcon className="h-4 w-4" />
                       <span>
                         Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
-                        {replyTo && (
-                          <> to <Link
-                            href={`/user?id=${replyTo.author.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-semibold hover:underline"
-                          >
-                            {replyToDisplay.showAt ? `@${replyToDisplay.text}` : replyToDisplay.text}
-                          </Link></>
-                        )}
                       </span>
                     </div>
                   </Tooltip.Trigger>
@@ -701,7 +658,16 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <PostContent content={tipInfo.message} className="mt-1" />
               )}
             </div>
-          ) : (
+          ) : isPrivatePost(post) ? (
+            <PrivatePostContent
+              post={post}
+              className="mt-1"
+              hashtagValidations={hashtagValidations}
+              onFailedHashtagClick={handleFailedHashtagClick}
+              mentionValidations={mentionValidations}
+              onFailedMentionClick={handleFailedMentionClick}
+            />
+          ) : post.content ? (
             <PostContent
               content={post.content}
               className="mt-1"
@@ -710,7 +676,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               mentionValidations={mentionValidations}
               onFailedMentionClick={handleFailedMentionClick}
             />
-          )}
+          ) : null}
 
           {/* Quoted post - show skeleton while loading, then actual content */}
           {post.quotedPostId && !post.quotedPost && (
@@ -728,28 +694,33 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           )}
 
           {post.quotedPost && (
-            <Link
-              href={`/post?id=${post.quotedPost.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
-            >
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <UserAvatar userId={post.quotedPost.author.id} size="sm" alt={post.quotedPost.author.displayName} />
-                <span className="font-semibold text-gray-900 dark:text-gray-100">
-                  {post.quotedPost.author.displayName}
-                </span>
-                {post.quotedPost.author.username && !post.quotedPost.author.username.startsWith('user_') ? (
-                  <span className="text-gray-500">@{post.quotedPost.author.username}</span>
-                ) : (
-                  <span className="text-gray-500 font-mono text-xs">
-                    {post.quotedPost.author.id.slice(0, 8)}...
+            isQuotedPostPrivate(post.quotedPost) ? (
+              // PRD §5.3: Private quoted posts are decrypted separately
+              <PrivateQuotedPostContent quotedPost={post.quotedPost} />
+            ) : (
+              <Link
+                href={`/post?id=${post.quotedPost.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
+              >
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <UserAvatar userId={post.quotedPost.author.id} size="sm" alt={post.quotedPost.author.displayName} />
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                    {post.quotedPost.author.displayName}
                   </span>
-                )}
-                <span>·</span>
-                <span>{formatTime(post.quotedPost.createdAt)}</span>
-              </div>
-              <PostContent content={post.quotedPost.content} className="mt-1 text-sm" />
-            </Link>
+                  {post.quotedPost.author.username && !post.quotedPost.author.username.startsWith('user_') ? (
+                    <span className="text-gray-500">@{post.quotedPost.author.username}</span>
+                  ) : (
+                    <span className="text-gray-500 font-mono text-xs">
+                      {post.quotedPost.author.id.slice(0, 8)}...
+                    </span>
+                  )}
+                  <span>·</span>
+                  <span>{formatTime(post.quotedPost.createdAt)}</span>
+                </div>
+                <PostContent content={post.quotedPost.content} className="mt-1 text-sm" />
+              </Link>
+            )
           )}
 
           {post.media && post.media.length > 0 && (
@@ -785,10 +756,26 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <Tooltip.Trigger asChild>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleReply(); }}
-                    className="group flex items-center gap-1 p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
+                    disabled={!canReplyToPrivate}
+                    className={cn(
+                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                      !canReplyToPrivate
+                        ? "opacity-50 cursor-not-allowed"
+                        : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
+                    )}
                   >
-                    <ChatBubbleOvalLeftIcon className="h-5 w-5 text-gray-500 group-hover:text-yappr-500 transition-colors" />
-                    <span className="text-sm text-gray-500 group-hover:text-yappr-500 transition-colors">
+                    <ChatBubbleOvalLeftIcon className={cn(
+                      "h-5 w-5 transition-colors",
+                      !canReplyToPrivate
+                        ? "text-gray-400"
+                        : "text-gray-500 group-hover:text-yappr-500"
+                    )} />
+                    <span className={cn(
+                      "text-sm transition-colors",
+                      !canReplyToPrivate
+                        ? "text-gray-400"
+                        : "text-gray-500 group-hover:text-yappr-500"
+                    )}>
                       {statsReplies > 0 && formatNumber(statsReplies)}
                     </span>
                   </button>
@@ -798,7 +785,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
                     sideOffset={5}
                   >
-                    Reply
+                    {cantReplyReason || 'Reply'}
                   </Tooltip.Content>
                 </Tooltip.Portal>
               </Tooltip.Root>

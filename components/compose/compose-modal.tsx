@@ -8,8 +8,10 @@ import {
   TrashIcon,
   EyeIcon,
   EyeSlashIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
-import { useAppStore, useSettingsStore, ThreadPost } from '@/lib/store'
+import { useAppStore, useSettingsStore, ThreadPost, PostVisibility } from '@/lib/store'
+import type { Post } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -21,7 +23,6 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
-import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
 import { MarkdownContent } from '@/components/ui/markdown-content'
 import {
@@ -35,6 +36,11 @@ import {
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
+import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
+import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
+import { isPrivatePost } from '@/components/post/private-post-content'
+import type { EncryptionSource } from '@/lib/services/post-service'
+import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
@@ -309,18 +315,20 @@ function ThreadPostEditor({
             : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950 hover:border-gray-300 dark:hover:border-gray-700 cursor-pointer'
         }`}
       >
-        {/* Post number/status indicator */}
-        <div className={`absolute -left-2 top-3 flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-semibold shadow-sm ${
-          isPosted ? 'bg-green-500' : 'bg-yappr-500'
-        }`}>
-          {isPosted ? (
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          ) : (
-            index + 1
-          )}
-        </div>
+        {/* Post number/status indicator - only show for threads (multiple posts) or posted status */}
+        {(!isOnly || isPosted) && (
+          <div className={`absolute -left-2 top-3 flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-semibold shadow-sm ${
+            isPosted ? 'bg-green-500' : 'bg-yappr-500'
+          }`}>
+            {isPosted ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              index + 1
+            )}
+          </div>
+        )}
 
         <div className="p-4 pl-8">
           {/* Posted status badge */}
@@ -473,6 +481,8 @@ export function ComposeModal() {
     addThreadPost,
     removeThreadPost,
     updateThreadPost,
+    updateThreadPostVisibility,
+    updateThreadPostTeaser,
     markThreadPostAsPosted,
     setActiveThreadPost,
     resetThreadPosts,
@@ -486,6 +496,165 @@ export function ComposeModal() {
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const teaserTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Private feed state
+  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const [privateFeedLoading, setPrivateFeedLoading] = useState(true)
+  const [privateFollowerCount, setPrivateFollowerCount] = useState(0)
+
+  // Enable private feed flow state (Improvement 1)
+  const [showAddKeyModal, setShowAddKeyModal] = useState(false)
+  const [pendingVisibility, setPendingVisibility] = useState<PostVisibility | null>(null)
+  const [hasEncryptionKeyOnIdentity, setHasEncryptionKeyOnIdentity] = useState(false)
+
+  // Inherited encryption state for replies to private posts (PRD §5.5)
+  const [inheritedEncryption, setInheritedEncryption] = useState<EncryptionSource | null>(null)
+  const [inheritedEncryptionLoading, setInheritedEncryptionLoading] = useState(false)
+  const [inheritedEncryptionError, setInheritedEncryptionError] = useState(false)
+
+  // Get visibility from first post (visibility only applies to first post)
+  const firstPost = threadPosts[0]
+  const visibility: PostVisibility = firstPost?.visibility || 'public'
+  const isPrivatePostVisibility = visibility === 'private' || visibility === 'private-with-teaser'
+
+  // Determine if this will be encrypted (either explicit private post or inherited from parent)
+  const willBeEncrypted = isPrivatePostVisibility || inheritedEncryption !== null
+
+  // Check private feed status and encryption key status when modal opens
+  useEffect(() => {
+    if (isComposeOpen && user) {
+      setPrivateFeedLoading(true)
+      const checkPrivateFeed = async () => {
+        try {
+          const { privateFeedService, privateFeedKeyStore, identityService } = await import('@/lib/services')
+
+          // First check local state (fast) - if local keys exist, user has private feed
+          const hasLocalKeys = privateFeedKeyStore.hasFeedSeed()
+
+          // Then verify with platform (authoritative) if local keys don't exist
+          let hasPrivate = hasLocalKeys
+          if (!hasLocalKeys) {
+            hasPrivate = await privateFeedService.hasPrivateFeed(user.identityId)
+          }
+
+          setHasPrivateFeed(hasPrivate)
+
+          if (hasPrivate) {
+            // Get follower count from recipient map
+            const recipientMap = privateFeedKeyStore.getRecipientMap()
+            setPrivateFollowerCount(Object.keys(recipientMap).length)
+          } else {
+            // Reset follower count when no private feed
+            setPrivateFollowerCount(0)
+          }
+
+          // Check if user has encryption key on identity (for enabling private feed flow)
+          if (!hasPrivate) {
+            try {
+              const identity = await identityService.getIdentity(user.identityId)
+              const hasEncKey = identity?.publicKeys?.some(
+                (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
+              ) ?? false
+              setHasEncryptionKeyOnIdentity(hasEncKey)
+            } catch {
+              setHasEncryptionKeyOnIdentity(false)
+            }
+          }
+        } catch (error) {
+          console.error('Failed to check private feed status:', error)
+          setHasPrivateFeed(false)
+        } finally {
+          setPrivateFeedLoading(false)
+        }
+      }
+      checkPrivateFeed()
+    }
+  }, [isComposeOpen, user])
+
+  // Check for inherited encryption when replying to a post (PRD §5.5)
+  // Extracted as a callback for retry functionality
+  const checkInheritedEncryption = useCallback(async (postToCheck: Post) => {
+    setInheritedEncryptionLoading(true)
+    setInheritedEncryptionError(false)
+    try {
+      // Check if parent is a private post
+      if (isPrivatePost(postToCheck)) {
+        // Import getEncryptionSource dynamically
+        const { getEncryptionSource } = await import('@/lib/services/post-service')
+        const encryptionSource = await getEncryptionSource(postToCheck.id)
+        if (encryptionSource) {
+          setInheritedEncryption(encryptionSource)
+        } else {
+          // Failed to get encryption source for private post - block posting
+          setInheritedEncryptionError(true)
+          setInheritedEncryption(null)
+        }
+      } else {
+        setInheritedEncryption(null)
+      }
+    } catch (error) {
+      console.error('Failed to check inherited encryption:', error)
+      // Error fetching encryption source for private post - block posting
+      if (isPrivatePost(postToCheck)) {
+        setInheritedEncryptionError(true)
+      }
+      setInheritedEncryption(null)
+    } finally {
+      setInheritedEncryptionLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isComposeOpen && replyingTo) {
+      // Track cancellation for stale async results
+      let cancelled = false
+
+      const doCheck = async () => {
+        setInheritedEncryptionLoading(true)
+        setInheritedEncryptionError(false)
+        try {
+          if (isPrivatePost(replyingTo)) {
+            const { getEncryptionSource } = await import('@/lib/services/post-service')
+            const encryptionSource = await getEncryptionSource(replyingTo.id)
+            // Check if replyingTo changed while we were fetching
+            if (cancelled) return
+            if (encryptionSource) {
+              setInheritedEncryption(encryptionSource)
+            } else {
+              setInheritedEncryptionError(true)
+              setInheritedEncryption(null)
+            }
+          } else {
+            if (cancelled) return
+            setInheritedEncryption(null)
+          }
+        } catch (error) {
+          console.error('Failed to check inherited encryption:', error)
+          if (cancelled) return
+          if (isPrivatePost(replyingTo)) {
+            setInheritedEncryptionError(true)
+          }
+          setInheritedEncryption(null)
+        } finally {
+          if (!cancelled) {
+            setInheritedEncryptionLoading(false)
+          }
+        }
+      }
+      doCheck().catch((err) => console.error('Failed to check inherited encryption:', err))
+
+      // Cleanup: mark as cancelled if replyingTo changes
+      return () => {
+        cancelled = true
+      }
+    } else {
+      // Reset when not replying
+      setInheritedEncryption(null)
+      setInheritedEncryptionLoading(false)
+      setInheritedEncryptionError(false)
+    }
+  }, [isComposeOpen, replyingTo])
 
   // Focus first textarea when modal opens
   useEffect(() => {
@@ -502,14 +671,99 @@ export function ComposeModal() {
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
   const totalCharacters = threadPosts.reduce((sum, p) => sum + p.content.length, 0)
   const hasValidContent = unpostedPosts.some((p) => p.content.trim().length > 0)
-  const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT)
-  const canPost = hasValidContent && !hasOverLimit && !isPosting
-  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost
+
+  // For private-with-teaser, also check teaser limit
+  const hasTeaserOverLimit = visibility === 'private-with-teaser' &&
+    firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
+  const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT) || hasTeaserOverLimit
+
+  // Encrypted posts must be single posts (no threads)
+  const isValidEncryptedPost = !willBeEncrypted || (unpostedPosts.length <= 1 && threadPosts.length <= 1)
+  // Block posting while checking inherited encryption for private post replies, or if check failed
+  const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) ||
+    (!inheritedEncryptionLoading && !inheritedEncryptionError)
+  const canPost = hasValidContent && !hasOverLimit && !isPosting && isValidEncryptedPost && isInheritedEncryptionReady
+  // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
+  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted
 
   // Get the last posted post ID for chaining retries
   const lastPostedId = postedPosts.length > 0
     ? postedPosts[postedPosts.length - 1].postedPostId
     : null
+
+  // Handle request to enable private feed when user selects a private visibility option
+  // Note: Not wrapped in useCallback because it references enablePrivateFeedAfterKeyEntry
+  // which changes when firstPost/updateThreadPostVisibility change, avoiding stale closure
+  const handleEnablePrivateFeedRequest = async (targetVisibility: PostVisibility) => {
+    if (!user) return
+
+    // Store the pending visibility so we can auto-select it after enabling
+    setPendingVisibility(targetVisibility)
+
+    if (!hasEncryptionKeyOnIdentity) {
+      // User needs to add encryption key to identity first
+      setShowAddKeyModal(true)
+    } else {
+      // User has encryption key on identity, prompt them to enter it
+      // so we can enable the private feed
+      const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
+      useEncryptionKeyModal.getState().open('manage_private_feed', async () => {
+        // After key entry, enable the private feed
+        await enablePrivateFeedAfterKeyEntry(targetVisibility)
+      })
+    }
+  }
+
+  // Enable private feed after encryption key is ready
+  const enablePrivateFeedAfterKeyEntry = useCallback(async (targetVisibility: PostVisibility) => {
+    if (!user) return
+
+    try {
+      const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+
+      // Get the encryption key bytes from secure storage (handles WIF and hex)
+      const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
+      if (!encryptionPrivateKey) {
+        toast.error('No encryption key found. Please try again.')
+        return
+      }
+
+      // Enable private feed
+      const result = await privateFeedService.enablePrivateFeed(user.identityId, encryptionPrivateKey)
+
+      if (result.success) {
+        setHasPrivateFeed(true)
+        // Update visibility to the pending one
+        if (firstPost) {
+          updateThreadPostVisibility(firstPost.id, targetVisibility)
+        }
+        toast.success('Private feed enabled!')
+
+        // Get follower count
+        const recipientMap = privateFeedKeyStore.getRecipientMap()
+        setPrivateFollowerCount(Object.keys(recipientMap).length)
+      } else {
+        toast.error(result.error || 'Failed to enable private feed')
+      }
+    } catch (error) {
+      console.error('Error enabling private feed:', error)
+      toast.error('Failed to enable private feed')
+    } finally {
+      setPendingVisibility(null)
+    }
+  }, [user, firstPost, updateThreadPostVisibility])
+
+  // Handle success from AddEncryptionKeyModal
+  const handleAddKeySuccess = useCallback(async () => {
+    setShowAddKeyModal(false)
+    setHasEncryptionKeyOnIdentity(true)
+
+    // Now enable the private feed with the pending visibility
+    if (pendingVisibility) {
+      await enablePrivateFeedAfterKeyEntry(pendingVisibility)
+    }
+  }, [pendingVisibility, enablePrivateFeedAfterKeyEntry])
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -531,13 +785,28 @@ export function ComposeModal() {
     let failureError: Error | null = null
 
     try {
-      const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
       const { retryPostCreation } = await import('@/lib/retry-utils')
+
+      // Check if this is a private post (explicit or inherited)
+      const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
+      const hasInheritedEncryption = inheritedEncryption !== null
 
       // Filter to only unposted posts with content, preserving their IDs
       const postsToCreate = threadPosts
         .filter((p) => p.content.trim().length > 0 && !p.postedPostId)
-        .map((p) => ({ threadPostId: p.id, content: p.content.trim() }))
+        .map((p) => ({
+          threadPostId: p.id,
+          content: p.content.trim(),
+          teaser: p.teaser?.trim(),
+          visibility: p.visibility,
+        }))
+
+      // Enforce single-post for encrypted posts
+      if ((isPrivate || hasInheritedEncryption) && postsToCreate.length > 1) {
+        toast.error('Encrypted posts cannot be threads. Only the first post will be published.')
+        // Trim to first post only for encrypted posts
+        postsToCreate.length = 1
+      }
 
       setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
 
@@ -545,48 +814,134 @@ export function ComposeModal() {
       let previousPostId: string | null = lastPostedId || replyingTo?.id || null
 
       for (let i = 0; i < postsToCreate.length; i++) {
-        const { threadPostId, content: postContent } = postsToCreate[i]
+        const { threadPostId, content: postContent, teaser, visibility: postVisibility } = postsToCreate[i]
+        const isThisPostPrivate = i === 0 && isPrivate
+        const isThisReplyInherited = i === 0 && hasInheritedEncryption && !isPrivate
 
         setPostingProgress({
           current: i + 1,
           total: postsToCreate.length,
-          status: `Creating post ${i + 1} of ${postsToCreate.length}...`
+          status: isThisPostPrivate || isThisReplyInherited
+            ? `Encrypting and creating private ${isThisReplyInherited ? 'reply' : 'post'} ${i + 1}...`
+            : `Creating post ${i + 1} of ${postsToCreate.length}...`
         })
 
-        console.log(`Creating post ${i + 1}/${postsToCreate.length}...`)
+        console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
+
+        // Determine encryption options
+        let encryptionOptions: import('@/lib/services/post-service').EncryptionOptions | undefined
+
+        if (isThisReplyInherited && inheritedEncryption) {
+          // Inherited encryption for replies to private posts (PRD §5.5)
+          encryptionOptions = {
+            type: 'inherited',
+            source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
+          }
+        } else if (isThisPostPrivate) {
+          // Owner encryption for new private posts
+          const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+          const encryptionPrivateKey = getEncryptionKeyBytes(authedUser.identityId) ?? undefined
+
+          encryptionOptions = {
+            type: 'owner',
+            teaser: postVisibility === 'private-with-teaser' ? teaser : undefined,
+            encryptionPrivateKey,
+          }
+        }
+
+        // Determine if this is a reply (to existing post/reply) or a top-level post
+        // - If replyingTo is set: all posts in thread are replies
+        // - If replyingTo is not set: first post is a top-level post, subsequent are replies
+        const isReply = (i === 0 && replyingTo) || (i > 0 && previousPostId)
+        const parentId = i === 0 && replyingTo ? replyingTo.id : previousPostId
+        const parentOwnerId = i === 0 && replyingTo
+          ? replyingTo.author.id
+          : previousPostId ? authedUser.identityId : undefined
 
         const result = await retryPostCreation(async () => {
-          const dashClient = getDashPlatformClient()
-          return await dashClient.createPost(postContent, {
-            replyToPostId: previousPostId || undefined,
-            quotedPostId: i === 0 ? quotingPost?.id : undefined,
-          })
+          // Check for sync required errors before they get wrapped by retry
+          try {
+            if (isReply && parentId && parentOwnerId) {
+              // Create a reply
+              const { replyService } = await import('@/lib/services/reply-service')
+              const reply = await replyService.createReply(authedUser.identityId, postContent, parentId, parentOwnerId, {
+                encryption: encryptionOptions,
+              })
+              return { postId: reply.id, document: reply, isReply: true }
+            } else {
+              // Create a top-level post
+              const { postService } = await import('@/lib/services')
+              const post = await postService.createPost(authedUser.identityId, postContent, {
+                quotedPostId: i === 0 ? quotingPost?.id : undefined,
+                quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
+                encryption: encryptionOptions,
+              })
+              return { postId: post.id, document: post, isReply: false }
+            }
+          } catch (error) {
+            // Check if this is a sync required error - handle it specially
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            if (errorMsg.startsWith('SYNC_REQUIRED:')) {
+              const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
+              useEncryptionKeyModal.getState().open('sync_state', () => {
+                toast('Please try posting again now that your keys are synced')
+              })
+              toast.error('Your private feed state needs to sync. Please enter your encryption key.')
+              // Throw a special error that we can detect
+              const syncError = new Error('SYNC_REQUIRED')
+              ;(syncError as Error & { syncRequired: boolean }).syncRequired = true
+              throw syncError
+            }
+            throw error
+          }
         })
+
+        // Handle sync required - abort without marking as failure
+        if (!result.success && (result.error as Error & { syncRequired?: boolean })?.syncRequired) {
+          setIsPosting(false)
+          setPostingProgress(null)
+          return
+        }
 
         if (result.success) {
           // Get the post ID for threading
-          const postId =
-            result.data?.documentId ||
-            result.data?.document?.$id ||
-            result.data?.document?.id ||
-            result.data?.$id ||
-            result.data?.id
+          // Type assertion needed due to different result formats from public/private posts
+          const data = result.data as Record<string, unknown> | undefined
+          const postId = (
+            data?.postId || // Private post result format
+            data?.documentId ||
+            (data?.document as Record<string, unknown> | undefined)?.$id ||
+            (data?.document as Record<string, unknown> | undefined)?.id ||
+            data?.$id ||
+            data?.id
+          ) as string | undefined
 
           if (postId) {
             // Track successful post with its original threadPost ID
             successfulPosts.push({ index: i, postId, content: postContent, threadPostId })
 
-            // Update previousPostId for thread chaining
-            previousPostId = postId
+            // Update previousPostId for thread chaining (only for public posts)
+            if (!isThisPostPrivate) {
+              previousPostId = postId
+            }
 
             setPostingProgress({
               current: i + 1,
               total: postsToCreate.length,
-              status: `Post ${i + 1} created, processing hashtags...`
+              status: isThisPostPrivate
+                ? `Private post created!`
+                : `Post ${i + 1} created, processing hashtags...`
             })
 
             // Create hashtag documents for this successful post
-            const hashtags = extractAllTags(postContent)
+            // For private posts, only index hashtags from the teaser (if any), not the encrypted content
+            // This prevents metadata leakage about encrypted content
+            const contentForHashtags = isThisPostPrivate
+              ? (postVisibility === 'private-with-teaser' && teaser ? teaser : '')
+              : isThisReplyInherited
+                ? '' // Inherited encryption replies have no public content
+                : postContent
+            const hashtags = extractAllTags(contentForHashtags)
             if (hashtags.length > 0) {
               hashtagService.createPostHashtags(postId, authedUser.identityId, hashtags)
                 .then((results) => {
@@ -608,39 +963,53 @@ export function ComposeModal() {
                 })
             }
 
-            // Create mention documents for this successful post (if contract is deployed)
-            if (MENTION_CONTRACT_ID) {
-              const mentions = extractMentions(postContent)
-              if (mentions.length > 0) {
-                mentionService.createPostMentionsFromUsernames(postId, authedUser.identityId, mentions)
-                  .then((results) => {
-                    const successCount = results.filter((r) => r).length
-                    console.log(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
+            // Create mention documents for this successful post
+            // Same privacy consideration: only index mentions from teaser for private posts
+            const contentForMentions = isThisPostPrivate
+              ? (postVisibility === 'private-with-teaser' && teaser ? teaser : '')
+              : isThisReplyInherited
+                ? '' // Inherited encryption replies have no public content
+                : postContent
+            const mentions = extractMentions(contentForMentions)
+            if (mentions.length > 0) {
+              mentionService.createPostMentionsFromUsernames(postId, authedUser.identityId, mentions)
+                .then((results) => {
+                  const successCount = results.filter((r) => r).length
+                  console.log(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
 
-                    // Dispatch event for each successful mention to trigger cache invalidation
-                    results.forEach((success, mentionIndex) => {
-                      if (success) {
-                        window.dispatchEvent(
-                          new CustomEvent('mention-registered', {
-                            detail: { postId, username: mentions[mentionIndex] },
-                          })
-                        )
-                      }
-                    })
+                  // Dispatch event for each successful mention to trigger cache invalidation
+                  results.forEach((success, mentionIndex) => {
+                    if (success) {
+                      window.dispatchEvent(
+                        new CustomEvent('mention-registered', {
+                          detail: { postId, username: mentions[mentionIndex] },
+                        })
+                      )
+                    }
                   })
-                  .catch((err) => {
-                    console.error(`Post ${i + 1}: Failed to create mention documents:`, err)
-                  })
-              }
+                })
+                .catch((err) => {
+                  console.error(`Post ${i + 1}: Failed to create mention documents:`, err)
+                })
             }
 
-            // Dispatch event for first post
+            // Dispatch event for first post/reply
             if (i === 0) {
-              window.dispatchEvent(
-                new CustomEvent('post-created', {
-                  detail: { post: result.data },
-                })
-              )
+              const eventData = result.data as Record<string, unknown> | undefined
+              const wasReply = eventData?.isReply
+              if (wasReply) {
+                window.dispatchEvent(
+                  new CustomEvent('reply-created', {
+                    detail: { reply: eventData?.document },
+                  })
+                )
+              } else {
+                window.dispatchEvent(
+                  new CustomEvent('post-created', {
+                    detail: { post: eventData?.document },
+                  })
+                )
+              }
             }
           } else {
             // Post created but no ID returned - treat as failure for threading
@@ -797,6 +1166,7 @@ export function ComposeModal() {
   }
 
   return (
+    <>
     <Dialog.Root open={isComposeOpen} onOpenChange={setComposeOpen}>
       <AnimatePresence>
         {isComposeOpen && (
@@ -905,6 +1275,146 @@ export function ComposeModal() {
 
                         {/* Thread posts */}
                         <div className="flex-1 space-y-4">
+                          {/* Visibility selector - show for new posts or replies to public posts
+                              Hide when replying to private posts (inherits parent encryption per PRD §5.5) */}
+                          {!(replyingTo && isPrivatePost(replyingTo)) && (
+                            <div className="flex items-center gap-3 mb-2">
+                              <VisibilitySelector
+                                visibility={visibility}
+                                onVisibilityChange={(v) => {
+                                  if (firstPost) {
+                                    updateThreadPostVisibility(firstPost.id, v)
+                                  }
+                                }}
+                                hasPrivateFeed={hasPrivateFeed}
+                                privateFeedLoading={privateFeedLoading}
+                                privateFollowerCount={privateFollowerCount}
+                                disabled={isPosting}
+                                onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
+                              />
+                            </div>
+                          )}
+
+                          {/* Inherited encryption banner for replies to private posts (PRD §5.5) */}
+                          {inheritedEncryption && !isPrivatePostVisibility && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800"
+                            >
+                              <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                              <span className="text-sm text-purple-700 dark:text-purple-300">
+                                Your reply will be visible to all subscribers of this private feed
+                              </span>
+                            </motion.div>
+                          )}
+
+                          {/* Inherited encryption loading state */}
+                          {inheritedEncryptionLoading && replyingTo && isPrivatePost(replyingTo) && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+                            >
+                              <div className="w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full animate-spin" />
+                              <span className="text-sm text-gray-500 dark:text-gray-400">
+                                Checking encryption inheritance...
+                              </span>
+                            </motion.div>
+                          )}
+
+                          {/* Inherited encryption error state */}
+                          {inheritedEncryptionError && replyingTo && isPrivatePost(replyingTo) && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                            >
+                              <div className="flex items-center gap-2">
+                                <ExclamationTriangleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
+                                <span className="text-sm text-red-700 dark:text-red-300">
+                                  Unable to determine encryption inheritance — replies to this private post cannot be posted right now
+                                </span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => replyingTo && checkInheritedEncryption(replyingTo)}
+                                disabled={inheritedEncryptionLoading}
+                                className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 shrink-0"
+                              >
+                                Retry
+                              </Button>
+                            </motion.div>
+                          )}
+
+                          {/* Private post banner */}
+                          {isPrivatePostVisibility && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"
+                            >
+                              <LockClosedIcon className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                              <span className="text-sm text-amber-700 dark:text-amber-300">
+                                {visibility === 'private'
+                                  ? 'This post will be encrypted and only visible to your private followers'
+                                  : 'The main content will be encrypted. Teaser will be visible to everyone.'}
+                              </span>
+                            </motion.div>
+                          )}
+
+                          {/* Teaser input for private-with-teaser posts */}
+                          {visibility === 'private-with-teaser' && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
+                            >
+                              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  Public Teaser (visible to everyone)
+                                </span>
+                              </div>
+                              <div className="p-4">
+                                <textarea
+                                  ref={teaserTextareaRef}
+                                  value={firstPost?.teaser || ''}
+                                  onChange={(e) => {
+                                    if (firstPost) {
+                                      updateThreadPostTeaser(firstPost.id, e.target.value)
+                                    }
+                                  }}
+                                  placeholder="Write a teaser to entice others to request access..."
+                                  className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                                  maxLength={TEASER_LIMIT + 50}
+                                />
+                                <div className="flex items-center justify-end mt-2">
+                                  <span className={`text-xs ${
+                                    (firstPost?.teaser?.length || 0) > TEASER_LIMIT
+                                      ? 'text-red-500'
+                                      : (firstPost?.teaser?.length || 0) > TEASER_LIMIT - 20
+                                      ? 'text-amber-500'
+                                      : 'text-gray-400'
+                                  }`}>
+                                    {firstPost?.teaser?.length || 0}/{TEASER_LIMIT}
+                                  </span>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+
+                          {/* Private content label for private-with-teaser */}
+                          {visibility === 'private-with-teaser' && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <LockClosedIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                Private Content (encrypted)
+                              </span>
+                            </div>
+                          )}
+
                           <AnimatePresence mode="popLayout">
                             {threadPosts.map((post, index) => (
                               <ThreadPostEditor
@@ -943,7 +1453,26 @@ export function ComposeModal() {
 
                     {/* Footer - minimal with keyboard hint */}
                     <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
-                      <div className="flex items-center justify-end">
+                      <div className="flex items-center justify-between">
+                        {/* Private post indicator */}
+                        {isPrivatePostVisibility && (
+                          <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                            <LockClosedIcon className="w-3 h-3" />
+                            <span>
+                              {privateFollowerCount > 0
+                                ? `Visible to ${privateFollowerCount} private follower${privateFollowerCount !== 1 ? 's' : ''}`
+                                : 'Only visible to you (no followers yet)'}
+                            </span>
+                          </div>
+                        )}
+                        {/* Inherited encryption indicator */}
+                        {inheritedEncryption && !isPrivatePostVisibility && (
+                          <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
+                            <LinkIcon className="w-3 h-3" />
+                            <span>Reply inherits parent&apos;s encryption</span>
+                          </div>
+                        )}
+                        {!willBeEncrypted && <div />}
                         <span className="text-xs text-gray-400">
                           {threadPosts.length > 1
                             ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`
@@ -959,5 +1488,16 @@ export function ComposeModal() {
         )}
       </AnimatePresence>
     </Dialog.Root>
+
+      {/* Add Encryption Key Modal - shown when user needs to add encryption key to identity */}
+      <AddEncryptionKeyModal
+        isOpen={showAddKeyModal}
+        onClose={() => {
+          setShowAddKeyModal(false)
+          setPendingVisibility(null)
+        }}
+        onSuccess={handleAddKeySuccess}
+      />
+    </>
   )
 }

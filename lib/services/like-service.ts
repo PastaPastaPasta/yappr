@@ -1,30 +1,51 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, normalizeSDKResponse, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
+import { paginateFetchAll } from './pagination-utils';
 
 export interface LikeDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
   postId: string;
+  postOwnerId?: string;
 }
 
 class LikeService extends BaseDocumentService<LikeDocument> {
-  private countUserLikesDeduplicator = new RequestDeduplicator<string, number>();
-
   constructor() {
     super('like');
   }
 
   protected transformDocument(doc: Record<string, unknown>): LikeDocument {
-    return transformDocumentWithField<LikeDocument>(doc, 'postId', 'LikeService');
+    const data = (doc.data || doc) as Record<string, unknown>;
+
+    // Convert postId
+    const rawPostId = data.postId || doc.postId;
+    const postId = rawPostId ? identifierToBase58(rawPostId) : '';
+    if (rawPostId && !postId) {
+      console.error('LikeService: Invalid postId format:', rawPostId);
+    }
+
+    // Convert postOwnerId (optional field)
+    const rawPostOwnerId = data.postOwnerId || doc.postOwnerId;
+    const postOwnerId = rawPostOwnerId ? identifierToBase58(rawPostOwnerId) : undefined;
+
+    return {
+      $id: (doc.$id || doc.id) as string,
+      $ownerId: (doc.$ownerId || doc.ownerId) as string,
+      $createdAt: (doc.$createdAt || doc.createdAt) as number,
+      postId: postId || '',
+      postOwnerId: postOwnerId || undefined,
+    };
   }
 
   /**
    * Like a post
+   * @param postId - ID of the post being liked
+   * @param ownerId - Identity ID of the user liking the post
+   * @param postOwnerId - Identity ID of the post author (for efficient notification queries)
    */
-  async likePost(postId: string, ownerId: string): Promise<boolean> {
+  async likePost(postId: string, ownerId: string, postOwnerId?: string): Promise<boolean> {
     try {
       // Check if already liked
       const existing = await this.getLike(postId, ownerId);
@@ -33,12 +54,22 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         return true;
       }
 
+      // Build document data
+      const documentData: Record<string, unknown> = {
+        postId: stringToIdentifierBytes(postId)
+      };
+
+      // Add postOwnerId if provided (for notification queries)
+      if (postOwnerId) {
+        documentData.postOwnerId = stringToIdentifierBytes(postOwnerId);
+      }
+
       // Use state transition service for creation
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         ownerId,
-        { postId: stringToIdentifierBytes(postId) }
+        documentData
       );
 
       return result.success;
@@ -122,9 +153,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           documentTypeName: 'like',
           where: [
             ['postId', '==', postId],
-            ['$createdAt', '>', 0]
+            ['$ownerId', '>', '']
           ],
-          orderBy: [['$createdAt', 'asc']]
+          orderBy: [['$ownerId', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );
@@ -134,66 +165,6 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       console.error('Error getting post likes:', error);
       return [];
     }
-  }
-
-  /**
-   * Get user's likes.
-   * Paginates through all results to return complete list.
-   */
-  async getUserLikes(userId: string): Promise<LikeDocument[]> {
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-      const { documents } = await paginateFetchAll(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: 'like',
-          where: [
-            ['$ownerId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['$createdAt', 'asc']]
-        }),
-        (doc) => this.transformDocument(doc)
-      );
-
-      return documents;
-    } catch (error) {
-      console.error('Error getting user likes:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Count likes given by a user.
-   * Paginates through all results for accurate count.
-   * Deduplicates in-flight requests.
-   */
-  async countUserLikes(userId: string): Promise<number> {
-    return this.countUserLikesDeduplicator.dedupe(userId, async () => {
-      try {
-        const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'like',
-            where: [
-              ['$ownerId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            orderBy: [['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
-      } catch (error) {
-        console.error('Error counting user likes:', error);
-        return 0;
-      }
-    });
   }
 
   /**
@@ -234,6 +205,38 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
       console.error('Error getting likes batch:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get likes on posts owned by a specific user (for notification queries).
+   * Uses the postOwnerLikes index: [postOwnerId, $createdAt]
+   * @param userId - Identity ID of the post owner
+   * @param since - Only return likes created after this timestamp (optional)
+   */
+  async getLikesOnMyPosts(userId: string, since?: Date): Promise<LikeDocument[]> {
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+
+      const sinceTimestamp = since?.getTime() || 0;
+
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'like',
+        where: [
+          ['postOwnerId', '==', userId],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        // Match postOwnerLikes index: [postOwnerId: asc, $createdAt: asc]
+        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']],
+        limit: 100
+      });
+
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
+    } catch (error) {
+      console.error('Error getting likes on my posts:', error);
       return [];
     }
   }

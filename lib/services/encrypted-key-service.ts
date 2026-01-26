@@ -15,6 +15,7 @@ export interface EncryptedKeyBackupDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
+  $revision: number;
   encryptedKey: string;
   iv: string;
   version: number;
@@ -54,6 +55,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       $id: doc.$id as string,
       $ownerId: doc.$ownerId as string,
       $createdAt: doc.$createdAt as number,
+      $revision: (doc.$revision as number) ?? 1,
       encryptedKey: data.encryptedKey as string,
       iv: data.iv as string,
       version: data.version as number,
@@ -245,7 +247,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
   /**
    * Login with username + password
-   * Resolves username to identity, fetches encrypted backup, decrypts and returns credentials
+   * Resolves username to identity, fetches encrypted backup, decrypts and returns credentials.
    */
   async loginWithPassword(
     username: string,
@@ -275,11 +277,11 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       kdfIterations: backup.kdfIterations
     };
 
-    const privateKey = await decryptKeyFromOnchain(encryptedData, identityId, password);
+    const decrypted = await decryptKeyFromOnchain(encryptedData, identityId, password);
 
     return {
       identityId,
-      privateKey
+      privateKey: decrypted
     };
   }
 

@@ -46,9 +46,9 @@ Tasks to complete before deploying to Dash mainnet.
 
 - [ ] **Remove `notification` from main contract** - Not implemented, and has the same `read` field ownership problem. Using derived notifications instead (see Notifications section below).
 
-- [ ] **Remove unused document types** - Consider removing until actually needed:
-  - `mute` - removing entirely, just use `block` instead
-  - `list` / `listMember` - no service/UI
+- [x] **Remove unused document types** - Consider removing until actually needed:
+  - ~~`mute`~~ - ✅ removed, just use `block` instead
+  - ~~`list` / `listMember`~~ - ✅ removed, no service/UI
 
 - [ ] **Remove redundant `ownerBlocks` index** - The `ownerBlocks` index exists to support `orderBy: $createdAt` but actual usage doesn't need chronological ordering. The `ownerAndBlocked` index can serve `$ownerId` queries alone since it's the first field.
 
@@ -88,6 +88,23 @@ Tasks to complete before deploying to Dash mainnet.
   - `website`
   - `location`
   - `bannerUrl`
+
+- [x] **Remove temporary post fields** - The `firstMentionId` and `primaryHashtag` fields were added as temporary single-value workarounds. Now that separate `yappr-mention-contract` and `yappr-hashtag-contract` exist with proper multi-value support, these fields are redundant:
+  - `firstMentionId` - use `postMention` documents instead
+  - `primaryHashtag` - use `postHashtag` documents instead
+  - Saves ~132 bytes per post (32-byte identifier + 100-char string max)
+
+- [x] **Add language-based post index** - The `language` field exists but has no index. Add `(language, $createdAt)` index to enable language-filtered feeds:
+  ```
+  {
+    "name": "languageTimeline",
+    "properties": [
+      { "language": "asc" },
+      { "$createdAt": "asc" }
+    ]
+  }
+  ```
+  **Use cases:** Users can browse posts in their preferred language, or filter global timeline by language.
 
 ## Notifications
 

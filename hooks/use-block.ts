@@ -114,7 +114,14 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
         throw new Error(result.error || 'Block operation failed')
       }
 
-      toast.success(wasBlocked ? 'User unblocked' : 'User blocked')
+      // Show appropriate message based on whether auto-revocation occurred
+      if (wasBlocked) {
+        toast.success('User unblocked')
+      } else if ('autoRevoked' in result && result.autoRevoked) {
+        toast.success('User blocked and private feed access revoked')
+      } else {
+        toast.success('User blocked')
+      }
     } catch (error) {
       // Rollback
       setIsBlocked(wasBlocked)

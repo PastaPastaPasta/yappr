@@ -134,36 +134,33 @@ class TipService {
         console.log('Could not fetch identity for debugging:', e);
       }
 
-      // Execute credit transfer
-      const transferArgs: {
-        senderId: string;
-        recipientId: string;
-        amount: bigint;
-        privateKeyWif: string;
-        keyId?: number;
-      } = {
+      // Fetch sender identity WASM object
+      const identity = await sdk.identities.fetch(senderId);
+      if (!identity) {
+        return {
+          success: false,
+          error: 'Sender identity not found',
+          errorCode: 'NETWORK_ERROR'
+        };
+      }
+
+      // Log transfer details
+      console.log('Transfer args:', JSON.stringify({
         senderId,
         recipientId,
-        amount: BigInt(amountCredits),
-        privateKeyWif: transferKeyWif.trim()
-      };
-
-      // Add keyId - use provided value or default to 3 (transfer key)
-      const effectiveKeyId = keyId !== undefined ? keyId : 3;
-      transferArgs.keyId = effectiveKeyId;
-      console.log(`Using key ID: ${effectiveKeyId}${keyId === undefined ? ' (defaulting to transfer key)' : ''}`);
-
-      // Log the exact args being sent
-      console.log('Transfer args:', JSON.stringify({
-        senderId: transferArgs.senderId,
-        recipientId: transferArgs.recipientId,
-        amount: transferArgs.amount.toString(),
-        keyId: transferArgs.keyId,
-        privateKeyWifLength: transferArgs.privateKeyWif.length
+        amount: amountCredits.toString(),
+        keyId: keyId ?? 'auto-select transfer key'
       }, null, 2));
 
       console.log('Calling sdk.identities.creditTransfer...');
-      const result = await sdk.identities.creditTransfer(transferArgs);
+      // The SDK API expects: senderId, recipientId, amount, privateKeyWif, keyId (optional)
+      const result = await sdk.identities.creditTransfer({
+        senderId,
+        recipientId,
+        amount: BigInt(amountCredits),
+        privateKeyWif: transferKeyWif.trim(),
+        keyId
+      });
 
       // Clear sender's balance cache so it refreshes
       identityService.clearCache(senderId);
@@ -173,7 +170,7 @@ class TipService {
       // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
       if (postId) {
-        await this.createTipPost(senderId, postId, amountCredits, message);
+        await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
       }
 
       return {
@@ -196,7 +193,7 @@ class TipService {
 
         // Create tip post (amount is known even if confirmation timed out)
         if (postId) {
-          await this.createTipPost(senderId, postId, amountCredits, message);
+          await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
         }
 
         return {
@@ -242,6 +239,7 @@ class TipService {
   private async createTipPost(
     senderId: string,
     postId: string,
+    postOwnerId: string,
     amountCredits: number,
     tipMessage?: string
   ): Promise<void> {
@@ -252,11 +250,11 @@ class TipService {
         ? `tip:${amountCredits}\n${tipMessage}`
         : `tip:${amountCredits}`;
 
-      await postService.createPost(senderId, content, {
-        replyToId: postId
-      });
+      // Tips are created as replies to the tipped post
+      const { replyService } = await import('./reply-service');
+      await replyService.createReply(senderId, content, postId, postOwnerId);
 
-      console.log('Tip post created successfully');
+      console.log('Tip reply created successfully');
     } catch (error) {
       // Log but don't fail the tip - the credit transfer already succeeded
       console.error('Failed to create tip post:', error);

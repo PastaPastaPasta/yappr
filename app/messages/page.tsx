@@ -354,7 +354,6 @@ function MessagesPage() {
     if (!newMessage.trim() || !selectedConversation || !user || isSending) return
 
     const messageContent = newMessage.trim()
-    setNewMessage('') // Clear input immediately for better UX
     setIsSending(true)
 
     try {
@@ -366,6 +365,8 @@ function MessagesPage() {
 
       if (result.success && result.message) {
         const sentMessage = result.message
+        // Clear input only on success
+        setNewMessage('')
         // Add message to UI (with deduplication in case poll already added it)
         setMessages(prev => {
           // Check if poll already added this message (with real ID while we have temp)
@@ -386,12 +387,10 @@ function MessagesPage() {
         ))
       } else {
         toast.error(result.error || 'Failed to send message')
-        setNewMessage(messageContent) // Restore message on failure
       }
     } catch (error) {
       console.error('Failed to send message:', error)
       toast.error('Failed to send message')
-      setNewMessage(messageContent) // Restore message on failure
     } finally {
       setIsSending(false)
     }

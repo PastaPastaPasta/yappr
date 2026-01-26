@@ -4,14 +4,13 @@ import { useEffect, useState, useRef } from 'react'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
 import { formatNumber } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
-import { postService, followService, likeService } from '@/lib/services'
+import { postService, followService } from '@/lib/services'
 import { cacheManager } from '@/lib/cache-manager'
 
 interface UserStats {
   posts: number
   followers: number
   following: number
-  likesGiven: number
 }
 
 interface GlobalStats {
@@ -99,14 +98,13 @@ export function FeedStats() {
         setLoading(true)
       }
       try {
-        const [posts, followers, following, likes] = await Promise.all([
+        const [posts, followers, following] = await Promise.all([
           postService.countUserPosts(currentIdentityId),
           followService.countFollowers(currentIdentityId),
-          followService.countFollowing(currentIdentityId),
-          likeService.countUserLikes(currentIdentityId)
+          followService.countFollowing(currentIdentityId)
         ])
         if (!cancelled) {
-          const newStats = { posts, followers, following, likesGiven: likes }
+          const newStats = { posts, followers, following }
           setStats(newStats)
           // Cache for 2 minutes to reduce query frequency
           cacheManager.set('sidebar', cacheKey, newStats, { ttl: 120000 })
@@ -114,7 +112,7 @@ export function FeedStats() {
       } catch (error) {
         console.error('Error fetching user stats:', error)
         if (!cancelled) {
-          setStats({ posts: 0, followers: 0, following: 0, likesGiven: 0 })
+          setStats({ posts: 0, followers: 0, following: 0 })
         }
       } finally {
         if (!cancelled) {
@@ -206,7 +204,7 @@ export function FeedStats() {
           <>
             {!shouldLoad || loading || !stats ? (
               // Show placeholder until user stats are loaded
-              <StatsPlaceholder rows={4} />
+              <StatsPlaceholder rows={3} />
             ) : (
               <>
                 <div className="flex justify-between text-sm">
@@ -220,10 +218,6 @@ export function FeedStats() {
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600 dark:text-gray-400">Following</span>
                   <span className="font-medium">{formatNumber(stats.following)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">Likes Given</span>
-                  <span className="font-medium">{formatNumber(stats.likesGiven)}</span>
                 </div>
               </>
             )}

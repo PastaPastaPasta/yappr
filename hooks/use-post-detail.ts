@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Post, ReplyThread } from '@/lib/types'
+import { Post, Reply, ReplyThread } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
+import { replyService } from '@/lib/services/reply-service'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
   post: Post | null
-  parentPost: Post | null
-  replies: Post[]
+  replies: Reply[]
   replyThreads: ReplyThread[]
 }
 
@@ -20,10 +20,8 @@ interface UsePostDetailOptions {
 interface UsePostDetailResult {
   /** The main post */
   post: Post | null
-  /** Parent post if this is a reply */
-  parentPost: Post | null
   /** Replies to this post (flat list for backwards compat) */
-  replies: Post[]
+  replies: Reply[]
   /** Threaded replies with nesting and author thread info */
   replyThreads: ReplyThread[]
   /** Whether initial load is in progress (false if using cached data) */
@@ -37,42 +35,43 @@ interface UsePostDetailResult {
   /** Refetch all data */
   refresh: () => Promise<void>
   /** Add an optimistic reply (before server confirms) */
-  addOptimisticReply: (reply: Post) => void
+  addOptimisticReply: (reply: Reply) => void
   /** Update the main post's fields */
   updatePost: (updates: Partial<Post>) => void
   /** Update a specific reply */
-  updateReply: (replyId: string, updates: Partial<Post>) => void
+  updateReply: (replyId: string, updates: Partial<Reply>) => void
 }
 
 /**
  * Build a threaded reply tree from flat replies and nested replies.
  * Author's thread is shown first (all at same indent level), then other replies with nesting.
  *
+ * @param mainPost - The main post being replied to
  * @param authorThreadChain - Pre-fetched complete author thread chain (all levels)
- * @param allReplies - All other replies (direct + nested) that are NOT part of author thread
- * @param nestedRepliesMap - Map of postId -> nested replies for non-author posts
+ * @param otherDirectReplies - All other direct replies that are NOT part of author thread
+ * @param nestedRepliesMap - Map of replyId -> nested replies for non-author posts
  */
 function buildReplyTree(
   mainPost: Post,
-  authorThreadChain: Post[],
-  otherDirectReplies: Post[],
-  nestedRepliesMap: Map<string, Post[]>
+  authorThreadChain: Reply[],
+  otherDirectReplies: Reply[],
+  nestedRepliesMap: Map<string, Reply[]>
 ): ReplyThread[] {
   const threads: ReplyThread[] = []
-  const authorThreadIds = new Set(authorThreadChain.map(p => p.id))
+  const authorThreadIds = new Set(authorThreadChain.map(r => r.id))
 
   // Add author's thread first - all at same level (no nesting within thread)
-  authorThreadChain.forEach((post, index) => {
+  authorThreadChain.forEach((reply, index) => {
     // Get replies to this thread post that are NOT part of the author thread
-    const nestedReplies = (nestedRepliesMap.get(post.id) || [])
+    const nestedReplies = (nestedRepliesMap.get(reply.id) || [])
       .filter(nested => !authorThreadIds.has(nested.id))
 
     threads.push({
-      post,
+      content: reply,
       isAuthorThread: true,
       isThreadContinuation: index > 0,
       nestedReplies: nestedReplies.map(nested => ({
-        post: nested,
+        content: nested,
         isAuthorThread: false,
         isThreadContinuation: false,
         nestedReplies: [] // 2-level max for non-author replies
@@ -81,14 +80,14 @@ function buildReplyTree(
   })
 
   // Add other direct replies (not part of author thread)
-  otherDirectReplies.forEach(post => {
-    const nestedReplies = nestedRepliesMap.get(post.id) || []
+  otherDirectReplies.forEach(reply => {
+    const nestedReplies = nestedRepliesMap.get(reply.id) || []
     threads.push({
-      post,
+      content: reply,
       isAuthorThread: false,
       isThreadContinuation: false,
       nestedReplies: nestedReplies.map(nested => ({
-        post: nested,
+        content: nested,
         isAuthorThread: false,
         isThreadContinuation: false,
         nestedReplies: [] // 2-level max for non-author replies
@@ -139,7 +138,6 @@ export function usePostDetail({
     const initial = getInitialData()
     return {
       post: initial?.post || null,
-      parentPost: null,
       replies: [],
       replyThreads: []
     }
@@ -172,28 +170,16 @@ export function usePostDetail({
   const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
 
   // Enrichment hook with callback to update state
+  // Note: enrichment works on posts, replies have their own author resolution
   const { enrich, reset: resetEnrichment } = usePostEnrichment({
     onEnriched: (enrichedPosts) => {
       setState(current => {
         const enrichedMap = new Map(enrichedPosts.map(p => [p.id, p]))
 
-        // Update enriched posts in replyThreads
-        const updateThread = (thread: ReplyThread): ReplyThread => ({
-          ...thread,
-          post: enrichedMap.get(thread.post.id) || thread.post,
-          nestedReplies: thread.nestedReplies.map(nested => ({
-            ...nested,
-            post: enrichedMap.get(nested.post.id) || nested.post
-          }))
-        })
-
         return {
           post: current.post ? (enrichedMap.get(current.post.id) || current.post) : null,
-          parentPost: current.parentPost
-            ? (enrichedMap.get(current.parentPost.id) || current.parentPost)
-            : null,
-          replies: current.replies.map(r => enrichedMap.get(r.id) || r),
-          replyThreads: current.replyThreads.map(updateThread)
+          replies: current.replies,
+          replyThreads: current.replyThreads
         }
       })
     }
@@ -219,41 +205,32 @@ export function usePostDetail({
       const loadedPost = await postService.getPostById(postId, { skipEnrichment: true })
 
       if (!loadedPost) {
-        setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+        setState({ post: null, replies: [], replyThreads: [] })
         setIsLoadingReplies(false)
         return
       }
 
-      // Load parent if this is a reply
-      let parentPost: Post | null = null
-      if (loadedPost.replyToId) {
-        parentPost = await postService.getPostById(loadedPost.replyToId, { skipEnrichment: true })
-      }
-
-      // Load direct replies
-      const repliesResult = await postService.getReplies(postId, { skipEnrichment: true })
-      const directReplies = repliesResult.documents.map(reply => ({
-        ...reply,
-        replyToId: postId
-      }))
+      // Load direct replies (now from reply-service)
+      const repliesResult = await replyService.getReplies(postId, { skipEnrichment: true })
+      const directReplies = repliesResult.documents
 
       // Build author's thread chain recursively
       // Find author's direct reply, then follow the chain of author replies
       const mainAuthorId = loadedPost.author.id
-      const authorThreadChain: Post[] = []
+      const authorThreadChain: Reply[] = []
       const authorThreadIds = new Set<string>([loadedPost.id])
 
       // Helper to recursively fetch author's thread continuation
-      const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Post[]> => {
+      const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
         if (parentIds.length === 0) return []
-        const nestedMap = await postService.getNestedReplies(parentIds, { skipEnrichment: true })
-        const authorContinuations: Post[] = []
+        const nestedMap = await replyService.getNestedReplies(parentIds, { skipEnrichment: true })
+        const authorContinuations: Reply[] = []
 
         nestedMap.forEach((nested, parentId) => {
-          for (const post of nested) {
-            if (post.author.id === mainAuthorId && authorThreadIds.has(parentId)) {
-              authorContinuations.push(post)
-              authorThreadIds.add(post.id)
+          for (const reply of nested) {
+            if (reply.author.id === mainAuthorId && authorThreadIds.has(parentId)) {
+              authorContinuations.push(reply)
+              authorThreadIds.add(reply.id)
             }
           }
         })
@@ -273,7 +250,7 @@ export function usePostDetail({
       }
 
       // Recursively fetch author's thread continuations (replies to thread posts)
-      let currentThreadIds = authorThreadChain.map(p => p.id)
+      let currentThreadIds = authorThreadChain.map(r => r.id)
       while (currentThreadIds.length > 0) {
         const continuations = await fetchAuthorThreadContinuation(currentThreadIds)
         if (continuations.length === 0) break
@@ -281,7 +258,7 @@ export function usePostDetail({
         // Sort and add to chain
         continuations.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         authorThreadChain.push(...continuations)
-        currentThreadIds = continuations.map(p => p.id)
+        currentThreadIds = continuations.map(r => r.id)
       }
 
       // Other direct replies (not part of author thread)
@@ -289,65 +266,48 @@ export function usePostDetail({
 
       // Fetch nested replies for all posts (author thread + other direct replies)
       const allDirectReplyIds = directReplies.map(r => r.id)
-      const allThreadPostIds = authorThreadChain.map(p => p.id)
-      const allPostIdsForNested = Array.from(new Set([...allDirectReplyIds, ...allThreadPostIds]))
+      const allThreadReplyIds = authorThreadChain.map(r => r.id)
+      const allIdsForNested = Array.from(new Set([...allDirectReplyIds, ...allThreadReplyIds]))
 
-      const nestedRepliesMap = allPostIdsForNested.length > 0
-        ? await postService.getNestedReplies(allPostIdsForNested, { skipEnrichment: true })
-        : new Map<string, Post[]>()
+      const nestedRepliesMap = allIdsForNested.length > 0
+        ? await replyService.getNestedReplies(allIdsForNested, { skipEnrichment: true })
+        : new Map<string, Reply[]>()
 
       // Build threaded reply tree
       const replyThreads = buildReplyTree(loadedPost, authorThreadChain, otherDirectReplies, nestedRepliesMap)
 
-      // Collect all nested replies for enrichment (excluding author thread posts already collected)
+      // Collect all nested replies for reference
       const allNestedReplies = Array.from(nestedRepliesMap.values())
         .flat()
-        .filter(p => !authorThreadIds.has(p.id))
+        .filter(r => !authorThreadIds.has(r.id))
 
-      // All replies for backwards compat and enrichment
-      const replies = [...directReplies, ...authorThreadChain.filter(p => !directReplies.some(d => d.id === p.id))]
+      // All replies for backwards compat
+      const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
-      // Fetch quoted posts for main post and all replies
-      const allPostsToCheck = [loadedPost, parentPost, ...replies, ...allNestedReplies].filter(Boolean) as Post[]
-      const quotedPostIds = allPostsToCheck
-        .filter((p: any) => p.quotedPostId)
-        .map((p: any) => p.quotedPostId)
-
-      if (quotedPostIds.length > 0) {
+      // Fetch quoted posts for main post only (replies don't have quotes)
+      if (loadedPost.quotedPostId) {
         try {
-          const quotedPosts = await postService.getPostsByIds(quotedPostIds)
-          const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
-
-          // Attach quoted posts
-          if ((loadedPost as any).quotedPostId && quotedPostMap.has((loadedPost as any).quotedPostId)) {
-            (loadedPost as any).quotedPost = quotedPostMap.get((loadedPost as any).quotedPostId)
-          }
-          if (parentPost && (parentPost as any).quotedPostId && quotedPostMap.has((parentPost as any).quotedPostId)) {
-            (parentPost as any).quotedPost = quotedPostMap.get((parentPost as any).quotedPostId)
-          }
-          for (const reply of [...replies, ...allNestedReplies]) {
-            if ((reply as any).quotedPostId && quotedPostMap.has((reply as any).quotedPostId)) {
-              (reply as any).quotedPost = quotedPostMap.get((reply as any).quotedPostId)
-            }
+          const quotedPosts = await postService.getPostsByIds([loadedPost.quotedPostId])
+          if (quotedPosts.length > 0) {
+            loadedPost.quotedPost = quotedPosts[0]
           }
         } catch (quoteError) {
-          console.error('Failed to fetch quoted posts:', quoteError)
+          console.error('Failed to fetch quoted post:', quoteError)
         }
       }
 
       // Set initial state immediately (with placeholder data)
-      setState({ post: loadedPost, parentPost, replies, replyThreads })
+      setState({ post: loadedPost, replies, replyThreads })
 
-      // Enrich all posts in batch (including nested replies)
-      const allPosts = [loadedPost, parentPost, ...replies, ...allNestedReplies].filter(Boolean) as Post[]
-      await enrich(allPosts)
+      // Enrich the main post only (replies are already enriched by replyService)
+      await enrich([loadedPost])
 
     } catch (err) {
       console.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
       // Only clear state if we don't have navigation data to show
       if (!usedNavigationDataRef.current) {
-        setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+        setState({ post: null, replies: [], replyThreads: [] })
       }
     } finally {
       setIsLoading(false)
@@ -362,7 +322,7 @@ export function usePostDetail({
 
     // Handle disabled or no postId - reset all state
     if (!postId || !enabled) {
-      setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      setState({ post: null, replies: [], replyThreads: [] })
       setPostEnrichment(undefined)
       setIsLoading(false)
       setIsLoadingReplies(false)
@@ -378,7 +338,6 @@ export function usePostDetail({
       // Use navigation data immediately, reset stale context
       setState({
         post: pending.post,
-        parentPost: null,
         replies: [],
         replyThreads: []
       })
@@ -391,7 +350,7 @@ export function usePostDetail({
       store.consumePendingPostNavigation(postId)
     } else {
       // No pending data - reset state and show loading
-      setState({ post: null, parentPost: null, replies: [], replyThreads: [] })
+      setState({ post: null, replies: [], replyThreads: [] })
       setPostEnrichment(undefined)
       usedNavigationDataRef.current = false
       setIsLoading(true)
@@ -408,11 +367,11 @@ export function usePostDetail({
     await loadPost()
   }, [loadPost, resetEnrichment])
 
-  const addOptimisticReply = useCallback((reply: Post) => {
+  const addOptimisticReply = useCallback((reply: Reply) => {
     setState(current => {
       // Create a new thread entry for the reply
       const newThread: ReplyThread = {
-        post: reply,
+        content: reply,
         isAuthorThread: false,
         isThreadContinuation: false,
         nestedReplies: []
@@ -427,9 +386,7 @@ export function usePostDetail({
           : null
       }
     })
-    // Enrich the new reply to get DPNS username/display name
-    enrich([reply])
-  }, [enrich])
+  }, [])
 
   const updatePost = useCallback((updates: Partial<Post>) => {
     setState(current => ({
@@ -438,7 +395,7 @@ export function usePostDetail({
     }))
   }, [])
 
-  const updateReply = useCallback((replyId: string, updates: Partial<Post>) => {
+  const updateReply = useCallback((replyId: string, updates: Partial<Reply>) => {
     setState(current => ({
       ...current,
       replies: current.replies.map(reply =>
@@ -447,18 +404,18 @@ export function usePostDetail({
     }))
   }, [])
 
-  // Listen for post-created events (from ComposeModal) to add replies
+  // Listen for reply-created events (from ComposeModal) to add replies
   useEffect(() => {
     if (!postId) return
 
-    const handlePostCreated = (event: CustomEvent<{ post: any }>) => {
-      const newPost = event.detail?.post
-      if (!newPost) return
+    const handleReplyCreated = (event: CustomEvent<{ reply: any }>) => {
+      const newReply = event.detail?.reply
+      if (!newReply) return
 
       // Check if this is a reply to the current post or any reply we're showing
-      const replyToId = newPost.replyToPostId || newPost.replyToId
-      const isReplyToCurrentPost = replyToId === postId
-      const isReplyToAReply = state.replies.some(r => r.id === replyToId)
+      const parentId = newReply.parentId
+      const isReplyToCurrentPost = parentId === postId
+      const isReplyToAReply = state.replies.some(r => r.id === parentId)
 
       if (isReplyToCurrentPost || isReplyToAReply) {
         // Refresh to get the new reply with proper data
@@ -466,15 +423,14 @@ export function usePostDetail({
       }
     }
 
-    window.addEventListener('post-created', handlePostCreated as EventListener)
+    window.addEventListener('reply-created', handleReplyCreated as EventListener)
     return () => {
-      window.removeEventListener('post-created', handlePostCreated as EventListener)
+      window.removeEventListener('reply-created', handleReplyCreated as EventListener)
     }
   }, [postId, state.replies, refresh])
 
   return {
     post: state.post,
-    parentPost: state.parentPost,
     replies: state.replies,
     replyThreads: state.replyThreads,
     isLoading,

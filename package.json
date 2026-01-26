@@ -10,13 +10,14 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@dashevo/evo-sdk": "^3.0.0-dev.9",
+    "@dashevo/evo-sdk": "3.0.0-dev.11",
     "@dicebear/collection": "^9.2.4",
     "@dicebear/core": "^9.2.4",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@headlessui/react": "^1.7.18",
     "@heroicons/react": "^2.1.1",
+    "@noble/ciphers": "^2.1.1",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "@radix-ui/react-avatar": "^1.0.4",

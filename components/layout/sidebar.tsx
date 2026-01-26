@@ -17,6 +17,7 @@ import {
   HashtagIcon,
   ArrowPathIcon,
   BellIcon,
+  BuildingStorefrontIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeIconSolid,
@@ -27,6 +28,7 @@ import {
   UsersIcon as UsersIconSolid,
   HashtagIcon as HashtagIconSolid,
   BellIcon as BellIconSolid,
+  BuildingStorefrontIcon as BuildingStorefrontIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -41,7 +43,8 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
     return [
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
-      { name: 'Following', href: '/following', icon: UserGroupIcon, activeIcon: UserGroupIconSolid },
+      { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
+      { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
     ]
   }
 
@@ -50,6 +53,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     { name: 'Following', href: '/following', icon: UserGroupIcon, activeIcon: UserGroupIconSolid },
     { name: 'Followers', href: '/followers', icon: UsersIcon, activeIcon: UsersIconSolid },
     { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
+    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
     { name: 'Notifications', href: '/notifications', icon: BellIcon, activeIcon: BellIconSolid },
     { name: 'Messages', href: '/messages', icon: EnvelopeIcon, activeIcon: EnvelopeIconSolid },
     { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon, activeIcon: BookmarkIconSolid },
@@ -69,11 +73,45 @@ export function Sidebar() {
 
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
+  const [displayName, setDisplayName] = useState<string | null>(null)
 
   // Prevent hydration mismatches
   useEffect(() => {
     setIsHydrated(true)
   }, [])
+
+  // Fetch display name from profile when no DPNS username
+  useEffect(() => {
+    // Reset display name at start to avoid stale values
+    setDisplayName(null)
+
+    if (!user?.identityId || user.dpnsUsername) {
+      return
+    }
+
+    let mounted = true
+
+    async function fetchDisplayName() {
+      try {
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+        const profile = await unifiedProfileService.getProfile(user!.identityId)
+        if (mounted) {
+          setDisplayName(profile?.displayName ?? null)
+        }
+      } catch (error) {
+        console.error('Failed to fetch display name:', error)
+        if (mounted) {
+          setDisplayName(null)
+        }
+      }
+    }
+
+    fetchDisplayName()
+
+    return () => {
+      mounted = false
+    }
+  }, [user?.identityId, user?.dpnsUsername])
 
   // Initial notification fetch and polling
   useEffect(() => {
@@ -222,7 +260,7 @@ export function Sidebar() {
                 <div className="flex flex-1 text-left">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold truncate">
-                      {user.dpnsUsername ? `@${user.dpnsUsername}` : 'Identity'}
+                      {user.dpnsUsername ? `@${user.dpnsUsername}` : (displayName || 'Identity')}
                     </p>
                     <p className="text-sm text-gray-500 truncate">{formatIdentityId(user.identityId)}</p>
                   </div>

@@ -17,6 +17,7 @@ import {
   ExclamationTriangleIcon,
   UserGroupIcon,
   UserPlusIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -30,20 +31,26 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
+import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
+import { PrivateFeedFollowRequests } from '@/components/settings/private-feed-follow-requests'
+import { PrivateFeedFollowers } from '@/components/settings/private-feed-followers'
+import { PrivateFeedDashboard } from '@/components/settings/private-feed-dashboard'
 import { BlockListSettings } from '@/components/settings/block-list-settings'
+import { SavedAddressesSettings } from '@/components/settings/saved-addresses-settings'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
-type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
-const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'appearance', 'about']
+type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'appearance' | 'about'
+const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'appearance', 'about']
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
   { id: 'contacts', label: 'Contacts', icon: UserGroupIcon, description: 'Import contacts from Dash Pay' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, description: 'Control your notification preferences' },
   { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your privacy settings' },
+  { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Encrypted posts for approved followers' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
@@ -57,8 +64,12 @@ function SettingsPage() {
   const setLinkPreviews = useSettingsStore((s) => s.setLinkPreviews)
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
   const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
+  const notificationSettings = useSettingsStore((s) => s.notificationSettings)
+  const setNotificationSettings = useSettingsStore((s) => s.setNotificationSettings)
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
+  const feedLanguage = useSettingsStore((s) => s.feedLanguage)
+  const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -74,16 +85,6 @@ function SettingsPage() {
       router.push(`/settings?section=${section}`)
     }
   }
-  
-  // Notification settings
-  const [notificationSettings, setNotificationSettings] = useState({
-    likes: true,
-    reposts: true,
-    replies: true,
-    follows: true,
-    mentions: true,
-    messages: true,
-  })
   
   // Privacy settings
   const [privacySettings, setPrivacySettings] = useState({
@@ -335,8 +336,8 @@ function SettingsPage() {
               </div>
               <Switch.Root
                 checked={value}
-                onCheckedChange={(checked) => 
-                  setNotificationSettings(prev => ({ ...prev, [key]: checked }))
+                onCheckedChange={(checked) =>
+                  setNotificationSettings({ [key as keyof typeof notificationSettings]: checked })
                 }
                 className={`w-11 h-6 rounded-full relative transition-colors ${
                   value ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
@@ -464,6 +465,11 @@ function SettingsPage() {
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
         <BlockedUsersSettings />
       </div>
+
+      {/* Saved Addresses Section */}
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <SavedAddressesSettings />
+      </div>
     </div>
   )
 
@@ -543,8 +549,64 @@ function SettingsPage() {
           </Switch.Root>
         </div>
       </div>
+
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-4">Feed Language</h3>
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Choose the language for the &quot;For You&quot; feed. Posts in other languages will not appear.
+          </p>
+          <select
+            value={feedLanguage}
+            onChange={(e) => setFeedLanguage(e.target.value)}
+            className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+          >
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="ar">Arabic</option>
+            <option value="hi">Hindi</option>
+            <option value="it">Italian</option>
+            <option value="nl">Dutch</option>
+            <option value="pl">Polish</option>
+            <option value="tr">Turkish</option>
+          </select>
+        </div>
+      </div>
     </div>
   )
+
+  const renderPrivateFeedSettings = () => {
+    // Check for action=reset URL param to auto-open reset dialog
+    const actionParam = searchParams.get('action')
+    const shouldOpenReset = actionParam === 'reset'
+
+    // Clear the URL param when opening the reset dialog to prevent re-open on re-render
+    const handleResetDialogOpened = () => {
+      if (shouldOpenReset) {
+        router.replace('/settings?section=privateFeed', { scroll: false })
+      }
+    }
+
+    return (
+      <div className="p-6 space-y-6">
+        <PrivateFeedSettings openReset={shouldOpenReset} onResetOpened={handleResetDialogOpened} />
+        <PrivateFeedDashboard />
+        <div id="private-feed-requests">
+          <PrivateFeedFollowRequests />
+        </div>
+        <div id="private-feed-followers">
+          <PrivateFeedFollowers />
+        </div>
+      </div>
+    )
+  }
 
   const renderAboutSettings = () => {
     const commitHash = process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'
@@ -631,6 +693,8 @@ function SettingsPage() {
         return renderNotificationSettings()
       case 'privacy':
         return renderPrivacySettings()
+      case 'privateFeed':
+        return renderPrivateFeedSettings()
       case 'appearance':
         return renderAppearanceSettings()
       case 'about':
