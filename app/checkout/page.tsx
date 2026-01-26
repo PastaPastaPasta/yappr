@@ -660,6 +660,8 @@ function CheckoutPage() {
               txid={txid}
               onTxidChange={setTxid}
               onSubmit={handlePaymentSubmit}
+              orderTotal={total}
+              orderCurrency={currency}
             />
           )}
 

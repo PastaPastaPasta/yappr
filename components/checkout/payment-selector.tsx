@@ -14,6 +14,8 @@ interface PaymentSelectorProps {
   txid: string
   onTxidChange: (txid: string) => void
   onSubmit: () => void
+  orderTotal?: number
+  orderCurrency?: string
 }
 
 export function PaymentSelector({
@@ -22,7 +24,9 @@ export function PaymentSelector({
   onSelect,
   txid,
   onTxidChange,
-  onSubmit
+  onSubmit,
+  orderTotal,
+  orderCurrency
 }: PaymentSelectorProps) {
   const [detectedAmount, setDetectedAmount] = useState<number | null>(null)
   const [wasAutoFilled, setWasAutoFilled] = useState(false)
@@ -82,6 +86,8 @@ export function PaymentSelector({
             size={180}
             watchForTransaction={!!isSelectedDashPayment}
             onTransactionDetected={handleTransactionDetected}
+            orderTotal={orderTotal}
+            orderCurrency={orderCurrency}
           />
 
           <div>

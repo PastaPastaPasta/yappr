@@ -1,10 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { ClipboardIcon, CheckIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
+import { ClipboardIcon, CheckIcon, ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS } from './payment-icons'
 import { DashPaymentWatcher } from './dash-payment-watcher'
+import { useCryptoPrice } from '@/hooks/use-crypto-price'
+import { formatCryptoAmount, getCryptoSymbol, fromSmallestUnit } from '@/lib/utils/format'
 import type { ParsedPaymentUri } from '@/lib/types'
 
 // Get scheme color for QR code styling
@@ -35,6 +37,17 @@ interface PaymentQRCodeProps {
   onTransactionDetected?: (txid: string, amountDash: number) => void
   onWatchTimeout?: () => void
   onDone?: () => void
+  orderTotal?: number
+  orderCurrency?: string
+}
+
+/**
+ * Build a payment URI with amount parameter (BIP-21 format)
+ */
+function buildUriWithAmount(uri: string, amount: number | null): string {
+  if (!amount || amount <= 0) return uri
+  const separator = uri.includes('?') ? '&' : '?'
+  return `${uri}${separator}amount=${amount.toFixed(8)}`
 }
 
 export function PaymentQRCode({
@@ -44,7 +57,9 @@ export function PaymentQRCode({
   watchForTransaction = false,
   onTransactionDetected,
   onWatchTimeout,
-  onDone
+  onDone,
+  orderTotal,
+  orderCurrency
 }: PaymentQRCodeProps) {
   const [copied, setCopied] = useState(false)
 
@@ -58,6 +73,32 @@ export function PaymentQRCode({
 
   // Enable watching if requested (DashPaymentWatcher handles scheme check internally)
   const shouldWatch = watchForTransaction
+
+  // Convert order total from smallest unit (cents) to display value
+  const displayTotal = orderTotal && orderCurrency
+    ? fromSmallestUnit(orderTotal, orderCurrency)
+    : null
+
+  // Get crypto conversion
+  const {
+    cryptoAmount,
+    cryptoPrice,
+    priceSources,
+    isLoading: isPriceLoading,
+    error: priceError,
+    refetch: refetchPrice
+  } = useCryptoPrice(displayTotal, orderCurrency, paymentUri.scheme)
+
+  // Build the payment URI with amount (if available)
+  const uriWithAmount = useMemo(() => {
+    return buildUriWithAmount(paymentUri.uri, cryptoAmount)
+  }, [paymentUri.uri, cryptoAmount])
+
+  // Check if this is a testnet scheme
+  const isTestnet = paymentUri.scheme.toLowerCase() === 'tdash:'
+
+  // Format the crypto symbol
+  const cryptoSymbol = getCryptoSymbol(paymentUri.scheme)
 
   const handleCopy = async () => {
     try {
@@ -104,6 +145,51 @@ export function PaymentQRCode({
         </div>
       </div>
 
+      {/* Amount Display */}
+      {displayTotal !== null && (
+        <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-4 space-y-2">
+          {isPriceLoading ? (
+            <div className="flex items-center justify-center gap-2 text-gray-500">
+              <ArrowPathIcon className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Fetching price...</span>
+            </div>
+          ) : cryptoAmount !== null && cryptoPrice !== null ? (
+            <>
+              <div className="text-center">
+                <p className="text-lg font-semibold">
+                  Send: {formatCryptoAmount(cryptoAmount, paymentUri.scheme)} {cryptoSymbol}
+                </p>
+                <p className="text-sm text-gray-500">
+                  (~{new Intl.NumberFormat('en-US', { style: 'currency', currency: orderCurrency || 'USD' }).format(cryptoPrice)} per {cryptoSymbol})
+                </p>
+              </div>
+              {priceSources.length > 0 && (
+                <div className="flex items-center justify-center gap-1 text-xs text-gray-400">
+                  <span>Price: {priceSources.join(', ')}</span>
+                  <button
+                    onClick={refetchPrice}
+                    className="p-1 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded"
+                    title="Refresh price"
+                  >
+                    <ArrowPathIcon className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              {isTestnet && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 text-center">
+                  Note: Testnet coins have no real value
+                </p>
+              )}
+            </>
+          ) : priceError ? (
+            <div className="text-center">
+              <p className="text-sm text-gray-500">Amount not calculated</p>
+              <p className="text-xs text-gray-400">{priceError}</p>
+            </div>
+          ) : null}
+        </div>
+      )}
+
       {/* QR Code */}
       <div className="flex justify-center">
         <div
@@ -111,7 +197,7 @@ export function PaymentQRCode({
           style={{ border: `3px solid ${schemeColor}` }}
         >
           <QRCodeSVG
-            value={paymentUri.uri}
+            value={uriWithAmount}
             size={size}
             level="M"
             includeMargin={false}
