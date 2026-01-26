@@ -149,13 +149,15 @@ class RepostService {
   async getRepost(postId: string, ownerId: string): Promise<RepostDocument | null> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      // SDK v3 requires byte arrays for identifier fields in queries using quotedPostAndOwner index
+      const postIdBytes = stringToIdentifierBytes(postId);
 
       // Query using the quotedPostAndOwner index
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostId', '==', postId],
+          ['quotedPostId', '==', postIdBytes],
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
@@ -184,6 +186,8 @@ class RepostService {
   async getPostReposts(postId: string): Promise<RepostDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      // SDK v3 requires byte arrays for identifier fields in queries using quotedPostAndOwner index
+      const postIdBytes = stringToIdentifierBytes(postId);
 
       const { documents } = await paginateFetchAll(
         sdk,
@@ -191,7 +195,7 @@ class RepostService {
           dataContractId: this.contractId,
           documentTypeName: 'post',
           where: [
-            ['quotedPostId', '==', postId],
+            ['quotedPostId', '==', postIdBytes],
             ['$ownerId', '>', '']  // Need second field for index
           ],
           orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']]

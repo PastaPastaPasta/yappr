@@ -119,12 +119,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   async getLike(postId: string, ownerId: string): Promise<LikeDocument | null> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      // SDK v3 requires byte arrays for identifier fields in queries using postAndOwner index
+      const postIdBytes = stringToIdentifierBytes(postId);
 
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
         where: [
-          ['postId', '==', postId],
+          ['postId', '==', postIdBytes],
           ['$ownerId', '==', ownerId]
         ],
         limit: 1
@@ -145,6 +147,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   async getPostLikes(postId: string): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      // SDK v3 requires byte arrays for identifier fields in queries using postAndOwner index
+      const postIdBytes = stringToIdentifierBytes(postId);
 
       const { documents } = await paginateFetchAll(
         sdk,
@@ -152,10 +156,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           dataContractId: this.contractId,
           documentTypeName: 'like',
           where: [
-            ['postId', '==', postId],
+            ['postId', '==', postIdBytes],
             ['$ownerId', '>', '']
           ],
-          orderBy: [['$ownerId', 'asc']]
+          orderBy: [['postId', 'asc'], ['$ownerId', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );

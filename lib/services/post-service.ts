@@ -1164,9 +1164,7 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Get posts that quote a specific post.
-   * NOTE: The contract lacks a quotedPostId index, so this uses client-side
-   * filtering of recent posts. Uses languageTimeline index to scan.
-   * For production, a contract migration adding the index would improve efficiency.
+   * Uses the quotedPostAndOwner index: [quotedPostId, $ownerId]
    */
   async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
     const limit = options.limit || 50;
@@ -1174,28 +1172,28 @@ class PostService extends BaseDocumentService<Post> {
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
+      // SDK v3 requires byte arrays for identifier fields in queries using quotedPostAndOwner index
+      const quotedPostIdBytes = stringToIdentifierBytes(quotedPostId);
 
-      // Scan recent posts using languageTimeline index - without a dedicated index
-      // we have to filter client-side
+      // Use quotedPostAndOwner index for efficient lookup
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['language', '==', 'en'],
-          ['$createdAt', '>', 0]
+          ['quotedPostId', '==', quotedPostIdBytes],
+          ['$ownerId', '>', '']  // Need second field for index
         ],
-        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
-        limit: 100 // Scan recent posts
+        orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
+        limit
       });
 
       const documents = normalizeSDKResponse(response);
 
-      // Filter for posts that quote the target post and transform
-      const quotePosts = documents
+      // Transform and filter for quote tweets only (non-empty content)
+      // Pure reposts have empty content
+      return documents
         .map(doc => this.transformDocument(doc))
-        .filter(post => post.quotedPostId === quotedPostId);
-
-      return quotePosts.slice(0, limit);
+        .filter(post => post.content && post.content.trim() !== '');
     } catch (error) {
       console.error('Error getting quote posts:', error);
       return [];
