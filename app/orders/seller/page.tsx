@@ -386,6 +386,9 @@ function SellerOrdersPage() {
                             onClick={() => {
                               setUpdateOrderId(order.id)
                               setNewStatus(status?.status || 'pending')
+                              setTrackingNumber('')
+                              setTrackingCarrier('')
+                              setStatusMessage('')
                             }}
                           >
                             Update Status
@@ -404,7 +407,13 @@ function SellerOrdersPage() {
                             message={statusMessage}
                             onMessageChange={setStatusMessage}
                             onSubmit={() => handleUpdateStatus(order.id)}
-                            onCancel={() => setUpdateOrderId(null)}
+                            onCancel={() => {
+                              setUpdateOrderId(null)
+                              setNewStatus('pending')
+                              setTrackingNumber('')
+                              setTrackingCarrier('')
+                              setStatusMessage('')
+                            }}
                             isSubmitting={isSubmitting}
                           />
                         )}

@@ -140,7 +140,7 @@ function FeedPage() {
 
       const cacheKey = activeTab === 'following'
         ? `feed_following_${user?.identityId}`
-        : 'feed_for_you'
+        : `feed_for_you_${feedLanguage || 'all'}`
 
       // Check cache first unless force refresh or paginating
       if (!forceRefresh && !isPaginating) {

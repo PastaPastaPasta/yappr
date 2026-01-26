@@ -322,19 +322,24 @@ function CheckoutPage() {
   ) => {
     if (!user?.identityId || !userEncryptionPubKey) return
 
-    const privKey = getEncryptionKeyBytes(user.identityId)
-    if (!privKey) throw new Error('Encryption key not found')
+    try {
+      const privKey = getEncryptionKeyBytes(user.identityId)
+      if (!privKey) throw new Error('Encryption key not found')
 
-    const newAddress = await savedAddressService.addAddress(
-      user.identityId,
-      address,
-      contact,
-      label,
-      userEncryptionPubKey,
-      privKey
-    )
+      const newAddress = await savedAddressService.addAddress(
+        user.identityId,
+        address,
+        contact,
+        label,
+        userEncryptionPubKey,
+        privKey
+      )
 
-    setSavedAddresses((prev) => [...prev, newAddress])
+      setSavedAddresses((prev) => [...prev, newAddress])
+    } catch (err) {
+      console.error('Failed to add address:', err)
+      setError('Failed to save address. Please try again.')
+    }
   }
 
   const handleUpdateAddressFromModal = async (
@@ -343,49 +348,64 @@ function CheckoutPage() {
   ) => {
     if (!user?.identityId || !userEncryptionPubKey) return
 
-    const privKey = getEncryptionKeyBytes(user.identityId)
-    if (!privKey) throw new Error('Encryption key not found')
+    try {
+      const privKey = getEncryptionKeyBytes(user.identityId)
+      if (!privKey) throw new Error('Encryption key not found')
 
-    const updated = await savedAddressService.updateAddress(
-      user.identityId,
-      id,
-      updates,
-      userEncryptionPubKey,
-      privKey
-    )
-
-    if (updated) {
-      setSavedAddresses((prev) =>
-        prev.map((a) => (a.id === id ? updated : updates.isDefault ? { ...a, isDefault: false } : a))
+      const updated = await savedAddressService.updateAddress(
+        user.identityId,
+        id,
+        updates,
+        userEncryptionPubKey,
+        privKey
       )
+
+      if (updated) {
+        setSavedAddresses((prev) =>
+          prev.map((a) => (a.id === id ? updated : updates.isDefault ? { ...a, isDefault: false } : a))
+        )
+      }
+    } catch (err) {
+      console.error('Failed to update address:', err)
+      setError('Failed to update address. Please try again.')
     }
   }
 
   const handleDeleteAddressFromModal = async (id: string) => {
     if (!user?.identityId || !userEncryptionPubKey) return
 
-    const privKey = getEncryptionKeyBytes(user.identityId)
-    if (!privKey) throw new Error('Encryption key not found')
+    try {
+      const privKey = getEncryptionKeyBytes(user.identityId)
+      if (!privKey) throw new Error('Encryption key not found')
 
-    await savedAddressService.removeAddress(user.identityId, id, userEncryptionPubKey, privKey)
-    setSavedAddresses((prev) => prev.filter((a) => a.id !== id))
+      await savedAddressService.removeAddress(user.identityId, id, userEncryptionPubKey, privKey)
+      setSavedAddresses((prev) => prev.filter((a) => a.id !== id))
 
-    // If we deleted the selected address, deselect it
-    if (selectedSavedAddressId === id) {
-      setSelectedSavedAddressId(null)
+      // If we deleted the selected address, deselect it
+      if (selectedSavedAddressId === id) {
+        setSelectedSavedAddressId(null)
+      }
+    } catch (err) {
+      console.error('Failed to delete address:', err)
+      setError('Failed to delete address. Please try again.')
     }
   }
 
   const handleSetDefaultFromModal = async (id: string) => {
     if (!user?.identityId || !userEncryptionPubKey) return
 
-    const privKey = getEncryptionKeyBytes(user.identityId)
-    if (!privKey) throw new Error('Encryption key not found')
+    try {
+      const privKey = getEncryptionKeyBytes(user.identityId)
+      if (!privKey) throw new Error('Encryption key not found')
 
-    await savedAddressService.setDefault(user.identityId, id, userEncryptionPubKey, privKey)
-    setSavedAddresses((prev) =>
-      prev.map((a) => ({ ...a, isDefault: a.id === id }))
-    )
+      await savedAddressService.setDefault(user.identityId, id, userEncryptionPubKey, privKey)
+      setSavedAddresses((prev) =>
+        prev.map((a) => ({ ...a, isDefault: a.id === id }))
+      )
+    } catch (err) {
+      console.error('Failed to set default address:', err)
+      setError('Failed to set default address. Please try again.')
+    }
   }
 
   const handleShippingSubmit = () => {

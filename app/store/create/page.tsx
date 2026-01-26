@@ -56,6 +56,13 @@ function CreateStorePage() {
           return
         }
 
+        // Verify ownership before populating form
+        if (store.ownerId !== user?.identityId) {
+          setError('Unauthorized to edit this store')
+          setIsLoading(false)
+          return
+        }
+
         // Populate form fields
         setName(store.name || '')
         setDescription(store.description || '')
@@ -82,7 +89,7 @@ function CreateStorePage() {
     }
 
     loadStore()
-  }, [sdkReady, isEditMode, storeId])
+  }, [sdkReady, isEditMode, storeId, user?.identityId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

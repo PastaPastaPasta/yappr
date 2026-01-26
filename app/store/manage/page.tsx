@@ -211,27 +211,32 @@ function StoreManagePage() {
   }) => {
     if (!user?.identityId || !store?.id) return
 
-    const newUri = {
-      scheme: data.scheme,
-      uri: `${data.scheme}${data.address}`,
-      label: data.label
+    try {
+      const newUri = {
+        scheme: data.scheme,
+        uri: `${data.scheme}${data.address}`,
+        label: data.label
+      }
+      const currentUris = store.paymentUris || []
+      // Preserve all existing fields during update (SDK replace operation)
+      const updatedStore = await storeService.updateStore(store.id, user.identityId, {
+        name: store.name,
+        description: store.description,
+        logoUrl: store.logoUrl,
+        bannerUrl: store.bannerUrl,
+        status: store.status,
+        paymentUris: [...currentUris, newUri],
+        defaultCurrency: store.defaultCurrency,
+        policies: store.policies,
+        location: store.location,
+        contactMethods: store.contactMethods
+      })
+      setStore(updatedStore)
+      setShowPaymentModal(false)
+    } catch (error) {
+      console.error('Failed to add payment method:', error)
+      toast.error('Failed to add payment method')
     }
-    const currentUris = store.paymentUris || []
-    // Preserve all existing fields during update (SDK replace operation)
-    const updatedStore = await storeService.updateStore(store.id, user.identityId, {
-      name: store.name,
-      description: store.description,
-      logoUrl: store.logoUrl,
-      bannerUrl: store.bannerUrl,
-      status: store.status,
-      paymentUris: [...currentUris, newUri],
-      defaultCurrency: store.defaultCurrency,
-      policies: store.policies,
-      location: store.location,
-      contactMethods: store.contactMethods
-    })
-    setStore(updatedStore)
-    setShowPaymentModal(false)
   }
 
   const handleRemovePayment = async () => {

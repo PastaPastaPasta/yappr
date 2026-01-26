@@ -49,6 +49,11 @@ export function PrivateFeedDashboard() {
 
     if (!user?.identityId) {
       setIsLoading(false)
+      setIsEnabled(false)
+      setFollowerCount(0)
+      setPendingRequestCount(0)
+      setPrivatePostCount(0)
+      setRecentActivity([])
       return
     }
 
