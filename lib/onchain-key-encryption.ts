@@ -2,8 +2,10 @@
 
 /**
  * On-chain key encryption utilities for encrypted key backup feature.
- * Uses PBKDF2 for key derivation (user-configurable iterations) and AES-GCM for encryption.
- * Salt is derived from identity ID to ensure uniqueness without storing separately.
+ *
+ * Password Backup (v1):
+ *   Uses PBKDF2 for key derivation (user-configurable iterations) and AES-GCM for encryption.
+ *   Salt is derived from identity ID to ensure uniqueness without storing separately.
  */
 
 // Iteration limits (1M to 1B)
@@ -34,6 +36,7 @@ export interface BenchmarkResult {
   iterations: number
   estimatedMs: number
 }
+
 
 /**
  * Validate backup password requirements (16+ characters)

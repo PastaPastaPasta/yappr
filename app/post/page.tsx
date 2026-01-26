@@ -12,6 +12,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { usePostDetail } from '@/hooks/use-post-detail'
 import { useAppStore, useSettingsStore } from '@/lib/store'
+import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -25,7 +26,6 @@ function PostDetailContent() {
   // Uses cached post data for instant navigation when available
   const {
     post,
-    parentPost,
     replyThreads,
     isLoading,
     isLoadingReplies,
@@ -35,8 +35,13 @@ function PostDetailContent() {
     enabled: !!postId
   })
 
+  // Check if user can reply to private posts
+  // Posts are top-level content, so the feed owner is the post author
+  const feedOwnerId = post?.author.id
+  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, feedOwnerId)
+
   const handleReply = () => {
-    if (!post) return
+    if (!post || !canReplyToPrivate) return
     setReplyingTo(post)
     setComposeOpen(true)
   }
@@ -82,26 +87,38 @@ function PostDetailContent() {
           </div>
         ) : post ? (
           <>
-            {parentPost && (
-              <div className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
-                <PostCard post={parentPost} hideReplyTo />
-              </div>
-            )}
-
             <div className="border-b border-gray-200 dark:border-gray-800">
               <PostCard post={post} enrichment={postEnrichment} hideReplyTo />
             </div>
 
             {user ? (
-              <div className="p-4 border-b border-gray-200 dark:border-gray-800">
-                <Button
-                  onClick={handleReply}
-                  variant="outline"
-                  className="w-full"
-                >
-                  Post your reply
-                </Button>
-              </div>
+              isCheckingAccess ? (
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled
+                  >
+                    Checking access...
+                  </Button>
+                </div>
+              ) : canReplyToPrivate ? (
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+                  <Button
+                    onClick={handleReply}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    Post your reply
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+                  <p className="text-gray-500 text-sm">
+                    {cantReplyReason || "Can't reply to this post"}
+                  </p>
+                </div>
+              )
             ) : (
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
                 <p className="text-gray-500 text-sm">
@@ -123,7 +140,7 @@ function PostDetailContent() {
               ) : (
                 replyThreads.map((thread) => (
                   <ReplyThreadItem
-                    key={thread.post.id}
+                    key={thread.content.id}
                     thread={thread}
                     mainPostAuthorId={post.author.id}
                   />

@@ -17,6 +17,10 @@ node register-contract-with-nonce.js # Register contract with specific nonce
 node test-dpns-resolve.js           # Test DPNS resolution
 ```
 
+## Workflow
+
+When completing a task, commit the changes automatically unless directed otherwise.
+
 ## Code Quality Guidelines
 
 ### Linter Errors and Warnings
@@ -27,6 +31,7 @@ node test-dpns-resolve.js           # Test DPNS resolution
 - Use `@ts-ignore` or `@ts-expect-error` to bypass TypeScript errors
 - Add `any` types to avoid proper typing
 - Rename unused variables with `_` prefix just to quiet the linter
+- Use `void` to silence floating promise warnings (e.g., `void someAsyncFn()`)
 - Use other suppression patterns that hide problems rather than fix them
 
 **Instead:**
@@ -34,6 +39,7 @@ node test-dpns-resolve.js           # Test DPNS resolution
 - If a variable is unused, remove it entirely
 - If a type is wrong, correct the type properly
 - If code triggers a legitimate warning, refactor the code
+- For floating promises, add proper `.catch()` error handling
 
 Linter rules exist to catch real problems. Suppression comments should be rare exceptions with clear justification, not a standard way to make warnings disappear.
 
@@ -49,6 +55,9 @@ This app is fully decentralized with **NO backend server**. All code and archite
 - Server-side rendering that requires a Node.js server
 - Database connections or server-side state
 - Any architecture requiring a hosted backend
+- Dynamic routes (e.g., `[id]`, `[slug]`, `[...params]`) - only static routes are allowed
+
+**Routing constraint:** All routes must be statically defined. Use query parameters (e.g., `/post?id=123`) instead of dynamic path segments (e.g., `/post/[id]`). This ensures the app can be fully exported as static files.
 
 **All data operations must go through:**
 - Dash Platform DAPI (via `@dashevo/evo-sdk`)
@@ -59,6 +68,7 @@ This app is fully decentralized with **NO backend server**. All code and archite
 - `lib/services/evo-sdk-service.ts` manages SDK initialization and connection
 - SDK runs in trusted mode with 8-second timeout for network requests
 - Contract ID and network config in `lib/constants.ts`
+- **Index ordering**: Dash Platform indices support both `asc` and `desc` queries regardless of how the index is defined in the contract. Don't assume an index only works in one direction.
 
 ### Services Layer (`lib/services/`)
 Singleton service classes handle all Dash Platform operations:

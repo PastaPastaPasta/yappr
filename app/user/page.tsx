@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon,
+  BuildingStorefrontIcon,
   CalendarIcon,
   MapPinIcon,
   LinkIcon,
@@ -16,9 +17,12 @@ import {
   QrCodeIcon,
   EnvelopeIcon,
   UserPlusIcon,
+  LockClosedIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
+import { PrivateFeedAccessButton } from '@/components/profile/private-feed-access-button'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
@@ -31,7 +35,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import type { Post, ParsedPaymentUri, SocialLink } from '@/lib/types'
+import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
@@ -40,7 +44,6 @@ import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import { mentionService } from '@/lib/services/mention-service'
-import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 import { UsernameModal } from '@/components/dpns/username-modal'
@@ -122,16 +125,27 @@ function UserProfileContent() {
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
   const [mentionCount, setMentionCount] = useState<number | null>(null)
 
+  // Private feed state
+  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const [isPrivateFollower, setIsPrivateFollower] = useState(false)
+
+  // Store state
+  const [userStore, setUserStore] = useState<Store | null>(null)
+
   // Progressive enrichment for post metadata (likes, reposts, etc.)
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
     currentUserId: currentUser?.identityId
   })
 
-  // Filter posts based on selected filter (original posts vs replies)
+  // Filter posts - all posts are now top-level (replies are a separate document type)
+  // The 'replies' filter currently shows no results until we implement replyService.getUserReplies()
   const filteredPosts = useMemo(() => {
-    return postFilter === 'posts'
-      ? posts.filter(p => !p.replyToId && !p.repostedBy)
-      : posts.filter(p => p.replyToId && !p.repostedBy)
+    if (postFilter === 'posts') {
+      return posts.filter(p => !p.repostedBy)
+    }
+    // 'replies' filter - would need replyService.getUserReplies() implementation
+    // For now, return empty since posts no longer contain replies
+    return []
   }, [posts, postFilter])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
@@ -203,35 +217,60 @@ function UserProfileContent() {
           setIsFollowing(following)
         }
 
-        // Process posts
-        const postDocs = postsResult.documents || []
-        const transformedPosts: Post[] = postDocs.map((doc: any) => {
-          const authorIdStr = doc.$ownerId || doc.ownerId || userId
-          return {
-            id: doc.$id || doc.id,
-            content: doc.content || '',
-            author: {
-              id: authorIdStr,
-              // Don't use a fake username format - leave empty and let hasDpns control display
-              username: '',
-              // Use empty displayName initially - skeleton shows when hasDpns is undefined
-              displayName: '',
-              avatar: '', // Let UserAvatar fetch the actual avatar
-              verified: false,
-              followers: 0,
-              following: 0,
-              joinedAt: new Date(),
-              // undefined = still loading, will show skeleton in PostCard
-              hasDpns: undefined,
-            } as any,
-            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
-            likes: 0,
-            reposts: 0,
-            replies: 0,
-            views: 0,
-            quotedPostId: doc.quotedPostId || undefined,
+        // Check if user has a private feed (for profile indicator)
+        try {
+          const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
+          const hasPF = await privateFeedService.hasPrivateFeed(userId)
+          setHasPrivateFeed(hasPF)
+
+          // If they have a private feed and we're viewing someone else's profile,
+          // check if we're an approved private follower
+          if (hasPF && currentUser?.identityId && currentUser.identityId !== userId) {
+            try {
+              const accessStatus = await privateFeedFollowerService.getAccessStatus(userId, currentUser.identityId)
+              // User is a private follower if approved (with or without local keys)
+              setIsPrivateFollower(accessStatus === 'approved' || accessStatus === 'approved-no-keys')
+            } catch (accessErr) {
+              // Access status check is non-critical
+              console.error('Failed to check private feed access status:', accessErr)
+              setIsPrivateFollower(false)
+            }
+          } else {
+            // No private feed or viewing own profile - reset private follower state
+            setIsPrivateFollower(false)
           }
-        })
+        } catch (e) {
+          // Private feed check is non-critical
+          console.error('Failed to check private feed status:', e)
+          setHasPrivateFeed(false)
+          setIsPrivateFollower(false)
+        }
+
+        // Check if user has a store
+        try {
+          const { storeService } = await import('@/lib/services/store-service')
+          const store = await storeService.getByOwner(userId)
+          setUserStore(store)
+        } catch (e) {
+          // Store check is non-critical
+          console.error('Failed to check store status:', e)
+          setUserStore(null)
+        }
+
+        // Process posts - postService.getUserPosts() returns already-transformed Post objects
+        // We just need to update author display info for progressive enrichment
+        const transformedPosts: Post[] = (postsResult.documents || []).map((post: Post) => ({
+          ...post,
+          author: {
+            ...post.author,
+            // Clear display fields - will be populated by progressive enrichment
+            username: '',
+            displayName: '',
+            avatar: '',
+            // undefined = still loading, will show skeleton in PostCard
+            hasDpns: undefined,
+          },
+        }))
 
         // Fetch user's reposts and merge with their posts
         try {
@@ -317,10 +356,10 @@ function UserProfileContent() {
         }
 
         // Set pagination state based on original posts (not reposts)
-        const originalPosts = postDocs || []
+        const originalPosts = postsResult.documents || []
         if (originalPosts.length > 0) {
-          const lastPost = originalPosts[originalPosts.length - 1] as any
-          setLastPostId(lastPost.$id || lastPost.id)
+          const lastPost = originalPosts[originalPosts.length - 1]
+          setLastPostId(lastPost.id)
         }
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
@@ -423,7 +462,7 @@ function UserProfileContent() {
       const { repostService } = await import('@/lib/services/repost-service')
 
       const newPosts: Post[] = []
-      let newPostDocs: any[] = []
+      let newPostDocs: Post[] = []
       let newRepostDocs: any[] = []
 
       // Fetch more posts using cursor-based pagination
@@ -435,31 +474,19 @@ function UserProfileContent() {
 
         newPostDocs = postsResult.documents || []
 
-        // Transform new posts
-        for (const doc of newPostDocs) {
-          const authorIdStr = doc.$ownerId || doc.ownerId || userId
+        // postService.getUserPosts() returns already-transformed Post objects
+        // We just update author display info (username/displayName already resolved for this profile)
+        for (const post of newPostDocs) {
           newPosts.push({
-            id: doc.$id || doc.id,
-            content: doc.content || '',
+            ...post,
             author: {
-              id: authorIdStr,
-              // Use resolved username or empty string (not fake user_ prefix)
+              ...post.author,
+              // Use already-resolved username and displayName from profile
               username: username || '',
-              // Use resolved displayName or empty string for skeleton/enrichment
               displayName: profile?.displayName || '',
               avatar: '',
-              verified: false,
-              followers: 0,
-              following: 0,
-              joinedAt: new Date(),
               hasDpns: hasDpns,
-            } as any,
-            createdAt: new Date(doc.$createdAt || doc.createdAt || Date.now()),
-            likes: 0,
-            reposts: 0,
-            replies: 0,
-            views: 0,
-            quotedPostId: doc.quotedPostId || undefined,
+            },
           })
         }
       }
@@ -548,8 +575,8 @@ function UserProfileContent() {
       // Update pagination state for posts (only if posts were fetched)
       if (canLoadMorePosts) {
         if (newPostDocs.length > 0) {
-          const lastPost = newPostDocs[newPostDocs.length - 1] as any
-          setLastPostId(lastPost.$id || lastPost.id)
+          const lastPost = newPostDocs[newPostDocs.length - 1] as Post
+          setLastPostId(lastPost.id)
         }
         setHasMore(newPostDocs.length >= 50)
       }
@@ -571,7 +598,7 @@ function UserProfileContent() {
 
   // Load mentions for this user (lazy load when tab is selected)
   const loadMentions = useCallback(async () => {
-    if (!userId || mentionsLoaded || !MENTION_CONTRACT_ID) return
+    if (!userId || mentionsLoaded) return
 
     setMentionsLoading(true)
     try {
@@ -623,18 +650,21 @@ function UserProfileContent() {
 
   // Load mentions when tab is activated
   useEffect(() => {
-    if (activeTab === 'mentions' && !mentionsLoaded && MENTION_CONTRACT_ID) {
+    if (activeTab === 'mentions' && !mentionsLoaded) {
       loadMentions().catch(err => console.error('Failed to load mentions:', err))
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Reset mentions and post filter when user changes
+  // Reset mentions, post filter, private feed, and store state when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
     setMentionCount(null)
     setActiveTab('posts')
     setPostFilter('posts')
+    setHasPrivateFeed(false)
+    setIsPrivateFollower(false)
+    setUserStore(null)
   }, [userId])
 
   const handleFollow = async () => {
@@ -925,7 +955,7 @@ function UserProfileContent() {
                       </Button>
                     )
                   ) : (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                       <Tooltip.Provider>
                         <Tooltip.Root>
                           <Tooltip.Trigger asChild>
@@ -976,6 +1006,13 @@ function UserProfileContent() {
                       >
                         {isFollowing ? 'Following' : 'Follow'}
                       </Button>
+                      {/* Private Feed Access Button - only shown when following */}
+                      <PrivateFeedAccessButton
+                        ownerId={userId}
+                        currentUserId={currentUser?.identityId || null}
+                        isFollowing={isFollowing}
+                        onRequireAuth={() => requireAuth('follow')}
+                      />
                     </div>
                   )}
                 </div>
@@ -1122,6 +1159,72 @@ function UserProfileContent() {
                           <UserPlusIcon className="h-3 w-3" />
                           {hasDpns ? 'Register More' : 'Register Username'}
                         </button>
+                      )}
+                      {/* Store Badge */}
+                      {userStore && userStore.status === 'active' && (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <button
+                                onClick={() => router.push(`/store/view?id=${userStore.id}`)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
+                              >
+                                <BuildingStorefrontIcon className="h-3 w-3" />
+                                {userStore.name}
+                              </button>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                Visit {displayName}&apos;s store
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
+                      )}
+                      {/* Private Feed Badge */}
+                      {hasPrivateFeed && (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-full">
+                                <LockClosedIcon className="h-3 w-3" />
+                                Private Feed
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                This user has a private feed. Follow them to request access.
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
+                      )}
+                      {/* Private Follower Badge - shown when you have access to their private feed */}
+                      {isPrivateFollower && (
+                        <Tooltip.Provider>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full">
+                                <CheckIcon className="h-3 w-3" />
+                                Private Follower
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                                sideOffset={5}
+                              >
+                                You have access to this user&apos;s private feed
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        </Tooltip.Provider>
                       )}
                     </div>
                   </div>
@@ -1382,12 +1485,6 @@ function UserProfileContent() {
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
                     <p className="text-gray-500">Loading mentions...</p>
                   </div>
-                ) : !MENTION_CONTRACT_ID ? (
-                  <div className="p-8 text-center text-gray-500">
-                    <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                    <p>Mentions feature not yet available</p>
-                    <p className="text-sm mt-2">Mention contract not deployed</p>
-                  </div>
                 ) : mentions.length === 0 ? (
                   <div className="p-8 text-center text-gray-500">
                     <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
@@ -1459,6 +1556,13 @@ function UserProfileContent() {
         }}
         paymentUri={selectedQrPayment}
         recipientName={username || displayName}
+        watchForTransaction={true}
+        onDone={() => {
+          setSelectedQrPayment(null)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('tip')
+          window.history.replaceState({}, '', url.toString())
+        }}
       />
 
       {/* Username Registration Modal */}

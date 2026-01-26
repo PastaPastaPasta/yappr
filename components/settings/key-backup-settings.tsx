@@ -1,15 +1,25 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
-import { getPrivateKey } from '@/lib/secure-storage'
+import {
+  getPrivateKey,
+  getEncryptionKey,
+  getEncryptionKeyType,
+  type KeyType
+} from '@/lib/secure-storage'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { CloudArrowUpIcon, TrashIcon, ShieldCheckIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { CloudArrowUpIcon, TrashIcon, ShieldCheckIcon, CheckCircleIcon, KeyIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+interface KeyInfo {
+  hasKey: boolean
+  type: KeyType | null
+}
 
 export function KeyBackupSettings() {
   const { user } = useAuth()
@@ -18,6 +28,14 @@ export function KeyBackupSettings() {
   const [isLoading, setIsLoading] = useState(true)
   const [isDeleting, setIsDeleting] = useState(false)
   const [backupDate, setBackupDate] = useState<Date | null>(null)
+
+  // Get local key status (memoized to re-compute when user changes)
+  const encryptionKeyInfo = useMemo<KeyInfo>(() => {
+    if (!user) return { hasKey: false, type: null }
+    const key = getEncryptionKey(user.identityId)
+    const type = getEncryptionKeyType(user.identityId)
+    return { hasKey: !!key, type }
+  }, [user])
 
   const checkBackupStatus = useCallback(async () => {
     if (!user) {
@@ -141,10 +159,57 @@ export function KeyBackupSettings() {
           On-Chain Key Backup
         </CardTitle>
         <CardDescription>
-          Save an encrypted copy of your private key to Dash Platform
+          Save encrypted copies of your keys to Dash Platform
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Keys Status Section */}
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Keys Status</h4>
+          <div className="space-y-2">
+            {/* Login Key - Always present */}
+            <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="flex items-center gap-2">
+                <KeyIcon className="h-4 w-4 text-gray-500" />
+                <span className="text-sm">Login Key</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
+                  Active
+                </span>
+              </div>
+            </div>
+
+            {/* Encryption Key */}
+            <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="flex items-center gap-2">
+                <LockClosedIcon className="h-4 w-4 text-gray-500" />
+                <span className="text-sm">Encryption Key</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {encryptionKeyInfo.hasKey ? (
+                  <>
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      encryptionKeyInfo.type === 'derived'
+                        ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+                        : 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
+                    }`}>
+                      {encryptionKeyInfo.type === 'derived' ? 'Derived' : 'External'}
+                    </span>
+                    <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
+                      Active
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded">
+                    Not configured
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {hasBackup ? (
           <>
             <div className="bg-green-50 dark:bg-green-950 p-4 rounded-lg">
@@ -155,7 +220,7 @@ export function KeyBackupSettings() {
                     Backup is active
                   </p>
                   <p className="text-sm text-green-700 dark:text-green-300">
-                    Your encrypted private key is stored on Dash Platform.
+                    Your encrypted key is stored on Dash Platform.
                     You can log in with your username and password.
                     {backupDate && (
                       <span className="block mt-1 text-xs">
@@ -196,7 +261,7 @@ export function KeyBackupSettings() {
                     No backup found
                   </p>
                   <p className="text-sm text-orange-700 dark:text-orange-300">
-                    Create an encrypted backup of your private key to enable username + password login.
+                    Create an encrypted backup of your login key to enable username + password login.
                   </p>
                 </div>
               </div>
@@ -217,15 +282,15 @@ export function KeyBackupSettings() {
           <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              Your private key is encrypted with a strong passphrase you choose
+              Your login key is encrypted with a strong passphrase you choose
             </li>
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              The encrypted key is stored publicly on Dash Platform
+              The encrypted backup is stored publicly on Dash Platform
             </li>
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              Anyone with your password can decrypt and access your key
+              Your encryption key is auto-derived from your login key on each login
             </li>
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>

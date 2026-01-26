@@ -5,7 +5,13 @@ import {
   UserPlusIcon,
   BellIcon,
   Cog6ToothIcon,
-  AtSymbolIcon
+  AtSymbolIcon,
+  LockClosedIcon,
+  LockOpenIcon,
+  ShieldExclamationIcon,
+  HeartIcon,
+  ArrowPathRoundedSquareIcon,
+  ChatBubbleLeftIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -17,22 +23,61 @@ import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { Notification } from '@/lib/types'
 
-type NotificationFilter = 'all' | 'follow' | 'mention'
+// Map notification types to settings keys
+const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> = {
+  like: 'likes',
+  repost: 'reposts',
+  reply: 'replies',
+  follow: 'follows',
+  mention: 'mentions',
+  // Private feed notifications always show (no setting)
+  privateFeedRequest: null,
+  privateFeedApproved: null,
+  privateFeedRevoked: null,
+}
+
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed'
 
 const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
   { key: 'all', label: 'All' },
+  { key: 'like', label: 'Likes' },
+  { key: 'repost', label: 'Reposts' },
+  { key: 'reply', label: 'Replies' },
   { key: 'follow', label: 'Follows' },
-  { key: 'mention', label: 'Mentions' }
+  { key: 'mention', label: 'Mentions' },
+  { key: 'privateFeed', label: 'Private' }
 ]
 
 const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   follow: <UserPlusIcon className="h-5 w-5 text-purple-500" />,
-  mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />
+  mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />,
+  like: <HeartIcon className="h-5 w-5 text-red-500" />,
+  repost: <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />,
+  reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
+  privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
+  privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
+  privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
 }
 
 const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   follow: 'started following you',
-  mention: 'mentioned you in a post'
+  mention: 'mentioned you in a post',
+  like: 'liked your post',
+  repost: 'reposted your post',
+  reply: 'replied to your post',
+  privateFeedRequest: 'requested access to your private feed',
+  privateFeedApproved: 'approved your private feed request',
+  privateFeedRevoked: 'revoked your private feed access'
+}
+
+const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
+  all: 'When someone interacts with you, you\'ll see it here',
+  like: 'When someone likes your post, you\'ll see it here',
+  repost: 'When someone reposts your post, you\'ll see it here',
+  reply: 'When someone replies to your post, you\'ll see it here',
+  follow: 'When someone follows you, you\'ll see it here',
+  mention: 'When someone mentions you, you\'ll see it here',
+  privateFeed: 'Private feed requests and updates will appear here'
 }
 
 function formatTime(date: Date): string {
@@ -56,11 +101,58 @@ function NotificationsPage() {
   const setFilter = useNotificationStore((s) => s.setFilter)
   const markAsRead = useNotificationStore((s) => s.markAsRead)
   const markAllAsRead = useNotificationStore((s) => s.markAllAsRead)
-  const getFilteredNotifications = useNotificationStore((s) => s.getFilteredNotifications)
-  const getUnreadCount = useNotificationStore((s) => s.getUnreadCount)
+  // Subscribe to notifications array directly so component re-renders when markAllAsRead updates it
+  // This fixes the bug where tab indicators didn't clear when marking all as read
+  const notifications = useNotificationStore((s) => s.notifications)
 
-  const filteredNotifications = getFilteredNotifications()
-  const unreadCount = getUnreadCount()
+  // Get notification settings from settings store
+  const notificationSettings = useSettingsStore((s) => s.notificationSettings)
+
+  // Filter notifications by current tab
+  const getFilteredByTab = (notifs: Notification[], tabFilter: NotificationFilter) => {
+    if (tabFilter === 'all') return notifs
+    if (tabFilter === 'privateFeed') {
+      return notifs.filter(n =>
+        n.type === 'privateFeedRequest' ||
+        n.type === 'privateFeedApproved' ||
+        n.type === 'privateFeedRevoked'
+      )
+    }
+    return notifs.filter(n => n.type === tabFilter)
+  }
+
+  // Get unread count for a specific filter, respecting user settings
+  const getUnreadCountForTab = (tabFilter: NotificationFilter) => {
+    const unread = notifications.filter(n => {
+      if (n.read) return false
+      // Respect notification settings (private feed notifications always count)
+      const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
+      if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
+        return false
+      }
+      return true
+    })
+    return getFilteredByTab(unread, tabFilter).length
+  }
+
+  // Filter by tab first, then by user settings
+  const tabFilteredNotifications = getFilteredByTab(notifications, filter)
+  const filteredNotifications = tabFilteredNotifications.filter((notification) => {
+    const settingKey = NOTIFICATION_TYPE_TO_SETTING[notification.type]
+    // If no setting key (e.g., private feed notifications), always show
+    if (settingKey === null) return true
+    // Check if this notification type is enabled in settings
+    return notificationSettings[settingKey as keyof typeof notificationSettings]
+  })
+  // Overall unread count respecting user settings
+  const unreadCount = notifications.filter(n => {
+    if (n.read) return false
+    const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
+    if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
+      return false
+    }
+    return true
+  }).length
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
@@ -71,7 +163,7 @@ function NotificationsPage() {
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
             <Link
-              href="/settings"
+              href="/settings?section=notifications"
               className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
             >
               <Cog6ToothIcon className="h-5 w-5" />
@@ -79,25 +171,34 @@ function NotificationsPage() {
           </div>
 
           <div className="flex border-b border-gray-200 dark:border-gray-800">
-            {FILTER_TABS.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setFilter(tab.key)}
-                className={`flex-1 py-4 text-sm font-medium transition-colors relative ${
-                  filter === tab.key
-                    ? 'text-gray-900 dark:text-white'
-                    : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                }`}
-              >
-                {tab.label}
-                {filter === tab.key && (
-                  <motion.div
-                    layoutId="notificationTab"
-                    className="absolute bottom-0 left-0 right-0 h-1 bg-yappr-500"
-                  />
-                )}
-              </button>
-            ))}
+            {FILTER_TABS.map((tab) => {
+              const tabUnreadCount = getUnreadCountForTab(tab.key)
+              return (
+                <button
+                  key={tab.key}
+                  data-testid={`notification-tab-${tab.key}`}
+                  onClick={() => setFilter(tab.key)}
+                  className={`flex-1 py-4 text-sm font-medium transition-colors relative ${
+                    filter === tab.key
+                      ? 'text-gray-900 dark:text-white'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {tab.label}
+                    {tabUnreadCount > 0 && (
+                      <span className="w-2 h-2 bg-yappr-500 rounded-full" />
+                    )}
+                  </span>
+                  {filter === tab.key && (
+                    <motion.div
+                      layoutId="notificationTab"
+                      className="absolute bottom-0 left-0 right-0 h-1 bg-yappr-500"
+                    />
+                  )}
+                </button>
+              )
+            })}
           </div>
         </header>
 
@@ -124,7 +225,7 @@ function NotificationsPage() {
             <BellIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No notifications yet</p>
             <p className="text-sm text-gray-400 mt-2">
-              When someone follows you or mentions you, you&apos;ll see it here
+              {EMPTY_STATE_MESSAGES[filter]}
             </p>
           </div>
         ) : (
@@ -155,20 +256,42 @@ function NotificationsPage() {
                       </Link>
 
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm">
-                          <Link
-                            href={`/user?id=${notification.from?.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-semibold hover:underline"
-                          >
-                            {notification.from?.displayName || notification.from?.username || 'Unknown User'}
-                          </Link>
-                          {' '}
-                          {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
-                          <span className="text-gray-500 ml-2">
-                            {formatTime(notification.createdAt)}
-                          </span>
-                        </p>
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm flex-1">
+                            <Link
+                              href={`/user?id=${notification.from?.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="font-semibold hover:underline"
+                            >
+                              {notification.from?.displayName || notification.from?.username || 'Unknown User'}
+                            </Link>
+                            {' '}
+                            {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
+                            <span className="text-gray-500 ml-2">
+                              {formatTime(notification.createdAt)}
+                            </span>
+                          </p>
+
+                          {/* Action buttons for private feed notifications */}
+                          {notification.type === 'privateFeedRequest' && (
+                            <Link
+                              href="/settings?section=privateFeed"
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950 dark:hover:bg-blue-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Requests
+                            </Link>
+                          )}
+                          {notification.type === 'privateFeedApproved' && (
+                            <Link
+                              href={`/user?id=${notification.from?.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Profile
+                            </Link>
+                          )}
+                        </div>
 
                         {notification.post && (
                           <Link
@@ -184,7 +307,7 @@ function NotificationsPage() {
                   </div>
 
                   {!notification.read && (
-                    <div className="w-2 h-2 bg-yappr-500 rounded-full mt-2 flex-shrink-0" />
+                    <div data-testid="unread-badge" className="w-2 h-2 bg-yappr-500 rounded-full mt-2 flex-shrink-0" />
                   )}
                 </div>
               </motion.div>

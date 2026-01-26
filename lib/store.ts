@@ -4,10 +4,14 @@ import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
+export type PostVisibility = 'public' | 'private' | 'private-with-teaser'
+
 export interface ThreadPost {
   id: string
   content: string
   postedPostId?: string // Platform post ID if successfully posted
+  visibility?: PostVisibility // Post visibility (only applies to first post in thread)
+  teaser?: string // Teaser content for private-with-teaser posts
 }
 
 // Pending navigation data for instant feed -> post detail transitions
@@ -36,6 +40,8 @@ interface AppState {
   addThreadPost: () => void
   removeThreadPost: (id: string) => void
   updateThreadPost: (id: string, content: string) => void
+  updateThreadPostVisibility: (id: string, visibility: PostVisibility) => void
+  updateThreadPostTeaser: (id: string, teaser: string) => void
   markThreadPostAsPosted: (id: string, postedPostId: string) => void
   setActiveThreadPost: (id: string | null) => void
   resetThreadPosts: () => void
@@ -47,6 +53,8 @@ interface AppState {
 const createInitialThreadPost = (): ThreadPost => ({
   id: crypto.randomUUID(),
   content: '',
+  visibility: 'public',
+  teaser: '',
 })
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -115,6 +123,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     ),
   })),
 
+  updateThreadPostVisibility: (id, visibility) => set((state) => ({
+    threadPosts: state.threadPosts.map(p =>
+      p.id === id ? { ...p, visibility } : p
+    ),
+  })),
+
+  updateThreadPostTeaser: (id, teaser) => set((state) => ({
+    threadPosts: state.threadPosts.map(p =>
+      p.id === id ? { ...p, teaser } : p
+    ),
+  })),
+
   markThreadPostAsPosted: (id, postedPostId) => set((state) => ({
     threadPosts: state.threadPosts.map(p =>
       p.id === id ? { ...p, postedPostId } : p
@@ -153,6 +173,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 }))
 
 // Settings store with localStorage persistence
+interface NotificationSettings {
+  likes: boolean
+  reposts: boolean
+  replies: boolean
+  follows: boolean
+  mentions: boolean
+  messages: boolean
+}
+
 interface SettingsState {
   /** Enable link previews (fetches metadata via third-party proxy) */
   linkPreviews: boolean
@@ -160,9 +189,15 @@ interface SettingsState {
   /** Send read receipts in direct messages */
   sendReadReceipts: boolean
   setSendReadReceipts: (enabled: boolean) => void
+  /** Notification preferences - which types to show */
+  notificationSettings: NotificationSettings
+  setNotificationSettings: (settings: Partial<NotificationSettings>) => void
   /** Potato Mode: Disable visual effects like backdrop blur for better performance on older devices */
   potatoMode: boolean
   setPotatoMode: (enabled: boolean) => void
+  /** Preferred language for the For You feed */
+  feedLanguage: string
+  setFeedLanguage: (language: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -172,8 +207,22 @@ export const useSettingsStore = create<SettingsState>()(
       setLinkPreviews: (enabled) => set({ linkPreviews: enabled }),
       sendReadReceipts: true, // Enabled by default
       setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
+      notificationSettings: {
+        likes: true,
+        reposts: true,
+        replies: true,
+        follows: true,
+        mentions: true,
+        messages: true,
+      },
+      setNotificationSettings: (settings) =>
+        set((state) => ({
+          notificationSettings: { ...state.notificationSettings, ...settings },
+        })),
       potatoMode: false, // Disabled by default - blur effects enabled
       setPotatoMode: (enabled) => set({ potatoMode: enabled }),
+      feedLanguage: 'en', // Default to English
+      setFeedLanguage: (language) => set({ feedLanguage: language }),
     }),
     {
       name: 'yappr-settings',

@@ -10,7 +10,6 @@ import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
 import { hashtagService } from '@/lib/services/hashtag-service'
-import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
@@ -43,15 +42,6 @@ function HashtagPageContent() {
 
       setIsLoading(true)
       try {
-        // Check if hashtag contract is deployed
-        if (!HASHTAG_CONTRACT_ID) {
-          console.log('Hashtag contract not deployed, showing empty state')
-          setPosts([])
-          setPostCount(0)
-          setIsLoading(false)
-          return
-        }
-
         // Get post IDs that have this hashtag
         const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag)
         setPostCount(hashtagDocs.length)
@@ -171,11 +161,6 @@ function HashtagPageContent() {
                 <p className="text-gray-500 mb-4">
                   Be the first to post with {tagSymbol}{displayTag}
                 </p>
-                {!HASHTAG_CONTRACT_ID && (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">
-                    Hashtag contract not deployed. Run `node register-hashtag-contract.js` to enable.
-                  </p>
-                )}
               </div>
             ) : (
               posts.map((post, index) => (

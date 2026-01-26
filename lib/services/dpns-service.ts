@@ -1,7 +1,10 @@
 import { getEvoSdk } from './evo-sdk-service';
+import { SecurityLevel, KeyPurpose } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
+import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
+import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -383,12 +386,84 @@ class DpnsService {
   }
 
   /**
-   * Register a new username
+   * Find the WASM identity public key that matches the stored private key.
+   *
+   * This is critical for dev.11+ SDK: we must use the key that matches our signer's private key.
+   * The signer only has one private key, so we find which identity key it corresponds to.
+   *
+   * DPNS registration operations require CRITICAL (1) or HIGH (2) security level keys.
+   *
+   * @param privateKeyWif - The private key in WIF format
+   * @param wasmPublicKeys - The identity's WASM public keys
+   * @param requiredSecurityLevel - Maximum allowed security level (lower = more secure)
+   * @returns The matching WASM key or null if not found/not suitable
+   */
+  private findMatchingSigningKey(
+    privateKeyWif: string,
+    wasmPublicKeys: WasmIdentityPublicKey[],
+    requiredSecurityLevel: number = SecurityLevel.CRITICAL
+  ): WasmIdentityPublicKey | null {
+    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+
+    // Filter out disabled keys before processing
+    const activeWasmKeys = wasmPublicKeys.filter(k => !k.disabledAt);
+
+    // Convert WASM keys to the format expected by findMatchingKeyIndex
+    const keyInfos: IdentityPublicKeyInfo[] = activeWasmKeys.map(key => {
+      // WASM key.data getter returns hex string - convert to Uint8Array
+      const dataHex = key.data;
+      const data = dataHex && dataHex.length > 0
+        ? new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || [])
+        : new Uint8Array(0);
+
+      return {
+        id: key.keyId ?? 0,
+        type: key.keyTypeNumber ?? 0,
+        purpose: key.purposeNumber ?? 0,
+        securityLevel: key.securityLevelNumber ?? 0,
+        data
+      };
+    });
+
+    // Find which key matches our private key
+    const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
+
+    if (!match) {
+      console.error('DPNS: Private key does not match any key on this identity');
+      return null;
+    }
+
+    console.log(`DPNS: Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
+
+    // Check if the matched key is suitable for DPNS operations
+    // Must be AUTHENTICATION purpose
+    if (match.purpose !== KeyPurpose.AUTHENTICATION) {
+      console.error(`DPNS: Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
+      return null;
+    }
+
+    // Must be CRITICAL (1) or HIGH (2) - NOT MASTER (0) and not below required level
+    if (match.securityLevel < SecurityLevel.CRITICAL) {
+      console.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for DPNS operations (only CRITICAL or HIGH)`);
+      return null;
+    }
+
+    if (match.securityLevel > requiredSecurityLevel) {
+      console.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
+      return null;
+    }
+
+    // Return the WASM key object for the matched key (from filtered active keys)
+    const wasmKey = activeWasmKeys.find(k => k.keyId === match.keyId);
+    return wasmKey || null;
+  }
+
+  /**
+   * Register a new username using the SDK API
    */
   async registerUsername(
     label: string,
     identityId: string,
-    publicKeyId: number,
     privateKeyWif: string,
     onPreorderSuccess?: () => void
   ): Promise<{ success: boolean }> {
@@ -413,12 +488,32 @@ class DpnsService {
         throw new Error(`Username ${label} is already taken`);
       }
 
-      // Register the name using EvoSDK facade
+      // Fetch identity to validate and get public key info
+      const identity = await sdk.identities.fetch(identityId);
+      if (!identity) {
+        throw new Error('Identity not found');
+      }
+
+      // Get WASM public keys to find the matching signing key
+      const wasmPublicKeys = identity.getPublicKeys();
+
+      // Find a signing key that matches the provided private key
+      // DPNS operations require CRITICAL or HIGH security level
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH);
+      if (!identityKey) {
+        throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+      }
+
+      console.log(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+
+      // Register the name using the correct SDK API
+      // The SDK expects: label, identityId, publicKeyId, privateKeyWif, onPreorder
+      // Note: onPreorder callback is passed to SDK which invokes it when preorder completes
       console.log(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
         identityId,
-        publicKeyId,
+        publicKeyId: identityKey.keyId,
         privateKeyWif,
         onPreorder: onPreorderSuccess
       });
@@ -527,13 +622,14 @@ class DpnsService {
 
   /**
    * Register multiple usernames sequentially with progress callback
+   * Uses dev.11+ typed API (publicKeyId no longer needed - key is found from identity)
    */
   async registerUsernamesSequentially(
     registrations: Array<{
       label: string;
       identityId: string;
-      publicKeyId: number;
       privateKeyWif: string;
+      publicKeyId?: number; // Deprecated, kept for backwards compatibility but ignored
     }>,
     onProgress?: (index: number, total: number, label: string) => void
   ): Promise<UsernameRegistrationResult[]> {
@@ -550,7 +646,6 @@ class DpnsService {
         await this.registerUsername(
           reg.label,
           reg.identityId,
-          reg.publicKeyId,
           reg.privateKeyWif
         );
 

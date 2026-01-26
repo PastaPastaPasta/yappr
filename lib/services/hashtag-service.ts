@@ -1,7 +1,6 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
-import { HASHTAG_CONTRACT_ID } from '../constants';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
@@ -25,7 +24,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   private readonly TRENDING_CACHE_TTL = 300000; // 5 minutes
 
   constructor() {
-    super('postHashtag', HASHTAG_CONTRACT_ID);
+    super('postHashtag');
   }
 
   /**

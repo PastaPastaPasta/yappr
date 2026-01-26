@@ -4,8 +4,14 @@ import { useState } from 'react'
 import { ArrowLeftIcon, DocumentDuplicateIcon, CheckIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import dataContract from '@/contracts/yappr-social-contract.json'
 import toast from 'react-hot-toast'
+import contractDocuments from '@/contracts/yappr-social-contract-actual.json'
+
+// Wrap the actual contract documents in the expected format
+const dataContract = {
+  version: 7,
+  documents: contractDocuments
+}
 
 export default function ContractPage() {
   const [copied, setCopied] = useState(false)

@@ -10,7 +10,6 @@ import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
 import { mentionService } from '@/lib/services/mention-service'
-import { MENTION_CONTRACT_ID } from '@/lib/constants'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
@@ -50,15 +49,6 @@ function MentionsPageContent() {
 
       setIsLoading(true)
       try {
-        // Check if mention contract is deployed
-        if (!MENTION_CONTRACT_ID) {
-          console.log('Mention contract not deployed, showing empty state')
-          setPosts([])
-          setMentionCount(0)
-          setIsLoading(false)
-          return
-        }
-
         // Get mention documents for this user
         const mentionDocs = await mentionService.getPostsMentioningUser(targetUserId)
         setMentionCount(mentionDocs.length)
@@ -189,11 +179,6 @@ function MentionsPageContent() {
                     : `No posts mentioning this user yet`
                   }
                 </p>
-                {!MENTION_CONTRACT_ID && (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">
-                    Mention contract not deployed. Run the deployment script to enable.
-                  </p>
-                )}
               </div>
             ) : (
               posts.map((post, index) => (

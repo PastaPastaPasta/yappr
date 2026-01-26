@@ -1,7 +1,6 @@
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
-import { MENTION_CONTRACT_ID } from '../constants';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
 
@@ -15,7 +14,7 @@ export interface PostMentionDocument {
 
 class MentionService extends BaseDocumentService<PostMentionDocument> {
   constructor() {
-    super('postMention', MENTION_CONTRACT_ID);
+    super('postMention');
   }
 
   /**
