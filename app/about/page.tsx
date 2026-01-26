@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeftIcon, InformationCircleIcon, GlobeAltIcon, CodeBracketIcon, UserGroupIcon, ServerStackIcon, CpuChipIcon, LockClosedIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, InformationCircleIcon, GlobeAltIcon, CodeBracketIcon, UserGroupIcon, ServerStackIcon, CpuChipIcon, LockClosedIcon, ShoppingBagIcon, BellIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
@@ -88,6 +88,9 @@ export default function AboutPage() {
                   { title: 'Likes & Reposts', desc: 'Engage with content you enjoy' },
                   { title: 'Encrypted DMs', desc: 'Private conversations, encrypted end-to-end' },
                   { title: 'Private Feeds', desc: 'Encrypted posts visible only to approved followers', href: '/about/private-feeds', icon: LockClosedIcon },
+                  { title: 'Store', desc: 'Create a storefront, list items, and sell with Dash', href: '/store', icon: ShoppingBagIcon },
+                  { title: 'Tips', desc: 'Send Dash tips directly to users you appreciate', icon: CurrencyDollarIcon },
+                  { title: 'Notifications', desc: 'Tabbed alerts with unread indicators and preferences', icon: BellIcon },
                   { title: 'Lists', desc: 'Organize accounts into custom lists' },
                   { title: 'Bookmarks', desc: 'Save posts to revisit later' },
                   { title: 'Block & Mute', desc: 'Control what you see in your feed' },
@@ -178,7 +181,7 @@ export default function AboutPage() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Document Types</p>
-                  <p className="text-sm text-gray-700 dark:text-gray-300">13 types available (profile, post, like, follow, etc.)</p>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">22 types across 2 contracts (social + storefront)</p>
                 </div>
                 <div className="pt-2">
                   <Link
