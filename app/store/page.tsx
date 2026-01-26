@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -20,6 +20,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
+import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 
 export default function StoreBrowsePage() {
@@ -29,6 +30,7 @@ export default function StoreBrowsePage() {
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [stores, setStores] = useState<Store[]>([])
   const [storeRatings, setStoreRatings] = useState<Map<string, StoreRatingSummary>>(new Map())
+  const [blockedOwners, setBlockedOwners] = useState<Map<string, boolean>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [hasStore, setHasStore] = useState(false)
@@ -78,13 +80,41 @@ export default function StoreBrowsePage() {
     loadStores().catch(console.error)
   }, [sdkReady])
 
-  // Filter stores by search query
-  const filteredStores = searchQuery
-    ? stores.filter(store =>
+  // Check which store owners are blocked
+  useEffect(() => {
+    if (!user?.identityId || stores.length === 0) {
+      setBlockedOwners(new Map())
+      return
+    }
+
+    const checkBlockedOwners = async () => {
+      const ownerIds = stores.map(store => store.ownerId)
+      const blocked = await checkBlockedForAuthors(user.identityId, ownerIds)
+      setBlockedOwners(blocked)
+    }
+
+    checkBlockedOwners().catch(console.error)
+  }, [user?.identityId, stores])
+
+  // Filter stores by search query and block status
+  const filteredStores = useMemo(() => {
+    let filtered = stores
+
+    // Filter out stores owned by blocked users
+    if (blockedOwners.size > 0) {
+      filtered = filtered.filter(store => !blockedOwners.get(store.ownerId))
+    }
+
+    // Apply search filter
+    if (searchQuery) {
+      filtered = filtered.filter(store =>
         store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         store.description?.toLowerCase().includes(searchQuery.toLowerCase())
       )
-    : stores
+    }
+
+    return filtered
+  }, [stores, blockedOwners, searchQuery])
 
   const handleStoreClick = (storeId: string) => {
     router.push(`/store/view?id=${storeId}`)
