@@ -225,24 +225,13 @@ class SignerService {
   }
 
   /**
-   * Convert a WASM IdentityPublicKey to the key data format
-   */
-  wasmKeyToKeyData(wasmKey: WasmIdentityPublicKey): IdentityPublicKeyType {
-    return {
-      id: wasmKey.keyId,
-      type: wasmKey.keyTypeNumber,
-      purpose: wasmKey.purposeNumber,
-      securityLevel: wasmKey.securityLevelNumber,
-      data: wasmKey.data, // hex string from WASM key
-      readOnly: false,
-    };
-  }
-
-  /**
    * Create signer and identity key from a WASM public key
    *
    * This is the preferred method for creating signing credentials from
    * identity keys obtained via identity.getPublicKeys().
+   *
+   * The WASM key is used directly since it's already the correct type
+   * for SDK state transition operations.
    *
    * @param privateKeyWif - The private key in WIF format
    * @param wasmKey - The WASM IdentityPublicKey from identity.getPublicKeys()
@@ -253,10 +242,11 @@ class SignerService {
     wasmKey: WasmIdentityPublicKey
   ): Promise<{
     signer: InstanceType<typeof IdentitySigner>;
-    identityKey: InstanceType<typeof IdentityPublicKey>;
+    identityKey: WasmIdentityPublicKey;
   }> {
-    const keyData = this.wasmKeyToKeyData(wasmKey);
-    return this.createSignerAndKey(privateKeyWif, keyData);
+    const signer = await this.createSigner(privateKeyWif);
+    // Use the WASM key directly - it's already the correct type for SDK operations
+    return { signer, identityKey: wasmKey };
   }
 }
 
