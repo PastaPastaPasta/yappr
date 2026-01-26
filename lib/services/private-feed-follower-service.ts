@@ -123,8 +123,9 @@ class PrivateFeedFollowerService {
       }
 
       // 4. Create FollowRequest document
+      // targetId must be a byte array (Identifier type in contract)
       const documentData: Record<string, unknown> = {
-        targetId: ownerId,
+        targetId: Array.from(identifierToBytes(ownerId)),
       };
 
       // Include public key if provided (for hash160-only keys on identity)

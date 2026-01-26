@@ -82,8 +82,8 @@ class DirectMessageService {
           'conversationInvite',
           senderId,
           {
-            // recipientId has contentMediaType identifier - pass as base58 string
-            recipientId,
+            // recipientId is an Identifier type - must be byte array
+            recipientId: Array.from(bs58.decode(recipientId)),
             // conversationId as array (10 bytes >= platform threshold)
             conversationId: conversationIdArray,
             // senderPubKey as array (33 bytes)

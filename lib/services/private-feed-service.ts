@@ -476,8 +476,9 @@ class PrivateFeedService {
       );
 
       // 11. Create PrivateFeedGrant document
+      // recipientId must be a byte array (Identifier type in contract)
       const documentData = {
-        recipientId: requesterId,
+        recipientId: Array.from(identifierToBytes(requesterId)),
         leafIndex,
         epoch: localEpoch,
         encryptedPayload: Array.from(encryptedPayload),
