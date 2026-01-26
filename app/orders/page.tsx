@@ -17,18 +17,25 @@ import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
+import { identityService } from '@/lib/services/identity-service'
+import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload } from '@/lib/types'
 
-// Helper to decode order payload (currently not encrypted, just JSON bytes)
-function decodeOrderPayload(encryptedPayload: Uint8Array): OrderPayload | null {
-  try {
-    const decoder = new TextDecoder()
-    const jsonStr = decoder.decode(encryptedPayload)
-    return JSON.parse(jsonStr) as OrderPayload
-  } catch (e) {
-    console.error('Failed to decode order payload:', e)
-    return null
+/**
+ * Normalize key data from various formats to Uint8Array
+ */
+function normalizeKeyData(data: unknown): Uint8Array | null {
+  if (!data) return null
+  if (data instanceof Uint8Array) return data
+  if (Array.isArray(data)) return new Uint8Array(data)
+  if (typeof data === 'string') {
+    try {
+      return new Uint8Array(Buffer.from(data, 'base64'))
+    } catch {
+      return null
+    }
   }
+  return null
 }
 
 function OrdersPage() {
@@ -76,17 +83,11 @@ function OrdersPage() {
         const { orders: userOrders } = await storeOrderService.getBuyerOrders(user.identityId, { limit: 50 })
         setOrders(userOrders)
 
-        // Decode order payloads
-        const payloadMap = new Map<string, OrderPayload>()
-        for (const order of userOrders) {
-          const payload = decodeOrderPayload(order.encryptedPayload)
-          if (payload) {
-            payloadMap.set(order.id, payload)
-          }
-        }
-        setOrderPayloads(payloadMap)
+        // Get buyer's encryption private key for decryption
+        const buyerPrivKey = getEncryptionKeyBytes(user.identityId)
 
-        // Load latest status for each order and check if reviewed
+        // Load latest status for each order, decrypt payloads, and check if reviewed
+        const payloadMap = new Map<string, OrderPayload>()
         const statusMap = new Map<string, OrderStatusUpdate>()
         const storeMap = new Map<string, Store>()
         const reviewedSet = new Set<string>()
@@ -109,12 +110,42 @@ function OrdersPage() {
               if (existingReview) {
                 reviewedSet.add(order.id)
               }
+
+              // Decrypt order payload if we have the private key
+              if (buyerPrivKey) {
+                try {
+                  // Fetch seller's public key for decryption
+                  const sellerIdentity = await identityService.getIdentity(order.sellerId)
+                  const sellerEncryptionKey = sellerIdentity?.publicKeys.find(
+                    (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
+                  )
+                  const sellerPubKey = sellerEncryptionKey?.data
+                    ? normalizeKeyData(sellerEncryptionKey.data)
+                    : null
+
+                  const payload = await storeOrderService.decryptOrderPayload(
+                    order.encryptedPayload,
+                    order.nonce,
+                    order.storeId,
+                    buyerPrivKey,
+                    sellerPubKey,
+                    true // isBuyer
+                  )
+
+                  if (payload) {
+                    payloadMap.set(order.id, payload)
+                  }
+                } catch (decryptError) {
+                  console.warn(`Failed to decrypt order ${order.id}:`, decryptError)
+                }
+              }
             } catch (e) {
-              // Ignore errors
+              // Ignore errors for status/store/review fetching
             }
           })
         )
 
+        setOrderPayloads(payloadMap)
         setOrderStatuses(statusMap)
         setStores(storeMap)
         setReviewedOrders(reviewedSet)

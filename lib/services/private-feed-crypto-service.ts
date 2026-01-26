@@ -443,6 +443,101 @@ class PrivateFeedCryptoService {
   }
 
   // ============================================================
+  // Order Encryption (Deterministic Ephemeral ECIES)
+  // ============================================================
+
+  /**
+   * Derive deterministic ephemeral key for order encryption.
+   * Allows buyer to re-derive the same key for decryption.
+   *
+   * @param buyerPrivateKey - Buyer's encryption private key (32 bytes)
+   * @param nonce - Order nonce (24 bytes)
+   * @param storeId - Store identifier string
+   * @returns Deterministic ephemeral private key (32 bytes)
+   */
+  deriveOrderEphemeralKey(
+    buyerPrivateKey: Uint8Array,
+    nonce: Uint8Array,
+    storeId: string
+  ): Uint8Array {
+    const salt = concat(nonce, utf8Encode(storeId));
+    return hkdf(sha256, buyerPrivateKey, salt, utf8Encode('yappr/order-eph/v1'), KEY_SIZE);
+  }
+
+  /**
+   * ECIES Encrypt with a provided ephemeral key (instead of random).
+   * Used for order encryption where buyer needs to re-derive the ephemeral key.
+   *
+   * @param ephemeralPrivKey - Ephemeral private key (32 bytes)
+   * @param recipientPubKey - Recipient's public key (33 bytes compressed)
+   * @param plaintext - Data to encrypt
+   * @param aad - Additional authenticated data
+   * @returns ephemeralPubKey || ciphertext (same format as standard ECIES)
+   */
+  async eciesEncryptWithEphemeralKey(
+    ephemeralPrivKey: Uint8Array,
+    recipientPubKey: Uint8Array,
+    plaintext: Uint8Array,
+    aad: Uint8Array
+  ): Promise<Uint8Array> {
+    // 1. Get ephemeral public key
+    const ephemeralPubKey = secp256k1.getPublicKey(ephemeralPrivKey, true);
+
+    // 2. Compute shared secret via ECDH
+    const sharedPoint = secp256k1.getSharedSecret(ephemeralPrivKey, recipientPubKey, true);
+    const sharedX = sharedPoint.slice(1, 33);
+    const sharedSecret = sha256(sharedX);
+
+    // 3. Derive encryption key and nonce via HKDF
+    const derived = hkdf(sha256, sharedSecret, ephemeralPubKey, utf8Encode(INFO_ECIES), 56);
+    const encKey = derived.slice(0, 32);
+    const nonce = derived.slice(32, 56);
+
+    // 4. Encrypt with XChaCha20-Poly1305
+    const cipher = xchacha20poly1305(encKey, nonce, aad);
+    const ciphertext = cipher.encrypt(plaintext);
+
+    // 5. Return: ephemeralPubKey || ciphertext
+    return concat(ephemeralPubKey, ciphertext);
+  }
+
+  /**
+   * ECIES Decrypt using a known ephemeral private key.
+   * Used by buyer who can re-derive the deterministic ephemeral key.
+   *
+   * @param ephemeralPrivKey - The ephemeral private key (re-derived by buyer)
+   * @param recipientPubKey - The recipient's (seller's) public key
+   * @param eciesCiphertext - The encrypted payload (ephemeralPubKey || ciphertext)
+   * @param aad - Additional authenticated data
+   * @returns Decrypted plaintext
+   */
+  async eciesDecryptWithEphemeralKey(
+    ephemeralPrivKey: Uint8Array,
+    recipientPubKey: Uint8Array,
+    eciesCiphertext: Uint8Array,
+    aad: Uint8Array
+  ): Promise<Uint8Array> {
+    // 1. Parse eciesCiphertext
+    const ephemeralPubKey = eciesCiphertext.slice(0, 33);
+    const ciphertext = eciesCiphertext.slice(33);
+
+    // 2. Compute shared secret via ECDH (ephemeralPriv + recipientPub)
+    // This produces the same shared secret as ECDH(recipientPriv + ephemeralPub)
+    const sharedPoint = secp256k1.getSharedSecret(ephemeralPrivKey, recipientPubKey, true);
+    const sharedX = sharedPoint.slice(1, 33);
+    const sharedSecret = sha256(sharedX);
+
+    // 3. Derive encryption key and nonce via HKDF
+    const derived = hkdf(sha256, sharedSecret, ephemeralPubKey, utf8Encode(INFO_ECIES), 56);
+    const encKey = derived.slice(0, 32);
+    const nonce = derived.slice(32, 56);
+
+    // 4. Decrypt with XChaCha20-Poly1305
+    const cipher = xchacha20poly1305(encKey, nonce, aad);
+    return cipher.decrypt(ciphertext);
+  }
+
+  // ============================================================
   // Content Encryption (SPEC §8.2, §8.6)
   // ============================================================
 

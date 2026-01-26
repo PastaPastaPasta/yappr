@@ -28,30 +28,35 @@ import type { StoreOrder, OrderStatusUpdate, OrderStatus, OrderPayload } from '@
 
 /**
  * Decrypt order payload using seller's encryption private key.
- * Falls back to plain JSON parsing for backwards compatibility with
- * orders created before encryption was implemented.
+ * Uses standard ECIES decryption (seller path).
  */
-async function decryptOrderPayload(
-  encryptedPayload: Uint8Array,
+async function decryptSellerOrderPayload(
+  order: StoreOrder,
   sellerPrivateKey: Uint8Array | null
 ): Promise<OrderPayload | null> {
-  // If we have a private key, try decryption first
-  if (sellerPrivateKey) {
+  if (!sellerPrivateKey) {
+    // No private key - try plain JSON fallback
     try {
-      return await storeOrderService.decryptOrderPayload(encryptedPayload, sellerPrivateKey)
+      const decoder = new TextDecoder()
+      const jsonStr = decoder.decode(order.encryptedPayload)
+      return JSON.parse(jsonStr) as OrderPayload
     } catch (e) {
-      // Decryption failed - might be an old unencrypted order
-      console.warn('ECIES decryption failed, trying plain JSON:', e)
+      console.error('Failed to decode order payload:', e)
+      return null
     }
   }
 
-  // Fallback: try plain JSON (for backwards compatibility)
   try {
-    const decoder = new TextDecoder()
-    const jsonStr = decoder.decode(encryptedPayload)
-    return JSON.parse(jsonStr) as OrderPayload
+    return await storeOrderService.decryptOrderPayload(
+      order.encryptedPayload,
+      order.nonce,
+      order.storeId,
+      sellerPrivateKey,
+      null, // No seller pubkey needed for seller decryption
+      false // isBuyer = false (seller)
+    )
   } catch (e) {
-    console.error('Failed to decode order payload:', e)
+    console.error('Failed to decrypt order payload:', e)
     return null
   }
 }
@@ -94,7 +99,7 @@ function SellerOrdersPage() {
         const payloadMap = new Map<string, OrderPayload>()
         await Promise.all(
           sellerOrders.map(async (order) => {
-            const payload = await decryptOrderPayload(order.encryptedPayload, sellerPrivateKey)
+            const payload = await decryptSellerOrderPayload(order, sellerPrivateKey)
             if (payload) {
               payloadMap.set(order.id, payload)
             }

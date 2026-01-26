@@ -22,7 +22,6 @@ import { cartService } from '@/lib/services/cart-service'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
-import { privateFeedCryptoService } from '@/lib/services/private-feed-crypto-service'
 import { identityService } from '@/lib/services/identity-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { savedAddressService } from '@/lib/services/saved-address-service'
@@ -458,27 +457,25 @@ function CheckoutPage() {
         throw new Error('Could not parse seller encryption key')
       }
 
-      // Serialize payload to bytes
-      const payloadJson = JSON.stringify(payload)
-      const encoder = new TextEncoder()
-      const payloadBytes = encoder.encode(payloadJson)
+      // Get buyer's encryption private key for deterministic ephemeral key derivation
+      const buyerPrivateKey = getEncryptionKeyBytes(user.identityId)
+      if (!buyerPrivateKey) {
+        throw new Error('Encryption key not found. Please set up your encryption key in Settings.')
+      }
 
-      // Build AAD (Additional Authenticated Data) for context binding
-      // Format: "yappr/order/v1" - simple context string
-      const aad = encoder.encode('yappr/order/v1')
-
-      // Encrypt with ECIES (ephemeral ECDH + XChaCha20-Poly1305)
-      // Returns: ephemeralPubKey (33 bytes) || ciphertext
-      const encryptedPayload = await privateFeedCryptoService.eciesEncrypt(
-        sellerPublicKey,
-        payloadBytes,
-        aad
-      )
-
-      // Generate random nonce (stored separately for contract compatibility)
-      // Note: ECIES derives its own nonce via HKDF, this is additional metadata
+      // Generate random nonce (used in ephemeral key derivation for uniqueness)
       const nonce = new Uint8Array(24)
       crypto.getRandomValues(nonce)
+
+      // Encrypt with deterministic ephemeral ECIES
+      // Both buyer (via re-derived ephemeral key) and seller can decrypt
+      const encryptedPayload = await storeOrderService.encryptOrderPayload(
+        payload,
+        buyerPrivateKey,
+        sellerPublicKey,
+        nonce,
+        store.id
+      )
 
       await storeOrderService.createOrder(user.identityId, {
         storeId: store.id,

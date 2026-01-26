@@ -175,26 +175,111 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   }
 
   /**
-   * Decrypt order payload for seller
+   * Encrypt order payload using deterministic ephemeral key.
+   * This allows both buyer (who can re-derive the ephemeral key) and
+   * seller (standard ECIES decryption) to decrypt.
+   *
+   * @param payload - The order payload to encrypt
+   * @param buyerPrivateKey - Buyer's encryption private key (32 bytes)
+   * @param sellerPublicKey - Seller's encryption public key (33 bytes)
+   * @param nonce - Random nonce for this order (24 bytes)
+   * @param storeId - Store identifier
+   * @returns Encrypted payload (ephemeralPubKey || ciphertext)
+   */
+  async encryptOrderPayload(
+    payload: OrderPayload,
+    buyerPrivateKey: Uint8Array,
+    sellerPublicKey: Uint8Array,
+    nonce: Uint8Array,
+    storeId: string
+  ): Promise<Uint8Array> {
+    const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
+    const aad = new TextEncoder().encode('yappr/order/v1');
+
+    // Derive deterministic ephemeral key from buyer's key + nonce + storeId
+    const ephemeralPrivKey = privateFeedCryptoService.deriveOrderEphemeralKey(
+      buyerPrivateKey,
+      nonce,
+      storeId
+    );
+
+    // Encrypt with the derived ephemeral key
+    return privateFeedCryptoService.eciesEncryptWithEphemeralKey(
+      ephemeralPrivKey,
+      sellerPublicKey,
+      payloadBytes,
+      aad
+    );
+  }
+
+  /**
+   * Decrypt order payload.
+   * Supports both seller (standard ECIES) and buyer (re-derived ephemeral key).
+   *
    * @param encryptedPayload - The encrypted order payload from the document
-   * @param sellerPrivateKey - Seller's encryption private key (Uint8Array, 32 bytes)
+   * @param nonce - The nonce stored with the order (24 bytes)
+   * @param storeId - Store identifier
+   * @param myPrivateKey - Decryptor's encryption private key (32 bytes)
+   * @param sellerPublicKey - Seller's public key (only needed for buyer decryption)
+   * @param isBuyer - True if caller is the buyer, false if seller
    * @returns Decrypted OrderPayload
    */
   async decryptOrderPayload(
     encryptedPayload: Uint8Array,
-    sellerPrivateKey: Uint8Array
+    nonce: Uint8Array,
+    storeId: string,
+    myPrivateKey: Uint8Array,
+    sellerPublicKey: Uint8Array | null,
+    isBuyer: boolean
   ): Promise<OrderPayload> {
     const aad = new TextEncoder().encode('yappr/order/v1');
-
-    const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
-      sellerPrivateKey,
-      encryptedPayload,
-      aad
-    );
-
     const decoder = new TextDecoder();
-    const payloadJson = decoder.decode(decryptedBytes);
-    return JSON.parse(payloadJson) as OrderPayload;
+
+    // Try decryption based on caller role
+    if (isBuyer && sellerPublicKey) {
+      // Buyer: Re-derive the deterministic ephemeral key
+      try {
+        const ephemeralPrivKey = privateFeedCryptoService.deriveOrderEphemeralKey(
+          myPrivateKey,
+          nonce,
+          storeId
+        );
+
+        const decryptedBytes = await privateFeedCryptoService.eciesDecryptWithEphemeralKey(
+          ephemeralPrivKey,
+          sellerPublicKey,
+          encryptedPayload,
+          aad
+        );
+
+        return JSON.parse(decoder.decode(decryptedBytes)) as OrderPayload;
+      } catch (e) {
+        // Old order with random ephemeral key - buyer can't decrypt
+        // Fall through to plain JSON fallback
+        console.warn('Buyer decryption failed (may be old order):', e);
+      }
+    } else {
+      // Seller: Standard ECIES decryption
+      try {
+        const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
+          myPrivateKey,
+          encryptedPayload,
+          aad
+        );
+
+        return JSON.parse(decoder.decode(decryptedBytes)) as OrderPayload;
+      } catch (e) {
+        console.warn('ECIES decryption failed:', e);
+      }
+    }
+
+    // Fallback: Try plain JSON (very old unencrypted orders)
+    try {
+      const payloadJson = decoder.decode(encryptedPayload);
+      return JSON.parse(payloadJson) as OrderPayload;
+    } catch (e) {
+      throw new Error('Failed to decrypt order payload');
+    }
   }
 }
 
