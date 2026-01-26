@@ -1,10 +1,11 @@
 import { getEvoSdk } from './evo-sdk-service';
-import { SecurityLevel, KeyPurpose } from './signer-service';
+import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { identifierToBase58 } from './sdk-helpers';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -388,7 +389,7 @@ class DpnsService {
   /**
    * Find the WASM identity public key that matches the stored private key.
    *
-   * This is critical for dev.11+ SDK: we must use the key that matches our signer's private key.
+   * This is critical for SDK 3.0.0 SDK: we must use the key that matches our signer's private key.
    * The signer only has one private key, so we find which identity key it corresponds to.
    *
    * DPNS registration operations require CRITICAL (1) or HIGH (2) security level keys.
@@ -459,6 +460,20 @@ class DpnsService {
   }
 
   /**
+   * Convert a WASM IdentityPublicKey to the format expected by signer-service
+   */
+  private wasmKeyToKeyData(wasmKey: WasmIdentityPublicKey): IdentityPublicKeyType {
+    return {
+      id: wasmKey.keyId,
+      type: wasmKey.keyTypeNumber,
+      purpose: wasmKey.purposeNumber,
+      securityLevel: wasmKey.securityLevelNumber,
+      data: wasmKey.data, // hex string from WASM key
+      readOnly: false,
+    };
+  }
+
+  /**
    * Register a new username using the SDK API
    */
   async registerUsername(
@@ -506,16 +521,23 @@ class DpnsService {
 
       console.log(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Register the name using the correct SDK API
-      // The SDK expects: label, identityId, publicKeyId, privateKeyWif, onPreorder
-      // Note: onPreorder callback is passed to SDK which invokes it when preorder completes
+      // Convert WASM key to format expected by signer service
+      const keyData = this.wasmKeyToKeyData(identityKey);
+
+      // Create signer and identity key for the state transition
+      const { signer, identityKey: signingKey } = await signerService.createSignerAndKey(
+        privateKeyWif,
+        keyData
+      );
+
+      // Register the name using SDK 3.0.0 API
       console.log(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
-        identityId,
-        publicKeyId: identityKey.keyId,
-        privateKeyWif,
-        onPreorder: onPreorderSuccess
+        identity,
+        identityKey: signingKey,
+        signer,
+        preorderCallback: onPreorderSuccess
       });
 
       // Clear cache for this identity
@@ -622,7 +644,7 @@ class DpnsService {
 
   /**
    * Register multiple usernames sequentially with progress callback
-   * Uses dev.11+ typed API (publicKeyId no longer needed - key is found from identity)
+   * Uses SDK 3.0.0 typed API (publicKeyId no longer needed - key is found from identity)
    */
   async registerUsernamesSequentially(
     registrations: Array<{

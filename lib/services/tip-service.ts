@@ -1,8 +1,10 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
-import { postService } from './post-service';
+import { signerService, KeyPurpose } from './signer-service';
 import { wallet } from '@dashevo/evo-sdk';
 import { TipInfo } from '../types';
+import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
 
 export interface TipResult {
   success: boolean;
@@ -28,6 +30,39 @@ export const CREDITS_PER_DASH = 100_000_000_000;
 export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
+  /**
+   * Convert a WASM IdentityPublicKey to the format expected by signer-service
+   */
+  private wasmKeyToKeyData(wasmKey: WasmIdentityPublicKey): IdentityPublicKeyType {
+    return {
+      id: wasmKey.keyId,
+      type: wasmKey.keyTypeNumber,
+      purpose: wasmKey.purposeNumber,
+      securityLevel: wasmKey.securityLevelNumber,
+      data: wasmKey.data, // hex string from WASM key
+      readOnly: false,
+    };
+  }
+
+  /**
+   * Find a transfer key (purpose 3) from identity's WASM public keys
+   * Optionally match by specific key ID
+   */
+  private findTransferKey(
+    wasmPublicKeys: WasmIdentityPublicKey[],
+    specificKeyId?: number
+  ): WasmIdentityPublicKey | null {
+    const activeKeys = wasmPublicKeys.filter(k => !k.disabledAt);
+    const transferKeys = activeKeys.filter(k => k.purposeNumber === KeyPurpose.TRANSFER);
+
+    if (specificKeyId !== undefined) {
+      return transferKeys.find(k => k.keyId === specificKeyId) || null;
+    }
+
+    // Return first available transfer key
+    return transferKeys[0] || null;
+  }
+
   /**
    * Send a tip (credit transfer) to another user and optionally create a tip post
    * @param senderId - The sender's identity ID
@@ -144,22 +179,42 @@ class TipService {
         };
       }
 
+      // Get WASM public keys and find the transfer key
+      const wasmPublicKeys = identity.getPublicKeys();
+      const transferKey = this.findTransferKey(wasmPublicKeys, keyId);
+      if (!transferKey) {
+        return {
+          success: false,
+          error: 'No transfer key found on identity. Please add a transfer key first.',
+          errorCode: 'INVALID_KEY'
+        };
+      }
+
       // Log transfer details
       console.log('Transfer args:', JSON.stringify({
         senderId,
         recipientId,
         amount: amountCredits.toString(),
-        keyId: keyId ?? 'auto-select transfer key'
+        keyId: transferKey.keyId
       }, null, 2));
 
+      // Convert WASM key to format expected by signer service
+      const keyData = this.wasmKeyToKeyData(transferKey);
+
+      // Create signer with the transfer key
+      const { signer, identityKey: signingKey } = await signerService.createSignerAndKey(
+        transferKeyWif.trim(),
+        keyData
+      );
+
       console.log('Calling sdk.identities.creditTransfer...');
-      // The SDK API expects: senderId, recipientId, amount, privateKeyWif, keyId (optional)
+      // The SDK 3.0.0 API expects: identity, recipientId, amount, signer, signingKey (optional)
       const result = await sdk.identities.creditTransfer({
-        senderId,
+        identity,
         recipientId,
         amount: BigInt(amountCredits),
-        privateKeyWif: transferKeyWif.trim(),
-        keyId
+        signer,
+        signingKey
       });
 
       // Clear sender's balance cache so it refreshes

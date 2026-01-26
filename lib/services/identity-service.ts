@@ -1,4 +1,5 @@
 import { getEvoSdk } from './evo-sdk-service';
+import { signerService } from './signer-service';
 // WASM SDK imports with dynamic initialization
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
 
@@ -223,7 +224,7 @@ class IdentityService {
 
   /**
    * Validate that a private key has sufficient security level for identity updates
-   * Identity modifications REQUIRE a MASTER (0) security level key in dev.11+
+   * Identity modifications REQUIRE a MASTER (0) security level key in SDK 3.0.0
    * CRITICAL keys are NOT sufficient for identity updates.
    *
    * @param privateKeyWif - The WIF-encoded private key to validate
@@ -265,7 +266,7 @@ class IdentityService {
         return { isValid: false, error: 'Private key does not match any key on this identity' };
       }
 
-      // For identity updates in dev.11+, we REQUIRE MASTER (0) security level
+      // For identity updates in SDK 3.0.0, we REQUIRE MASTER (0) security level
       // The WASM SDK explicitly checks: key.security_level() == SecurityLevel::MASTER
       // CRITICAL (1) and below are NOT sufficient for identity updates
       if (match.securityLevel !== 0) {
@@ -297,7 +298,7 @@ class IdentityService {
    * This creates an identity update state transition
    *
    * NOTE: Identity modifications on Dash Platform REQUIRE a MASTER (0) security level key
-   * for signing in dev.11+. CRITICAL (1) and HIGH (2) keys are NOT sufficient.
+   * for signing in SDK 3.0.0. CRITICAL (1) and HIGH (2) keys are NOT sufficient.
    * This is enforced by the WASM SDK which verifies the signer has a private key
    * matching one of the identity's MASTER keys.
    *
@@ -386,34 +387,16 @@ class IdentityService {
       // - disablePublicKeyIds: array of key IDs to disable (optional)
       // - privateKeyWif: the WIF-encoded private key for signing
       //
-      // IMPORTANT: The WASM SDK's parse_keys_for_identity_update expects string values for:
-      // - keyType (e.g., "ECDSA_SECP256K1")
-      // - purpose (e.g., "ENCRYPTION")
-      // - securityLevel (e.g., "MEDIUM")
-      //
-      // But IdentityPublicKeyInCreation.toJSON() outputs numeric values (type: 0, purpose: 1, etc.).
-      // We need to transform these to string format manually.
-      const keyToAdd = newKey.toJSON() as Record<string, unknown>;
-      // Override with string values that the WASM SDK expects
-      keyToAdd.keyType = 'ECDSA_SECP256K1';
-      keyToAdd.purpose = 'ENCRYPTION';
-      keyToAdd.securityLevel = 'MEDIUM';
-      // The WASM SDK requires privateKeyHex for ECDSA_SECP256K1 keys - it derives the public key from it
-      // Convert the encryption private key to hex string
-      keyToAdd.privateKeyHex = Array.from(encryptionPrivateKey)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-      // Log without sensitive data
-      const keyToLog = { ...keyToAdd, privateKeyHex: '<redacted>' };
-      console.log('Key to add (JSON):', JSON.stringify(keyToLog, null, 2));
+      // Create signer for the identity update using the master key
+      const signer = await signerService.createSigner(signingPrivateKeyWif);
 
-      // Update the identity using evo-sdk facade API
+      // Update the identity using SDK 3.0.0 API
       console.log('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({
-          identityId,
-          addPublicKeys: [keyToAdd],
-          privateKeyWif: signingPrivateKeyWif
+          identity,
+          addPublicKeys: [newKey],
+          signer
         });
         console.log('sdk.identities.update completed successfully');
       } catch (updateError) {
@@ -480,7 +463,7 @@ class IdentityService {
    * Transfer keys are used for credit transfer operations (tips, etc.).
    *
    * IMPORTANT: This operation requires a MASTER security level (0) key
-   * for signing in dev.11+. CRITICAL (1) and HIGH (2) keys are NOT sufficient.
+   * for signing in SDK 3.0.0. CRITICAL (1) and HIGH (2) keys are NOT sufficient.
    *
    * @param identityId - The identity to update
    * @param transferPrivateKey - The private key bytes (32 bytes)
@@ -555,27 +538,16 @@ class IdentityService {
       const identityJson = identity.toJSON();
       console.log('Identity revision before update:', identityJson.revision);
 
-      // Transform key to JSON format expected by WASM SDK
-      const keyToAdd = newKey.toJSON() as Record<string, unknown>;
-      // Override with string values that the WASM SDK expects
-      keyToAdd.keyType = 'ECDSA_SECP256K1';
-      keyToAdd.purpose = 'TRANSFER';
-      keyToAdd.securityLevel = 'HIGH';
-      // The WASM SDK requires privateKeyHex for ECDSA_SECP256K1 keys
-      keyToAdd.privateKeyHex = Array.from(transferPrivateKey)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-      // Log without sensitive data
-      const keyToLog = { ...keyToAdd, privateKeyHex: '<redacted>' };
-      console.log('Key to add (JSON):', JSON.stringify(keyToLog, null, 2));
+      // Create signer for the identity update using the master key
+      const signer = await signerService.createSigner(signingPrivateKeyWif);
 
-      // Update the identity using evo-sdk facade API
+      // Update the identity using SDK 3.0.0 API
       console.log('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({
-          identityId,
-          addPublicKeys: [keyToAdd],
-          privateKeyWif: signingPrivateKeyWif
+          identity,
+          addPublicKeys: [newKey],
+          signer
         });
         console.log('sdk.identities.update completed successfully');
       } catch (updateError) {

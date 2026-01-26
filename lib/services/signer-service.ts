@@ -1,8 +1,8 @@
 /**
- * Signer Service - Manages IdentitySigner creation for dev.11+ SDK
+ * Signer Service - Manages IdentitySigner creation for SDK 3.0.0 SDK
  *
  * This service provides utilities for creating signers and identity public keys
- * for use with the new typed state transition APIs in @dashevo/evo-sdk@^3.0.0-dev.11
+ * for use with the new typed state transition APIs in @dashevo/evo-sdk@3.0.0
  *
  * IMPORTANT: We import WASM types from @dashevo/evo-sdk which re-exports them from
  * @dashevo/wasm-sdk. By calling getEvoSdk() first, we ensure the shared WASM module
