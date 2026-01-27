@@ -313,31 +313,35 @@ class NotificationService {
   }
 
   /**
-   * Fetch posts by IDs for mention notifications
+   * Fetch posts and replies by IDs for notification display.
+   * First tries to fetch from posts collection, then fetches remaining IDs from replies.
+   * For replies, includes parentId so UI can navigate to the parent post.
    */
   private async fetchPostsByIds(postIds: string[]): Promise<Map<string, Post>> {
     const result = new Map<string, Post>();
+    if (postIds.length === 0) return result;
 
     try {
       const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
+      // First, try to fetch from posts collection
+      const postResponse = await sdk.documents.query({
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'post',
         where: [['$id', 'in', postIds]],
         limit: postIds.length
       } as any);
 
-      const documents = normalizeSDKResponse(response);
+      const postDocuments = normalizeSDKResponse(postResponse);
+      const foundPostIds = new Set<string>();
 
-      for (const doc of documents) {
+      for (const doc of postDocuments) {
         const docData = doc as Record<string, unknown>;
         const id = docData.$id as string;
         const ownerId = docData.$ownerId as string;
         const createdAt = docData.$createdAt as number;
         const content = (docData.content as string) || '';
 
-        // Create a minimal Post object - just enough for notification display
         const post: Post = {
           id,
           author: {
@@ -360,6 +364,59 @@ class NotificationService {
           bookmarked: false
         };
         result.set(id, post);
+        foundPostIds.add(id);
+      }
+
+      // Find IDs not found in posts collection (these might be replies)
+      const missingIds = postIds.filter(id => !foundPostIds.has(id));
+
+      if (missingIds.length > 0) {
+        // Try to fetch from replies collection
+        const replyResponse = await sdk.documents.query({
+          dataContractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'reply',
+          where: [['$id', 'in', missingIds]],
+          limit: missingIds.length
+        } as any);
+
+        const replyDocuments = normalizeSDKResponse(replyResponse);
+
+        for (const doc of replyDocuments) {
+          const docData = doc as Record<string, unknown>;
+          const id = docData.$id as string;
+          const ownerId = docData.$ownerId as string;
+          const createdAt = docData.$createdAt as number;
+          const content = (docData.content as string) || '';
+
+          // Extract parentId from reply - this allows the UI to link to the parent post
+          const rawParentId = docData.parentId;
+          const parentId = rawParentId ? identifierToBase58(rawParentId) || undefined : undefined;
+
+          // Create a Post object from the reply, including parentId for navigation
+          const post: Post = {
+            id,
+            author: {
+              id: ownerId,
+              username: '',
+              displayName: this.truncateId(ownerId),
+              avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${ownerId}`,
+              followers: 0,
+              following: 0,
+              joinedAt: new Date()
+            },
+            content,
+            createdAt: new Date(createdAt),
+            likes: 0,
+            reposts: 0,
+            replies: 0,
+            views: 0,
+            liked: false,
+            reposted: false,
+            bookmarked: false,
+            parentId // Include parentId so UI can navigate to the parent post
+          };
+          result.set(id, post);
+        }
       }
     } catch (error) {
       console.error('Error fetching posts by IDs:', error);

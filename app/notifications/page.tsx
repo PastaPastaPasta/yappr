@@ -20,8 +20,40 @@ import { withAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { Notification } from '@/lib/types'
+
+/**
+ * Get the URL to navigate to when clicking a notification.
+ * For reply notifications, navigates to the parent post (so you can see the reply in context).
+ * For like/repost/mention notifications, navigates to the relevant post.
+ * Returns null for follow and private feed notifications (no associated post).
+ */
+function getNotificationUrl(notification: Notification): string | null {
+  // Follow and private feed notifications don't have an associated post
+  if (
+    notification.type === 'follow' ||
+    notification.type === 'privateFeedRequest' ||
+    notification.type === 'privateFeedApproved' ||
+    notification.type === 'privateFeedRevoked'
+  ) {
+    return null
+  }
+
+  // For reply notifications, navigate to the parent post (where the reply appears)
+  // The post.parentId contains the ID of the post/reply that was replied to
+  if (notification.type === 'reply' && notification.post?.parentId) {
+    return `/post?id=${notification.post.parentId}`
+  }
+
+  // For like, repost, mention - navigate to the post itself
+  if (notification.post) {
+    return `/post?id=${notification.post.id}`
+  }
+
+  return null
+}
 
 // Map notification types to settings keys
 const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> = {
@@ -94,6 +126,7 @@ function formatTime(date: Date): string {
 }
 
 function NotificationsPage() {
+  const router = useRouter()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   // Store - polling is handled by Sidebar, we just display data
   const filter = useNotificationStore((s) => s.filter)
@@ -236,7 +269,15 @@ function NotificationsPage() {
                 key={notification.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                onClick={() => !notification.read && markAsRead(notification.id)}
+                onClick={() => {
+                  if (!notification.read) {
+                    markAsRead(notification.id)
+                  }
+                  const url = getNotificationUrl(notification)
+                  if (url) {
+                    router.push(url)
+                  }
+                }}
                 className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
                   !notification.read ? 'bg-yappr-50/20 dark:bg-yappr-950/10' : ''
                 }`}
@@ -294,15 +335,19 @@ function NotificationsPage() {
                           )}
                         </div>
 
-                        {notification.post && (
-                          <Link
-                            href={`/post?id=${notification.post.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
-                          >
-                            {notification.post.content}
-                          </Link>
-                        )}
+                        {(() => {
+                          const post = notification.post
+                          const postUrl = post && getNotificationUrl(notification)
+                          return postUrl && post ? (
+                            <Link
+                              href={postUrl}
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
+                            >
+                              {post.content}
+                            </Link>
+                          ) : null
+                        })()}
                       </div>
                     </div>
                   </div>
