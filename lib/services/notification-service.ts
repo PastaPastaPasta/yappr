@@ -1,7 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
+import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../types';
 
@@ -336,24 +336,27 @@ class NotificationService {
 
       // First, try to fetch from posts collection (chunked to avoid platform limit)
       const postChunks = chunkArray(postIds, NOTIFICATION_QUERY_LIMIT);
-      const postQueryPromises = postChunks.map(chunk =>
-        sdk.documents.query({
+      const postQueryPromises = postChunks.map(chunk => {
+        const options: QueryDocumentsOptions = {
           dataContractId: YAPPR_CONTRACT_ID,
           documentTypeName: 'post',
           where: [['$id', 'in', chunk]],
           limit: chunk.length
-        } as any)
-      );
+        };
+        return queryDocuments(sdk, options);
+      });
       const postResponses = await Promise.all(postQueryPromises);
-      const postDocuments = postResponses.flatMap(response => normalizeSDKResponse(response));
+      const postDocuments = postResponses.flat();
       const foundPostIds = new Set<string>();
 
       for (const doc of postDocuments) {
         const docData = doc as Record<string, unknown>;
+        const nestedData = docData.data as Record<string, unknown> | undefined;
         const id = docData.$id as string;
         const ownerId = docData.$ownerId as string;
         const createdAt = docData.$createdAt as number;
-        const content = (docData.content as string) || '';
+        // Check both top-level and nested locations for content
+        const content = (docData.content as string) || (nestedData?.content as string) || '';
 
         const post: Post = {
           id,
@@ -386,16 +389,17 @@ class NotificationService {
       if (missingIds.length > 0) {
         // Try to fetch from replies collection (chunked to avoid platform limit)
         const replyChunks = chunkArray(missingIds, NOTIFICATION_QUERY_LIMIT);
-        const replyQueryPromises = replyChunks.map(chunk =>
-          sdk.documents.query({
+        const replyQueryPromises = replyChunks.map(chunk => {
+          const options: QueryDocumentsOptions = {
             dataContractId: YAPPR_CONTRACT_ID,
             documentTypeName: 'reply',
             where: [['$id', 'in', chunk]],
             limit: chunk.length
-          } as any)
-        );
+          };
+          return queryDocuments(sdk, options);
+        });
         const replyResponses = await Promise.all(replyQueryPromises);
-        const replyDocuments = replyResponses.flatMap(response => normalizeSDKResponse(response));
+        const replyDocuments = replyResponses.flat();
 
         for (const doc of replyDocuments) {
           const docData = doc as Record<string, unknown>;
@@ -403,7 +407,8 @@ class NotificationService {
           const id = docData.$id as string;
           const ownerId = docData.$ownerId as string;
           const createdAt = docData.$createdAt as number;
-          const content = (docData.content as string) || '';
+          // Check both top-level and nested locations for content
+          const content = (docData.content as string) || (nestedData?.content as string) || '';
 
           // Extract parentId from reply - check both top-level and nested locations
           const rawParentId = docData.parentId || nestedData?.parentId;
