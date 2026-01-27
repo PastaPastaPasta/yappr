@@ -120,13 +120,15 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
+      // Use 'in' pattern that works on feed page
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
         where: [
-          ['postId', '==', postId],
+          ['postId', 'in', [postId]],
           ['$ownerId', '==', ownerId]
         ],
+        orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
         limit: 1
       });
 
@@ -146,16 +148,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
+      // Use 'in' with single-element array - matches working feed pattern
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
           documentTypeName: 'like',
-          where: [
-            ['postId', '==', postId],
-            ['$ownerId', '>', '']
-          ],
-          orderBy: [['$ownerId', 'asc']]
+          where: [['postId', 'in', [postId]]],
+          orderBy: [['postId', 'asc']]
         }),
         (doc) => this.transformDocument(doc)
       );
