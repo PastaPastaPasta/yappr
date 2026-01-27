@@ -98,6 +98,7 @@ function NotificationsPage() {
   // Store - polling is handled by Sidebar, we just display data
   const filter = useNotificationStore((s) => s.filter)
   const isLoading = useNotificationStore((s) => s.isLoading)
+  const hasFetchedOnce = useNotificationStore((s) => s.hasFetchedOnce)
   const setFilter = useNotificationStore((s) => s.setFilter)
   const markAsRead = useNotificationStore((s) => s.markAsRead)
   const markAllAsRead = useNotificationStore((s) => s.markAllAsRead)
@@ -215,7 +216,7 @@ function NotificationsPage() {
           </div>
         )}
 
-        {isLoading ? (
+        {isLoading || !hasFetchedOnce ? (
           <div className="p-8 text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
             <p className="text-gray-500">Loading notifications...</p>

@@ -30,6 +30,7 @@ interface NotificationState {
 
   // Loading states
   isLoading: boolean;
+  hasFetchedOnce: boolean;
 
   // Read state (persisted)
   readIds: string[];
@@ -42,6 +43,7 @@ interface NotificationState {
   markAllAsRead: () => void;
   setLoading: (loading: boolean) => void;
   setLastFetchTimestamp: (timestamp: number) => void;
+  setHasFetchedOnce: (fetched: boolean) => void;
   clearNotifications: () => void;
 
   // Computed helpers
@@ -59,6 +61,7 @@ export const useNotificationStore = create<NotificationState>()(
       lastFetchTimestamp: 0,
       filter: 'all',
       isLoading: false,
+      hasFetchedOnce: false,
       readIds: [],
 
       // Actions
@@ -120,6 +123,8 @@ export const useNotificationStore = create<NotificationState>()(
       setLoading: (isLoading) => set({ isLoading }),
 
       setLastFetchTimestamp: (timestamp) => set({ lastFetchTimestamp: timestamp }),
+
+      setHasFetchedOnce: (fetched) => set({ hasFetchedOnce: fetched }),
 
       clearNotifications: () => set({
         notifications: [],

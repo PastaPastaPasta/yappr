@@ -132,6 +132,11 @@ export function Sidebar() {
 
       const store = useNotificationStore.getState()
 
+      // Set loading state for initial fetch
+      if (isInitial) {
+        store.setLoading(true)
+      }
+
       try {
         const readIds = store.getReadIdsSet()
         const result = isInitial
@@ -142,12 +147,18 @@ export function Sidebar() {
 
         if (isInitial) {
           store.setNotifications(result.notifications)
+          store.setHasFetchedOnce(true)
         } else if (result.notifications.length > 0) {
           store.addNotifications(result.notifications)
         }
         store.setLastFetchTimestamp(result.latestTimestamp)
       } catch (error) {
         console.error('Notification fetch error:', error)
+      } finally {
+        if (isInitial && !cancelled) {
+          store.setLoading(false)
+          store.setHasFetchedOnce(true)
+        }
       }
 
       if (!cancelled) {
