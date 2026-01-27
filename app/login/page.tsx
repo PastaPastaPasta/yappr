@@ -368,6 +368,9 @@ export default function LoginPage() {
                   )}
                 </p>
               )}
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                🔒 Your keys never leave this device. All signing happens locally.
+              </p>
             </div>
 
             {/* Remember Me Toggle */}
@@ -436,11 +439,6 @@ export default function LoginPage() {
             >
               Create Identity
             </a>
-          </div>
-
-          <div className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg p-4 space-y-1">
-            <h3 className="font-medium text-gray-900 dark:text-gray-100">🔒 Your keys never leave this device</h3>
-            <p>All signing happens locally in your browser.</p>
           </div>
         </div>
       </div>
