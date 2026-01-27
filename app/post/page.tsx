@@ -12,6 +12,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { usePostDetail } from '@/hooks/use-post-detail'
 import { useAppStore, useSettingsStore } from '@/lib/store'
+import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import type { Post } from '@/lib/types'
@@ -23,6 +24,7 @@ function PostDetailContent() {
   const { user } = useAuth()
   const { setReplyingTo, setComposeOpen } = useAppStore()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const openLoginModal = useLoginModal((s) => s.open)
 
   // All post loading and enrichment handled by hook
   // Uses cached post data for instant navigation when available
@@ -149,7 +151,7 @@ function PostDetailContent() {
             ) : (
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
                 <p className="text-gray-500 text-sm">
-                  <a href="/login" className="text-purple-600 hover:underline">Log in</a> to reply
+                  <button onClick={openLoginModal} className="text-purple-600 hover:underline">Log in</button> to reply
                 </p>
               </div>
             )}

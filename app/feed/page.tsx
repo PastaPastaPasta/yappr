@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
@@ -1062,12 +1061,12 @@ function FeedPage() {
             </div>
           ) : (
             <div className="flex items-center justify-center">
-              <Link
-                href="/login"
+              <button
+                onClick={() => openLoginPrompt()}
                 className="text-yappr-500 hover:text-yappr-600 font-medium py-1"
               >
                 Login to share your thoughts
-              </Link>
+              </button>
             </div>
           )}
         </div>

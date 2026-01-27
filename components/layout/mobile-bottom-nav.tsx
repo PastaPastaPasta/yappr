@@ -18,11 +18,13 @@ import {
   UserIcon as UserIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 export function MobileBottomNav() {
   const pathname = usePathname()
   const { user } = useAuth()
   const { setComposeOpen } = useAppStore()
+  const openLoginModal = useLoginModal((s) => s.open)
 
   const navItems = [
     {
@@ -85,12 +87,12 @@ export function MobileBottomNav() {
             <PlusIcon className="h-7 w-7" />
           </button>
         ) : (
-          <Link
-            href="/login"
+          <button
+            onClick={openLoginModal}
             className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
           >
             <PlusIcon className="h-7 w-7" />
-          </Link>
+          </button>
         )}
 
         {/* Last two nav items */}

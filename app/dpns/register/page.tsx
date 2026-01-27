@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation'
 import { UsernameModal } from '@/components/dpns/username-modal'
 import { useAuth } from '@/contexts/auth-context'
 import Link from 'next/link'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 export default function DPNSRegisterPage() {
   const router = useRouter()
   const { user, logout } = useAuth()
+  const openLoginModal = useLoginModal((s) => s.open)
   const [isModalOpen, setIsModalOpen] = useState(false)
 
   useEffect(() => {
@@ -36,14 +38,14 @@ export default function DPNSRegisterPage() {
             You need to log in to register a DPNS username.
           </p>
           <div className="space-y-4">
-            <Link 
-              href="/login" 
+            <button
+              onClick={openLoginModal}
               className="block w-full text-center bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors"
             >
               Go to Login
-            </Link>
-            <Link 
-              href="/" 
+            </button>
+            <Link
+              href="/"
               className="block w-full text-center text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
             >
               Back to Home
