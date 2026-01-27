@@ -291,7 +291,7 @@ export function LoginModal() {
                 </button>
                 <div className="text-center">
                   <h1 className="text-2xl font-bold text-gradient">Yappr</h1>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Sign in with your Dash Platform identity</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
                 </div>
               </div>
 
@@ -300,7 +300,7 @@ export function LoginModal() {
                 {/* Identity ID / DPNS Input */}
                 <div>
                   <label htmlFor="loginIdentityInput" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Identity ID or DPNS Username
+                    Dash Username or Identity ID
                   </label>
                   <div className="relative">
                     <input
@@ -463,8 +463,7 @@ export function LoginModal() {
                 {/* Onboarding Gateway */}
                 <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                    <span className="font-medium">No Dash Identity yet?</span>{' '}
-                    A Dash Platform Identity is required to use Yappr.
+                    Don&apos;t have an identity yet? Create one to start posting on Yappr.
                   </p>
                   <a
                     href="https://bridge.thepasta.org"
