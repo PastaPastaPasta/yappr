@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
+import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +30,7 @@ interface PrivateFeedSettingsProps {
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
   const { user } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
+  const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
   const [isEnabled, setIsEnabled] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isEnabling, setIsEnabling] = useState(false)
@@ -107,7 +109,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
   useEffect(() => {
     checkPrivateFeedStatus().catch(err => console.error('Failed to check private feed status:', err))
-  }, [checkPrivateFeedStatus])
+  }, [checkPrivateFeedStatus, refreshKey])
 
   // Handle openReset prop - open reset dialog when directed from lost key flow
   useEffect(() => {
