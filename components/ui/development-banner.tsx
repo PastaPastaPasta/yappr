@@ -6,7 +6,7 @@ export function DevelopmentBanner() {
         <span className="opacity-80 mx-1">|</span>
         <span className="font-medium">
           <span className="hidden sm:inline">Running on Dash Platform Testnet. Data may be reset.</span>
-          <span className="sm:hidden">Testnet - Data may reset</span>
+          <span className="sm:hidden">Data may be reset</span>
         </span>
       </div>
     </div>
