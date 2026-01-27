@@ -21,6 +21,7 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { usePlatformDetection } from '@/hooks/use-platform-detection'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
+import { extractFirstUrl, isDirectImageUrl } from '@/hooks/use-link-preview'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
@@ -388,13 +389,37 @@ function ThreadPostEditor({
 
           {/* Content area */}
           {showPreview || isPosted ? (
-            <div className={`min-h-[60px] whitespace-pre-wrap break-words ${
+            <div className={`min-h-[60px] ${
               isPosted
                 ? 'text-gray-600 dark:text-gray-400'
                 : 'text-gray-900 dark:text-gray-100'
             }`}>
               {post.content ? (
-                <MarkdownContent content={post.content} />
+                <>
+                  <div className="whitespace-pre-wrap break-words">
+                    <MarkdownContent content={post.content} />
+                  </div>
+                  {/* Image preview for direct image URLs */}
+                  {(() => {
+                    const firstUrl = extractFirstUrl(post.content)
+                    if (firstUrl && isDirectImageUrl(firstUrl)) {
+                      return (
+                        <div className="mt-3 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={firstUrl}
+                            alt="Image preview"
+                            className="w-full max-h-[300px] object-contain bg-gray-100 dark:bg-gray-800"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                            }}
+                          />
+                        </div>
+                      )
+                    }
+                    return null
+                  })()}
+                </>
               ) : (
                 <span className="text-gray-400 dark:text-gray-600 italic">
                   Nothing to preview
