@@ -125,6 +125,11 @@ function UserProfileContent() {
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
   const [mentionCount, setMentionCount] = useState<number | null>(null)
 
+  // User replies state (for replies tab)
+  const [userReplies, setUserReplies] = useState<Post[]>([])
+  const [repliesLoading, setRepliesLoading] = useState(false)
+  const [repliesLoaded, setRepliesLoaded] = useState(false)
+
   // Private feed state
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const [isPrivateFollower, setIsPrivateFollower] = useState(false)
@@ -138,15 +143,13 @@ function UserProfileContent() {
   })
 
   // Filter posts - all posts are now top-level (replies are a separate document type)
-  // The 'replies' filter currently shows no results until we implement replyService.getUserReplies()
   const filteredPosts = useMemo(() => {
     if (postFilter === 'posts') {
       return posts.filter(p => !p.repostedBy)
     }
-    // 'replies' filter - would need replyService.getUserReplies() implementation
-    // For now, return empty since posts no longer contain replies
-    return []
-  }, [posts, postFilter])
+    // 'replies' filter - show user's replies from replyService
+    return userReplies
+  }, [posts, postFilter, userReplies])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
@@ -648,6 +651,54 @@ function UserProfileContent() {
     }
   }, [userId, mentionsLoaded])
 
+  // Load user's replies (lazy load when filter is selected)
+  const loadUserReplies = useCallback(async () => {
+    if (!userId || repliesLoaded) return
+
+    setRepliesLoading(true)
+    try {
+      const { replyService } = await import('@/lib/services/reply-service')
+
+      const result = await replyService.getUserReplies(userId, { limit: 50 })
+
+      if (result.documents.length === 0) {
+        setUserReplies([])
+        setRepliesLoaded(true)
+        return
+      }
+
+      // Convert Reply objects to Post-compatible objects for PostCard display
+      const replyPosts: Post[] = result.documents.map(reply => ({
+        id: reply.id,
+        author: reply.author,
+        content: reply.content,
+        createdAt: reply.createdAt,
+        likes: reply.likes,
+        reposts: reply.reposts,
+        replies: reply.replies,
+        views: reply.views,
+        liked: reply.liked,
+        reposted: reply.reposted,
+        bookmarked: reply.bookmarked,
+        media: reply.media,
+        parentId: reply.parentId,
+        parentOwnerId: reply.parentOwnerId,
+        _enrichment: reply._enrichment,
+      }))
+
+      setUserReplies(replyPosts)
+
+      // Enrich with progressive data (author info, etc.)
+      enrichProgressively(replyPosts)
+    } catch (error) {
+      console.error('Failed to load user replies:', error)
+      setUserReplies([])
+    } finally {
+      setRepliesLoading(false)
+      setRepliesLoaded(true)
+    }
+  }, [userId, repliesLoaded, enrichProgressively])
+
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded) {
@@ -655,11 +706,20 @@ function UserProfileContent() {
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Reset mentions, post filter, private feed, and store state when user changes
+  // Load user replies when filter is selected
+  useEffect(() => {
+    if (postFilter === 'replies' && !repliesLoaded) {
+      loadUserReplies().catch(err => console.error('Failed to load user replies:', err))
+    }
+  }, [postFilter, repliesLoaded, loadUserReplies])
+
+  // Reset mentions, replies, post filter, private feed, and store state when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
     setMentionCount(null)
+    setUserReplies([])
+    setRepliesLoaded(false)
     setActiveTab('posts')
     setPostFilter('posts')
     setHasPrivateFeed(false)
@@ -1448,7 +1508,12 @@ function UserProfileContent() {
                   </div>
 
                   {/* Posts List */}
-                  {filteredPosts.length === 0 ? (
+                  {postFilter === 'replies' && repliesLoading ? (
+                    <div className="p-8 text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                      <p className="text-gray-500">Loading replies...</p>
+                    </div>
+                  ) : filteredPosts.length === 0 ? (
                     <div className="p-8 text-center text-gray-500">
                       <p>{postFilter === 'posts' ? 'No original posts yet' : 'No replies yet'}</p>
                     </div>
