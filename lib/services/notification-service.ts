@@ -316,6 +316,7 @@ class NotificationService {
    * Fetch posts and replies by IDs for notification display.
    * First tries to fetch from posts collection, then fetches remaining IDs from replies.
    * For replies, includes parentId so UI can navigate to the parent post.
+   * Handles chunking to avoid exceeding platform's 100-item "in" limit.
    */
   private async fetchPostsByIds(postIds: string[]): Promise<Map<string, Post>> {
     const result = new Map<string, Post>();
@@ -324,15 +325,27 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // First, try to fetch from posts collection
-      const postResponse = await sdk.documents.query({
-        dataContractId: YAPPR_CONTRACT_ID,
-        documentTypeName: 'post',
-        where: [['$id', 'in', postIds]],
-        limit: postIds.length
-      } as any);
+      // Helper to chunk an array into smaller arrays
+      const chunkArray = <T>(arr: T[], size: number): T[][] => {
+        const chunks: T[][] = [];
+        for (let i = 0; i < arr.length; i += size) {
+          chunks.push(arr.slice(i, i + size));
+        }
+        return chunks;
+      };
 
-      const postDocuments = normalizeSDKResponse(postResponse);
+      // First, try to fetch from posts collection (chunked to avoid platform limit)
+      const postChunks = chunkArray(postIds, NOTIFICATION_QUERY_LIMIT);
+      const postQueryPromises = postChunks.map(chunk =>
+        sdk.documents.query({
+          dataContractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'post',
+          where: [['$id', 'in', chunk]],
+          limit: chunk.length
+        } as any)
+      );
+      const postResponses = await Promise.all(postQueryPromises);
+      const postDocuments = postResponses.flatMap(response => normalizeSDKResponse(response));
       const foundPostIds = new Set<string>();
 
       for (const doc of postDocuments) {
@@ -371,25 +384,29 @@ class NotificationService {
       const missingIds = postIds.filter(id => !foundPostIds.has(id));
 
       if (missingIds.length > 0) {
-        // Try to fetch from replies collection
-        const replyResponse = await sdk.documents.query({
-          dataContractId: YAPPR_CONTRACT_ID,
-          documentTypeName: 'reply',
-          where: [['$id', 'in', missingIds]],
-          limit: missingIds.length
-        } as any);
-
-        const replyDocuments = normalizeSDKResponse(replyResponse);
+        // Try to fetch from replies collection (chunked to avoid platform limit)
+        const replyChunks = chunkArray(missingIds, NOTIFICATION_QUERY_LIMIT);
+        const replyQueryPromises = replyChunks.map(chunk =>
+          sdk.documents.query({
+            dataContractId: YAPPR_CONTRACT_ID,
+            documentTypeName: 'reply',
+            where: [['$id', 'in', chunk]],
+            limit: chunk.length
+          } as any)
+        );
+        const replyResponses = await Promise.all(replyQueryPromises);
+        const replyDocuments = replyResponses.flatMap(response => normalizeSDKResponse(response));
 
         for (const doc of replyDocuments) {
           const docData = doc as Record<string, unknown>;
+          const nestedData = docData.data as Record<string, unknown> | undefined;
           const id = docData.$id as string;
           const ownerId = docData.$ownerId as string;
           const createdAt = docData.$createdAt as number;
           const content = (docData.content as string) || '';
 
-          // Extract parentId from reply - this allows the UI to link to the parent post
-          const rawParentId = docData.parentId;
+          // Extract parentId from reply - check both top-level and nested locations
+          const rawParentId = docData.parentId || nestedData?.parentId;
           const parentId = rawParentId ? identifierToBase58(rawParentId) || undefined : undefined;
 
           // Create a Post object from the reply, including parentId for navigation
