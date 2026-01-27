@@ -20,7 +20,6 @@ import { withAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { Notification } from '@/lib/types'
 
@@ -126,7 +125,6 @@ function formatTime(date: Date): string {
 }
 
 function NotificationsPage() {
-  const router = useRouter()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   // Store - polling is handled by Sidebar, we just display data
   const filter = useNotificationStore((s) => s.filter)
@@ -272,10 +270,6 @@ function NotificationsPage() {
                 onClick={() => {
                   if (!notification.read) {
                     markAsRead(notification.id)
-                  }
-                  const url = getNotificationUrl(notification)
-                  if (url) {
-                    router.push(url)
                   }
                 }}
                 className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
