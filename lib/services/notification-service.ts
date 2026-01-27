@@ -28,6 +28,8 @@ interface RawNotification {
   type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType;
   fromUserId: string;
   postId?: string;
+  parentId?: string; // For reply notifications: the ID of the post/reply being replied to
+  replyContent?: string; // For reply notifications: pre-fetched content to avoid re-querying
   createdAt: number;
 }
 
@@ -186,6 +188,8 @@ class NotificationService {
           type: 'reply' as const,
           fromUserId: reply.author.id,
           postId: reply.id, // The reply itself
+          parentId: reply.parentId, // The post/reply that was replied to (for navigation)
+          replyContent: reply.content, // Pre-fetched content to avoid re-querying
           createdAt: reply.createdAt.getTime()
         }));
     } catch (error) {
@@ -299,7 +303,28 @@ class NotificationService {
         joinedAt: new Date()
       };
 
-      const post = raw.postId ? posts.get(raw.postId) : undefined;
+      // For reply notifications, use pre-fetched data and ensure parentId is set for navigation
+      let post: Post | undefined;
+      if (raw.type === 'reply' && raw.replyContent !== undefined) {
+        // Use pre-fetched reply data directly - more reliable than re-querying
+        post = {
+          id: raw.postId || '',
+          author: user, // The reply author is the notification sender
+          content: raw.replyContent,
+          createdAt: new Date(raw.createdAt),
+          likes: 0,
+          reposts: 0,
+          replies: 0,
+          views: 0,
+          liked: false,
+          reposted: false,
+          bookmarked: false,
+          parentId: raw.parentId // Critical for UI navigation to the parent post
+        };
+      } else {
+        // For other notification types, use fetched post data
+        post = raw.postId ? posts.get(raw.postId) : undefined;
+      }
 
       return {
         id: raw.id,
