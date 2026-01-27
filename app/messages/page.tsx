@@ -539,7 +539,7 @@ function MessagesPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-32px-56px)] md:h-[calc(100vh-40px)] flex overflow-hidden">
+    <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
@@ -730,7 +730,7 @@ function MessagesPage() {
               )}
             </div>
 
-            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4">
+            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom">
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
