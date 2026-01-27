@@ -539,32 +539,32 @@ function MessagesPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-40px)] flex overflow-hidden">
+    <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
         {/* Conversations List */}
         <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
           <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
-            <div className="flex items-center justify-between px-4 py-3">
-              <h1 className="text-xl font-bold">Messages</h1>
+            <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
+              <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
               <button
                 onClick={() => setShowNewConversation(true)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
               >
                 <PlusIcon className="h-5 w-5" />
               </button>
             </div>
-            
-            <div className="px-4 pb-3">
+
+            <div className="px-3 sm:px-4 pb-2 sm:pb-3">
               <div className="relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500" />
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
                 <Input
                   type="text"
                   placeholder="Search messages"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="pl-9 sm:pl-10 h-9 sm:h-10 text-base"
                 />
               </div>
             </div>
@@ -638,39 +638,39 @@ function MessagesPage() {
         {/* Message Thread */}
         {selectedConversation ? (
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-4 py-3">
+            <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                   {/* Back button - mobile only */}
                   <button
                     onClick={() => setSelectedConversation(null)}
-                    className="md:hidden p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                    className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
                   >
                     <ArrowLeftIcon className="h-5 w-5" />
                   </button>
                   <Link
                     href={`/user?id=${selectedConversation.participantId}`}
-                    className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+                    className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity min-w-0 flex-1"
                   >
-                    <div className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
                       <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold truncate">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold truncate text-sm sm:text-base">
                         {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
                       </p>
-                      <p className="text-xs text-gray-500 truncate">
+                      <p className="text-xs text-gray-500 truncate hidden sm:block">
                         {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 12)}...`}
                       </p>
                     </div>
                   </Link>
                 </div>
-                
-                <div className="flex items-center gap-2">
-                  <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+
+                <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+                  <button className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
                     <InformationCircleIcon className="h-5 w-5" />
                   </button>
-                  <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+                  <button className="hidden sm:block p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
                     <EllipsisHorizontalIcon className="h-5 w-5" />
                   </button>
                 </div>
@@ -730,13 +730,13 @@ function MessagesPage() {
               )}
             </div>
 
-            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-3 sm:p-4">
+            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom">
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
                   sendMessage().catch(err => console.error('Failed to send message:', err))
                 }}
-                className="flex items-center gap-1 sm:gap-2"
+                className="flex items-center gap-2"
               >
                 <Input
                   type="text"
@@ -744,14 +744,14 @@ function MessagesPage() {
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   disabled={isSending}
-                  className="flex-1 min-w-0"
+                  className="flex-1 min-w-0 h-9 sm:h-10 text-base"
                 />
 
                 <Button
                   type="submit"
                   size="sm"
                   disabled={!newMessage.trim() || isSending}
-                  className="flex-shrink-0"
+                  className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
                 >
                   {isSending ? (
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
@@ -804,7 +804,7 @@ function MessagesPage() {
 
       {/* New Conversation Modal */}
       {showNewConversation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center pt-16 sm:pt-0">
           <div
             className="absolute inset-0 bg-black/50"
             onClick={() => {
@@ -813,7 +813,7 @@ function MessagesPage() {
               setUserSearchResults([])
             }}
           />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-4 p-6 shadow-xl">
+          <div className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">New Message</h2>
               <button
