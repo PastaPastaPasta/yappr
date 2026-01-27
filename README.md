@@ -59,7 +59,6 @@ A decentralized social media platform and marketplace built on Dash Platform. Al
 ### Security
 - **Self-Custody**: You control your private keys
 - **Encrypted Key Backup**: Optional on-chain encrypted backup with password protection
-- **Biometric Storage**: Secure key storage via biometric authentication
 - **Session Storage**: Secure key storage for browser sessions
 - **No Central Database**: All data stored on Dash Platform
 
