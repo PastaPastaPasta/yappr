@@ -564,7 +564,7 @@ function MessagesPage() {
                   placeholder="Search messages"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 sm:pl-10 h-9 sm:h-10 text-sm"
+                  className="pl-9 sm:pl-10 h-9 sm:h-10 text-base"
                 />
               </div>
             </div>
@@ -744,7 +744,7 @@ function MessagesPage() {
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   disabled={isSending}
-                  className="flex-1 min-w-0 h-9 sm:h-10 text-sm"
+                  className="flex-1 min-w-0 h-9 sm:h-10 text-base"
                 />
 
                 <Button
