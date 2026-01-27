@@ -11,11 +11,13 @@ import { useAuth } from '@/contexts/auth-context'
 import Link from 'next/link'
 import { useHomepageData } from '@/hooks/use-homepage-data'
 import { PlatformStats, FeaturedPosts, TopUsersSection } from '@/components/home'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 export default function PublicHomePage() {
   const router = useRouter()
   const { user } = useAuth()
   const [isHydrated, setIsHydrated] = useState(false)
+  const openLoginModal = useLoginModal((s) => s.open)
 
   const { platformStats, featuredPosts, topUsers, refresh } = useHomepageData()
 
@@ -98,11 +100,9 @@ export default function PublicHomePage() {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-0">
-              <Button size="lg" asChild className="shadow-yappr-lg">
-                <Link href="/login">
-                  Get Started
-                  <ArrowRightIcon className="ml-2 h-5 w-5" />
-                </Link>
+              <Button size="lg" className="shadow-yappr-lg" onClick={openLoginModal}>
+                Get Started
+                <ArrowRightIcon className="ml-2 h-5 w-5" />
               </Button>
               <Button size="lg" variant="outline" asChild>
                 <Link href="/feed">
@@ -144,11 +144,9 @@ export default function PublicHomePage() {
           <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
             Create your decentralized identity and start sharing your thoughts.
           </p>
-          <Button size="lg" asChild className="shadow-yappr-lg">
-            <Link href="/login">
-              Create Account
-              <ArrowRightIcon className="ml-2 h-5 w-5" />
-            </Link>
+          <Button size="lg" className="shadow-yappr-lg" onClick={openLoginModal}>
+            Create Account
+            <ArrowRightIcon className="ml-2 h-5 w-5" />
           </Button>
         </section>
       </main>
