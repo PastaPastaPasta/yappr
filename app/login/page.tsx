@@ -422,11 +422,14 @@ export default function LoginPage() {
         </form>
 
         <div className="mt-8 space-y-4 text-sm text-gray-600 dark:text-gray-400">
-          {/* Need an Identity Section */}
+          {/* Onboarding Gateway */}
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-            <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Need an Identity?</h3>
-            <p className="text-blue-700 dark:text-blue-300 mb-3">
-              Create your Dash Platform identity:
+            <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">New here?</h3>
+            <p className="text-blue-700 dark:text-blue-300 mb-1">
+              Create a Dash Platform identity to get started.
+            </p>
+            <p className="text-blue-600 dark:text-blue-400 mb-3">
+              You&apos;ll need one to use Yappr.
             </p>
             <a
               href="https://bridge.thepasta.org"
@@ -434,10 +437,7 @@ export default function LoginPage() {
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
             >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-              Bridge
+              Create Identity with Bridge
             </a>
           </div>
 
