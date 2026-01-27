@@ -319,65 +319,11 @@ export function usePostDetail({
         : new Map<string, Reply[]>()
       if (!isCurrent()) return
 
-      // Enrich replies with stats/interactions/author data (likes, reposts, etc.)
-      const allRepliesForEnrichment = [
-        ...directReplies,
-        ...authorThreadChain,
-        ...Array.from(nestedRepliesMap.values()).flat()
-      ]
-      const uniqueRepliesForEnrichment = Array.from(
-        new Map(allRepliesForEnrichment.map(reply => [reply.id, reply])).values()
-      )
-
-      let enrichedRepliesMap = new Map<string, Post>()
-      if (uniqueRepliesForEnrichment.length > 0) {
-        try {
-          const enrichedPosts = await postService.enrichPostsBatch(uniqueRepliesForEnrichment as unknown as Post[])
-          if (!isCurrent()) return
-          enrichedRepliesMap = new Map(enrichedPosts.map(p => [p.id, p]))
-        } catch (enrichmentError) {
-          console.error('usePostDetail: Failed to enrich replies:', enrichmentError)
-        }
-      }
-
-      const applyReplyEnrichment = (reply: Reply): Reply => {
-        const enriched = enrichedRepliesMap.get(reply.id)
-        if (!enriched) return reply
-        return {
-          ...reply,
-          author: enriched.author,
-          likes: enriched.likes,
-          reposts: enriched.reposts,
-          replies: enriched.replies,
-          views: enriched.views,
-          liked: enriched.liked,
-          reposted: enriched.reposted,
-          bookmarked: enriched.bookmarked,
-          _enrichment: enriched._enrichment
-        }
-      }
-
-      const directRepliesEnriched = directReplies.map(applyReplyEnrichment)
-      const authorThreadChainEnriched = authorThreadChain.map(applyReplyEnrichment)
-      const otherDirectRepliesEnriched = otherDirectReplies.map(applyReplyEnrichment)
-      const nestedRepliesMapEnriched = new Map<string, Reply[]>()
-      nestedRepliesMap.forEach((repliesForParent, parentId) => {
-        nestedRepliesMapEnriched.set(parentId, repliesForParent.map(applyReplyEnrichment))
-      })
-
       // Build threaded reply tree
-      const replyThreads = buildReplyTree(
-        loadedPost,
-        authorThreadChainEnriched,
-        otherDirectRepliesEnriched,
-        nestedRepliesMapEnriched
-      )
+      const replyThreads = buildReplyTree(loadedPost, authorThreadChain, otherDirectReplies, nestedRepliesMap)
 
       // All replies for backwards compat
-      const replies = [
-        ...directRepliesEnriched,
-        ...authorThreadChainEnriched.filter(r => !directRepliesEnriched.some(d => d.id === r.id))
-      ]
+      const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
       // Fetch quoted posts for main post only (replies don't have quotes)
       let quotedPost: Post | undefined

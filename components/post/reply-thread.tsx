@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { ReplyThread, Reply, Post } from '@/lib/types'
-import { PostCard } from './post-card'
+import { PostCard, ProgressiveEnrichment } from './post-card'
 
 /**
  * Convert a Reply to a Post-like object for PostCard rendering.
@@ -35,6 +35,7 @@ function replyToPostLike(reply: Reply): Post {
 interface ReplyThreadItemProps {
   thread: ReplyThread
   mainPostAuthorId: string
+  getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
 }
 
 /**
@@ -42,7 +43,7 @@ interface ReplyThreadItemProps {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemProps) {
+export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }: ReplyThreadItemProps) {
   const { content, isAuthorThread, isThreadContinuation, nestedReplies } = thread
   const postLike = replyToPostLike(content)
 
@@ -66,7 +67,12 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
         </div>
       )}
 
-      <PostCard post={postLike} hideReplyTo rootPostOwnerId={mainPostAuthorId} />
+      <PostCard
+        post={postLike}
+        enrichment={getPostEnrichment?.(postLike)}
+        hideReplyTo
+        rootPostOwnerId={mainPostAuthorId}
+      />
 
       {/* Nested replies (2nd level) - indented */}
       {nestedReplies.length > 0 && (
@@ -76,6 +82,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
               key={nested.content.id}
               thread={nested}
               mainPostAuthorId={mainPostAuthorId}
+              getPostEnrichment={getPostEnrichment}
             />
           ))}
         </div>
@@ -87,19 +94,25 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
 interface NestedReplyProps {
   thread: ReplyThread
   mainPostAuthorId: string
+  getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
 }
 
 /**
  * Renders a nested (2nd level) reply. The indentation and left border
  * visually indicate the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ thread, mainPostAuthorId }: NestedReplyProps) {
+function NestedReply({ thread, mainPostAuthorId, getPostEnrichment }: NestedReplyProps) {
   const { content } = thread
   const postLike = replyToPostLike(content)
 
   return (
     <div className="relative">
-      <PostCard post={postLike} hideReplyTo rootPostOwnerId={mainPostAuthorId} />
+      <PostCard
+        post={postLike}
+        enrichment={getPostEnrichment?.(postLike)}
+        hideReplyTo
+        rootPostOwnerId={mainPostAuthorId}
+      />
 
       {/* Show "View more replies" if this reply has replies (3+ level) */}
       {content.replies > 0 && (
