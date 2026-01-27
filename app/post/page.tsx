@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button'
 import { usePostDetail } from '@/hooks/use-post-detail'
 import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import type { Post } from '@/lib/types'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -35,10 +37,35 @@ function PostDetailContent() {
     enabled: !!postId
   })
 
+  const {
+    enrichProgressively: enrichRepliesProgressively,
+    getPostEnrichment: getReplyEnrichment,
+    reset: resetReplyEnrichment
+  } = useProgressiveEnrichment({ currentUserId: user?.identityId })
+
   // Check if user can reply to private posts
   // Posts are top-level content, so the feed owner is the post author
   const feedOwnerId = post?.author.id
   const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, feedOwnerId)
+
+  useEffect(() => {
+    resetReplyEnrichment()
+  }, [postId, resetReplyEnrichment])
+
+  useEffect(() => {
+    if (replyThreads.length === 0) return
+
+    const replyMap = new Map<string, Post>()
+    replyThreads.forEach((thread) => {
+      replyMap.set(thread.content.id, thread.content as unknown as Post)
+      thread.nestedReplies.forEach((nested) => {
+        replyMap.set(nested.content.id, nested.content as unknown as Post)
+      })
+    })
+
+    const repliesToEnrich = Array.from(replyMap.values())
+    enrichRepliesProgressively(repliesToEnrich)
+  }, [replyThreads, enrichRepliesProgressively])
 
   const handleReply = () => {
     if (!post || !canReplyToPrivate) return
@@ -143,6 +170,7 @@ function PostDetailContent() {
                     key={thread.content.id}
                     thread={thread}
                     mainPostAuthorId={post.author.id}
+                    getPostEnrichment={getReplyEnrichment}
                   />
                 ))
               )}
