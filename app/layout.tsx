@@ -31,7 +31,7 @@ export default function RootLayout({
         <ErrorBoundary level="app">
           <Providers>
             <DevelopmentBanner />
-            <div className="h-[40px]" /> {/* Spacer for fixed banner */}
+            <div className="h-[32px] sm:h-[40px]" /> {/* Spacer for fixed banner */}
             <ErrorBoundary level="page">
               {children}
             </ErrorBoundary>
