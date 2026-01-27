@@ -15,7 +15,7 @@ import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { ReviewCard, PoliciesDisplay } from '@/components/store'
+import { ReviewCard, PoliciesDisplay, MobileCartFab } from '@/components/store'
 import { formatPrice } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -416,6 +416,9 @@ function StoreDetailContent() {
       </div>
 
       <RightSidebar />
+
+      {/* Mobile floating cart button */}
+      <MobileCartFab />
     </div>
   )
 }
