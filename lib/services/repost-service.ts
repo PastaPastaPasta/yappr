@@ -150,14 +150,15 @@ class RepostService {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Query using the quotedPostAndOwner index
+      // Use 'in' pattern - '==' fails on byte array fields
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostId', '==', postId],
+          ['quotedPostId', 'in', [postId]],
           ['$ownerId', '==', ownerId]
         ],
+        orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
         limit: 1
       });
 
@@ -185,16 +186,14 @@ class RepostService {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
+      // Use 'in' with single-element array - '==' fails on byte array fields
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
           documentTypeName: 'post',
-          where: [
-            ['quotedPostId', '==', postId],
-            ['$ownerId', '>', '']  // Need second field for index
-          ],
-          orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']]
+          where: [['quotedPostId', 'in', [postId]]],
+          orderBy: [['quotedPostId', 'asc']]
         }),
         (doc) => this.transformToRepostDocument(doc)
       );
