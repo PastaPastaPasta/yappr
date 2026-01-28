@@ -21,7 +21,8 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { usePlatformDetection } from '@/hooks/use-platform-detection'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
-import { extractFirstUrl, isDirectImageUrl } from '@/hooks/use-link-preview'
+import { extractFirstUrl, isDirectImageUrl, stripTrailingPunctuation } from '@/hooks/use-link-preview'
+import { LinkIcon } from '@heroicons/react/24/outline'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
@@ -395,31 +396,69 @@ function ThreadPostEditor({
                 : 'text-gray-900 dark:text-gray-100'
             }`}>
               {post.content ? (
-                <>
-                  <div className="whitespace-pre-wrap break-words">
-                    <MarkdownContent content={post.content} />
-                  </div>
-                  {/* Image preview for direct image URLs */}
-                  {(() => {
-                    const firstUrl = extractFirstUrl(post.content)
-                    if (firstUrl && isDirectImageUrl(firstUrl)) {
-                      return (
-                        <div className="mt-3 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={firstUrl}
-                            alt="Image preview"
-                            className="w-full max-h-[300px] object-contain bg-gray-100 dark:bg-gray-800"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none'
-                            }}
-                          />
-                        </div>
-                      )
+                (() => {
+                  const firstUrl = extractFirstUrl(post.content)
+                  const isImageUrl = firstUrl && isDirectImageUrl(firstUrl)
+
+                  // Strip the image URL from content (matching PostContent behavior)
+                  let displayContent = post.content
+                  if (isImageUrl && firstUrl) {
+                    // Remove the URL but keep any trailing punctuation
+                    const cleanUrl = stripTrailingPunctuation(firstUrl)
+                    displayContent = post.content.replace(cleanUrl, '').trim()
+                  }
+
+                  // Extract hostname for footer
+                  const hostname = isImageUrl && firstUrl ? (() => {
+                    try {
+                      return new URL(firstUrl).hostname.replace(/^www\./, '')
+                    } catch {
+                      return firstUrl
                     }
-                    return null
-                  })()}
-                </>
+                  })() : null
+
+                  return (
+                    <>
+                      {displayContent && (
+                        <div className="whitespace-pre-wrap break-words">
+                          <MarkdownContent content={displayContent} />
+                        </div>
+                      )}
+                      {/* Image preview matching LinkPreview component exactly */}
+                      {isImageUrl && firstUrl && (
+                        <div className="mt-3">
+                          <a
+                            href={firstUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="block border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                          >
+                            <div className="relative bg-neutral-100 dark:bg-neutral-800">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={firstUrl}
+                                alt="Image preview"
+                                className="w-full max-h-[400px] object-contain"
+                                onError={(e) => {
+                                  const parent = e.currentTarget.parentElement
+                                  if (parent) {
+                                    parent.innerHTML = '<div class="flex items-center justify-center h-32 text-neutral-400">Failed to load image</div>'
+                                  }
+                                }}
+                              />
+                            </div>
+                            {/* Domain info footer */}
+                            <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700">
+                              <LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                              <span className="truncate">{hostname}</span>
+                            </div>
+                          </a>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()
               ) : (
                 <span className="text-gray-400 dark:text-gray-600 italic">
                   Nothing to preview
