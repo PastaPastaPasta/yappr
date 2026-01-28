@@ -9,7 +9,9 @@ import {
   EyeIcon,
   EyeSlashIcon,
   ExclamationTriangleIcon,
+  LinkIcon,
 } from '@heroicons/react/24/outline'
+import Image from 'next/image'
 import { useAppStore, useSettingsStore, ThreadPost, PostVisibility } from '@/lib/store'
 import type { Post } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -22,7 +24,6 @@ import { usePlatformDetection } from '@/hooks/use-platform-detection'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { extractFirstUrl, isDirectImageUrl, stripTrailingPunctuation } from '@/hooks/use-link-preview'
-import { LinkIcon } from '@heroicons/react/24/outline'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
@@ -39,7 +40,7 @@ import {
   getDialogDescription,
 } from './compose-sub-components'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
-import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
+import { LockClosedIcon, LinkIcon as LinkIconSolid } from '@heroicons/react/24/solid'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import type { EncryptionSource } from '@/lib/services/post-service'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
@@ -170,6 +171,12 @@ function ThreadPostEditor({
 }) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
+  const [imageError, setImageError] = useState(false)
+
+  // Reset image error when content changes
+  useEffect(() => {
+    setImageError(false)
+  }, [post.content])
 
   useEffect(() => {
     if (isActive && ref.current) {
@@ -401,11 +408,28 @@ function ThreadPostEditor({
                   const isImageUrl = firstUrl && isDirectImageUrl(firstUrl)
 
                   // Strip the image URL from content (matching PostContent behavior)
+                  // Handle all URL variants: http://, https://, //, www., or protocol-less
                   let displayContent = post.content
                   if (isImageUrl && firstUrl) {
-                    // Remove the URL but keep any trailing punctuation
-                    const cleanUrl = stripTrailingPunctuation(firstUrl)
-                    displayContent = post.content.replace(cleanUrl, '').trim()
+                    try {
+                      const parsedUrl = new URL(firstUrl)
+                      // Get the path portion (e.g., /path/to/image.jpg)
+                      const pathAndQuery = parsedUrl.pathname + parsedUrl.search + parsedUrl.hash
+                      // Escape special regex characters in hostname and path
+                      const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                      const escapedHost = escapeRegex(parsedUrl.hostname)
+                      const escapedPath = escapeRegex(pathAndQuery)
+                      // Build regex that matches: optional protocol (http://, https://, //), optional www., hostname, path
+                      const urlPattern = new RegExp(
+                        `(?:https?:\\/\\/|\\/)?\\/?(www\\.)?${escapedHost}${escapedPath}`,
+                        'gi'
+                      )
+                      displayContent = post.content.replace(urlPattern, '').trim()
+                    } catch {
+                      // Fallback to simple replacement
+                      const cleanUrl = stripTrailingPunctuation(firstUrl)
+                      displayContent = post.content.replace(cleanUrl, '').trim()
+                    }
                   }
 
                   // Extract hostname for footer
@@ -434,20 +458,23 @@ function ThreadPostEditor({
                             onClick={(e) => e.stopPropagation()}
                             className="block border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
                           >
-                            <div className="relative bg-neutral-100 dark:bg-neutral-800">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={firstUrl}
-                                alt="Image preview"
-                                className="w-full max-h-[400px] object-contain"
-                                onError={(e) => {
-                                  const parent = e.currentTarget.parentElement
-                                  if (parent) {
-                                    parent.innerHTML = '<div class="flex items-center justify-center h-32 text-neutral-400">Failed to load image</div>'
-                                  }
-                                }}
-                              />
-                            </div>
+                            {!imageError ? (
+                              <div className="relative bg-neutral-100 dark:bg-neutral-800">
+                                <Image
+                                  src={firstUrl}
+                                  alt="Image preview"
+                                  width={600}
+                                  height={400}
+                                  className="w-full max-h-[400px] object-contain"
+                                  onError={() => setImageError(true)}
+                                  unoptimized
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center h-32 bg-neutral-100 dark:bg-neutral-800 text-neutral-400">
+                                Failed to load image
+                              </div>
+                            )}
                             {/* Domain info footer */}
                             <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700">
                               <LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />
@@ -1366,7 +1393,7 @@ export function ComposeModal() {
                               animate={{ opacity: 1, y: 0 }}
                               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800"
                             >
-                              <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                              <LinkIconSolid className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                               <span className="text-sm text-purple-700 dark:text-purple-300">
                                 Your reply will be visible to all subscribers of this private feed
                               </span>
@@ -1532,7 +1559,7 @@ export function ComposeModal() {
                         {/* Inherited encryption indicator */}
                         {inheritedEncryption && !isPrivatePostVisibility && (
                           <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
-                            <LinkIcon className="w-3 h-3" />
+                            <LinkIconSolid className="w-3 h-3" />
                             <span>Reply inherits parent&apos;s encryption</span>
                           </div>
                         )}
