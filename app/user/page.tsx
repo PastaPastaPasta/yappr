@@ -1353,7 +1353,7 @@ function UserProfileContent() {
                         {profile.location}
                       </span>
                     )}
-                    {profile?.website && (
+                    {profile?.website && (profile.website.startsWith('http://') || profile.website.startsWith('https://')) && (
                       <a
                         href={profile.website}
                         target="_blank"
