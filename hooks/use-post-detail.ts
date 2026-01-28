@@ -186,7 +186,8 @@ export function usePostDetail({
         return {
           post: current.post ? (enrichedMap.get(current.post.id) || current.post) : null,
           replies: current.replies,
-          replyThreads: current.replyThreads
+          replyThreads: current.replyThreads,
+          replyChain: current.replyChain.map(p => enrichedMap.get(p.id) || p)
         }
       })
     }
