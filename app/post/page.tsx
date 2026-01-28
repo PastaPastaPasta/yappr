@@ -31,6 +31,7 @@ function PostDetailContent() {
   const {
     post,
     replyThreads,
+    replyChain,
     isLoading,
     isLoadingReplies,
     postEnrichment
@@ -116,6 +117,26 @@ function PostDetailContent() {
           </div>
         ) : post ? (
           <>
+            {/* Reply chain - show predecessors leading up to this post */}
+            {replyChain.length > 0 && (
+              <div className="border-b border-gray-200 dark:border-gray-800">
+                {replyChain.map((chainPost) => (
+                  <div key={chainPost.id} className="relative">
+                    {/* Thread line connecting to next item */}
+                    <div
+                      className="absolute left-[30px] top-[56px] bottom-0 w-0.5 bg-gray-300 dark:bg-gray-600"
+                      aria-hidden="true"
+                    />
+                    <PostCard
+                      post={chainPost}
+                      hideReplyTo
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
               <PostCard post={post} enrichment={postEnrichment} hideReplyTo />
             </div>
