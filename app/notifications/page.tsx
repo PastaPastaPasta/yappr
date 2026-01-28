@@ -276,13 +276,13 @@ function NotificationsPage() {
                   !notification.read ? 'bg-yappr-50/20 dark:bg-yappr-950/10' : ''
                 }`}
               >
-                <div className="flex gap-3">
-                  <div className="mt-1">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0">
                     {NOTIFICATION_ICONS[notification.type] || <BellIcon className="h-5 w-5 text-gray-500" />}
                   </div>
 
-                  <div className="flex-1">
-                    <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3">
                       <Link
                         href={`/user?id=${notification.from?.id}`}
                         onClick={(e) => e.stopPropagation()}
@@ -292,7 +292,7 @@ function NotificationsPage() {
                       </Link>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2">
                           <p className="text-sm flex-1">
                             <Link
                               href={`/user?id=${notification.from?.id}`}
@@ -347,7 +347,7 @@ function NotificationsPage() {
                   </div>
 
                   {!notification.read && (
-                    <div data-testid="unread-badge" className="w-2 h-2 bg-yappr-500 rounded-full mt-2 flex-shrink-0" />
+                    <div data-testid="unread-badge" className="w-2 h-2 bg-yappr-500 rounded-full flex-shrink-0" />
                   )}
                 </div>
               </motion.div>
