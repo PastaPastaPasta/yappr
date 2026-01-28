@@ -167,12 +167,7 @@ function SettingsPage() {
   }
 
   const handleBack = () => {
-    if (activeSection === 'main') {
-      router.back()
-    } else {
-      // Navigate to main settings (removes query param)
-      router.push('/settings')
-    }
+    router.back()
   }
 
   // TODO: Implement account deletion
