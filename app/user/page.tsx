@@ -64,7 +64,8 @@ interface ProfileData {
 }
 
 function getSocialLinkUrl(platform: string, handle: string): string | null {
-  const cleanHandle = handle.replace(/^@/, '')
+  // URL-encode the handle to prevent injection
+  const cleanHandle = encodeURIComponent(handle.replace(/^@/, ''))
 
   switch (platform) {
     case 'twitter':
@@ -81,16 +82,30 @@ function getSocialLinkUrl(platform: string, handle: string): string | null {
       return `https://instagram.com/${cleanHandle}`
     case 'linkedin':
       return `https://linkedin.com/in/${cleanHandle}`
-    case 'email':
-      return `mailto:${handle}`
+    case 'email': {
+      // Strip any query params that could inject mailto headers
+      const emailOnly = handle.split('?')[0]
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOnly)) return null
+      return `mailto:${encodeURIComponent(emailOnly)}`
+    }
     case 'mastodon': {
-      const match = handle.match(/^@?([^@]+)@(.+)$/)
-      if (match) return `https://${match[2]}/@${match[1]}`
+      // Validate instance is a valid hostname (no path traversal)
+      const match = handle.match(/^@?([^@]+)@([a-zA-Z0-9.-]+)$/)
+      if (match) {
+        return `https://${match[2]}/@${encodeURIComponent(match[1])}`
+      }
       return null
     }
     case 'other':
       if (handle.startsWith('http://') || handle.startsWith('https://')) {
-        return handle
+        try {
+          const url = new URL(handle)
+          if (['http:', 'https:'].includes(url.protocol)) {
+            return handle
+          }
+        } catch {
+          return null
+        }
       }
       return null
     default:
