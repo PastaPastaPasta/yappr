@@ -256,8 +256,17 @@ export class PinataProvider implements UploadProvider {
     } catch (error) {
       console.error('[Pinata] Upload error:', error)
 
-      // Check for quota/rate limit errors
       const errorMsg = error instanceof Error ? error.message : String(error)
+
+      // Check for permission errors (403)
+      if (errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('permission')) {
+        throw new UploadException(
+          UploadErrorCode.CREDENTIAL_ERROR,
+          'Permission denied. Make sure your API key has "Files: Write" permission enabled.'
+        )
+      }
+
+      // Check for quota/rate limit errors
       if (errorMsg.includes('quota') || errorMsg.includes('limit') || errorMsg.includes('429')) {
         throw new UploadException(UploadErrorCode.QUOTA_EXCEEDED, 'Rate limit or quota exceeded. Please try again later.')
       }

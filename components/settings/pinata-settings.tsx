@@ -245,7 +245,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
             <>
               <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  IPFS pinning with API key authentication.
+                  IPFS pinning with API key. Requires a key with <strong>Files: Write</strong> permission.
                 </p>
               </div>
 
@@ -266,7 +266,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
                     Enter your Pinata API key
                   </p>
                   <p className="text-sm text-blue-700 dark:text-blue-300">
-                    Get your JWT from the Pinata dashboard.
+                    Create an API key with <strong>Files: Write</strong> permission.
                   </p>
                   <a
                     href="https://app.pinata.cloud/developers/api-keys"
