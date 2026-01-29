@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { isIpfsProtocol, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
 
 interface IpfsImageProps {
@@ -12,7 +12,7 @@ interface IpfsImageProps {
   onLoad?: () => void
   /** Called when all gateways fail */
   onError?: () => void
-  /** Fallback element to show while loading or on error */
+  /** Fallback element to show when all gateways fail */
   fallback?: React.ReactNode
 }
 
@@ -29,12 +29,12 @@ export function IpfsImage({
   fallback,
 }: IpfsImageProps) {
   // Get all gateway URLs for IPFS content, or just use the src directly
-  const [gatewayUrls] = useState(() => {
+  const gatewayUrls = useMemo(() => {
     if (isIpfsProtocol(src)) {
       return getAllGatewayUrls(src)
     }
     return [src]
-  })
+  }, [src])
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [loaded, setLoaded] = useState(false)

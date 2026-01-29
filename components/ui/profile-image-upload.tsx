@@ -57,6 +57,8 @@ export function ProfileImageUpload({
   useEffect(() => {
     if (currentUrl && isIpfsProtocol(currentUrl)) {
       setImageLoading(true)
+    } else {
+      setImageLoading(false)
     }
   }, [currentUrl])
 
@@ -169,8 +171,17 @@ export function ProfileImageUpload({
       />
 
       <div
+        role="button"
+        tabIndex={isUploading ? -1 : 0}
+        aria-disabled={isUploading}
         onClick={handleClick}
-        className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-yappr-500 dark:hover:border-yappr-500 transition-colors overflow-hidden ${
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && !isUploading) {
+            e.preventDefault()
+            handleClick()
+          }
+        }}
+        className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-yappr-500 dark:hover:border-yappr-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
           isUploading ? 'cursor-wait' : 'cursor-pointer'
         }`}
       >

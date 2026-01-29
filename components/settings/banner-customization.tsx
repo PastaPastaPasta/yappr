@@ -29,7 +29,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
   const [bannerUrl, setBannerUrl] = useState<string | null>(initialBannerUrl || null)
   const [originalUrl, setOriginalUrl] = useState<string | null>(initialBannerUrl || null)
   const [saving, setSaving] = useState(false)
-  const [loading, setLoading] = useState(!initialBannerUrl)
+  const [loading, setLoading] = useState(initialBannerUrl === undefined)
   const [imageLoading, setImageLoading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
@@ -241,9 +241,10 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
 
         {/* Empty state */}
         {!hasImage && !isUploading && (
-          <div
+          <button
+            type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-200/50 dark:hover:bg-gray-700/50 transition-colors"
+            className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-200/50 dark:hover:bg-gray-700/50 transition-colors w-full"
           >
             <ImagePlus className="h-12 w-12 text-gray-400 mb-3" />
             <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
@@ -252,7 +253,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
             <span className="text-xs text-gray-400 mt-1">
               1500×500 recommended • Max 5MB
             </span>
-          </div>
+          </button>
         )}
 
         {/* Upload progress overlay */}
