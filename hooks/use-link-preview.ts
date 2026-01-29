@@ -48,7 +48,8 @@ const IMAGE_EXTENSIONS = [
  * IPFS gateways typically have CORS headers enabled, so we can fetch directly.
  *
  * Matches:
- * - Subdomain gateways: hostname contains "ipfs." (e.g., gateway.ipfs.io, bafybeib.ipfs.dweb.link)
+ * - Subdomain gateways: hostname contains ".ipfs." (e.g., bafybeib.ipfs.dweb.link)
+ * - Direct gateways: ipfs.io domain (e.g., gateway.ipfs.io, ipfs.io)
  * - Path gateways: path starts with /ipfs/ (e.g., https://gateway.pinata.cloud/ipfs/Qm...)
  */
 export function isIpfsUrl(url: string): boolean {
@@ -57,9 +58,13 @@ export function isIpfsUrl(url: string): boolean {
     const hostname = parsed.hostname.toLowerCase()
     const pathname = parsed.pathname.toLowerCase()
 
-    // Check for subdomain gateway pattern: *.ipfs.* or hostname contains .ipfs.
-    // Also matches gateway.ipfs.io style domains
-    if (hostname.includes('.ipfs.') || hostname.includes('ipfs.')) {
+    // Check for subdomain gateway pattern: *.ipfs.* (e.g., cid.ipfs.dweb.link)
+    if (hostname.includes('.ipfs.')) {
+      return true
+    }
+
+    // Check for ipfs.io domain specifically (e.g., ipfs.io, gateway.ipfs.io)
+    if (hostname === 'ipfs.io' || hostname.endsWith('.ipfs.io')) {
       return true
     }
 
@@ -223,10 +228,26 @@ interface FetchResult {
   contentType: string | null
 }
 
+// Maximum content size to download for preview metadata (5MB)
+const MAX_PREVIEW_SIZE_BYTES = 5 * 1024 * 1024
+
+/**
+ * Check if a Content-Type header indicates an image.
+ */
+function isImageContentType(contentType: string | null): boolean {
+  if (!contentType) return false
+  // Split on semicolon to handle "image/png; charset=utf-8"
+  const mimeType = contentType.split(';')[0].trim().toLowerCase()
+  return mimeType.startsWith('image/')
+}
+
 /**
  * Fetch content directly without CORS proxy.
  * Used for IPFS gateways which typically have CORS headers enabled.
  * Returns both content and Content-Type header for detecting images.
+ *
+ * For images, skips downloading content (we only need Content-Type).
+ * Rejects files larger than MAX_PREVIEW_SIZE_BYTES to prevent memory issues.
  */
 async function fetchDirectly(url: string): Promise<FetchResult> {
   const controller = new AbortController()
@@ -244,6 +265,21 @@ async function fetchDirectly(url: string): Promise<FetchResult> {
     }
 
     const contentType = response.headers.get('content-type')
+
+    // For images, we only need the Content-Type - skip downloading the body
+    if (isImageContentType(contentType)) {
+      return { content: '', contentType }
+    }
+
+    // Check Content-Length to prevent downloading huge files
+    const contentLength = response.headers.get('content-length')
+    if (contentLength) {
+      const size = parseInt(contentLength, 10)
+      if (!isNaN(size) && size > MAX_PREVIEW_SIZE_BYTES) {
+        throw new Error('Content too large for preview')
+      }
+    }
+
     const content = await response.text()
     return { content, contentType }
   } catch (err) {
@@ -298,14 +334,6 @@ async function fetchContent(url: string): Promise<FetchResult> {
   // CORS proxies don't preserve Content-Type reliably, so treat as HTML
   const content = await fetchViaProxy(url)
   return { content, contentType: 'text/html' }
-}
-
-/**
- * Check if a Content-Type header indicates an image.
- */
-function isImageContentType(contentType: string | null): boolean {
-  if (!contentType) return false
-  return contentType.toLowerCase().startsWith('image/')
 }
 
 async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
