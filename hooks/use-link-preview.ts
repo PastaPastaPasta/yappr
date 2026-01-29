@@ -3,6 +3,71 @@
 import { useState, useEffect } from 'react'
 import type { LinkPreviewData } from '@/components/post/link-preview'
 
+// YouTube domain patterns for URL detection
+const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
+
+/**
+ * Extract YouTube video ID from various YouTube URL formats.
+ * Returns null if the URL is not a YouTube video URL.
+ *
+ * Supported formats:
+ * - youtube.com/watch?v=VIDEO_ID
+ * - youtu.be/VIDEO_ID
+ * - youtube.com/embed/VIDEO_ID
+ * - youtube.com/v/VIDEO_ID
+ * - youtube.com/shorts/VIDEO_ID
+ */
+export function extractYouTubeVideoId(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+
+    // Check if it's a YouTube domain
+    if (!YOUTUBE_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
+      return null
+    }
+
+    // youtu.be/VIDEO_ID
+    if (hostname === 'youtu.be') {
+      const videoId = parsed.pathname.slice(1).split('/')[0]
+      return videoId || null
+    }
+
+    // youtube.com/watch?v=VIDEO_ID
+    const vParam = parsed.searchParams.get('v')
+    if (vParam) return vParam
+
+    // youtube.com/embed/VIDEO_ID or /v/VIDEO_ID or /shorts/VIDEO_ID
+    const pathMatch = parsed.pathname.match(/\/(embed|v|shorts)\/([^/?]+)/)
+    if (pathMatch) return pathMatch[2]
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if a URL is a YouTube video URL.
+ */
+export function isYouTubeUrl(url: string): boolean {
+  return extractYouTubeVideoId(url) !== null
+}
+
+/**
+ * Create preview data for a YouTube video URL.
+ * Uses YouTube's thumbnail service which has CORS headers enabled.
+ */
+function createYouTubePreview(url: string, videoId: string): LinkPreviewData {
+  return {
+    url,
+    siteName: 'YouTube',
+    // Use maxresdefault with hqdefault fallback (handled in component via onError)
+    image: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+    youtubeVideoId: videoId,
+  }
+}
+
 // Client-side cache for link previews
 const previewCache = new Map<string, LinkPreviewData>()
 const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
@@ -528,6 +593,15 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
       // Skip fetch for URLs with obvious image extensions - no network request needed
       if (isDirectImageUrl(url)) {
         const data = createDirectImagePreview(url)
+        previewCache.set(url, data)
+        return data
+      }
+
+      // Skip fetch for YouTube URLs - we can construct preview from URL alone
+      // This improves privacy (no proxy needed) and performance
+      const youtubeVideoId = extractYouTubeVideoId(url)
+      if (youtubeVideoId) {
+        const data = createYouTubePreview(url, youtubeVideoId)
         previewCache.set(url, data)
         return data
       }

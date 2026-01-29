@@ -3,9 +3,18 @@
 import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { LinkIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { LinkIcon, SparklesIcon, PlayIcon } from '@heroicons/react/24/solid'
 import { useSettingsStore } from '@/lib/store'
-import { CORS_PROXY_INFO, isDirectImageUrl } from '@/hooks/use-link-preview'
+import { CORS_PROXY_INFO, isDirectImageUrl, isYouTubeUrl } from '@/hooks/use-link-preview'
+
+// YouTube brand icon SVG
+function YouTubeIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+    </svg>
+  )
+}
 
 /**
  * Prompt shown when link previews are disabled but a URL exists
@@ -105,6 +114,8 @@ export interface LinkPreviewData {
   favicon?: string
   /** True if URL points directly to an image (detected via Content-Type or extension) */
   isDirectImage?: boolean
+  /** YouTube video ID for embedded player (when URL is a YouTube video) */
+  youtubeVideoId?: string
 }
 
 interface LinkPreviewProps {
@@ -139,6 +150,13 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     return false
   })
   const [faviconError, setFaviconError] = useState(false)
+  // YouTube player state
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [thumbnailUrl, setThumbnailUrl] = useState(() =>
+    data.youtubeVideoId
+      ? `https://img.youtube.com/vi/${data.youtubeVideoId}/maxresdefault.jpg`
+      : ''
+  )
 
   const safeUrl = sanitizeUrl(data.url)
 
@@ -167,6 +185,71 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     if (img.naturalWidth < MIN_IMAGE_SIZE || img.naturalHeight < MIN_IMAGE_SIZE) {
       setImageTooSmall(true)
     }
+  }
+
+  // YouTube video preview with click-to-play embedded player
+  if (data.youtubeVideoId) {
+    return (
+      <div className={`mt-3 ${className}`}>
+        <div className="border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+          {!isPlaying ? (
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setIsPlaying(true)
+              }}
+              className="relative w-full aspect-video bg-black cursor-pointer group"
+            >
+              {/* Thumbnail */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={thumbnailUrl}
+                alt="YouTube video thumbnail"
+                className="w-full h-full object-cover"
+                onError={() => {
+                  // Fallback from maxresdefault to hqdefault if maxres doesn't exist
+                  if (thumbnailUrl.includes('maxresdefault')) {
+                    setThumbnailUrl(
+                      `https://img.youtube.com/vi/${data.youtubeVideoId}/hqdefault.jpg`
+                    )
+                  }
+                }}
+              />
+              {/* Play button overlay */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center shadow-lg group-hover:bg-red-700 transition-colors">
+                  <PlayIcon className="h-8 w-8 text-white ml-1" />
+                </div>
+              </div>
+              {/* Gradient overlay for better play button visibility */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent pointer-events-none" />
+            </button>
+          ) : (
+            <div className="relative w-full aspect-video bg-black">
+              <iframe
+                src={`https://www.youtube.com/embed/${data.youtubeVideoId}?autoplay=1`}
+                title="YouTube video player"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="absolute inset-0 w-full h-full"
+              />
+            </div>
+          )}
+          {/* Footer with YouTube branding */}
+          <a
+            href={safeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+          >
+            <YouTubeIcon className="h-4 w-4 text-red-600 flex-shrink-0" />
+            <span>YouTube</span>
+          </a>
+        </div>
+      </div>
+    )
   }
 
   // Direct image URL - use larger layout with prominent image display
@@ -288,6 +371,30 @@ interface LinkPreviewSkeletonProps {
 export function LinkPreviewSkeleton({ className = '', url }: LinkPreviewSkeletonProps) {
   // Check if URL points directly to an image file for larger skeleton
   const isDirectImage = url ? isDirectImageUrl(url) : false
+  // Check if URL is a YouTube video for video-style skeleton
+  const isYouTube = url ? isYouTubeUrl(url) : false
+
+  // YouTube video skeleton - 16:9 aspect ratio with play button placeholder
+  if (isYouTube) {
+    return (
+      <div
+        className={`mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden ${className}`}
+      >
+        {/* Video thumbnail skeleton with 16:9 aspect ratio */}
+        <div className="relative w-full aspect-video bg-neutral-200 dark:bg-neutral-700 animate-pulse">
+          {/* Play button placeholder */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-16 h-16 bg-neutral-300 dark:bg-neutral-600 rounded-full" />
+          </div>
+        </div>
+        {/* YouTube footer skeleton */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-t border-neutral-200 dark:border-neutral-700">
+          <div className="w-4 h-4 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+          <div className="h-3 w-16 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+        </div>
+      </div>
+    )
+  }
 
   if (isDirectImage) {
     return (
