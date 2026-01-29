@@ -282,7 +282,7 @@ class NotificationService {
           id: `message-${doc.$id}`,
           type: 'newMessage' as const,
           fromUserId: doc.$ownerId, // The sender
-          conversationId,
+          conversationId: conversationId ?? undefined,
           createdAt: doc.$createdAt
         };
       });
@@ -320,7 +320,7 @@ class NotificationService {
           type: 'orderReceived' as const,
           fromUserId: doc.$ownerId, // The buyer
           orderId: doc.$id,
-          storeId,
+          storeId: storeId ?? undefined,
           createdAt: doc.$createdAt
         };
       });
@@ -392,7 +392,7 @@ class NotificationService {
       }
 
       return statusUpdates.map((doc: any) => {
-        const orderId = doc.orderId ? identifierToBase58(doc.orderId) : doc.$id;
+        const orderId = (doc.orderId ? identifierToBase58(doc.orderId) : null) ?? doc.$id;
         return {
           id: `status-${doc.$id}`,
           type: 'orderStatusUpdate' as const,
@@ -437,8 +437,8 @@ class NotificationService {
           id: `review-${doc.$id}`,
           type: 'newReview' as const,
           fromUserId: doc.$ownerId, // The reviewer (buyer)
-          storeId,
-          orderId,
+          storeId: storeId ?? undefined,
+          orderId: orderId ?? undefined,
           reviewRating: doc.rating,
           reviewTitle: doc.title,
           createdAt: doc.$createdAt
