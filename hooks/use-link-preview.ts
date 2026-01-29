@@ -44,6 +44,37 @@ const IMAGE_EXTENSIONS = [
 ]
 
 /**
+ * Check if a URL points to IPFS content.
+ * IPFS gateways typically have CORS headers enabled, so we can fetch directly.
+ *
+ * Matches:
+ * - Subdomain gateways: hostname contains "ipfs." (e.g., gateway.ipfs.io, bafybeib.ipfs.dweb.link)
+ * - Path gateways: path starts with /ipfs/ (e.g., https://gateway.pinata.cloud/ipfs/Qm...)
+ */
+export function isIpfsUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+    const pathname = parsed.pathname.toLowerCase()
+
+    // Check for subdomain gateway pattern: *.ipfs.* or hostname contains .ipfs.
+    // Also matches gateway.ipfs.io style domains
+    if (hostname.includes('.ipfs.') || hostname.includes('ipfs.')) {
+      return true
+    }
+
+    // Check for path gateway pattern: /ipfs/ in the path
+    if (pathname.startsWith('/ipfs/')) {
+      return true
+    }
+
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
  * Check if a URL points directly to an image file based on its extension.
  * This is used to render direct image links with a larger preview format.
  */
@@ -188,6 +219,32 @@ function parseHtmlForPreview(html: string, url: string): LinkPreviewData {
 }
 
 /**
+ * Fetch HTML directly without CORS proxy.
+ * Used for IPFS gateways which typically have CORS headers enabled.
+ */
+async function fetchDirectly(url: string): Promise<string> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 8000)
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    return await response.text()
+  } catch (err) {
+    clearTimeout(timeout)
+    throw err instanceof Error ? err : new Error('Unknown error')
+  }
+}
+
+/**
  * Fetch HTML via CORS proxy with fallback support
  * Tries each proxy in order until one succeeds
  */
@@ -221,6 +278,18 @@ async function fetchViaProxy(url: string): Promise<string> {
   throw lastError || new Error('All proxies failed')
 }
 
+/**
+ * Fetch HTML content for a URL.
+ * Uses direct fetch for IPFS URLs (which have CORS enabled),
+ * otherwise uses CORS proxy with fallbacks.
+ */
+async function fetchHtmlContent(url: string): Promise<string> {
+  if (isIpfsUrl(url)) {
+    return fetchDirectly(url)
+  }
+  return fetchViaProxy(url)
+}
+
 async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Check cache first
   const cached = previewCache.get(url)
@@ -234,10 +303,10 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
     return pending
   }
 
-  // Create new request using CORS proxy with fallbacks
+  // Create new request - uses direct fetch for IPFS, CORS proxy for others
   const request = (async () => {
     try {
-      const html = await fetchViaProxy(url)
+      const html = await fetchHtmlContent(url)
       const data = parseHtmlForPreview(html, url)
       previewCache.set(url, data)
       return data
