@@ -85,7 +85,7 @@ const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
  * - corsproxy.io: https://corsproxy.io/ (no formal policy)
  */
 export const CORS_PROXY_INFO = {
-  warning: 'Rich previews send URLs to third-party proxy servers to fetch metadata. These services may log the URLs you view.',
+  warning: 'Some URLs (YouTube, Reddit, IPFS, etc.) are fetched directly from their services. Other URLs use third-party proxy servers to fetch metadata. These services may log the URLs you view.',
   proxies: [
     { name: 'allorigins.win', url: 'https://allorigins.win/' },
     { name: 'corsproxy.io', url: 'https://corsproxy.io/' },
