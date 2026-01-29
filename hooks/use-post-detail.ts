@@ -10,6 +10,8 @@ interface PostDetailState {
   post: Post | null
   replies: Reply[]
   replyThreads: ReplyThread[]
+  /** Chain of parent posts/replies leading to this post (if it's a deeply nested reply) */
+  replyChain: Post[]
 }
 
 interface UsePostDetailOptions {
@@ -24,6 +26,8 @@ interface UsePostDetailResult {
   replies: Reply[]
   /** Threaded replies with nesting and author thread info */
   replyThreads: ReplyThread[]
+  /** Chain of parent posts/replies leading up to the main post (for nested replies) */
+  replyChain: Post[]
   /** Whether initial load is in progress (false if using cached data) */
   isLoading: boolean
   /** Whether replies are still loading (separate from main post) */
@@ -139,7 +143,8 @@ export function usePostDetail({
     return {
       post: initial?.post || null,
       replies: [],
-      replyThreads: []
+      replyThreads: [],
+      replyChain: []
     }
   })
 
@@ -181,11 +186,56 @@ export function usePostDetail({
         return {
           post: current.post ? (enrichedMap.get(current.post.id) || current.post) : null,
           replies: current.replies,
-          replyThreads: current.replyThreads
+          replyThreads: current.replyThreads,
+          replyChain: current.replyChain.map(p => enrichedMap.get(p.id) || p)
         }
       })
     }
   })
+
+  /**
+   * Fetch the chain of parent posts/replies leading up to a reply.
+   * Walks up the parentId chain until reaching the original post.
+   * Returns the chain in order from oldest (OP) to most recent parent.
+   */
+  const fetchReplyChain = async (parentId: string): Promise<Post[]> => {
+    const chain: Post[] = []
+    let currentParentId: string | undefined = parentId
+    const MAX_DEPTH = 50 // Safety limit to prevent infinite loops
+
+    while (currentParentId && chain.length < MAX_DEPTH) {
+      // First try as a post
+      let parent = await postService.getPostById(currentParentId, { skipEnrichment: true })
+
+      if (!parent) {
+        // Try as a reply
+        const reply = await replyService.getReplyById(currentParentId, { skipEnrichment: true })
+        if (reply) {
+          // Convert reply to Post-like structure
+          parent = reply as Post
+        }
+      }
+
+      if (!parent) break
+
+      // Add to the beginning of the chain (we're walking backwards)
+      chain.unshift(parent)
+
+      // Continue up the chain if this parent also has a parent
+      currentParentId = parent.parentId
+    }
+
+    // Enrich all posts in the chain
+    if (chain.length > 0) {
+      try {
+        await enrich(chain)
+      } catch (err) {
+        console.error('usePostDetail: Failed to enrich reply chain:', err)
+      }
+    }
+
+    return chain
+  }
 
   const loadPost = useCallback(async () => {
     if (!postId || !enabled) return
@@ -223,14 +273,21 @@ export function usePostDetail({
       if (!isCurrent()) return
 
       if (!loadedPost) {
-        setState({ post: null, replies: [], replyThreads: [] })
+        setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
         setIsLoading(false)
         setIsLoadingReplies(false)
         return
       }
 
+      // If the loaded item is a reply (has parentId), fetch the parent chain
+      let replyChain: Post[] = []
+      if (loadedPost.parentId) {
+        replyChain = await fetchReplyChain(loadedPost.parentId)
+        if (!isCurrent()) return
+      }
+
       // Show the main post as soon as it's available
-      setState({ post: loadedPost, replies: [], replyThreads: [] })
+      setState({ post: loadedPost, replies: [], replyThreads: [], replyChain })
       setIsLoading(false)
 
       // Enrich the main post without blocking replies or UI
@@ -243,7 +300,7 @@ export function usePostDetail({
       setError(err instanceof Error ? err.message : 'Failed to load post')
       // Only clear state if we don't have navigation data to show
       if (!usedNavigationDataRef.current) {
-        setState({ post: null, replies: [], replyThreads: [] })
+        setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
       }
       setIsLoading(false)
       setIsLoadingReplies(false)
@@ -339,14 +396,14 @@ export function usePostDetail({
         }
       }
 
-      // Update replies after they're ready, preserve any enriched main post
+      // Update replies after they're ready, preserve any enriched main post and replyChain
       if (!isCurrent()) return
       setState(current => {
         const mergedPost = current.post
           ? { ...current.post, quotedPost: quotedPost ?? current.post.quotedPost }
           : { ...loadedPost, quotedPost: quotedPost ?? loadedPost.quotedPost }
 
-        return { post: mergedPost, replies, replyThreads }
+        return { post: mergedPost, replies, replyThreads, replyChain: current.replyChain }
       })
     } catch (err) {
       if (!isCurrent()) return
@@ -366,7 +423,7 @@ export function usePostDetail({
 
     // Handle disabled or no postId - reset all state
     if (!postId || !enabled) {
-      setState({ post: null, replies: [], replyThreads: [] })
+      setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
       setPostEnrichment(undefined)
       setIsLoading(false)
       setIsLoadingReplies(false)
@@ -383,7 +440,8 @@ export function usePostDetail({
       setState({
         post: pending.post,
         replies: [],
-        replyThreads: []
+        replyThreads: [],
+        replyChain: []
       })
       setPostEnrichment(pending.enrichment)
       usedNavigationDataRef.current = true
@@ -394,7 +452,7 @@ export function usePostDetail({
       store.consumePendingPostNavigation(postId)
     } else {
       // No pending data - reset state and show loading
-      setState({ post: null, replies: [], replyThreads: [] })
+      setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
       setPostEnrichment(undefined)
       usedNavigationDataRef.current = false
       setIsLoading(true)
@@ -477,6 +535,7 @@ export function usePostDetail({
     post: state.post,
     replies: state.replies,
     replyThreads: state.replyThreads,
+    replyChain: state.replyChain,
     isLoading,
     isLoadingReplies,
     postEnrichment,
