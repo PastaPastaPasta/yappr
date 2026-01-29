@@ -525,6 +525,13 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Create new request - uses direct fetch for IPFS, CORS proxy for others
   const request = (async () => {
     try {
+      // Skip fetch for URLs with obvious image extensions - no network request needed
+      if (isDirectImageUrl(url)) {
+        const data = createDirectImagePreview(url)
+        previewCache.set(url, data)
+        return data
+      }
+
       const { content, contentType, resolvedUrl } = await fetchContent(url)
 
       // If content is an image (common for IPFS), return as direct image preview
