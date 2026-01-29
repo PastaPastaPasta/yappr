@@ -44,15 +44,74 @@ const IMAGE_EXTENSIONS = [
 ]
 
 /**
+ * IPFS Gateway Configuration
+ * These public gateways are used to resolve ipfs:// protocol URLs.
+ * Gateways are tried in order until one succeeds.
+ */
+const IPFS_GATEWAYS = [
+  'https://ipfs.io',
+  'https://dweb.link',
+  'https://cloudflare-ipfs.com',
+]
+
+/**
+ * Check if a URL uses the ipfs:// protocol.
+ */
+export function isIpfsProtocol(url: string): boolean {
+  return url.toLowerCase().startsWith('ipfs://')
+}
+
+/**
+ * Extract CID from an ipfs:// URL.
+ * Handles formats like:
+ * - ipfs://CID
+ * - ipfs://CID/path/to/file
+ */
+function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | null {
+  if (!isIpfsProtocol(url)) return null
+
+  // Remove ipfs:// prefix
+  const remainder = url.slice(7)
+  if (!remainder) return null
+
+  // Split into CID and optional path
+  const slashIndex = remainder.indexOf('/')
+  if (slashIndex === -1) {
+    return { cid: remainder, path: '' }
+  }
+
+  return {
+    cid: remainder.slice(0, slashIndex),
+    path: remainder.slice(slashIndex),
+  }
+}
+
+/**
+ * Convert an ipfs:// URL to an HTTP gateway URL.
+ */
+function ipfsToGatewayUrl(ipfsUrl: string, gateway: string): string | null {
+  const parsed = extractCidFromIpfsUrl(ipfsUrl)
+  if (!parsed) return null
+
+  return `${gateway}/ipfs/${parsed.cid}${parsed.path}`
+}
+
+/**
  * Check if a URL points to IPFS content.
  * IPFS gateways typically have CORS headers enabled, so we can fetch directly.
  *
  * Matches:
+ * - Protocol: ipfs:// URLs
  * - Subdomain gateways: hostname contains ".ipfs." (e.g., bafybeib.ipfs.dweb.link)
  * - Direct gateways: ipfs.io domain (e.g., gateway.ipfs.io, ipfs.io)
  * - Path gateways: path starts with /ipfs/ (e.g., https://gateway.pinata.cloud/ipfs/Qm...)
  */
 export function isIpfsUrl(url: string): boolean {
+  // Check for ipfs:// protocol first (before URL parsing which doesn't support it)
+  if (isIpfsProtocol(url)) {
+    return true
+  }
+
   try {
     const parsed = new URL(url)
     const hostname = parsed.hostname.toLowerCase()
@@ -94,6 +153,11 @@ export function isDirectImageUrl(url: string): boolean {
 }
 
 function shouldSkipUrl(url: string): boolean {
+  // Never skip ipfs:// protocol URLs
+  if (isIpfsProtocol(url)) {
+    return false
+  }
+
   try {
     const parsed = new URL(url)
     return SKIP_DOMAINS.some(domain => parsed.hostname.includes(domain))
@@ -323,14 +387,46 @@ async function fetchViaProxy(url: string): Promise<string> {
 }
 
 /**
+ * Fetch content from an ipfs:// URL by trying multiple gateways.
+ * Returns the result from the first gateway that succeeds.
+ */
+async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
+  let lastError: Error | null = null
+
+  for (const gateway of IPFS_GATEWAYS) {
+    const gatewayUrl = ipfsToGatewayUrl(ipfsUrl, gateway)
+    if (!gatewayUrl) {
+      continue
+    }
+
+    try {
+      return await fetchDirectly(gatewayUrl)
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error('Unknown error')
+      // Continue to next gateway
+    }
+  }
+
+  throw lastError || new Error('All IPFS gateways failed')
+}
+
+/**
  * Fetch content for a URL.
- * Uses direct fetch for IPFS URLs (which have CORS enabled),
- * otherwise uses CORS proxy with fallbacks.
+ * - ipfs:// URLs: tries multiple gateways
+ * - IPFS gateway URLs: fetches directly (CORS enabled)
+ * - Other URLs: uses CORS proxy with fallbacks
  */
 async function fetchContent(url: string): Promise<FetchResult> {
+  // Handle ipfs:// protocol URLs with gateway fallback
+  if (isIpfsProtocol(url)) {
+    return fetchIpfsProtocol(url)
+  }
+
+  // Handle IPFS gateway URLs directly
   if (isIpfsUrl(url)) {
     return fetchDirectly(url)
   }
+
   // CORS proxies don't preserve Content-Type reliably, so treat as HTML
   const content = await fetchViaProxy(url)
   return { content, contentType: 'text/html' }
@@ -528,16 +624,18 @@ export function stripTrailingPunctuation(url: string): string {
 }
 
 /**
- * Extract the first URL from content text
+ * Extract the first URL from content text.
+ * Supports http://, https://, ipfs://, and www. URLs.
  */
 export function extractFirstUrl(content: string): string | null {
-  const urlPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
+  // Match http(s)://, ipfs://, or www. URLs
+  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
   const match = content.match(urlPattern)
   if (!match?.[0]) return null
 
   let url = match[0]
-  // Add protocol if missing
-  if (url.startsWith('www.')) {
+  // Add protocol if missing (for www. URLs)
+  if (url.toLowerCase().startsWith('www.')) {
     url = `https://${url}`
   }
   // Clean trailing punctuation while preserving balanced parens
@@ -547,16 +645,18 @@ export function extractFirstUrl(content: string): string | null {
 }
 
 /**
- * Extract all URLs from content text
+ * Extract all URLs from content text.
+ * Supports http://, https://, ipfs://, and www. URLs.
  */
 export function extractAllUrls(content: string): string[] {
-  const urlPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
+  // Match http(s)://, ipfs://, or www. URLs
+  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
   const matches = content.match(urlPattern)
   if (!matches) return []
 
   return matches.map(url => {
-    // Add protocol if missing
-    if (url.startsWith('www.')) {
+    // Add protocol if missing (for www. URLs)
+    if (url.toLowerCase().startsWith('www.')) {
       url = `https://${url}`
     }
     // Clean trailing punctuation while preserving balanced parens
