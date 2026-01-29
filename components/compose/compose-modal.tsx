@@ -1539,7 +1539,6 @@ export function ComposeModal() {
                           {/* Image attachment preview */}
                           {attachedImage && (
                             <ImageAttachment
-                              file={attachedImage.file}
                               previewUrl={attachedImage.preview}
                               isUploading={isUploading}
                               isUploaded={!!attachedImage.uploadResult}

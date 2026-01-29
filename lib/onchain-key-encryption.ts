@@ -383,8 +383,15 @@ export async function decryptBackupPayload(
         storachaCredentials: parsed.storachaCredentials
       }
     }
-  } catch {
-    // Not JSON, fall through to v1 handling
+    // Parsed as JSON but not a valid ExtendedBackupPayload - unexpected format
+    console.warn('Unexpected backup payload format:', typeof parsed, Object.keys(parsed as object))
+    throw new Error('Unexpected backup payload format')
+  } catch (e) {
+    // If JSON.parse failed, it's v1 format (plain WIF key)
+    // If it's our own error about unexpected format, re-throw it
+    if (e instanceof Error && e.message === 'Unexpected backup payload format') {
+      throw e
+    }
   }
 
   // V1 format - decrypted string is the login key directly

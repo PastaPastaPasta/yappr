@@ -4,8 +4,6 @@ import { XMarkIcon } from '@heroicons/react/24/solid'
 import { motion } from 'framer-motion'
 
 interface ImageAttachmentProps {
-  /** The file being displayed */
-  file: File
   /** Object URL for preview */
   previewUrl: string
   /** Whether the image is currently uploading */

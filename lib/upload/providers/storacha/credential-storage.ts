@@ -204,7 +204,9 @@ export function clearAllStorachaCredentials(): void {
         keysToRemove.push(key)
       }
     }
-    keysToRemove.forEach(key => storage.removeItem(key))
+    for (const key of keysToRemove) {
+      storage.removeItem(key)
+    }
   }
 
   clearFromStorage(localStorage)

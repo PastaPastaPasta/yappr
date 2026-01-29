@@ -134,6 +134,9 @@ export function storePinataCredentials(identityId: string, credentials: PinataCr
   storePinataJwt(identityId, credentials.jwt)
   if (credentials.gateway) {
     storePinataGateway(identityId, credentials.gateway)
+  } else {
+    // Clear any previously stored gateway when new credentials don't include one
+    remove(`gateway_${identityId}`)
   }
   console.log('[Pinata Storage] Credentials stored successfully')
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +42,12 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
+  // Use ref for onConnectionChange to avoid effect re-runs when parent re-renders
+  const onConnectionChangeRef = useRef(onConnectionChange)
+  useEffect(() => {
+    onConnectionChangeRef.current = onConnectionChange
+  }, [onConnectionChange])
+
   const checkConnectionStatus = useCallback(async () => {
     if (!user) {
       setIsLoading(false)
@@ -62,27 +68,27 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
           setStatus('connected')
           setMaskedJwt(provider.getMaskedJwt())
           setGateway(provider.getConnectedGateway())
-          onConnectionChange?.(true)
+          onConnectionChangeRef.current?.(true)
           console.log('[Pinata] Successfully connected')
         } catch (err) {
           console.error('[Pinata] Failed to connect with stored credentials:', err)
           setStatus('disconnected')
-          onConnectionChange?.(false)
+          onConnectionChangeRef.current?.(false)
         }
       } else {
         console.log('[Pinata] No stored credentials found')
         setStatus('disconnected')
-        onConnectionChange?.(false)
+        onConnectionChangeRef.current?.(false)
       }
 
     } catch (error) {
       console.error('Error checking Pinata status:', error)
       setStatus('error')
-      onConnectionChange?.(false)
+      onConnectionChangeRef.current?.(false)
     } finally {
       setIsLoading(false)
     }
-  }, [user, onConnectionChange])
+  }, [user])
 
   useEffect(() => {
     checkConnectionStatus().catch(err => console.error('Failed to check status:', err))
