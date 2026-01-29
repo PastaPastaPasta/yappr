@@ -66,6 +66,53 @@ interface ProfileData {
   bannerUri?: string
 }
 
+/**
+ * Helper to fetch content by IDs, trying posts first and then replies for any not found.
+ * Returns an array of Post objects (replies are converted to Post format for display).
+ * Needed because quoted content can be either a post or a reply.
+ */
+async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
+  if (ids.length === 0) return []
+
+  const { postService } = await import('@/lib/services')
+  const { replyService } = await import('@/lib/services/reply-service')
+
+  // First try to fetch as posts
+  const posts = await postService.getPostsByIds(ids)
+  const foundPostIds = new Set(posts.map(p => p.id))
+
+  // Find IDs that weren't found as posts
+  const missingIds = ids.filter(id => !foundPostIds.has(id))
+
+  if (missingIds.length === 0) {
+    return posts
+  }
+
+  // Try to fetch missing IDs as replies
+  const replies = await replyService.getRepliesByIds(missingIds)
+
+  // Convert replies to Post format for display
+  const convertedReplies: Post[] = replies.map(reply => ({
+    id: reply.id,
+    author: reply.author,
+    content: reply.content,
+    createdAt: reply.createdAt,
+    likes: reply.likes,
+    reposts: reply.reposts,
+    replies: reply.replies,
+    views: reply.views,
+    liked: reply.liked,
+    reposted: reply.reposted,
+    bookmarked: reply.bookmarked,
+    media: reply.media,
+    encryptedContent: reply.encryptedContent,
+    epoch: reply.epoch,
+    nonce: reply.nonce,
+  }))
+
+  return [...posts, ...convertedReplies]
+}
+
 function UserProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -337,14 +384,14 @@ function UserProfileContent() {
           // Continue without reposts - non-critical
         }
 
-        // Fetch quoted posts for quote posts
+        // Fetch quoted posts for quote posts (can be posts or replies)
         try {
           const quotedPostIds = transformedPosts
             .filter((p: any) => p.quotedPostId)
             .map((p: any) => p.quotedPostId)
 
           if (quotedPostIds.length > 0) {
-            const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+            const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
             const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
             for (const post of transformedPosts) {
@@ -542,14 +589,14 @@ function UserProfileContent() {
         }
       }
 
-      // Fetch quoted posts for quote posts
+      // Fetch quoted posts for quote posts (can be posts or replies)
       try {
         const quotedPostIds = newPosts
           .filter((p: any) => p.quotedPostId)
           .map((p: any) => p.quotedPostId)
 
         if (quotedPostIds.length > 0) {
-          const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+          const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
           const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
           for (const post of newPosts) {
