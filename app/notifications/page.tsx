@@ -11,7 +11,11 @@ import {
   ShieldExclamationIcon,
   HeartIcon,
   ArrowPathRoundedSquareIcon,
-  ChatBubbleLeftIcon
+  ChatBubbleLeftIcon,
+  EnvelopeIcon,
+  ShoppingBagIcon,
+  TruckIcon,
+  StarIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -27,6 +31,8 @@ import { Notification } from '@/lib/types'
  * Get the URL to navigate to when clicking a notification.
  * For reply notifications, navigates to the parent post (so you can see the reply in context).
  * For like/repost/mention notifications, navigates to the relevant post.
+ * For DM notifications, navigates to the messages page.
+ * For order notifications, navigates to the appropriate orders page.
  * Returns null for follow and private feed notifications (no associated post).
  */
 function getNotificationUrl(notification: Notification): string | null {
@@ -38,6 +44,29 @@ function getNotificationUrl(notification: Notification): string | null {
     notification.type === 'privateFeedRevoked'
   ) {
     return null
+  }
+
+  // For DM notifications, navigate to messages with conversation
+  if (notification.type === 'newMessage') {
+    if (notification.conversationId) {
+      return `/messages?conversation=${notification.conversationId}`
+    }
+    return '/messages'
+  }
+
+  // For order received (seller), navigate to seller orders page
+  if (notification.type === 'orderReceived') {
+    return '/orders/seller'
+  }
+
+  // For order status update (buyer), navigate to buyer orders page
+  if (notification.type === 'orderStatusUpdate') {
+    return '/orders'
+  }
+
+  // For new review (seller), navigate to store management or orders
+  if (notification.type === 'newReview') {
+    return '/orders/seller'
   }
 
   // For reply notifications, navigate to the parent post (where the reply appears)
@@ -65,9 +94,14 @@ const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> 
   privateFeedRequest: null,
   privateFeedApproved: null,
   privateFeedRevoked: null,
+  // DM and store notifications
+  newMessage: 'messages',
+  orderReceived: 'orders',
+  orderStatusUpdate: 'orders',
+  newReview: 'reviews',
 }
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed'
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed' | 'messages' | 'orders'
 
 const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -76,6 +110,8 @@ const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
   { key: 'reply', label: 'Replies' },
   { key: 'follow', label: 'Follows' },
   { key: 'mention', label: 'Mentions' },
+  { key: 'messages', label: 'Messages' },
+  { key: 'orders', label: 'Orders' },
   { key: 'privateFeed', label: 'Private' }
 ]
 
@@ -87,7 +123,12 @@ const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
   privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
   privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
-  privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
+  privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />,
+  // DM and store notification icons
+  newMessage: <EnvelopeIcon className="h-5 w-5 text-blue-500" />,
+  orderReceived: <ShoppingBagIcon className="h-5 w-5 text-emerald-500" />,
+  orderStatusUpdate: <TruckIcon className="h-5 w-5 text-orange-500" />,
+  newReview: <StarIcon className="h-5 w-5 text-yellow-500" />
 }
 
 const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
@@ -98,7 +139,12 @@ const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   reply: 'replied to your post',
   privateFeedRequest: 'requested access to your private feed',
   privateFeedApproved: 'approved your private feed request',
-  privateFeedRevoked: 'revoked your private feed access'
+  privateFeedRevoked: 'revoked your private feed access',
+  // DM and store notification messages
+  newMessage: 'sent you a message',
+  orderReceived: 'placed an order in your store',
+  orderStatusUpdate: 'updated your order status',
+  newReview: 'left a review on your store'
 }
 
 const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
@@ -108,6 +154,8 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
   reply: 'When someone replies to your post, you\'ll see it here',
   follow: 'When someone follows you, you\'ll see it here',
   mention: 'When someone mentions you, you\'ll see it here',
+  messages: 'When someone sends you a direct message, you\'ll see it here',
+  orders: 'Order updates and new orders will appear here',
   privateFeed: 'Private feed requests and updates will appear here'
 }
 
@@ -148,6 +196,16 @@ function NotificationsPage() {
         n.type === 'privateFeedRequest' ||
         n.type === 'privateFeedApproved' ||
         n.type === 'privateFeedRevoked'
+      )
+    }
+    if (tabFilter === 'messages') {
+      return notifs.filter(n => n.type === 'newMessage')
+    }
+    if (tabFilter === 'orders') {
+      return notifs.filter(n =>
+        n.type === 'orderReceived' ||
+        n.type === 'orderStatusUpdate' ||
+        n.type === 'newReview'
       )
     }
     return notifs.filter(n => n.type === tabFilter)
@@ -327,8 +385,47 @@ function NotificationsPage() {
                               View Profile
                             </Link>
                           )}
+                          {/* Action buttons for DM notifications */}
+                          {notification.type === 'newMessage' && (
+                            <Link
+                              href={notification.conversationId ? `/messages?conversation=${notification.conversationId}` : '/messages'}
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950 dark:hover:bg-blue-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              Open Messages
+                            </Link>
+                          )}
+                          {/* Action buttons for store notifications */}
+                          {notification.type === 'orderReceived' && (
+                            <Link
+                              href="/orders/seller"
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-950 dark:hover:bg-emerald-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Order
+                            </Link>
+                          )}
+                          {notification.type === 'orderStatusUpdate' && (
+                            <Link
+                              href="/orders"
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 dark:text-orange-400 dark:bg-orange-950 dark:hover:bg-orange-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Order
+                            </Link>
+                          )}
+                          {notification.type === 'newReview' && (
+                            <Link
+                              href="/orders/seller"
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-yellow-600 bg-yellow-50 hover:bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-950 dark:hover:bg-yellow-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Review
+                            </Link>
+                          )}
                         </div>
 
+                        {/* Content preview for post-related notifications */}
                         {(() => {
                           const post = notification.post
                           const postUrl = post && getNotificationUrl(notification)
@@ -342,6 +439,48 @@ function NotificationsPage() {
                             </Link>
                           ) : null
                         })()}
+
+                        {/* Order status badge for orderStatusUpdate notifications */}
+                        {notification.type === 'orderStatusUpdate' && notification.orderStatus && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                              notification.orderStatus === 'shipped' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
+                              notification.orderStatus === 'delivered' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+                              notification.orderStatus === 'cancelled' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' :
+                              notification.orderStatus === 'payment_received' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' :
+                              notification.orderStatus === 'processing' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
+                              'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                            }`}>
+                              {notification.orderStatus.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Rating display for newReview notifications */}
+                        {notification.type === 'newReview' && notification.reviewRating && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <div className="flex items-center">
+                              {[1, 2, 3, 4, 5].map((star) => {
+                                const rating = notification.reviewRating ?? 0
+                                return (
+                                  <StarIcon
+                                    key={star}
+                                    className={`h-4 w-4 ${
+                                      star <= rating
+                                        ? 'text-yellow-500 fill-yellow-500'
+                                        : 'text-gray-300 dark:text-gray-600'
+                                    }`}
+                                  />
+                                )
+                              })}
+                            </div>
+                            {notification.reviewTitle && (
+                              <span className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                                {notification.reviewTitle}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

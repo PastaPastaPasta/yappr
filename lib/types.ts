@@ -135,11 +135,22 @@ export interface Comment {
 
 export interface Notification {
   id: string
-  type: 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked'
+  type: 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked' | 'newMessage' | 'orderReceived' | 'orderStatusUpdate' | 'newReview'
   from: User
   post?: Post
   createdAt: Date
   read: boolean
+  // DM notification fields
+  conversationId?: string
+  messagePreview?: string
+  // Store notification fields
+  orderId?: string
+  storeId?: string
+  storeName?: string
+  orderStatus?: OrderStatus
+  // Review notification fields
+  reviewRating?: number
+  reviewTitle?: string
 }
 
 export interface Trend {

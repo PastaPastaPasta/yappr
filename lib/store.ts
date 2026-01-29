@@ -180,6 +180,9 @@ interface NotificationSettings {
   follows: boolean
   mentions: boolean
   messages: boolean
+  // Store notification settings
+  orders: boolean
+  reviews: boolean
 }
 
 export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
@@ -216,6 +219,8 @@ export const useSettingsStore = create<SettingsState>()(
         follows: true,
         mentions: true,
         messages: true,
+        orders: true,
+        reviews: true,
       },
       setNotificationSettings: (settings) =>
         set((state) => ({
