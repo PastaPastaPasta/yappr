@@ -100,14 +100,31 @@ function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | nul
 }
 
 /**
+ * Check if a CID is version 0 (starts with "Qm").
+ * CIDv0 uses base58btc which is case-sensitive, making it incompatible
+ * with subdomain gateways (DNS is case-insensitive).
+ */
+function isCidV0(cid: string): boolean {
+  return cid.startsWith('Qm')
+}
+
+/**
  * Convert an ipfs:// URL to an HTTP gateway URL.
  * Supports both subdomain and path gateway formats.
+ *
+ * Note: CIDv0 (Qm...) is incompatible with subdomain gateways because
+ * base58btc is case-sensitive but DNS is not. Returns null for CIDv0
+ * with subdomain gateways, allowing fallback to path gateways.
  */
 function ipfsToGatewayUrl(ipfsUrl: string, gateway: IpfsGateway): string | null {
   const parsed = extractCidFromIpfsUrl(ipfsUrl)
   if (!parsed) return null
 
   if (gateway.format === 'subdomain') {
+    // CIDv0 is case-sensitive (base58btc) - incompatible with DNS subdomains
+    if (isCidV0(parsed.cid)) {
+      return null // Skip this gateway, try next one
+    }
     // Subdomain format: https://CID.ipfs.dweb.link/path
     return `https://${parsed.cid}.${gateway.domain}${parsed.path}`
   } else {
