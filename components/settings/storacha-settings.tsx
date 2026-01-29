@@ -325,7 +325,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
             <>
               <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Free IPFS storage with email signup. 5GB free tier available.
+                  5GB free tier available. Requires credit card for signup.
                 </p>
               </div>
 

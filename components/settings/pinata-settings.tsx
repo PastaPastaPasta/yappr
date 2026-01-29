@@ -251,7 +251,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
             <>
               <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  IPFS pinning service with 1GB free tier. Requires a JWT with <strong>Files: Write</strong> permission.
+                  1GB free tier, no credit card required. Requires a JWT with <strong>Files: Write</strong> permission.
                 </p>
               </div>
 
