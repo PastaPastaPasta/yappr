@@ -62,20 +62,48 @@ function MessagesPage() {
 
   // Load conversations on mount
   useEffect(() => {
+    let cancelled = false
     const loadConversations = async () => {
       if (!user) return
       setIsLoading(true)
       try {
-        const convos = await directMessageService.getConversations(user.identityId)
-        setConversations(convos)
+        const shells = await directMessageService.getConversationShells(user.identityId)
+        if (cancelled) return
+        setConversations(shells)
+        setIsLoading(false)
+
+        const updateConversation = (updatedConv: Conversation) => {
+          if (cancelled) return
+          setConversations(prev => {
+            const next = prev.map(conv =>
+              conv.id === updatedConv.id ? { ...conv, ...updatedConv } : conv
+            )
+            return next.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+          })
+        }
+
+        const enriched = await directMessageService.enrichConversations(
+          user.identityId,
+          shells,
+          updateConversation
+        )
+
+        if (!cancelled) {
+          setConversations(enriched)
+        }
       } catch (error) {
         console.error('Failed to load conversations:', error)
         toast.error('Failed to load conversations')
       } finally {
-        setIsLoading(false)
+        if (!cancelled) {
+          setIsLoading(false)
+        }
       }
     }
     loadConversations().catch(err => console.error('Failed to load conversations:', err))
+    return () => {
+      cancelled = true
+    }
   }, [user])
 
   // Handle auto-starting a conversation from URL parameter
@@ -141,24 +169,63 @@ function MessagesPage() {
 
   // Load messages when conversation is selected
   useEffect(() => {
+    let cancelled = false
     const loadMessages = async () => {
       if (!selectedConversation || !user) return
       setIsLoadingMessages(true)
       setParticipantLastRead(null) // Reset while loading
+      setMessages([])
       try {
-        const msgs = await directMessageService.getConversationMessages(
+        const rawDocs = await directMessageService.getConversationMessageDocuments(
           selectedConversation.id,
-          user.identityId,
+          100
+        )
+        if (cancelled) return
+
+        const lastReadPromise = directMessageService.getParticipantLastRead(
+          selectedConversation.id,
           selectedConversation.participantId
         )
-        setMessages(msgs)
+
+        const otherPartyId = selectedConversation.participantId ||
+          (rawDocs.find(doc => doc.$ownerId !== user.identityId)?.$ownerId as string | undefined) ||
+          ''
+
+        const batchSize = 20
+        const assembled: DirectMessage[] = []
+        for (let i = 0; i < rawDocs.length; i += batchSize) {
+          const chunk = rawDocs.slice(i, i + batchSize)
+          const decryptedChunk = await Promise.all(
+            chunk.map(doc =>
+              directMessageService.decryptMessageDocument(
+                doc,
+                user.identityId,
+                otherPartyId,
+                '[Could not decrypt message]'
+              )
+            )
+          )
+
+          if (cancelled) return
+
+          assembled.push(...decryptedChunk.filter(Boolean) as DirectMessage[])
+          assembled.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+          setMessages([...assembled])
+
+          if (i === 0) {
+            setIsLoadingMessages(false)
+          }
+        }
+
+        if (rawDocs.length === 0) {
+          setIsLoadingMessages(false)
+        }
 
         // Get when participant last read (for read receipts)
-        const lastRead = await directMessageService.getParticipantLastRead(
-          selectedConversation.id,
-          selectedConversation.participantId
-        )
-        setParticipantLastRead(lastRead)
+        const lastRead = await lastReadPromise
+        if (!cancelled) {
+          setParticipantLastRead(lastRead)
+        }
 
         // Only mark as read if there are unread messages and read receipts are enabled
         if (selectedConversation.unreadCount > 0 && sendReadReceipts) {
@@ -166,19 +233,26 @@ function MessagesPage() {
         }
 
         // Update conversation unread count in UI
-        setConversations(prev => prev.map(conv =>
-          conv.id === selectedConversation.id
-            ? { ...conv, unreadCount: 0 }
-            : conv
-        ))
+        if (!cancelled) {
+          setConversations(prev => prev.map(conv =>
+            conv.id === selectedConversation.id
+              ? { ...conv, unreadCount: 0 }
+              : conv
+          ))
+        }
       } catch (error) {
         console.error('Failed to load messages:', error)
         toast.error('Failed to load messages')
       } finally {
-        setIsLoadingMessages(false)
+        if (!cancelled) {
+          setIsLoadingMessages(false)
+        }
       }
     }
     loadMessages().catch(err => console.error('Failed to load messages:', err))
+    return () => {
+      cancelled = true
+    }
   }, [selectedConversation, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
