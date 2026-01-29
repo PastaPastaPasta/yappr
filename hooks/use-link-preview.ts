@@ -3,6 +3,72 @@
 import { useState, useEffect } from 'react'
 import type { LinkPreviewData } from '@/components/post/link-preview'
 
+// YouTube domain patterns for URL detection
+const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
+
+/**
+ * Extract YouTube video ID from various YouTube URL formats.
+ * Returns null if the URL is not a YouTube video URL.
+ *
+ * Supported formats:
+ * - youtube.com/watch?v=VIDEO_ID
+ * - youtu.be/VIDEO_ID
+ * - youtube.com/embed/VIDEO_ID
+ * - youtube.com/v/VIDEO_ID
+ * - youtube.com/shorts/VIDEO_ID
+ * - youtube.com/live/VIDEO_ID
+ */
+export function extractYouTubeVideoId(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+
+    // Check if it's a YouTube domain
+    if (!YOUTUBE_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
+      return null
+    }
+
+    // youtu.be/VIDEO_ID
+    if (hostname === 'youtu.be') {
+      const videoId = parsed.pathname.slice(1).split('/')[0]
+      return videoId || null
+    }
+
+    // youtube.com/watch?v=VIDEO_ID
+    const vParam = parsed.searchParams.get('v')
+    if (vParam) return vParam
+
+    // youtube.com/embed/VIDEO_ID or /v/VIDEO_ID or /shorts/VIDEO_ID or /live/VIDEO_ID
+    const pathMatch = parsed.pathname.match(/\/(embed|v|shorts|live)\/([^/?]+)/)
+    if (pathMatch) return pathMatch[2]
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if a URL is a YouTube video URL.
+ */
+export function isYouTubeUrl(url: string): boolean {
+  return extractYouTubeVideoId(url) !== null
+}
+
+/**
+ * Create preview data for a YouTube video URL.
+ * Uses YouTube's thumbnail service which has CORS headers enabled.
+ */
+function createYouTubePreview(url: string, videoId: string): LinkPreviewData {
+  return {
+    url,
+    siteName: 'YouTube',
+    // Use maxresdefault with hqdefault fallback (handled in component via onError)
+    image: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+    youtubeVideoId: videoId,
+  }
+}
+
 // Client-side cache for link previews
 const previewCache = new Map<string, LinkPreviewData>()
 const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
@@ -30,6 +96,32 @@ const CORS_PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
 ]
+
+/**
+ * Domains that are known to have CORS headers enabled.
+ * These can be fetched directly without a proxy, improving privacy and speed.
+ * Only include major, trusted services to avoid IP harvesting concerns.
+ */
+const CORS_ALLOWED_DOMAINS = [
+  'media.giphy.com',
+  'i.giphy.com',
+  'i.imgur.com',
+  'i.redd.it',
+  'pbs.twimg.com',
+  'raw.githubusercontent.com',
+]
+
+/**
+ * Check if a URL's hostname is in the CORS-allowed whitelist.
+ */
+function isCorsAllowedDomain(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return CORS_ALLOWED_DOMAINS.includes(parsed.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
 
 // URLs that commonly don't have good previews or should be skipped
 const SKIP_DOMAINS = [
@@ -455,6 +547,7 @@ async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
  * Fetch content for a URL.
  * - ipfs:// URLs: tries multiple gateways
  * - IPFS gateway URLs: fetches directly (CORS enabled)
+ * - CORS-allowed domains: fetches directly (with proxy fallback)
  * - Other URLs: uses CORS proxy with fallbacks
  */
 async function fetchContent(url: string): Promise<FetchResult> {
@@ -466,6 +559,15 @@ async function fetchContent(url: string): Promise<FetchResult> {
   // Handle IPFS gateway URLs directly
   if (isIpfsUrl(url)) {
     return fetchDirectly(url)
+  }
+
+  // Handle CORS-allowed domains directly (with proxy fallback)
+  if (isCorsAllowedDomain(url)) {
+    try {
+      return await fetchDirectly(url)
+    } catch {
+      // Fall back to proxy if direct fetch fails
+    }
   }
 
   // CORS proxies don't preserve Content-Type reliably, so treat as HTML
@@ -489,6 +591,22 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Create new request - uses direct fetch for IPFS, CORS proxy for others
   const request = (async () => {
     try {
+      // Skip fetch for URLs with obvious image extensions - no network request needed
+      if (isDirectImageUrl(url)) {
+        const data = createDirectImagePreview(url)
+        previewCache.set(url, data)
+        return data
+      }
+
+      // Skip fetch for YouTube URLs - we can construct preview from URL alone
+      // This improves privacy (no proxy needed) and performance
+      const youtubeVideoId = extractYouTubeVideoId(url)
+      if (youtubeVideoId) {
+        const data = createYouTubePreview(url, youtubeVideoId)
+        previewCache.set(url, data)
+        return data
+      }
+
       const { content, contentType, resolvedUrl } = await fetchContent(url)
 
       // If content is an image (common for IPFS), return as direct image preview
