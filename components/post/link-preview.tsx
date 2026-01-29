@@ -120,38 +120,62 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
 
           {/* Collapsible technical details */}
           {showDetails && (
-            <div className="space-y-3 pt-2 border-t border-neutral-200 dark:border-neutral-700">
+            <div className="space-y-4 pt-3 border-t border-neutral-200 dark:border-neutral-700">
               {/* Direct services */}
-              <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3">
-                <h3 className="text-sm font-medium text-green-800 dark:text-green-300 mb-2">
+              <div>
+                <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
                   Direct previews
                 </h3>
-                <ul className="text-xs text-green-700 dark:text-green-400 space-y-1">
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
                   {CORS_PROXY_INFO.directServices.map((service) => (
                     <li key={service.name}>
                       <span className="font-medium">{service.name}</span>
-                      <span className="text-green-600 dark:text-green-500"> — {service.description}</span>
+                      <span className="text-neutral-500 dark:text-neutral-500"> — {service.description}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* IPFS gateways */}
+              <div>
+                <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
+                  IPFS content
+                </h3>
+                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
+                  For ipfs:// links, content is fetched from public gateways:
+                </p>
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+                  {CORS_PROXY_INFO.ipfsGateways.map((gateway) => (
+                    <li key={gateway.name}>
+                      <a
+                        href={gateway.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-neutral-800 dark:hover:text-neutral-300"
+                      >
+                        {gateway.name}
+                      </a>
                     </li>
                   ))}
                 </ul>
               </div>
 
               {/* Proxy services */}
-              <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
-                <h3 className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">
+              <div>
+                <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
                   Other links
                 </h3>
-                <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">
+                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
                   For sites not listed above, previews are fetched through external services to avoid browser restrictions. External providers may see the requested URL. Currently used providers:
                 </p>
-                <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1">
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
                   {CORS_PROXY_INFO.proxies.map((proxy) => (
                     <li key={proxy.name}>
                       <a
                         href={proxy.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="underline hover:text-amber-800 dark:hover:text-amber-300"
+                        className="underline hover:text-neutral-800 dark:hover:text-neutral-300"
                       >
                         {proxy.name}
                       </a>
