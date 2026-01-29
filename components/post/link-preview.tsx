@@ -233,6 +233,8 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
                 className="absolute inset-0 w-full h-full"
+                // credentialless attribute helps with COEP restrictions
+                {...{ credentialless: 'true' } as React.IframeHTMLAttributes<HTMLIFrameElement>}
               />
             </div>
           )}
