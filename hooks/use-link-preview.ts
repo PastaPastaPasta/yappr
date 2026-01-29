@@ -47,11 +47,24 @@ const IMAGE_EXTENSIONS = [
  * IPFS Gateway Configuration
  * These public gateways are used to resolve ipfs:// protocol URLs.
  * Gateways are tried in order until one succeeds.
+ *
+ * Two formats are supported:
+ * - subdomain: https://CID.ipfs.dweb.link/path (better origin isolation)
+ * - path: https://ipfs.io/ipfs/CID/path (traditional format)
  */
-const IPFS_GATEWAYS = [
-  'https://ipfs.io',
-  'https://dweb.link',
-  'https://gateway.pinata.cloud',
+interface IpfsGateway {
+  /** Base domain for the gateway */
+  domain: string
+  /** Gateway format: 'subdomain' or 'path' */
+  format: 'subdomain' | 'path'
+}
+
+const IPFS_GATEWAYS: IpfsGateway[] = [
+  // Subdomain gateway (preferred for origin isolation)
+  { domain: 'ipfs.dweb.link', format: 'subdomain' },
+  // Path gateways (fallback)
+  { domain: 'ipfs.io', format: 'path' },
+  { domain: 'gateway.pinata.cloud', format: 'path' },
 ]
 
 /**
@@ -88,12 +101,19 @@ function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | nul
 
 /**
  * Convert an ipfs:// URL to an HTTP gateway URL.
+ * Supports both subdomain and path gateway formats.
  */
-function ipfsToGatewayUrl(ipfsUrl: string, gateway: string): string | null {
+function ipfsToGatewayUrl(ipfsUrl: string, gateway: IpfsGateway): string | null {
   const parsed = extractCidFromIpfsUrl(ipfsUrl)
   if (!parsed) return null
 
-  return `${gateway}/ipfs/${parsed.cid}${parsed.path}`
+  if (gateway.format === 'subdomain') {
+    // Subdomain format: https://CID.ipfs.dweb.link/path
+    return `https://${parsed.cid}.${gateway.domain}${parsed.path}`
+  } else {
+    // Path format: https://ipfs.io/ipfs/CID/path
+    return `https://${gateway.domain}/ipfs/${parsed.cid}${parsed.path}`
+  }
 }
 
 /**
