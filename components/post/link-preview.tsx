@@ -124,11 +124,8 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
               {/* Direct services */}
               <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3">
                 <h3 className="text-sm font-medium text-green-800 dark:text-green-300 mb-2">
-                  Fetched directly (no proxy)
+                  Direct previews
                 </h3>
-                <p className="text-xs text-green-700 dark:text-green-400 mb-2">
-                  These popular services are fetched directly from their servers:
-                </p>
                 <ul className="text-xs text-green-700 dark:text-green-400 space-y-1">
                   {CORS_PROXY_INFO.directServices.map((service) => (
                     <li key={service.name}>
@@ -142,10 +139,10 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
               {/* Proxy services */}
               <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
                 <h3 className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">
-                  Other URLs use third-party proxies
+                  Other links
                 </h3>
                 <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">
-                  For other websites, we use proxy services to fetch previews. These services may log the URLs you view:
+                  For sites not listed above, previews are fetched through external services to avoid browser restrictions. External providers may see the requested URL. Currently used providers:
                 </p>
                 <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1">
                   {CORS_PROXY_INFO.proxies.map((proxy) => (
