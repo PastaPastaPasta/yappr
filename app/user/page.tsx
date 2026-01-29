@@ -942,7 +942,7 @@ function UserProfileContent() {
               {isOwnProfile && isEditingProfile && (
                 <button
                   onClick={() => setIsEditingBanner(true)}
-                  className="absolute bottom-3 right-3 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+                  className="absolute bottom-3 right-3 z-10 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
                   title="Edit banner"
                 >
                   <PencilIcon className="h-4 w-4 text-white" />
