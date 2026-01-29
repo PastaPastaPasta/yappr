@@ -22,15 +22,12 @@ interface IpfsGateway {
 }
 
 export const IPFS_GATEWAYS: IpfsGateway[] = [
-  // Gateways ordered by reliability and CORS support
   // ipfs.io is the canonical IPFS Foundation gateway
   { domain: 'ipfs.io', format: 'path' },
   // dweb.link subdomain gateway (IPFS Foundation)
   { domain: 'ipfs.dweb.link', format: 'subdomain' },
   // nftstorage.link (NFT.storage gateway)
   { domain: 'nftstorage.link', format: 'path' },
-  // flk-ipfs.xyz (Fleek gateway)
-  { domain: 'flk-ipfs.xyz', format: 'path' },
   // Note: w3s.link not functional
   // Note: cloudflare-ipfs.com deprecated Aug 2024
   // Note: gateway.pinata.cloud has CORS restrictions
