@@ -47,6 +47,8 @@ import { EmojiPicker } from './emoji-picker'
 import { ImageAttachment } from './image-attachment'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
+import Link from 'next/link'
+import { CloudArrowUpIcon } from '@heroicons/react/24/outline'
 
 const CHARACTER_LIMIT = 500
 
@@ -523,6 +525,7 @@ export function ComposeModal() {
     preview: string
     uploadResult?: UploadResult
   } | null>(null)
+  const [showStorageProviderModal, setShowStorageProviderModal] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { upload, isUploading, progress, isProviderConnected, checkProvider } = useImageUpload()
 
@@ -714,8 +717,9 @@ export function ComposeModal() {
   const canPost = hasValidContent && !hasOverLimit && !isPosting && !isUploading && isValidEncryptedPost && isInheritedEncryptionReady
   // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted
-  // Disable image attachment for private posts (mediaUrl is stored publicly on chain)
-  const canAttachImage = isProviderConnected && !willBeEncrypted && !attachedImage
+  // Check if image attachment is allowed (not including provider connection status)
+  // Private posts can't have images (mediaUrl is stored publicly on chain)
+  const canAttachImage = !willBeEncrypted && !attachedImage
 
   // Get the last posted post ID for chaining retries
   const lastPostedId = postedPosts.length > 0
@@ -828,6 +832,15 @@ export function ComposeModal() {
     }
     setAttachedImage(null)
   }, [attachedImage])
+
+  // Handle image button click - check provider first
+  const handleImageButtonClick = useCallback(() => {
+    if (!isProviderConnected) {
+      setShowStorageProviderModal(true)
+      return
+    }
+    fileInputRef.current?.click()
+  }, [isProviderConnected])
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -1562,7 +1575,7 @@ export function ComposeModal() {
                           {/* Image attachment button */}
                           <button
                             type="button"
-                            onClick={() => fileInputRef.current?.click()}
+                            onClick={handleImageButtonClick}
                             disabled={!canAttachImage}
                             className={`p-1.5 rounded-md transition-colors ${
                               canAttachImage
@@ -1570,9 +1583,7 @@ export function ComposeModal() {
                                 : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
                             }`}
                             title={
-                              !isProviderConnected
-                                ? 'Connect storage provider in Settings'
-                                : willBeEncrypted
+                              willBeEncrypted
                                 ? 'Images not supported for private posts'
                                 : attachedImage
                                 ? 'Only one image per post'
@@ -1635,6 +1646,74 @@ export function ComposeModal() {
         }}
         onSuccess={handleAddKeySuccess}
       />
+
+      {/* Storage Provider Modal - shown when trying to attach image without a provider */}
+      <Dialog.Root open={showStorageProviderModal} onOpenChange={setShowStorageProviderModal}>
+        <AnimatePresence>
+          {showStorageProviderModal && (
+            <Dialog.Portal forceMount>
+              <Dialog.Overlay asChild>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className={`fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                >
+                  <Dialog.Content asChild>
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Dialog.Title className="sr-only">Connect Storage Provider</Dialog.Title>
+                      <Dialog.Description className="sr-only">
+                        You need to connect a storage provider to attach images to posts
+                      </Dialog.Description>
+
+                      <div className="p-6">
+                        <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-yappr-100 dark:bg-yappr-900/30">
+                          <CloudArrowUpIcon className="w-6 h-6 text-yappr-600 dark:text-yappr-400" />
+                        </div>
+
+                        <h3 className="text-lg font-semibold text-center text-gray-900 dark:text-gray-100 mb-2">
+                          Connect a Storage Provider
+                        </h3>
+
+                        <p className="text-sm text-center text-gray-600 dark:text-gray-400 mb-6">
+                          To attach images to your posts, you need to connect a storage provider like Storacha or Pinata. This allows your images to be stored on IPFS.
+                        </p>
+
+                        <div className="flex flex-col gap-3">
+                          <Button asChild className="w-full">
+                            <Link
+                              href="/settings?section=storage"
+                              onClick={() => {
+                                setShowStorageProviderModal(false)
+                                setComposeOpen(false)
+                              }}
+                            >
+                              Go to Settings
+                            </Link>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => setShowStorageProviderModal(false)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  </Dialog.Content>
+                </motion.div>
+              </Dialog.Overlay>
+            </Dialog.Portal>
+          )}
+        </AnimatePresence>
+      </Dialog.Root>
     </>
   )
 }
