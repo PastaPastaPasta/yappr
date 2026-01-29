@@ -290,6 +290,8 @@ function parseHtmlForPreview(html: string, url: string): LinkPreviewData {
 interface FetchResult {
   content: string
   contentType: string | null
+  /** For ipfs:// URLs, the resolved HTTP gateway URL that browsers can load */
+  resolvedUrl?: string
 }
 
 // Maximum content size to download for preview metadata (5MB)
@@ -388,7 +390,7 @@ async function fetchViaProxy(url: string): Promise<string> {
 
 /**
  * Fetch content from an ipfs:// URL by trying multiple gateways.
- * Returns the result from the first gateway that succeeds.
+ * Returns the result from the first gateway that succeeds, including the resolved gateway URL.
  */
 async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
   let lastError: Error | null = null
@@ -400,7 +402,9 @@ async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
     }
 
     try {
-      return await fetchDirectly(gatewayUrl)
+      const result = await fetchDirectly(gatewayUrl)
+      // Include the resolved gateway URL so browsers can load it
+      return { ...result, resolvedUrl: gatewayUrl }
     } catch (err) {
       lastError = err instanceof Error ? err : new Error('Unknown error')
       // Continue to next gateway
@@ -448,16 +452,20 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Create new request - uses direct fetch for IPFS, CORS proxy for others
   const request = (async () => {
     try {
-      const { content, contentType } = await fetchContent(url)
+      const { content, contentType, resolvedUrl } = await fetchContent(url)
 
       // If content is an image (common for IPFS), return as direct image preview
+      // Use resolvedUrl for ipfs:// URLs so browsers can load the image
       if (isImageContentType(contentType)) {
-        const data = createDirectImagePreview(url)
+        const previewUrl = resolvedUrl || url
+        const data = createDirectImagePreview(previewUrl)
         previewCache.set(url, data)
         return data
       }
 
-      const data = parseHtmlForPreview(content, url)
+      // Use resolvedUrl for parsing so relative URLs resolve correctly
+      const previewUrl = resolvedUrl || url
+      const data = parseHtmlForPreview(content, previewUrl)
       previewCache.set(url, data)
       return data
     } catch {
