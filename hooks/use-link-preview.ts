@@ -51,7 +51,7 @@ const IMAGE_EXTENSIONS = [
 const IPFS_GATEWAYS = [
   'https://ipfs.io',
   'https://dweb.link',
-  'https://cloudflare-ipfs.com',
+  'https://gateway.pinata.cloud',
 ]
 
 /**
