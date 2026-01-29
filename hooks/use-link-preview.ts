@@ -86,6 +86,16 @@ const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
  */
 export const CORS_PROXY_INFO = {
   warning: 'Some URLs (YouTube, Reddit, IPFS, etc.) are fetched directly from their services. Other URLs use third-party proxy servers to fetch metadata. These services may log the URLs you view.',
+  /** Services that are fetched directly without a proxy */
+  directServices: [
+    { name: 'YouTube', description: 'Video thumbnails' },
+    { name: 'Reddit', description: 'Image hosting (i.redd.it)' },
+    { name: 'IPFS', description: 'Decentralized storage gateways' },
+    { name: 'Imgur', description: 'Image hosting' },
+    { name: 'Giphy', description: 'GIF hosting' },
+    { name: 'GitHub', description: 'Raw file content' },
+  ],
+  /** Third-party proxies used for other URLs */
   proxies: [
     { name: 'allorigins.win', url: 'https://allorigins.win/' },
     { name: 'corsproxy.io', url: 'https://corsproxy.io/' },

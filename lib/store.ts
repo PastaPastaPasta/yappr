@@ -182,10 +182,12 @@ interface NotificationSettings {
   messages: boolean
 }
 
+export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
+
 interface SettingsState {
-  /** Enable link previews (fetches metadata via third-party proxy) */
-  linkPreviews: boolean
-  setLinkPreviews: (enabled: boolean) => void
+  /** Link preview preference: undecided (show prompt), enabled, or disabled */
+  linkPreviewsChoice: LinkPreviewChoice
+  setLinkPreviewsChoice: (choice: LinkPreviewChoice) => void
   /** Send read receipts in direct messages */
   sendReadReceipts: boolean
   setSendReadReceipts: (enabled: boolean) => void
@@ -203,8 +205,8 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      linkPreviews: false, // Disabled by default for privacy
-      setLinkPreviews: (enabled) => set({ linkPreviews: enabled }),
+      linkPreviewsChoice: 'undecided' as LinkPreviewChoice,
+      setLinkPreviewsChoice: (choice) => set({ linkPreviewsChoice: choice }),
       sendReadReceipts: true, // Enabled by default
       setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
       notificationSettings: {

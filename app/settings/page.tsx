@@ -65,8 +65,9 @@ function SettingsPage() {
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const { theme, setTheme } = useTheme()
-  const linkPreviews = useSettingsStore((s) => s.linkPreviews)
-  const setLinkPreviews = useSettingsStore((s) => s.setLinkPreviews)
+  const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
+  const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
+  const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
   const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
   const notificationSettings = useSettingsStore((s) => s.notificationSettings)
@@ -402,16 +403,16 @@ function SettingsPage() {
               <p className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
             </div>
             <Switch.Root
-              checked={linkPreviews}
-              onCheckedChange={setLinkPreviews}
+              checked={linkPreviewsEnabled}
+              onCheckedChange={(checked) => setLinkPreviewsChoice(checked ? 'enabled' : 'disabled')}
               className={`w-11 h-6 rounded-full relative transition-colors ${
-                linkPreviews ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
+                linkPreviewsEnabled ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
               }`}
             >
               <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
             </Switch.Root>
           </div>
-          {linkPreviews && (
+          {linkPreviewsEnabled && (
             <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
               <p className="text-sm text-amber-800 dark:text-amber-200">
                 <strong>Privacy note:</strong> {CORS_PROXY_INFO.warning}

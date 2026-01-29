@@ -7,6 +7,7 @@ import ErrorBoundary from '@/components/error-boundary'
 import { DevelopmentBanner } from '@/components/ui/development-banner'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { LoginModal } from '@/components/auth/login-modal'
+import { LinkPreviewModalProvider } from '@/components/post/link-preview'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -31,14 +32,16 @@ export default function RootLayout({
       <body className={`${inter.className} h-full bg-white dark:bg-neutral-900`}>
         <ErrorBoundary level="app">
           <Providers>
-            <DevelopmentBanner />
-            <div className="h-[32px] sm:h-[40px]" /> {/* Spacer for fixed banner */}
-            <ErrorBoundary level="page">
-              {children}
-            </ErrorBoundary>
-            <div className="h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
-            <MobileBottomNav />
-            <LoginModal />
+            <LinkPreviewModalProvider>
+              <DevelopmentBanner />
+              <div className="h-[32px] sm:h-[40px]" /> {/* Spacer for fixed banner */}
+              <ErrorBoundary level="page">
+                {children}
+              </ErrorBoundary>
+              <div className="h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
+              <MobileBottomNav />
+              <LoginModal />
+            </LinkPreviewModalProvider>
           </Providers>
         </ErrorBoundary>
         <Toaster

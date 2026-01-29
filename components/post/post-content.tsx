@@ -5,9 +5,9 @@ import { Fragment, useMemo } from 'react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
 import { MentionValidationStatus } from '@/hooks/use-mention-validation'
-import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt } from './link-preview'
+import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt, LinkPreviewInfoIcon } from './link-preview'
 import { useLinkPreview, extractFirstUrl, stripTrailingPunctuation } from '@/hooks/use-link-preview'
-import { useSettingsStore } from '@/lib/store'
+import { useSettingsStore, LinkPreviewChoice } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { MentionLink } from './mention-link'
 import { cn } from '@/lib/utils'
@@ -70,7 +70,8 @@ export function PostContent({
   onFailedMentionClick,
   disableLinkPreview = false
 }: PostContentProps) {
-  const linkPreviews = useSettingsStore((s) => s.linkPreviews)
+  const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
+  const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
 
   // Check if content is emoji-only for large emoji display
   const isEmojiOnlyContent = useMemo(() => isEmojiOnly(content), [content])
@@ -81,7 +82,7 @@ export function PostContent({
   // Only fetch preview if link previews are enabled
   const { data: previewData, loading: previewLoading } = useLinkPreview(
     firstUrl,
-    { disabled: disableLinkPreview || !linkPreviews }
+    { disabled: disableLinkPreview || !linkPreviewsEnabled }
   )
   const parsedContent = useMemo(() => {
     // Patterns for inline elements (hashtags, cashtags, mentions, urls)
@@ -252,9 +253,16 @@ export function PostContent({
 
       // If link previews are enabled and this URL is being previewed (loading or loaded), strip it from content
       // Keep only trailing punctuation (if any). If preview fetch fails, the raw URL remains visible.
-      if (linkPreviews && firstUrl && cleanHref === firstUrl && (previewLoading || previewData)) {
+      if (linkPreviewsEnabled && firstUrl && cleanHref === firstUrl && (previewLoading || previewData)) {
         return trailingPunctuation ? <Fragment key={key}>{trailingPunctuation}</Fragment> : null
       }
+
+      // When link previews are disabled, truncate long URLs
+      const shouldTruncate = linkPreviewsChoice === 'disabled'
+      const maxLength = 40
+      const truncatedDisplay = shouldTruncate && cleanDisplay.length > maxLength
+        ? cleanDisplay.slice(0, maxLength) + '...'
+        : cleanDisplay
 
       return (
         <Fragment key={key}>
@@ -264,9 +272,11 @@ export function PostContent({
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             className="text-yappr-500 hover:underline break-all"
+            title={shouldTruncate && cleanDisplay.length > maxLength ? cleanDisplay : undefined}
           >
-            {cleanDisplay}
+            {truncatedDisplay}
           </a>
+          {shouldTruncate && <LinkPreviewInfoIcon />}
           {trailingPunctuation}
         </Fragment>
       )
@@ -400,12 +410,12 @@ export function PostContent({
         })}
       </div>
       {/* Link preview */}
-      {!disableLinkPreview && linkPreviews && previewLoading && <LinkPreviewSkeleton url={firstUrl ?? undefined} />}
-      {!disableLinkPreview && linkPreviews && previewData && (
+      {!disableLinkPreview && linkPreviewsEnabled && previewLoading && <LinkPreviewSkeleton url={firstUrl ?? undefined} />}
+      {!disableLinkPreview && linkPreviewsEnabled && previewData && (
         <LinkPreview data={previewData} />
       )}
-      {/* Enable link previews prompt - shown when disabled and URL exists */}
-      {!disableLinkPreview && !linkPreviews && firstUrl && (
+      {/* Enable link previews prompt - only shown when user hasn't made a choice yet */}
+      {!disableLinkPreview && linkPreviewsChoice === 'undecided' && firstUrl && (
         <LinkPreviewEnablePrompt />
       )}
     </div>
