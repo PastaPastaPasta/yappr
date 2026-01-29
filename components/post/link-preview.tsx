@@ -228,7 +228,7 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           ) : (
             <div className="relative w-full aspect-video bg-black">
               <iframe
-                src={`https://www.youtube.com/embed/${data.youtubeVideoId}?autoplay=1`}
+                src={`https://www.youtube-nocookie.com/embed/${data.youtubeVideoId}?autoplay=1`}
                 title="YouTube video player"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
