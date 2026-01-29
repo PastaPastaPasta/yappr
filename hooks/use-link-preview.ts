@@ -218,11 +218,17 @@ function parseHtmlForPreview(html: string, url: string): LinkPreviewData {
   }
 }
 
+interface FetchResult {
+  content: string
+  contentType: string | null
+}
+
 /**
- * Fetch HTML directly without CORS proxy.
+ * Fetch content directly without CORS proxy.
  * Used for IPFS gateways which typically have CORS headers enabled.
+ * Returns both content and Content-Type header for detecting images.
  */
-async function fetchDirectly(url: string): Promise<string> {
+async function fetchDirectly(url: string): Promise<FetchResult> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 8000)
 
@@ -237,7 +243,9 @@ async function fetchDirectly(url: string): Promise<string> {
       throw new Error(`HTTP ${response.status}`)
     }
 
-    return await response.text()
+    const contentType = response.headers.get('content-type')
+    const content = await response.text()
+    return { content, contentType }
   } catch (err) {
     clearTimeout(timeout)
     throw err instanceof Error ? err : new Error('Unknown error')
@@ -279,15 +287,25 @@ async function fetchViaProxy(url: string): Promise<string> {
 }
 
 /**
- * Fetch HTML content for a URL.
+ * Fetch content for a URL.
  * Uses direct fetch for IPFS URLs (which have CORS enabled),
  * otherwise uses CORS proxy with fallbacks.
  */
-async function fetchHtmlContent(url: string): Promise<string> {
+async function fetchContent(url: string): Promise<FetchResult> {
   if (isIpfsUrl(url)) {
     return fetchDirectly(url)
   }
-  return fetchViaProxy(url)
+  // CORS proxies don't preserve Content-Type reliably, so treat as HTML
+  const content = await fetchViaProxy(url)
+  return { content, contentType: 'text/html' }
+}
+
+/**
+ * Check if a Content-Type header indicates an image.
+ */
+function isImageContentType(contentType: string | null): boolean {
+  if (!contentType) return false
+  return contentType.toLowerCase().startsWith('image/')
 }
 
 async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
@@ -306,8 +324,16 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Create new request - uses direct fetch for IPFS, CORS proxy for others
   const request = (async () => {
     try {
-      const html = await fetchHtmlContent(url)
-      const data = parseHtmlForPreview(html, url)
+      const { content, contentType } = await fetchContent(url)
+
+      // If content is an image (common for IPFS), return as direct image preview
+      if (isImageContentType(contentType)) {
+        const data = createDirectImagePreview(url)
+        previewCache.set(url, data)
+        return data
+      }
+
+      const data = parseHtmlForPreview(content, url)
       previewCache.set(url, data)
       return data
     } catch {
@@ -338,6 +364,24 @@ function createBasicPreview(url: string): LinkPreviewData {
     }
   } catch {
     return { url }
+  }
+}
+
+/**
+ * Create preview data for a URL that points directly to an image.
+ * Used when Content-Type indicates image (e.g., IPFS images without file extensions).
+ */
+function createDirectImagePreview(url: string): LinkPreviewData {
+  try {
+    const parsed = new URL(url)
+    return {
+      url,
+      siteName: parsed.hostname.replace(/^www\./, ''),
+      favicon: `${parsed.origin}/favicon.ico`,
+      isDirectImage: true,
+    }
+  } catch {
+    return { url, isDirectImage: true }
   }
 }
 

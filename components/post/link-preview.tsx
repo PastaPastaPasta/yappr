@@ -103,6 +103,8 @@ export interface LinkPreviewData {
   imageHeight?: number
   siteName?: string
   favicon?: string
+  /** True if URL points directly to an image (detected via Content-Type or extension) */
+  isDirectImage?: boolean
 }
 
 interface LinkPreviewProps {
@@ -156,8 +158,8 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   // Hide image if error, too small, or dimensions indicate it's not useful
   const showImage = data.image && !imageError && !imageTooSmall
 
-  // Check if URL points directly to an image file
-  const isDirectImage = isDirectImageUrl(data.url)
+  // Check if URL points directly to an image (via Content-Type detection or file extension)
+  const isDirectImage = data.isDirectImage || isDirectImageUrl(data.url)
 
   // Handler to check actual image dimensions after load
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
