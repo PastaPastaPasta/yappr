@@ -31,6 +31,32 @@ const CORS_PROXIES = [
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
 ]
 
+/**
+ * Domains that are known to have CORS headers enabled.
+ * These can be fetched directly without a proxy, improving privacy and speed.
+ * Only include major, trusted services to avoid IP harvesting concerns.
+ */
+const CORS_ALLOWED_DOMAINS = [
+  'media.giphy.com',
+  'i.giphy.com',
+  'i.imgur.com',
+  'i.redd.it',
+  'pbs.twimg.com',
+  'raw.githubusercontent.com',
+]
+
+/**
+ * Check if a URL's hostname is in the CORS-allowed whitelist.
+ */
+function isCorsAllowedDomain(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return CORS_ALLOWED_DOMAINS.includes(parsed.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
 // URLs that commonly don't have good previews or should be skipped
 const SKIP_DOMAINS = [
   'localhost',
@@ -455,6 +481,7 @@ async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
  * Fetch content for a URL.
  * - ipfs:// URLs: tries multiple gateways
  * - IPFS gateway URLs: fetches directly (CORS enabled)
+ * - CORS-allowed domains: fetches directly (with proxy fallback)
  * - Other URLs: uses CORS proxy with fallbacks
  */
 async function fetchContent(url: string): Promise<FetchResult> {
@@ -466,6 +493,15 @@ async function fetchContent(url: string): Promise<FetchResult> {
   // Handle IPFS gateway URLs directly
   if (isIpfsUrl(url)) {
     return fetchDirectly(url)
+  }
+
+  // Handle CORS-allowed domains directly (with proxy fallback)
+  if (isCorsAllowedDomain(url)) {
+    try {
+      return await fetchDirectly(url)
+    } catch {
+      // Fall back to proxy if direct fetch fails
+    }
   }
 
   // CORS proxies don't preserve Content-Type reliably, so treat as HTML
