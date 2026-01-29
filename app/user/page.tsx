@@ -1398,7 +1398,7 @@ function UserProfileContent() {
                     )}
                     <span className="flex items-center gap-1">
                       <CalendarIcon className="h-4 w-4" />
-                      Joined recently
+                      Joined {profile.joinedAt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                     </span>
                   </div>
 
