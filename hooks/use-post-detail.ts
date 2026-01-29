@@ -383,13 +383,43 @@ export function usePostDetail({
       const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
       // Fetch quoted posts for main post only (replies don't have quotes)
+      // Quoted content can be either a post or a reply, so try both collections
       let quotedPost: Post | undefined
       if (loadedPost.quotedPostId) {
         try {
+          // First try to fetch as a post
           const quotedPosts = await postService.getPostsByIds([loadedPost.quotedPostId])
           if (!isCurrent()) return
           if (quotedPosts.length > 0) {
             quotedPost = quotedPosts[0]
+          } else {
+            // Not found as a post - try fetching as a reply
+            const quotedReplies = await replyService.getRepliesByIds([loadedPost.quotedPostId])
+            if (!isCurrent()) return
+            if (quotedReplies.length > 0) {
+              // Convert reply to Post format for display
+              const reply = quotedReplies[0]
+              quotedPost = {
+                id: reply.id,
+                author: reply.author,
+                content: reply.content,
+                createdAt: reply.createdAt,
+                likes: reply.likes,
+                reposts: reply.reposts,
+                replies: reply.replies,
+                views: reply.views,
+                liked: reply.liked,
+                reposted: reply.reposted,
+                bookmarked: reply.bookmarked,
+                media: reply.media,
+                encryptedContent: reply.encryptedContent,
+                epoch: reply.epoch,
+                nonce: reply.nonce,
+                parentId: reply.parentId,
+                parentOwnerId: reply.parentOwnerId,
+                _enrichment: reply._enrichment,
+              }
+            }
           }
         } catch (quoteError) {
           console.error('Failed to fetch quoted post:', quoteError)
