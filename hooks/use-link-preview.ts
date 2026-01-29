@@ -16,6 +16,7 @@ const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtub
  * - youtube.com/embed/VIDEO_ID
  * - youtube.com/v/VIDEO_ID
  * - youtube.com/shorts/VIDEO_ID
+ * - youtube.com/live/VIDEO_ID
  */
 export function extractYouTubeVideoId(url: string): string | null {
   try {
@@ -37,8 +38,8 @@ export function extractYouTubeVideoId(url: string): string | null {
     const vParam = parsed.searchParams.get('v')
     if (vParam) return vParam
 
-    // youtube.com/embed/VIDEO_ID or /v/VIDEO_ID or /shorts/VIDEO_ID
-    const pathMatch = parsed.pathname.match(/\/(embed|v|shorts)\/([^/?]+)/)
+    // youtube.com/embed/VIDEO_ID or /v/VIDEO_ID or /shorts/VIDEO_ID or /live/VIDEO_ID
+    const pathMatch = parsed.pathname.match(/\/(embed|v|shorts|live)\/([^/?]+)/)
     if (pathMatch) return pathMatch[2]
 
     return null
