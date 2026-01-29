@@ -58,6 +58,7 @@ export function LinkPreviewModalProvider({ children }: { children: React.ReactNo
  * Modal that explains link previews and lets users enable/disable them.
  */
 function LinkPreviewModal({ onClose }: { onClose: () => void }) {
+  const [showDetails, setShowDetails] = useState(false)
   const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
 
   const handleChoice = (choice: LinkPreviewChoice) => {
@@ -79,7 +80,7 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-700">
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-            Link Previews
+            Link Preview Settings
           </h2>
           <button
             onClick={onClose}
@@ -91,48 +92,78 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
 
         {/* Content */}
         <div className="p-4 space-y-4">
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Link previews show rich content (titles, images, descriptions) for URLs in posts.
-          </p>
-
-          {/* Direct services */}
-          <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3">
-            <h3 className="text-sm font-medium text-green-800 dark:text-green-300 mb-2">
-              Fetched directly (no proxy)
-            </h3>
-            <ul className="text-xs text-green-700 dark:text-green-400 space-y-1">
-              {CORS_PROXY_INFO.directServices.map((service) => (
-                <li key={service.name}>
-                  <span className="font-medium">{service.name}</span>
-                  <span className="text-green-600 dark:text-green-500"> — {service.description}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Proxy services */}
-          <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
-            <h3 className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">
-              Other URLs use third-party proxies
-            </h3>
-            <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">
-              These services may log the URLs you view:
+          {/* Simple explanation for most users */}
+          <div className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
+            <p>
+              Link previews show images and other rich content for links in posts.
             </p>
-            <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1">
-              {CORS_PROXY_INFO.proxies.map((proxy) => (
-                <li key={proxy.name}>
-                  <a
-                    href={proxy.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-amber-800 dark:hover:text-amber-300"
-                  >
-                    {proxy.name}
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <p>
+              To do this, Yappr needs to fetch preview content from the web. In some cases, the service providing the preview may see the URL being viewed.
+            </p>
           </div>
+
+          {/* Learn more toggle */}
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="flex items-center gap-1 text-sm text-yappr-500 hover:text-yappr-600 dark:text-yappr-400 dark:hover:text-yappr-300"
+          >
+            <span>{showDetails ? 'Hide details' : 'Learn more about how this works'}</span>
+            <svg
+              className={`h-4 w-4 transition-transform ${showDetails ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Collapsible technical details */}
+          {showDetails && (
+            <div className="space-y-3 pt-2 border-t border-neutral-200 dark:border-neutral-700">
+              {/* Direct services */}
+              <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3">
+                <h3 className="text-sm font-medium text-green-800 dark:text-green-300 mb-2">
+                  Fetched directly (no proxy)
+                </h3>
+                <p className="text-xs text-green-700 dark:text-green-400 mb-2">
+                  These popular services are fetched directly from their servers:
+                </p>
+                <ul className="text-xs text-green-700 dark:text-green-400 space-y-1">
+                  {CORS_PROXY_INFO.directServices.map((service) => (
+                    <li key={service.name}>
+                      <span className="font-medium">{service.name}</span>
+                      <span className="text-green-600 dark:text-green-500"> — {service.description}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Proxy services */}
+              <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
+                <h3 className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">
+                  Other URLs use third-party proxies
+                </h3>
+                <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">
+                  For other websites, we use proxy services to fetch previews. These services may log the URLs you view:
+                </p>
+                <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1">
+                  {CORS_PROXY_INFO.proxies.map((proxy) => (
+                    <li key={proxy.name}>
+                      <a
+                        href={proxy.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-amber-800 dark:hover:text-amber-300"
+                      >
+                        {proxy.name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
 
           <p className="text-xs text-neutral-500 dark:text-neutral-500">
             You can change this anytime in{' '}
@@ -148,7 +179,7 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
             onClick={() => handleChoice('disabled')}
             className="flex-1 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-lg transition-colors"
           >
-            Keep disabled
+            Not now
           </button>
           <button
             onClick={() => handleChoice('enabled')}
