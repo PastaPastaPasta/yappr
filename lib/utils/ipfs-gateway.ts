@@ -25,13 +25,14 @@ export const IPFS_GATEWAYS: IpfsGateway[] = [
   // Gateways ordered by reliability and CORS support
   // w3s.link is fast and CORS-friendly (web3.storage/Storacha)
   { domain: 'w3s.link', format: 'path' },
-  // Cloudflare is reliable and CORS-friendly
-  { domain: 'cloudflare-ipfs.com', format: 'path' },
-  // ipfs.io is the canonical gateway
+  // ipfs.io is the canonical IPFS Foundation gateway
   { domain: 'ipfs.io', format: 'path' },
-  // dweb.link subdomain gateway
+  // dweb.link subdomain gateway (IPFS Foundation)
   { domain: 'ipfs.dweb.link', format: 'subdomain' },
-  // Note: gateway.pinata.cloud has CORS restrictions, not included
+  // nftstorage.link (NFT.storage gateway)
+  { domain: 'nftstorage.link', format: 'path' },
+  // Note: cloudflare-ipfs.com deprecated Aug 2024
+  // Note: gateway.pinata.cloud has CORS restrictions
 ]
 
 /**
