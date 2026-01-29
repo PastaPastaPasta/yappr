@@ -31,16 +31,16 @@ export function LinkPreviewEnablePrompt() {
   }
 
   return (
-    <div className="mt-2 text-xs text-neutral-400 dark:text-neutral-500">
+    <div className="mt-3">
       {showEnableHint ? (
-        <div className="p-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg space-y-2">
-          <p className="text-neutral-600 dark:text-neutral-400">
+        <div className="p-3 bg-neutral-100 dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 space-y-2">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
             {CORS_PROXY_INFO.warning}
           </p>
           <div className="flex items-center gap-3">
             <button
               onClick={handleEnablePreviews}
-              className="text-yappr-500 hover:text-yappr-600 font-medium"
+              className="px-3 py-1.5 bg-yappr-500 hover:bg-yappr-600 text-white text-sm font-medium rounded-md transition-colors"
             >
               Enable link previews
             </button>
@@ -50,12 +50,12 @@ export function LinkPreviewEnablePrompt() {
                 e.stopPropagation()
                 setShowEnableHint(false)
               }}
-              className="text-neutral-500 hover:text-neutral-600"
+              className="text-sm text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-400"
             >
               Cancel
             </button>
           </div>
-          <p className="text-neutral-500 text-[10px]">
+          <p className="text-neutral-500 text-xs">
             Uses:{' '}
             {CORS_PROXY_INFO.proxies.map((p, i) => (
               <span key={p.name}>
@@ -72,7 +72,7 @@ export function LinkPreviewEnablePrompt() {
               </span>
             ))}
           </p>
-          <p className="text-neutral-500 text-[10px]">
+          <p className="text-neutral-500 text-xs">
             You can change this anytime in{' '}
             <Link
               href="/settings"
@@ -90,10 +90,10 @@ export function LinkPreviewEnablePrompt() {
             e.stopPropagation()
             setShowEnableHint(true)
           }}
-          className="flex items-center gap-1 hover:text-neutral-500 dark:hover:text-neutral-400 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm text-yappr-500 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-900/20 hover:bg-yappr-100 dark:hover:bg-yappr-900/30 border border-yappr-200 dark:border-yappr-800 rounded-lg transition-colors"
         >
-          <SparklesIcon className="h-3 w-3" />
-          <span>Enable link previews</span>
+          <SparklesIcon className="h-4 w-4" />
+          <span className="font-medium">Enable link previews</span>
         </button>
       )}
     </div>
