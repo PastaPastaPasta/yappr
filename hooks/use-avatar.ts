@@ -21,10 +21,17 @@ export interface UseAvatarResult {
 
 export interface UseAvatarSettingsResult {
   settings: AvatarSettings | null
+  /** Whether the current avatar is a custom image (IPFS/URL) vs generated */
+  isCustomImage: boolean
+  /** The custom image URL if avatar is a custom image */
+  customImageUrl: string | null
   loading: boolean
   saving: boolean
   error: string | null
+  /** Save a generated DiceBear avatar */
   save: (style: DiceBearStyle, seed: string) => Promise<boolean>
+  /** Save a custom image URL (ipfs:// or https://) */
+  saveCustomUrl: (url: string) => Promise<boolean>
   refresh: () => void
 }
 
@@ -100,6 +107,8 @@ export function useAvatar(userId: string): UseAvatarResult {
  */
 export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   const [settings, setSettings] = useState<AvatarSettings | null>(null)
+  const [isCustomImage, setIsCustomImage] = useState(false)
+  const [customImageUrl, setCustomImageUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -121,10 +130,28 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
 
       if (profile && profile.avatar) {
         // Parse the avatar field to extract settings
-        // Could be JSON {"style":"bottts","seed":"xyz"} or a URI
+        // Could be JSON {"style":"bottts","seed":"xyz"} or a URI (ipfs://, https://, data:)
         try {
-          if (profile.avatar.startsWith('{')) {
+          // Check if it's a custom image URL (ipfs://, https://, http://)
+          const isCustom = profile.avatar.startsWith('ipfs://') ||
+                          profile.avatar.startsWith('https://') ||
+                          profile.avatar.startsWith('http://')
+
+          if (isCustom) {
+            // Custom image URL - not a generated avatar
+            setIsCustomImage(true)
+            setCustomImageUrl(profile.avatar)
+            // Still set default settings in case user switches back to generated
+            setSettings({
+              style: DEFAULT_AVATAR_STYLE,
+              seed: userId,
+              avatarUrl: unifiedProfileService.getDefaultAvatarUrl(userId),
+            })
+          } else if (profile.avatar.startsWith('{')) {
+            // JSON format for DiceBear settings
             const parsed = JSON.parse(profile.avatar)
+            setIsCustomImage(false)
+            setCustomImageUrl(null)
             setSettings({
               style: parsed.style || DEFAULT_AVATAR_STYLE,
               seed: parsed.seed || userId,
@@ -137,6 +164,8 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
             // Direct URI - extract seed from DiceBear URL if possible
             const seedMatch = profile.avatar.match(/seed=([^&]+)/)
             const styleMatch = profile.avatar.match(/\/7\.x\/([^/]+)\//)
+            setIsCustomImage(false)
+            setCustomImageUrl(null)
             setSettings({
               style: (styleMatch?.[1] as DiceBearStyle) || DEFAULT_AVATAR_STYLE,
               seed: seedMatch ? decodeURIComponent(seedMatch[1]) : userId,
@@ -145,6 +174,8 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
           }
         } catch {
           // Fallback to default settings
+          setIsCustomImage(false)
+          setCustomImageUrl(null)
           setSettings({
             style: DEFAULT_AVATAR_STYLE,
             seed: userId,
@@ -153,6 +184,8 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
         }
       } else {
         // No avatar set, use defaults
+        setIsCustomImage(false)
+        setCustomImageUrl(null)
         setSettings({
           style: DEFAULT_AVATAR_STYLE,
           seed: userId,
@@ -206,11 +239,43 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
     }
   }, [userId, loadSettings])
 
+  const saveCustomUrl = useCallback(async (url: string): Promise<boolean> => {
+    if (!userId) return false
+
+    setSaving(true)
+    setError(null)
+
+    try {
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+
+      // Save the URL directly (ipfs:// or https://)
+      const result = await unifiedProfileService.updateProfile(userId, {
+        avatar: url,
+      })
+
+      if (result) {
+        // Clear cache and reload
+        avatarCache.delete(userId)
+        await loadSettings(true)
+        return true
+      } else {
+        setError('Failed to save avatar')
+        return false
+      }
+    } catch (err) {
+      console.error('useAvatarSettings: Error saving custom URL:', err)
+      setError('Failed to save avatar')
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }, [userId, loadSettings])
+
   const refresh = useCallback(() => {
     loadSettings(true)
   }, [loadSettings])
 
-  return { settings, loading, saving, error, save, refresh }
+  return { settings, isCustomImage, customImageUrl, loading, saving, error, save, saveCustomUrl, refresh }
 }
 
 /**

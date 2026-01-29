@@ -2,8 +2,11 @@
 
 import { useState, useEffect, memo } from 'react'
 import { PresenceIndicator } from './presence-indicator'
+import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
+import { IpfsImage } from './ipfs-image'
 
 // Module-level cache for avatar URLs to prevent redundant fetches
+// Stores raw URLs (ipfs:// or data: or https://) - conversion happens at display time
 const avatarCache = new Map<string, { url: string; timestamp: number }>()
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const pendingRequests = new Map<string, Promise<string>>()
@@ -31,6 +34,7 @@ async function fetchAvatarUrl(userId: string): Promise<string> {
   const request = (async () => {
     try {
       const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      // Get raw URL - conversion to gateway happens at display time
       const url = await unifiedProfileService.getAvatarUrl(userId)
       avatarCache.set(userId, { url, timestamp: Date.now() })
       return url
@@ -95,8 +99,9 @@ export const UserAvatar = memo(function UserAvatar({
   hideOfflinePresence = true,
 }: AvatarImageProps) {
   // Start with preloaded URL, cached URL, or null (loading state)
+  // Store raw URL - conversion to gateway happens at display time
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => {
-    // Use preloaded URL if provided
+    // Use preloaded URL if provided (keep raw format)
     if (preloadedUrl) return preloadedUrl
     // Guard against empty userId
     if (!userId) return null
@@ -134,10 +139,17 @@ export const UserAvatar = memo(function UserAvatar({
 
   // Don't render until we have the correct URL
   if (!avatarUrl) {
-    return <div className={`rounded-full ${sizeClass} ${className}`} />
+    return <div className={`rounded-full bg-gray-200 dark:bg-gray-700 ${sizeClass} ${className}`} />
   }
 
-  const avatarElement = (
+  // Use IpfsImage for IPFS URLs (handles gateway fallback)
+  const avatarElement = isIpfsProtocol(avatarUrl) ? (
+    <IpfsImage
+      src={avatarUrl}
+      alt={alt}
+      className={`rounded-full object-cover ${sizeClass} ${showPresence ? '' : className}`}
+    />
+  ) : (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={avatarUrl}

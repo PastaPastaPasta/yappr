@@ -30,7 +30,9 @@ import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
+import { BannerImage, invalidateBannerCache } from '@/components/ui/banner-image'
 import { AvatarCustomization } from '@/components/settings/avatar-customization'
+import { BannerCustomization } from '@/components/settings/banner-customization'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
@@ -61,6 +63,7 @@ interface ProfileData {
   socialLinks?: SocialLink[]
   nsfw?: boolean
   hasUnifiedProfile?: boolean
+  bannerUri?: string
 }
 
 function UserProfileContent() {
@@ -94,7 +97,9 @@ function UserProfileContent() {
   // Edit profile state
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [isEditingAvatar, setIsEditingAvatar] = useState(false)
+  const [isEditingBanner, setIsEditingBanner] = useState(false)
   const [avatarKey, setAvatarKey] = useState(0)
+  const [bannerKey, setBannerKey] = useState(0)
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editBio, setEditBio] = useState('')
   const [editLocation, setEditLocation] = useState('')
@@ -204,6 +209,7 @@ function UserProfileContent() {
             socialLinks: profileResult.socialLinks,
             nsfw: profileResult.nsfw,
             hasUnifiedProfile: profileResult.hasUnifiedProfile,
+            bannerUri: profileResult.bannerUri,
           })
         } else {
           // Even without a Yappr profile, show follow counts
@@ -905,7 +911,13 @@ function UserProfileContent() {
 
         {isLoading ? (
           <div>
-            <div className="h-48 bg-gradient-yappr opacity-50" />
+            <div className="h-48 overflow-hidden blur-sm opacity-60">
+              <BannerImage
+                userId={userId || ''}
+                className="w-full h-full"
+                fallbackGradient
+              />
+            </div>
             <div className="px-4 pb-4">
               <div className="relative -mt-16 mb-4">
                 <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
@@ -924,7 +936,25 @@ function UserProfileContent() {
           </div>
         ) : (
           <>
-            <div className="h-48 bg-gradient-yappr" />
+            {/* Banner */}
+            <div className="relative h-48">
+              <BannerImage
+                key={bannerKey}
+                userId={userId || ''}
+                preloadedUrl={profile?.bannerUri}
+                className="w-full h-full"
+                fallbackGradient
+              />
+              {isOwnProfile && isEditingProfile && (
+                <button
+                  onClick={() => setIsEditingBanner(true)}
+                  className="absolute bottom-3 right-3 z-10 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+                  title="Edit banner"
+                >
+                  <PencilIcon className="h-4 w-4 text-white" />
+                </button>
+              )}
+            </div>
 
             <div className="px-4 pb-4">
               <div className="relative flex justify-between items-start -mt-16 mb-4">
@@ -1603,6 +1633,41 @@ function UserProfileContent() {
                   invalidateAvatarImageCache(userId)
                 }
                 setAvatarKey(prev => prev + 1)
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Banner Customization Modal */}
+      {isEditingBanner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setIsEditingBanner(false)}
+          />
+          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Customize Banner</h2>
+              <button
+                onClick={() => setIsEditingBanner(false)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <BannerCustomization
+              initialBannerUrl={profile?.bannerUri}
+              onSave={(newBannerUrl) => {
+                setIsEditingBanner(false)
+                if (userId) {
+                  invalidateBannerCache(userId)
+                }
+                setBannerKey(prev => prev + 1)
+                // Update profile state with new banner URL
+                setProfile(prev => prev ? { ...prev, bannerUri: newBannerUrl || undefined } : null)
               }}
             />
           </div>

@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
+import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { Loader2 } from 'lucide-react'
-import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
 import Image from 'next/image'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
@@ -24,6 +26,8 @@ import {
   type DiceBearStyle,
 } from '@/lib/services/unified-profile-service'
 
+type AvatarSource = 'generated' | 'custom'
+
 function CreateProfilePage() {
   const router = useRouter()
   const { user, logout } = useAuth()
@@ -32,8 +36,15 @@ function CreateProfilePage() {
   const [privateKey, setPrivateKey] = useState('')
   const [isCheckingProfile, setIsCheckingProfile] = useState(true)
   const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
+
+  // Avatar state
+  const [avatarSource, setAvatarSource] = useState<AvatarSource>('generated')
   const [avatarStyle, setAvatarStyle] = useState<DiceBearStyle>(DEFAULT_AVATAR_STYLE)
   const [avatarSeed, setAvatarSeed] = useState<string>('')
+  const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null)
+
+  // Banner state
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
     displayName: '',
@@ -134,10 +145,15 @@ function CreateProfilePage() {
 
       console.log('Creating profile with data:', formData)
 
-      // Build avatar data from current settings
-      const avatarData = avatarSeed
-        ? unifiedProfileService.encodeAvatarData(avatarSeed, avatarStyle)
-        : undefined
+      // Build avatar data - either custom URL or generated DiceBear settings
+      let avatarData: string | undefined
+      if (avatarSource === 'custom' && customAvatarUrl) {
+        // Store custom image URL directly
+        avatarData = customAvatarUrl
+      } else if (avatarSeed) {
+        // Store DiceBear settings as JSON
+        avatarData = unifiedProfileService.encodeAvatarData(avatarSeed, avatarStyle)
+      }
 
       // Create the profile on the new unified profile contract
       await unifiedProfileService.createProfile(user.identityId, {
@@ -148,6 +164,7 @@ function CreateProfilePage() {
         pronouns: formData.pronouns || undefined,
         nsfw: formData.nsfw || undefined,
         avatar: avatarData,
+        bannerUri: bannerUrl || undefined,
         paymentUris: paymentUris.length > 0 ? paymentUris : undefined,
         socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
       })
@@ -301,52 +318,137 @@ function CreateProfilePage() {
             <div className="space-y-4">
               <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avatar</h3>
 
-              <div className="flex items-start gap-6">
-                {/* Avatar Preview */}
-                <div className="flex-shrink-0">
-                  <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
-                    {avatarSeed && (
-                      <Image
-                        src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
-                        alt="Avatar preview"
-                        width={96}
-                        height={96}
-                        className="w-full h-full object-cover"
-                        unoptimized
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {/* Avatar Controls */}
-                <div className="flex-1 space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Style
-                    </label>
-                    <select
-                      value={avatarStyle}
-                      onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                    >
-                      {DICEBEAR_STYLES.map((style) => (
-                        <option key={style} value={style}>
-                          {DICEBEAR_STYLE_LABELS[style]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setAvatarSeed(unifiedProfileService.generateRandomSeed())}
-                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400 dark:hover:text-yappr-300 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 rounded-lg transition-colors"
-                  >
+              {/* Avatar Source Tabs */}
+              <div className="flex border-b border-gray-200 dark:border-gray-700">
+                <button
+                  type="button"
+                  onClick={() => setAvatarSource('generated')}
+                  className={`flex-1 py-2 px-4 text-sm font-medium transition-colors relative ${
+                    avatarSource === 'generated'
+                      ? 'text-yappr-600 dark:text-yappr-400'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-2">
                     <SparklesIcon className="h-4 w-4" />
-                    Randomize
-                  </button>
-                </div>
+                    Generated
+                  </span>
+                  {avatarSource === 'generated' && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yappr-500" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAvatarSource('custom')}
+                  className={`flex-1 py-2 px-4 text-sm font-medium transition-colors relative ${
+                    avatarSource === 'custom'
+                      ? 'text-yappr-600 dark:text-yappr-400'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <PhotoIcon className="h-4 w-4" />
+                    Custom Image
+                  </span>
+                  {avatarSource === 'custom' && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yappr-500" />
+                  )}
+                </button>
               </div>
+
+              {avatarSource === 'generated' ? (
+                <div className="flex items-start gap-6">
+                  {/* Avatar Preview */}
+                  <div className="flex-shrink-0">
+                    <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
+                      {avatarSeed && (
+                        <Image
+                          src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
+                          alt="Avatar preview"
+                          width={96}
+                          height={96}
+                          className="w-full h-full object-cover"
+                          unoptimized
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Avatar Controls */}
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Style
+                      </label>
+                      <select
+                        value={avatarStyle}
+                        onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      >
+                        {DICEBEAR_STYLES.map((style) => (
+                          <option key={style} value={style}>
+                            {DICEBEAR_STYLE_LABELS[style]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setAvatarSeed(unifiedProfileService.generateRandomSeed())}
+                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400 dark:hover:text-yappr-300 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 rounded-lg transition-colors"
+                    >
+                      <SparklesIcon className="h-4 w-4" />
+                      Randomize
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <ProfileImageUpload
+                    currentUrl={customAvatarUrl || undefined}
+                    onUpload={(url) => setCustomAvatarUrl(url)}
+                    onClear={() => setCustomAvatarUrl(null)}
+                    aspectRatio="square"
+                    maxSizeMB={2}
+                    label=""
+                    placeholder="Click to upload your avatar"
+                  />
+                  <p className="text-xs text-gray-500 text-center">
+                    Upload a custom image for your avatar. Recommended: square image, at least 200x200px.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Banner Section */}
+            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Banner (Optional)</h3>
+
+              {/* Banner Preview */}
+              {bannerUrl && (
+                <div className="relative aspect-[3/1] rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={isIpfsProtocol(bannerUrl) ? ipfsToGatewayUrl(bannerUrl) : bannerUrl}
+                    alt="Banner preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+
+              <ProfileImageUpload
+                currentUrl={bannerUrl || undefined}
+                onUpload={(url) => setBannerUrl(url)}
+                onClear={() => setBannerUrl(null)}
+                aspectRatio="banner"
+                maxSizeMB={5}
+                label=""
+                placeholder="Click to upload banner image"
+              />
+              <p className="text-xs text-gray-500">
+                Recommended: 1500x500 pixels (3:1 aspect ratio). Max 5MB.
+              </p>
             </div>
 
             {/* Basic Info Section */}
