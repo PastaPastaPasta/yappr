@@ -64,6 +64,7 @@ interface ProfileData {
   nsfw?: boolean
   hasUnifiedProfile?: boolean
   bannerUri?: string
+  joinedAt?: Date
 }
 
 /**
@@ -262,6 +263,7 @@ function UserProfileContent() {
             nsfw: profileResult.nsfw,
             hasUnifiedProfile: profileResult.hasUnifiedProfile,
             bannerUri: profileResult.bannerUri,
+            joinedAt: profileResult.joinedAt,
           })
         } else {
           // Even without a Yappr profile, show follow counts
