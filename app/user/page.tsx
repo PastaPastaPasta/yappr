@@ -108,6 +108,11 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
     encryptedContent: reply.encryptedContent,
     epoch: reply.epoch,
     nonce: reply.nonce,
+    // Thread context fields
+    parentId: reply.parentId,
+    parentOwnerId: reply.parentOwnerId,
+    // Enrichment metadata
+    _enrichment: reply._enrichment,
   }))
 
   return [...posts, ...convertedReplies]
