@@ -384,7 +384,7 @@ class NotificationService {
 
       // Build a map of orderId -> storeId from orders for enrichment
       const orderStoreMap = new Map<string, string>();
-      for (const order of orders) {
+      for (const order of orders as any[]) {
         const storeId = order.storeId ? identifierToBase58(order.storeId) : undefined;
         if (storeId) {
           orderStoreMap.set(order.$id, storeId);
