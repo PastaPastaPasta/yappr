@@ -86,8 +86,8 @@ export function PostContent({
   const parsedContent = useMemo(() => {
     // Patterns for inline elements (hashtags, cashtags, mentions, urls)
     const inlinePatterns: Array<{ regex: RegExp; type: PartType }> = [
-      // URLs: http://, https://, or www. prefixed
-      { regex: /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/g, type: 'url' },
+      // URLs: http://, https://, ipfs://, or www. prefixed
+      { regex: /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/g, type: 'url' },
       // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
       { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
       // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
@@ -242,7 +242,7 @@ export function PostContent({
   // Used for both top-level and nested content inside bold/italic
   const renderInlinePart = (part: ContentPart, key: string | number): React.ReactNode => {
     if (part.type === 'url') {
-      const href = part.value.startsWith('www.')
+      const href = part.value.toLowerCase().startsWith('www.')
         ? `https://${part.value}`
         : part.value
       // Use stripTrailingPunctuation for cleanHref to match extractFirstUrl's normalization
