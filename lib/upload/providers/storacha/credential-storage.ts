@@ -11,15 +11,17 @@
 import type { StorachaCredentials } from '../../types'
 
 const PREFIX = 'yappr_storacha_'
-const REMEMBER_KEY = 'yappr_remember_me'
 
 /**
- * Get the appropriate storage based on remember me setting
+ * Get storage for Storacha credentials.
+ * Always uses localStorage since:
+ * - Storacha credentials are not security-sensitive (only authorize uploads to user's own space)
+ * - Re-verification via email is high-friction
+ * - On-chain backup exists for cross-device sync
  */
 function getStorage(): Storage | null {
   if (typeof window === 'undefined') return null
-  const remember = localStorage.getItem(REMEMBER_KEY) === 'true'
-  return remember ? localStorage : sessionStorage
+  return localStorage
 }
 
 /**
@@ -29,8 +31,8 @@ function isStorageAvailable(): boolean {
   if (typeof window === 'undefined') return false
   try {
     const test = '__storage_test__'
-    sessionStorage.setItem(test, test)
-    sessionStorage.removeItem(test)
+    localStorage.setItem(test, test)
+    localStorage.removeItem(test)
     return true
   } catch {
     return false
@@ -62,9 +64,8 @@ function get(key: string): unknown {
     const item = storage.getItem(PREFIX + key)
     if (item) return JSON.parse(item)
 
-    // Fallback: check the other storage
-    const otherStorage = localStorage.getItem(REMEMBER_KEY) === 'true' ? sessionStorage : localStorage
-    const fallback = otherStorage.getItem(PREFIX + key)
+    // Fallback: check sessionStorage for credentials stored before this change
+    const fallback = sessionStorage.getItem(PREFIX + key)
     return fallback ? JSON.parse(fallback) : null
   } catch {
     return null
@@ -90,9 +91,8 @@ function has(key: string): boolean {
   const storage = getStorage()
   if (!storage) return false
   if (storage.getItem(PREFIX + key) !== null) return true
-  // Check other storage as fallback
-  const otherStorage = localStorage.getItem(REMEMBER_KEY) === 'true' ? sessionStorage : localStorage
-  return otherStorage.getItem(PREFIX + key) !== null
+  // Check sessionStorage as fallback for credentials stored before this change
+  return sessionStorage.getItem(PREFIX + key) !== null
 }
 
 // ==========================================
@@ -148,7 +148,11 @@ export function getStorachaSpace(identityId: string): string | null {
  * Check if Storacha credentials exist for an identity
  */
 export function hasStorachaCredentials(identityId: string): boolean {
-  return has(`email_${identityId}`) && has(`agent_${identityId}`) && has(`space_${identityId}`)
+  const hasEmail = has(`email_${identityId}`)
+  const hasAgent = has(`agent_${identityId}`)
+  const hasSpace = has(`space_${identityId}`)
+  console.log('[Storacha Storage] hasCredentials check:', { identityId, hasEmail, hasAgent, hasSpace })
+  return hasEmail && hasAgent && hasSpace
 }
 
 /**
@@ -170,9 +174,11 @@ export function getStorachaCredentials(identityId: string): StorachaCredentials 
  * Store all Storacha credentials for an identity
  */
 export function storeStorachaCredentials(identityId: string, credentials: StorachaCredentials): void {
+  console.log('[Storacha Storage] Storing credentials for identity:', identityId)
   storeStorachaEmail(identityId, credentials.email)
   storeStorachaAgent(identityId, credentials.agentData)
   storeStorachaSpace(identityId, credentials.spaceDid)
+  console.log('[Storacha Storage] Credentials stored successfully')
 }
 
 /**

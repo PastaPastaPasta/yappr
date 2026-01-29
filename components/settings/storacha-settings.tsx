@@ -36,12 +36,6 @@ export function StorachaSettings() {
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
-  // Backup integration state
-  const [hasBackup, setHasBackup] = useState(false)
-  const [hasStorachaInBackup, setHasStorachaInBackup] = useState(false)
-  const [showBackupPassword, setShowBackupPassword] = useState(false)
-  const [backupPassword, setBackupPassword] = useState('')
-  const [isAddingToBackup, setIsAddingToBackup] = useState(false)
 
   const checkConnectionStatus = useCallback(async () => {
     if (!user) {
@@ -54,24 +48,26 @@ export function StorachaSettings() {
       provider.setIdentityId(user.identityId)
 
       // Check if we have stored credentials
-      if (provider.hasStoredCredentials()) {
+      const hasCredentials = provider.hasStoredCredentials()
+      console.log('[Storacha] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
+
+      if (hasCredentials) {
         try {
           await provider.connect()
           setStatus('connected')
           setConnectedEmail(provider.getConnectedEmail())
           setSpaceDid(provider.getSpaceDid())
-        } catch {
+          console.log('[Storacha] Successfully connected')
+        } catch (err) {
           // Credentials may be stale
+          console.error('[Storacha] Failed to connect with stored credentials:', err)
           setStatus('disconnected')
         }
       } else {
+        console.log('[Storacha] No stored credentials found')
         setStatus('disconnected')
       }
 
-      // Check backup status
-      const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
-      const backupExists = await encryptedKeyService.hasBackup(user.identityId)
-      setHasBackup(backupExists)
     } catch (error) {
       console.error('Error checking Storacha status:', error)
       setStatus('error')
@@ -102,10 +98,16 @@ export function StorachaSettings() {
     setIsConnecting(true)
     setConnectionError(null)
 
-    try {
-      const provider = getStorachaProvider()
-      provider.setIdentityId(user.identityId)
+    const provider = getStorachaProvider()
+    provider.setIdentityId(user.identityId)
 
+    // Poll provider status during connection to update UI in real-time
+    const statusInterval = setInterval(() => {
+      const providerStatus = provider.getStatus()
+      setStatus(providerStatus)
+    }, 500)
+
+    try {
       // This will send verification email and wait for user to click link
       await provider.setupWithEmail(emailInput.trim())
 
@@ -117,13 +119,23 @@ export function StorachaSettings() {
       toast.success('Storacha connected successfully!')
     } catch (error) {
       console.error('Failed to connect:', error)
-      const message = error instanceof Error ? error.message : 'Failed to connect'
+      // Extract the underlying error message if available
+      let message = 'Failed to connect'
+      if (error instanceof Error) {
+        message = error.message
+        // Check for cause (UploadException stores original error)
+        const cause = (error as { cause?: Error }).cause
+        if (cause) {
+          console.error('Underlying error:', cause)
+          message = `${error.message}: ${cause.message}`
+        }
+      }
       setConnectionError(message)
 
       // Update status based on error
-      const provider = getStorachaProvider()
       setStatus(provider.getStatus())
     } finally {
+      clearInterval(statusInterval)
       setIsConnecting(false)
     }
   }
@@ -144,45 +156,6 @@ export function StorachaSettings() {
     } catch (error) {
       console.error('Failed to disconnect:', error)
       toast.error('Failed to disconnect')
-    }
-  }
-
-  const handleAddToBackup = async () => {
-    if (!user || !backupPassword) return
-
-    setIsAddingToBackup(true)
-
-    try {
-      const provider = getStorachaProvider()
-      const credentials = provider.getCredentials()
-
-      if (!credentials) {
-        toast.error('No Storacha credentials to backup')
-        return
-      }
-
-      const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
-
-      const result = await encryptedKeyService.updateBackupWithStoracha(
-        user.identityId,
-        backupPassword,
-        credentials
-      )
-
-      if (result.success) {
-        setHasStorachaInBackup(true)
-        setShowBackupPassword(false)
-        setBackupPassword('')
-        toast.success('Storacha credentials added to backup!')
-      } else {
-        toast.error(result.error || 'Failed to add to backup')
-      }
-    } catch (error) {
-      console.error('Failed to add to backup:', error)
-      const message = error instanceof Error ? error.message : 'Failed to add to backup'
-      toast.error(message)
-    } finally {
-      setIsAddingToBackup(false)
     }
   }
 
@@ -237,72 +210,10 @@ export function StorachaSettings() {
               </div>
             </div>
 
-            {/* Backup integration */}
-            {hasBackup && !hasStorachaInBackup && (
-              <div className="border-t pt-4">
-                <h4 className="text-sm font-medium mb-2">Backup Integration</h4>
-                {!showBackupPassword ? (
-                  <div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
-                    <p className="text-sm text-blue-700 dark:text-blue-300 mb-2">
-                      Add your Storacha credentials to your on-chain backup for recovery across devices.
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowBackupPassword(true)}
-                    >
-                      Add to Backup
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Enter your backup password to add Storacha credentials:
-                    </p>
-                    <Input
-                      type="password"
-                      placeholder="Backup password"
-                      value={backupPassword}
-                      onChange={(e) => setBackupPassword(e.target.value)}
-                    />
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setShowBackupPassword(false)
-                          setBackupPassword('')
-                        }}
-                        disabled={isAddingToBackup}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={handleAddToBackup}
-                        disabled={!backupPassword || isAddingToBackup}
-                      >
-                        {isAddingToBackup ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Adding...
-                          </>
-                        ) : (
-                          'Add to Backup'
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {hasStorachaInBackup && (
-              <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400">
-                <CheckCircleIcon className="h-4 w-4" />
-                <span>Included in on-chain backup</span>
-              </div>
-            )}
+            {/* Note about local storage */}
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Credentials stored locally on this device. Re-authenticate via email on new devices.
+            </p>
 
             <Button
               variant="outline"
@@ -313,18 +224,71 @@ export function StorachaSettings() {
             </Button>
           </>
         ) : status === 'verification_pending' ? (
-          <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
-            <div className="flex gap-3">
-              <Loader2 className="h-5 w-5 text-amber-600 dark:text-amber-400 animate-spin flex-shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                  Waiting for email verification
-                </p>
-                <p className="text-sm text-amber-700 dark:text-amber-300">
-                  Please check your email and click the verification link.
-                </p>
+          <div className="space-y-4">
+            <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
+              <div className="flex gap-3">
+                <Loader2 className="h-5 w-5 text-amber-600 dark:text-amber-400 animate-spin flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                    Waiting for email verification
+                  </p>
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    Please check your email and click the verification link.
+                  </p>
+                </div>
               </div>
             </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                const provider = getStorachaProvider()
+                provider.disconnect(false).catch(console.error)
+                setStatus('disconnected')
+                setIsConnecting(false)
+                setShowEmailInput(false)
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : status === 'awaiting_plan' ? (
+          <div className="space-y-4">
+            <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg">
+              <div className="flex gap-3">
+                <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    Select a storage plan
+                  </p>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    Please visit{' '}
+                    <a
+                      href="https://console.storacha.network"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline font-medium"
+                    >
+                      console.storacha.network
+                    </a>
+                    {' '}to select a plan (free tier available with 5GB).
+                  </p>
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                const provider = getStorachaProvider()
+                provider.disconnect(false).catch(console.error)
+                setStatus('disconnected')
+                setIsConnecting(false)
+                setShowEmailInput(false)
+              }}
+            >
+              Cancel
+            </Button>
           </div>
         ) : (
           <>
@@ -344,12 +308,23 @@ export function StorachaSettings() {
                         <span className="text-yappr-500">•</span>
                         Free tier includes 5GB of storage
                       </li>
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        Sign up with just an email address
-                      </li>
                     </ul>
                   </div>
+                </div>
+
+                <div className="bg-amber-50 dark:bg-amber-950 p-3 rounded-lg">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    <strong>Note:</strong> Storacha is a third-party service. New accounts require email verification and selecting a plan at{' '}
+                    <a
+                      href="https://console.storacha.network"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      console.storacha.network
+                    </a>
+                    . The free tier may require credit card verification.
+                  </p>
                 </div>
 
                 <Button className="w-full" onClick={handleStartConnect}>

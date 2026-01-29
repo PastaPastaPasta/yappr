@@ -12,6 +12,7 @@ export type ProviderStatus =
   | 'disconnected'
   | 'connecting'
   | 'verification_pending'
+  | 'awaiting_plan'
   | 'connected'
   | 'error'
 

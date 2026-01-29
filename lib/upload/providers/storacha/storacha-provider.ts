@@ -22,10 +22,71 @@ export type { StorachaCredentials }
 // Storacha client types (dynamically imported)
 type StorachaClient = Awaited<ReturnType<typeof import('@storacha/client').create>>
 type Account = Awaited<ReturnType<StorachaClient['login']>>
+type AgentDataExport = Parameters<typeof import('@storacha/access/agent').AgentData.fromExport>[0]
 
 const SPACE_NAME = 'yappr-uploads'
 const VERIFICATION_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
-const IPFS_GATEWAY = 'https://w3s.link/ipfs' // Storacha's gateway
+
+/**
+ * Custom JSON replacer for Storacha data types
+ * Matches the format used by @storacha/access/utils/json.js
+ */
+function jsonReplacer(_k: string, v: unknown): unknown {
+  if (v instanceof URL) {
+    return { $url: v.toString() }
+  } else if (v instanceof Map) {
+    return { $map: Array.from(v.entries()) }
+  } else if (v instanceof Uint8Array) {
+    return { $bytes: Array.from(v) }
+  } else if (v instanceof ArrayBuffer) {
+    return { $bytes: Array.from(new Uint8Array(v)) }
+  } else if (v && typeof v === 'object' && 'type' in v && v.type === 'Buffer' && 'data' in v && Array.isArray(v.data)) {
+    return { $bytes: v.data }
+  }
+  return v
+}
+
+/**
+ * Custom JSON reviver for Storacha data types
+ * Matches the format used by @storacha/access/utils/json.js
+ */
+function jsonReviver(_k: string, v: unknown): unknown {
+  if (!v || typeof v !== 'object') return v
+  const obj = v as Record<string, unknown>
+  if ('$url' in obj && typeof obj.$url === 'string') return new URL(obj.$url)
+  if ('$map' in obj && Array.isArray(obj.$map)) return new Map(obj.$map)
+  if ('$bytes' in obj && Array.isArray(obj.$bytes)) return new Uint8Array(obj.$bytes)
+  return v
+}
+
+/**
+ * Custom store driver that captures AgentDataExport for credential storage
+ */
+class InMemoryStore {
+  private data: AgentDataExport | undefined = undefined
+
+  async open(): Promise<void> {}
+  async close(): Promise<void> {}
+  async reset(): Promise<void> {
+    this.data = undefined
+  }
+
+  async save(data: AgentDataExport): Promise<void> {
+    this.data = data
+  }
+
+  async load(): Promise<AgentDataExport | undefined> {
+    return this.data
+  }
+
+  getData(): AgentDataExport | undefined {
+    return this.data
+  }
+
+  setData(data: AgentDataExport): void {
+    this.data = data
+  }
+}
 
 /**
  * Storacha upload provider implementation
@@ -34,6 +95,7 @@ export class StorachaProvider implements UploadProvider {
   readonly name = 'Storacha'
 
   private client: StorachaClient | null = null
+  private store: InMemoryStore | null = null
   private status: ProviderStatus = 'disconnected'
   private identityId: string | null = null
   private connectedEmail: string | null = null
@@ -76,15 +138,24 @@ export class StorachaProvider implements UploadProvider {
     try {
       // Dynamically import to avoid SSR issues
       const { create } = await import('@storacha/client')
+      const { generate } = await import('@ucanto/principal/ed25519')
 
-      // Create a new client
-      this.client = await create()
+      // Create a custom store to capture agent data for export
+      this.store = new InMemoryStore()
+
+      // Generate Ed25519 key instead of default RSA
+      // Ed25519 keys are extractable and can be serialized, unlike browser RSA keys
+      const principal = await generate()
+
+      // Create a new client with our custom store and Ed25519 principal
+      this.client = await create({ store: this.store, principal })
 
       this.status = 'verification_pending'
 
       // Login with email - this sends verification email and waits for click
       let account: Account
       try {
+        console.log('[Storacha] Starting login for:', email)
         account = await Promise.race([
           this.client.login(email as `${string}@${string}`, { signal }),
           new Promise<never>((_, reject) =>
@@ -94,27 +165,41 @@ export class StorachaProvider implements UploadProvider {
             )
           )
         ])
+        console.log('[Storacha] Login completed successfully')
       } catch (error) {
+        console.error('[Storacha] Login error:', error)
+        console.error('[Storacha] Error type:', typeof error)
+        console.error('[Storacha] Error constructor:', error?.constructor?.name)
         if (error instanceof UploadException) {
           throw error
         }
+        const errorMessage = error instanceof Error ? error.message : String(error)
         throw new UploadException(
           UploadErrorCode.VERIFICATION_FAILED,
-          'Email verification failed',
+          `Email verification failed: ${errorMessage}`,
           error instanceof Error ? error : undefined
         )
       }
 
-      // Wait for plan if new account
+      // Wait for plan - user needs to select a plan on console.storacha.network
+      console.log('[Storacha] Waiting for plan selection...')
+      this.status = 'awaiting_plan'
       try {
         await account.plan.wait()
+        console.log('[Storacha] Plan confirmed')
       } catch (error) {
-        // Plan wait can fail for various reasons, log but continue
-        console.warn('Plan wait failed (may be expected for existing accounts):', error)
+        console.warn('[Storacha] Plan wait failed:', error)
+        throw new UploadException(
+          UploadErrorCode.CONNECTION_FAILED,
+          'Failed to confirm plan. Please select a plan at console.storacha.network',
+          error instanceof Error ? error : undefined
+        )
       }
 
       // Check for existing spaces or create new one
+      console.log('[Storacha] Checking for existing spaces...')
       const spaces = this.client.spaces()
+      console.log('[Storacha] Found spaces:', spaces.length)
       const space = spaces.find(s => s.name === SPACE_NAME)
       let spaceDid: `did:key:${string}`
 
@@ -135,13 +220,17 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Set as current space
+      console.log('[Storacha] Setting current space:', spaceDid)
       await this.client.setCurrentSpace(spaceDid)
 
       // Export and store credentials
+      console.log('[Storacha] Saving credentials...')
       await this.saveCredentials(email, spaceDid)
+      console.log('[Storacha] Credentials saved')
 
       this.connectedEmail = email
       this.status = 'connected'
+      console.log('[Storacha] Setup complete, status:', this.status)
     } catch (error) {
       this.status = 'error'
       this.client = null
@@ -192,22 +281,16 @@ export class StorachaProvider implements UploadProvider {
    */
   private async restoreFromCredentials(credentials: StorachaCredentials): Promise<void> {
     const { create } = await import('@storacha/client')
-    const { AgentData } = await import('@storacha/access/agent')
 
-    // Parse the stored agent data
-    const exportedData = JSON.parse(atob(credentials.agentData))
+    // Parse the stored agent data using custom reviver that handles Map, Uint8Array, etc.
+    const exportedData = JSON.parse(atob(credentials.agentData), jsonReviver) as AgentDataExport
 
-    // Restore agent data from export
-    const agentData = AgentData.fromExport(exportedData)
+    // Create a store pre-loaded with the exported data
+    this.store = new InMemoryStore()
+    this.store.setData(exportedData)
 
-    // Create client with restored agent data
-    this.client = await create({ principal: agentData.principal })
-
-    // Import the proofs/delegations
-    const delegations = Array.from(agentData.delegations.values())
-    for (const delegationEntry of delegations) {
-      await this.client.agent.addProof(delegationEntry.delegation)
-    }
+    // Create client with the store containing our saved data
+    this.client = await create({ store: this.store })
 
     // Set the current space
     await this.client.setCurrentSpace(credentials.spaceDid as `did:key:${string}`)
@@ -217,23 +300,31 @@ export class StorachaProvider implements UploadProvider {
    * Save credentials for later restoration
    */
   private async saveCredentials(email: string, spaceDid: string): Promise<void> {
-    if (!this.identityId || !this.client) {
+    if (!this.identityId || !this.client || !this.store) {
       throw new UploadException(UploadErrorCode.CREDENTIAL_ERROR, 'Cannot save credentials without client')
     }
 
-    // Export agent data and encode as base64
-    // Access agent's underlying data for export via internal API
-    // Note: This uses internal Storacha API - may need updates if SDK changes
+    // Get exported agent data from our store
     try {
-      const internalClient = this.client as unknown as { _agent?: { data?: { export?: () => unknown } } }
-      if (!internalClient._agent?.data?.export) {
-        throw new Error('Storacha SDK structure changed - unable to export agent data')
-      }
-      const exported = internalClient._agent.data.export()
+      const exported = this.store.getData()
       if (!exported) {
-        throw new Error('Agent data export returned empty')
+        throw new Error('No agent data available in store')
       }
-      const agentDataB64 = btoa(JSON.stringify(exported))
+
+      // Use custom JSON serialization that handles Map, Uint8Array, ArrayBuffer, URL
+      // This matches the format used by @storacha/access internally
+      const jsonStr = JSON.stringify(exported, jsonReplacer)
+      const agentDataB64 = btoa(jsonStr)
+
+      console.log('[Storacha] Credential sizes:', {
+        jsonLength: jsonStr.length,
+        base64Length: agentDataB64.length,
+        delegationsCount: Array.isArray(exported.delegations)
+          ? exported.delegations.length
+          : exported.delegations instanceof Map
+            ? exported.delegations.size
+            : 0
+      })
 
       const credentials: StorachaCredentials = {
         email,
@@ -256,6 +347,7 @@ export class StorachaProvider implements UploadProvider {
    */
   async disconnect(clearCredentials = true): Promise<void> {
     this.client = null
+    this.store = null
     this.connectedEmail = null
     this.status = 'disconnected'
 
@@ -364,7 +456,7 @@ export class StorachaProvider implements UploadProvider {
         cid: cidString,
         size: file.size,
         mime: file.type,
-        url: `${IPFS_GATEWAY}/${cidString}`
+        url: `ipfs://${cidString}`
       }
     } catch (error) {
       // Check for quota errors

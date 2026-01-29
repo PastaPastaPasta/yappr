@@ -849,13 +849,13 @@ export function ComposeModal() {
     let failureError: Error | null = null
 
     // Upload image first if attached (and not already uploaded)
-    let mediaUrl: string | undefined
+    let imageUrl: string | undefined
     if (attachedImage && !attachedImage.uploadResult) {
       try {
         setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
         const result = await upload(attachedImage.file)
         setAttachedImage(prev => prev ? { ...prev, uploadResult: result } : null)
-        mediaUrl = result.url // ipfs://CID
+        imageUrl = result.url // ipfs://CID
       } catch (err) {
         console.error('Failed to upload image:', err)
         toast.error('Failed to upload image')
@@ -864,7 +864,7 @@ export function ComposeModal() {
         return
       }
     } else if (attachedImage?.uploadResult) {
-      mediaUrl = attachedImage.uploadResult.url
+      imageUrl = attachedImage.uploadResult.url
     }
 
     try {
@@ -877,9 +877,12 @@ export function ComposeModal() {
       // Filter to only unposted posts with content, preserving their IDs
       const postsToCreate = threadPosts
         .filter((p) => p.content.trim().length > 0 && !p.postedPostId)
-        .map((p) => ({
+        .map((p, index) => ({
           threadPostId: p.id,
-          content: p.content.trim(),
+          // Append image URL to first post's content if we have one
+          content: index === 0 && imageUrl
+            ? `${p.content.trim()}\n\n${imageUrl}`
+            : p.content.trim(),
           teaser: p.teaser?.trim(),
           visibility: p.visibility,
         }))
@@ -958,7 +961,6 @@ export function ComposeModal() {
                 quotedPostId: i === 0 ? quotingPost?.id : undefined,
                 quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
                 encryption: encryptionOptions,
-                mediaUrl: i === 0 ? mediaUrl : undefined, // Only first post gets image
               })
               return { postId: post.id, document: post, isReply: false }
             }

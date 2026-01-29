@@ -7,12 +7,10 @@ import {
   decryptKeyFromOnchain,
   validateBackupPassword,
   benchmarkPbkdf2,
-  encryptExtendedBackup,
   decryptBackupPayload,
   OnchainEncryptedData,
   BenchmarkResult,
   StorachaBackupCredentials,
-  ExtendedBackupPayload,
 } from '../onchain-key-encryption';
 
 export interface EncryptedKeyBackupDocument {
@@ -36,11 +34,6 @@ export interface LoginWithPasswordResult {
   identityId: string;
   privateKey: string;
   storachaCredentials?: StorachaBackupCredentials;
-}
-
-export interface UpdateBackupResult {
-  success: boolean;
-  error?: string;
 }
 
 class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument> {
@@ -295,112 +288,6 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       privateKey: decrypted.loginKey,
       storachaCredentials: decrypted.storachaCredentials
     };
-  }
-
-  /**
-   * Update an existing backup to include Storacha credentials.
-   * Requires the user's password to decrypt and re-encrypt the backup.
-   */
-  async updateBackupWithStoracha(
-    identityId: string,
-    password: string,
-    storachaCredentials: StorachaBackupCredentials
-  ): Promise<UpdateBackupResult> {
-    if (!this.isConfigured()) {
-      return {
-        success: false,
-        error: 'Encrypted key backup contract is not configured'
-      };
-    }
-
-    try {
-      // Get existing backup
-      const backup = await this.getBackupByIdentityId(identityId);
-      if (!backup) {
-        return {
-          success: false,
-          error: 'No backup found. Create a backup first.'
-        };
-      }
-
-      // Decrypt current backup to get login key
-      const encryptedData: OnchainEncryptedData = {
-        encryptedKey: backup.encryptedKey,
-        iv: backup.iv,
-        version: backup.version,
-        kdfIterations: backup.kdfIterations
-      };
-
-      const decrypted = await decryptBackupPayload(encryptedData, identityId, password);
-
-      // Create extended payload with Storacha credentials
-      const extendedPayload: ExtendedBackupPayload = {
-        formatVersion: 2,
-        loginKey: decrypted.loginKey,
-        storachaCredentials
-      };
-
-      // Re-encrypt with extended payload
-      const newEncryptedData = await encryptExtendedBackup(
-        extendedPayload,
-        identityId,
-        password,
-        backup.kdfIterations
-      );
-
-      // Update the document on chain
-      const result = await stateTransitionService.updateDocument(
-        this.contractId,
-        this.documentType,
-        backup.$id,
-        identityId,
-        {
-          encryptedKey: newEncryptedData.encryptedKey,
-          iv: newEncryptedData.iv,
-          version: newEncryptedData.version,
-          kdfIterations: newEncryptedData.kdfIterations
-        },
-        backup.$revision
-      );
-
-      if (!result.success) {
-        return {
-          success: false,
-          error: result.error || 'Failed to update backup document'
-        };
-      }
-
-      return { success: true };
-    } catch (error) {
-      console.error('Error updating backup with Storacha:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update backup'
-      };
-    }
-  }
-
-  /**
-   * Check if the backup includes Storacha credentials.
-   * Requires password to decrypt and check.
-   */
-  async hasStorachaInBackup(identityId: string, password: string): Promise<boolean> {
-    try {
-      const backup = await this.getBackupByIdentityId(identityId);
-      if (!backup) return false;
-
-      const encryptedData: OnchainEncryptedData = {
-        encryptedKey: backup.encryptedKey,
-        iv: backup.iv,
-        version: backup.version,
-        kdfIterations: backup.kdfIterations
-      };
-
-      const decrypted = await decryptBackupPayload(encryptedData, identityId, password);
-      return !!decrypted.storachaCredentials;
-    } catch {
-      return false;
-    }
   }
 
   /**
