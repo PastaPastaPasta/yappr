@@ -4,18 +4,24 @@
  * This service provides utilities for creating signers and identity public keys
  * for use with the new typed state transition APIs in @dashevo/evo-sdk
  *
- * IMPORTANT: We import WASM types from @dashevo/evo-sdk which re-exports them from
- * @dashevo/wasm-sdk. By calling getEvoSdk() first, we ensure the shared WASM module
- * is initialized before creating any WASM objects.
+ * IMPORTANT: The SDK is loaded from CDN. By calling loadEvoSdk() first, we ensure
+ * the WASM module is initialized before creating any WASM objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import {
-  IdentitySigner,
-  PrivateKey,
-  IdentityPublicKey,
-} from '@dashevo/evo-sdk';
+import { loadEvoSdk, type IdentitySignerInstance } from './cdn-loader';
 import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
-import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+
+// WasmIdentityPublicKey type - represents the WASM-level identity public key
+// This is compatible with what identity.getPublicKeys() returns
+interface WasmIdentityPublicKey {
+  keyId: number;
+  keyTypeNumber: number;
+  purposeNumber: number;
+  securityLevelNumber: number;
+  securityLevel: number;
+  data: string;
+  disabledAt?: number;
+}
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -74,11 +80,14 @@ class SignerService {
    */
   async createSigner(
     privateKeyWif: string
-  ): Promise<InstanceType<typeof IdentitySigner>> {
+  ): Promise<IdentitySignerInstance> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // Create a new signer instance using imported class
+    // Load SDK from CDN and get IdentitySigner class
+    const { IdentitySigner } = await loadEvoSdk();
+
+    // Create a new signer instance
     const signer = new IdentitySigner();
 
     // Add key directly from WIF (the signer has a convenience method for this)
@@ -97,11 +106,14 @@ class SignerService {
   async createSignerFromHex(
     privateKeyHex: string,
     network: 'testnet' | 'mainnet' = 'testnet'
-  ): Promise<InstanceType<typeof IdentitySigner>> {
+  ): Promise<IdentitySignerInstance> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // Create a new signer instance using imported class
+    // Load SDK from CDN and get classes
+    const { IdentitySigner, PrivateKey } = await loadEvoSdk();
+
+    // Create a new signer instance
     const signer = new IdentitySigner();
 
     // Create PrivateKey from hex and add to signer
@@ -123,9 +135,12 @@ class SignerService {
    */
   async createIdentityPublicKey(
     keyData: IdentityPublicKeyType
-  ): Promise<InstanceType<typeof IdentityPublicKey>> {
+  ): Promise<unknown> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
+
+    // Load SDK from CDN and get IdentityPublicKey class
+    const { IdentityPublicKey } = await loadEvoSdk();
 
     // Normalize the key data to match the expected JSON format
     // The fromJSON method expects camelCase fields
@@ -213,8 +228,8 @@ class SignerService {
     privateKeyWif: string,
     keyData: IdentityPublicKeyType
   ): Promise<{
-    signer: InstanceType<typeof IdentitySigner>;
-    identityKey: InstanceType<typeof IdentityPublicKey>;
+    signer: IdentitySignerInstance;
+    identityKey: unknown;
   }> {
     const [signer, identityKey] = await Promise.all([
       this.createSigner(privateKeyWif),
@@ -241,7 +256,7 @@ class SignerService {
     privateKeyWif: string,
     wasmKey: WasmIdentityPublicKey
   ): Promise<{
-    signer: InstanceType<typeof IdentitySigner>;
+    signer: IdentitySignerInstance;
     identityKey: WasmIdentityPublicKey;
   }> {
     const signer = await this.createSigner(privateKeyWif);
@@ -249,6 +264,9 @@ class SignerService {
     return { signer, identityKey: wasmKey };
   }
 }
+
+// Re-export WasmIdentityPublicKey type for use by other services
+export type { WasmIdentityPublicKey };
 
 // Singleton instance
 export const signerService = new SignerService();

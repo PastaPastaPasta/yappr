@@ -5,15 +5,25 @@
  * This helper converts that to a simple array of document data.
  */
 
-import type { EvoSDK } from '@dashevo/evo-sdk';
-import type {
-  DocumentsQuery,
-  DocumentWhereClause,
-  DocumentOrderByClause,
-} from '@dashevo/wasm-sdk';
+import type { EvoSDK } from './evo-sdk-service';
 import bs58 from 'bs58';
 
-export type { DocumentWhereClause, DocumentOrderByClause };
+// Query types - these match the SDK's query interface
+// Where clauses can be tuples like ['field', 'operator', value] or objects
+export type DocumentWhereClause = [string, string, unknown] | { [key: string]: unknown };
+
+// Order by clauses can be tuples like ['field', 'asc'/'desc'] or objects
+export type DocumentOrderByClause = [string, 'asc' | 'desc'] | { [key: string]: 'asc' | 'desc' };
+
+export interface DocumentsQuery {
+  dataContractId: string;
+  documentTypeName: string;
+  where?: DocumentWhereClause[];
+  orderBy?: DocumentOrderByClause[];
+  limit?: number;
+  startAfter?: string;
+  startAt?: string;
+}
 
 /**
  * Convert any identifier value to a base58 string.

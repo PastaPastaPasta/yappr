@@ -1,4 +1,4 @@
-import { EvoSDK } from '@dashevo/evo-sdk';
+import { loadEvoSdk, type EvoSDKInstance } from './cdn-loader';
 import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '../constants';
 
 export interface EvoSdkConfig {
@@ -6,8 +6,11 @@ export interface EvoSdkConfig {
   contractId: string;
 }
 
+// Re-export the EvoSDK instance type for convenience
+export type EvoSDK = EvoSDKInstance;
+
 class EvoSdkService {
-  private sdk: EvoSDK | null = null;
+  private sdk: EvoSDKInstance | null = null;
   private initPromise: Promise<void> | null = null;
   private config: EvoSdkConfig | null = null;
   private _isInitialized = false;
@@ -54,7 +57,10 @@ class EvoSdkService {
     }
 
     try {
-      console.log('EvoSdkService: Creating EvoSDK instance...');
+      console.log('EvoSdkService: Loading EvoSDK from CDN...');
+
+      // Load SDK from CDN
+      const { EvoSDK } = await loadEvoSdk();
 
       // Create SDK with trusted mode based on network
       if (this.config.network === 'testnet') {
@@ -140,7 +146,7 @@ class EvoSdkService {
   /**
    * Get the SDK instance, initializing if necessary
    */
-  async getSdk(): Promise<EvoSDK> {
+  async getSdk(): Promise<EvoSDKInstance> {
     if (!this._isInitialized || !this.sdk) {
       if (!this.config) {
         throw new Error('SDK not configured. Call initialize() first.');
@@ -226,9 +232,6 @@ class EvoSdkService {
 export const evoSdkService = new EvoSdkService();
 
 // Export helper to ensure SDK is initialized
-export async function getEvoSdk(): Promise<EvoSDK> {
+export async function getEvoSdk(): Promise<EvoSDKInstance> {
   return evoSdkService.getSdk();
 }
-
-// Re-export EvoSDK type for convenience
-export type { EvoSDK };

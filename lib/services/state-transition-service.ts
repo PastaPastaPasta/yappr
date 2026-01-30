@@ -1,8 +1,7 @@
 import { getEvoSdk } from './evo-sdk-service';
-import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
+import { SecurityLevel, KeyPurpose, signerService, type WasmIdentityPublicKey } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
-import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 export interface StateTransitionResult {
   success: boolean;

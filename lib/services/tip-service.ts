@@ -1,10 +1,9 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
-import { signerService, KeyPurpose } from './signer-service';
-import { wallet } from '@dashevo/evo-sdk';
+import { signerService, KeyPurpose, type WasmIdentityPublicKey } from './signer-service';
+import { loadEvoSdk } from './cdn-loader';
 import { TipInfo } from '../types';
 import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
-import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 export interface TipResult {
   success: boolean;
@@ -154,12 +153,14 @@ class TipService {
 
           // Try to derive public key from the provided private key and compare
           try {
+            const { wallet } = await loadEvoSdk();
             const keyPair = await wallet.keyPairFromWif(transferKeyWif.trim());
             console.log('Derived key pair from WIF:', keyPair);
 
             // Find transfer keys (purpose 3) on the identity
             interface IdentityPublicKey { id: number; purpose: number; data?: string }
-            const transferKeys = identityJson.publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
+            const publicKeys = (identityJson.publicKeys || []) as IdentityPublicKey[];
+            const transferKeys = publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
             console.log('Transfer keys on identity:', transferKeys);
 
             if (keyPair?.publicKey) {
@@ -177,7 +178,7 @@ class TipService {
               console.log('Derived public key (base64):', pubKeyBase64);
 
               // Compare with key 3's public key
-              const key3 = identityJson.publicKeys.find((k: IdentityPublicKey) => k.id === 3);
+              const key3 = publicKeys.find((k: IdentityPublicKey) => k.id === 3);
               if (key3) {
                 console.log('Key 3 public key (from identity):', key3.data);
                 console.log('Keys match:', pubKeyBase64 === key3.data);

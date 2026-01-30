@@ -6,12 +6,11 @@
  *
  * The new API requires Document WASM objects instead of plain data objects.
  *
- * IMPORTANT: We import the Document class from @dashevo/evo-sdk which re-exports
- * from the shared @dashevo/wasm-sdk module. By calling getEvoSdk() first, we ensure
+ * IMPORTANT: The SDK is loaded from CDN. By calling loadEvoSdk() first, we ensure
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { Document } from '@dashevo/evo-sdk';
+import { loadEvoSdk, type DocumentInstance } from './cdn-loader';
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -39,9 +38,12 @@ class DocumentBuilderService {
     documentTypeName: string,
     ownerId: string,
     data: Record<string, unknown>
-  ): Promise<InstanceType<typeof Document>> {
+  ): Promise<DocumentInstance> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
+
+    // Load SDK from CDN and get Document class
+    const { Document } = await loadEvoSdk();
 
     // Create document with revision 1 for new documents
     // Document ID is undefined to let the SDK generate it based on entropy
@@ -80,9 +82,12 @@ class DocumentBuilderService {
     ownerId: string,
     data: Record<string, unknown>,
     newRevision: number
-  ): Promise<InstanceType<typeof Document>> {
+  ): Promise<DocumentInstance> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
+
+    // Load SDK from CDN and get Document class
+    const { Document } = await loadEvoSdk();
 
     // Create document with the incremented revision
     const document = new Document(
@@ -137,10 +142,10 @@ class DocumentBuilderService {
    * @param document - A WASM Document or document-like object
    * @returns Normalized document data with $ prefixed fields
    */
-  normalizeDocumentResponse(document: Document | Record<string, unknown>): Record<string, unknown> {
+  normalizeDocumentResponse(document: DocumentInstance | Record<string, unknown>): Record<string, unknown> {
     // Check if it's a WASM Document with toJSON method
-    if (document && typeof (document as Document).toJSON === 'function') {
-      return (document as Document).toJSON();
+    if (document && typeof (document as DocumentInstance).toJSON === 'function') {
+      return (document as DocumentInstance).toJSON();
     }
 
     // Handle raw objects - normalize field names
@@ -172,7 +177,7 @@ class DocumentBuilderService {
    * @param document - The WASM Document after creation
    * @returns The document ID as a string
    */
-  getDocumentId(document: Document): string {
+  getDocumentId(document: DocumentInstance): string {
     // The document.id property returns an Identifier which can be converted to string
     const id = document.id;
     if (typeof id === 'string') {
@@ -183,7 +188,7 @@ class DocumentBuilderService {
     }
     // Fallback: try to get from JSON
     const json = document.toJSON();
-    return json.$id || json.id || '';
+    return (json.$id as string) || (json.id as string) || '';
   }
 }
 

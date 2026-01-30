@@ -36,25 +36,11 @@ const nextConfig = {
     domains: ['images.unsplash.com'],
   },
   webpack: (config, { isServer }) => {
-    // Optimize EvoSDK bundle size
-    if (!isServer) {
-      config.optimization = {
-        ...config.optimization,
-        splitChunks: {
-          chunks: 'all',
-          cacheGroups: {
-            dashevo: {
-              test: /[\\/]node_modules[\\/]@dashevo[\\/]/,
-              name: 'evo-sdk',
-              priority: 10,
-              reuseExistingChunk: true,
-            },
-          },
-        },
-      }
-    }
+    // Note: The main evo-sdk is loaded from CDN using dynamic import with webpackIgnore.
+    // This avoids bundling the large SDK while still allowing specialized WASM classes
+    // (like IdentityPublicKeyInCreation) to be imported directly when needed.
 
-    // Handle WASM files (required for @dashevo/evo-sdk)
+    // Handle WASM files (required for @dashevo/wasm-sdk)
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
@@ -71,7 +57,7 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https: blob:",
               "font-src 'self'",

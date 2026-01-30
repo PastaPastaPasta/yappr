@@ -73,7 +73,7 @@ class IdentityService {
       console.log('Public keys from identity:', identity.publicKeys);
 
       // Normalize public keys to ensure all fields are present
-      const rawPublicKeys = identity.publicKeys || identity.public_keys || [];
+      const rawPublicKeys = (identity.publicKeys || identity.public_keys || []) as IdentityPublicKey[];
       const normalizedPublicKeys: IdentityPublicKey[] = rawPublicKeys.map((key: IdentityPublicKey) => ({
         id: key.id,
         type: key.type,
@@ -86,10 +86,10 @@ class IdentityService {
       }));
 
       const identityInfo: IdentityInfo = {
-        id: identity.id || identityId,
-        balance: identity.balance || 0,
+        id: (identity.id as string) || identityId,
+        balance: (identity.balance as number) || 0,
         publicKeys: normalizedPublicKeys,
-        revision: identity.revision || 0
+        revision: (identity.revision as number) || 0
       };
 
       // Cache the result
