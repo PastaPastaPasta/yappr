@@ -6,7 +6,7 @@ import { Notification } from '../types';
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
 const MAX_READ_IDS = 1000;
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed';
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed' | 'messages' | 'orders';
 
 /**
  * Add IDs to read set and prune if exceeds limit
@@ -150,6 +150,16 @@ export const useNotificationStore = create<NotificationState>()(
             n.type === 'privateFeedRevoked'
           ).length;
         }
+        if (filter === 'messages') {
+          return unread.filter(n => n.type === 'newMessage').length;
+        }
+        if (filter === 'orders') {
+          return unread.filter(n =>
+            n.type === 'orderReceived' ||
+            n.type === 'orderStatusUpdate' ||
+            n.type === 'newReview'
+          ).length;
+        }
         return unread.filter(n => n.type === filter).length;
       },
 
@@ -164,6 +174,18 @@ export const useNotificationStore = create<NotificationState>()(
             n.type === 'privateFeedRequest' ||
             n.type === 'privateFeedApproved' ||
             n.type === 'privateFeedRevoked'
+          );
+        }
+        // Handle messages filter
+        if (state.filter === 'messages') {
+          return state.notifications.filter(n => n.type === 'newMessage');
+        }
+        // Handle orders filter - includes all store-related notifications
+        if (state.filter === 'orders') {
+          return state.notifications.filter(n =>
+            n.type === 'orderReceived' ||
+            n.type === 'orderStatusUpdate' ||
+            n.type === 'newReview'
           );
         }
         // Handle engagement filters (like, repost, reply)
