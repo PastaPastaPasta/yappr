@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { ShoppingCartIcon } from '@heroicons/react/24/outline'
 import { cartService } from '@/lib/services/cart-service'
@@ -14,23 +14,25 @@ export function MobileCartFab({ className }: MobileCartFabProps) {
   const router = useRouter()
   const [itemCount, setItemCount] = useState(0)
   const [isAnimating, setIsAnimating] = useState(false)
-  const [prevCount, setPrevCount] = useState(0)
+  const prevCountRef = useRef(0)
 
   useEffect(() => {
-    setItemCount(cartService.getItemCount())
+    // Initialize prevCount to current cart count to prevent false animation on mount
+    prevCountRef.current = cartService.getItemCount()
+    setItemCount(prevCountRef.current)
 
     const unsubscribe = cartService.subscribe(() => {
       const newCount = cartService.getItemCount()
-      if (newCount > prevCount) {
+      if (newCount > prevCountRef.current) {
         setIsAnimating(true)
         setTimeout(() => setIsAnimating(false), 300)
       }
-      setPrevCount(newCount)
+      prevCountRef.current = newCount
       setItemCount(newCount)
     })
 
     return unsubscribe
-  }, [prevCount])
+  }, [])
 
   // Don't render if cart is empty
   if (itemCount === 0) {
