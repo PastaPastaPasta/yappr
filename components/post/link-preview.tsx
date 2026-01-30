@@ -74,11 +74,11 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
       }}
     >
       <div
-        className="bg-white dark:bg-neutral-900 rounded-xl max-w-md w-full shadow-xl"
+        className="bg-white dark:bg-neutral-900 rounded-xl max-w-md w-full max-h-[90vh] flex flex-col shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-700">
+        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-700 flex-shrink-0">
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
             Link Preview Settings
           </h2>
@@ -91,7 +91,7 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Content */}
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Simple explanation for most users */}
           <div className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
             <p>
@@ -195,7 +195,7 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Actions */}
-        <div className="flex gap-3 p-4 border-t border-neutral-200 dark:border-neutral-700">
+        <div className="flex gap-3 p-4 border-t border-neutral-200 dark:border-neutral-700 flex-shrink-0">
           <button
             onClick={() => handleChoice('disabled')}
             className="flex-1 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-lg transition-colors"
