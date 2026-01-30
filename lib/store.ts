@@ -31,11 +31,14 @@ interface AppState {
   activeThreadPostId: string | null
   // Pending navigation data (set when clicking post, consumed on detail page mount)
   pendingPostNavigation: PendingPostNavigation | null
+  // Mobile message composing mode - hides bottom nav when typing
+  isMobileMessageInputFocused: boolean
 
   setCurrentUser: (user: User | null) => void
   setComposeOpen: (open: boolean) => void
   setReplyingTo: (post: Post | null) => void
   setQuotingPost: (post: Post | null) => void
+  setMobileMessageInputFocused: (focused: boolean) => void
   // Thread composition actions
   addThreadPost: () => void
   removeThreadPost: (id: string) => void
@@ -65,8 +68,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   threadPosts: [createInitialThreadPost()],
   activeThreadPostId: null,
   pendingPostNavigation: null,
+  isMobileMessageInputFocused: false,
 
   setCurrentUser: (user) => set({ currentUser: user }),
+  setMobileMessageInputFocused: (focused) => set({ isMobileMessageInputFocused: focused }),
   setComposeOpen: (open) => {
     if (open) {
       // Reset thread posts when opening modal

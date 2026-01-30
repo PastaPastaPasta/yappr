@@ -18,7 +18,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
 import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
-import { useSettingsStore } from '@/lib/store'
+import { useSettingsStore, useAppStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -51,6 +51,10 @@ function MessagesPage() {
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const searchIdRef = useRef(0)
+  const [isInputFocused, setIsInputFocused] = useState(false)
+  const setMobileMessageInputFocused = useAppStore((s) => s.setMobileMessageInputFocused)
+  const messageInputRef = useRef<HTMLInputElement>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -351,6 +355,44 @@ function MessagesPage() {
     return () => clearTimeout(debounceTimer)
   }, [newConversationInput, user?.identityId])
 
+  // Sync local input focus state with global store for hiding bottom nav
+  useEffect(() => {
+    setMobileMessageInputFocused(isInputFocused)
+  }, [isInputFocused, setMobileMessageInputFocused])
+
+  // Clear focus state when conversation is deselected or component unmounts
+  useEffect(() => {
+    if (!selectedConversation) {
+      setIsInputFocused(false)
+    }
+  }, [selectedConversation])
+
+  // Cleanup: reset focus state when leaving the page
+  useEffect(() => {
+    return () => {
+      setMobileMessageInputFocused(false)
+    }
+  }, [setMobileMessageInputFocused])
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages])
+
+  // Handle focus/blur for mobile keyboard mode
+  const handleInputFocus = () => {
+    setIsInputFocused(true)
+  }
+
+  const handleInputBlur = () => {
+    // Small delay to allow tap on send button to register
+    setTimeout(() => {
+      setIsInputFocused(false)
+    }, 100)
+  }
+
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !user || isSending) return
 
@@ -539,7 +581,7 @@ function MessagesPage() {
   }
 
   return (
-    <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
+    <div className={`${isInputFocused ? 'h-[calc(100dvh-32px)]' : 'h-[calc(100dvh-32px-56px)]'} md:h-[calc(100dvh-40px)] flex overflow-hidden transition-[height] duration-200`}>
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
@@ -728,9 +770,10 @@ function MessagesPage() {
                   )
                 })
               )}
+              <div ref={messagesEndRef} />
             </div>
 
-            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom">
+            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom bg-white dark:bg-neutral-900">
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -739,10 +782,13 @@ function MessagesPage() {
                 className="flex items-center gap-2"
               >
                 <Input
+                  ref={messageInputRef}
                   type="text"
                   placeholder="Type a message..."
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
+                  onFocus={handleInputFocus}
+                  onBlur={handleInputBlur}
                   disabled={isSending}
                   className="flex-1 min-w-0 h-9 sm:h-10 text-base"
                 />

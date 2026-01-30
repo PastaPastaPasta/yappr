@@ -33,7 +33,7 @@ import { useLoginModal } from '@/hooks/use-login-modal'
 export function MobileBottomNav() {
   const pathname = usePathname()
   const { user, logout } = useAuth()
-  const { setComposeOpen } = useAppStore()
+  const { setComposeOpen, isMobileMessageInputFocused } = useAppStore()
   const openLoginModal = useLoginModal((s) => s.open)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
@@ -47,6 +47,11 @@ export function MobileBottomNav() {
   useEffect(() => {
     setMoreMenuOpen(false)
   }, [pathname])
+
+  // Hide the nav bar when composing a message on mobile
+  if (isMobileMessageInputFocused) {
+    return null
+  }
 
   const navItems = [
     {
