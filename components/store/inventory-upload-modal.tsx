@@ -137,12 +137,12 @@ export function InventoryUploadModal({
     URL.revokeObjectURL(url)
   }, [])
 
-  if (!isOpen) return null
-
   const handleBackdropClick = useCallback(() => {
     if (step === 'uploading') return
     handleClose()
   }, [step, handleClose])
+
+  if (!isOpen) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
