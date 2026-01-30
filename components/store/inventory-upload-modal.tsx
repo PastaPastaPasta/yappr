@@ -139,9 +139,17 @@ export function InventoryUploadModal({
 
   if (!isOpen) return null
 
+  const handleBackdropClick = useCallback(() => {
+    if (step === 'uploading') return
+    handleClose()
+  }, [step, handleClose])
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
+      <div
+        className={`absolute inset-0 bg-black/50 ${step === 'uploading' ? 'cursor-not-allowed' : ''}`}
+        onClick={handleBackdropClick}
+      />
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -170,7 +178,7 @@ export function InventoryUploadModal({
                 <ArrowUpTrayIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <p className="text-lg font-medium mb-2">Click to select a CSV file</p>
                 <p className="text-sm text-gray-500">
-                  or drag and drop your inventory file here
+                  Supported format: .csv
                 </p>
                 <input
                   ref={fileInputRef}

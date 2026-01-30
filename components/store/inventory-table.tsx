@@ -1,7 +1,6 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
-import { motion } from 'framer-motion'
+import React, { useState, useCallback, useMemo } from 'react'
 import {
   PencilIcon,
   TrashIcon,
@@ -335,151 +334,144 @@ export function InventoryTable({
                     }, 0)
                   : storeItemService.getStock(item)
 
-                return (
-                  <motion.tr
-                    key={item.id}
-                    initial={false}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                  >
-                    <td className="px-3 py-3">
-                      {hasVariants && (
-                        <button
-                          onClick={() => toggleExpand(item.id)}
-                          className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-                        >
-                          {isExpanded ? (
-                            <ChevronDownIcon className="h-4 w-4" />
-                          ) : (
-                            <ChevronRightIcon className="h-4 w-4" />
-                          )}
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-3">
-                        {item.imageUrls?.[0] ? (
-                          <img
-                            src={item.imageUrls[0]}
-                            alt={item.title}
-                            className="w-10 h-10 object-cover rounded"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
-                            <CubeIcon className="h-5 w-5 text-gray-400" />
+                const variantRows = hasVariants && isExpanded
+                  ? item.variants!.combinations.map((combo: VariantCombination) => (
+                      <tr
+                        key={`${item.id}-${combo.key}`}
+                        className="bg-gray-50 dark:bg-gray-800/30"
+                      >
+                        <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-3 pl-6">
+                            {combo.imageUrl ? (
+                              <img
+                                src={combo.imageUrl}
+                                alt={combo.key}
+                                className="w-8 h-8 object-cover rounded"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
+                            )}
+                            <span className="text-gray-600 dark:text-gray-400">
+                              {combo.key.replace(/\|/g, ' / ')}
+                            </span>
                           </div>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-gray-500 text-sm">
+                          {combo.sku || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {formatPrice(combo.price, currency)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {renderStockCell(item, combo.stock ?? Infinity, combo.key)}
+                        </td>
+                        <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2"></td>
+                      </tr>
+                    ))
+                  : null
+
+                return (
+                  <React.Fragment key={item.id}>
+                    <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td className="px-3 py-3">
+                        {hasVariants && (
+                          <button
+                            onClick={() => toggleExpand(item.id)}
+                            className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                          >
+                            {isExpanded ? (
+                              <ChevronDownIcon className="h-4 w-4" />
+                            ) : (
+                              <ChevronRightIcon className="h-4 w-4" />
+                            )}
+                          </button>
                         )}
-                        <div>
-                          <div className="font-medium">{item.title}</div>
-                          {item.category && (
-                            <div className="text-xs text-gray-500">{item.category}</div>
-                          )}
-                          {hasVariants && (
-                            <div className="text-xs text-yappr-500">
-                              {item.variants!.combinations.length} variants
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          {item.imageUrls?.[0] ? (
+                            <img
+                              src={item.imageUrls[0]}
+                              alt={item.title}
+                              className="w-10 h-10 object-cover rounded"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
+                              <CubeIcon className="h-5 w-5 text-gray-400" />
                             </div>
                           )}
+                          <div>
+                            <div className="font-medium">{item.title}</div>
+                            {item.category && (
+                              <div className="text-xs text-gray-500">{item.category}</div>
+                            )}
+                            {hasVariants && (
+                              <div className="text-xs text-yappr-500">
+                                {item.variants!.combinations.length} variants
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 font-mono text-gray-500">
-                      {item.sku || '-'}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {priceRange.min === priceRange.max
-                        ? formatPrice(priceRange.min, currency)
-                        : `${formatPrice(priceRange.min, currency)} - ${formatPrice(priceRange.max, currency)}`
-                      }
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {hasVariants ? (
-                        <span className="text-gray-500">
-                          {totalStock === Infinity ? 'Varies' : totalStock}
+                      </td>
+                      <td className="px-3 py-3 font-mono text-gray-500">
+                        {item.sku || '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {priceRange.min === priceRange.max
+                          ? formatPrice(priceRange.min, currency)
+                          : `${formatPrice(priceRange.min, currency)} - ${formatPrice(priceRange.max, currency)}`
+                        }
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {hasVariants ? (
+                          <span className="text-gray-500">
+                            {totalStock === Infinity ? 'Varies' : totalStock}
+                          </span>
+                        ) : (
+                          renderStockCell(item, totalStock)
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
+                          item.status === 'active'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : item.status === 'paused'
+                              ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                              : item.status === 'sold_out'
+                                ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                        }`}>
+                          {item.status}
                         </span>
-                      ) : (
-                        renderStockCell(item, totalStock)
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-center">
-                      <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
-                        item.status === 'active'
-                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                          : item.status === 'paused'
-                            ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                            : item.status === 'sold_out'
-                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                              : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                      }`}>
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex justify-end gap-1">
-                        <button
-                          onClick={() => onEditItem(item)}
-                          className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-                          title="Edit"
-                        >
-                          <PencilIcon className="h-4 w-4 text-gray-500" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteItemId(item.id)}
-                          className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
-                          title="Delete"
-                        >
-                          <TrashIcon className="h-4 w-4 text-red-500" />
-                        </button>
-                      </div>
-                    </td>
-                  </motion.tr>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex justify-end gap-1">
+                          <button
+                            onClick={() => onEditItem(item)}
+                            className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                            title="Edit"
+                          >
+                            <PencilIcon className="h-4 w-4 text-gray-500" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteItemId(item.id)}
+                            className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
+                            title="Delete"
+                          >
+                            <TrashIcon className="h-4 w-4 text-red-500" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {variantRows}
+                  </React.Fragment>
                 )
               })}
             </tbody>
           </table>
         </div>
-
-        {/* Expanded variant rows */}
-        {filteredItems.map((item) => {
-          if (!item.variants || !expandedItems.has(item.id)) return null
-
-          return item.variants.combinations.map((combo: VariantCombination) => (
-            <motion.div
-              key={`${item.id}-${combo.key}`}
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700"
-            >
-              <div className="flex items-center py-2 px-3 text-sm">
-                <div className="w-8"></div>
-                <div className="flex-1 flex items-center gap-3 pl-10">
-                  {combo.imageUrl ? (
-                    <img
-                      src={combo.imageUrl}
-                      alt={combo.key}
-                      className="w-8 h-8 object-cover rounded"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
-                  )}
-                  <span className="text-gray-600 dark:text-gray-400">
-                    {combo.key.replace(/\|/g, ' / ')}
-                  </span>
-                </div>
-                <div className="w-24 font-mono text-gray-500 text-sm">
-                  {combo.sku || '-'}
-                </div>
-                <div className="w-32 text-right">
-                  {formatPrice(combo.price, currency)}
-                </div>
-                <div className="w-24 text-right">
-                  {renderStockCell(item, combo.stock ?? Infinity, combo.key)}
-                </div>
-                <div className="w-24"></div>
-                <div className="w-24"></div>
-              </div>
-            </motion.div>
-          ))
-        })}
       </div>
 
       {/* Delete Confirmation */}

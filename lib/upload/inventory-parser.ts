@@ -331,20 +331,127 @@ function evaluateSingleFormula(formula: string, skuQuantities: Record<string, nu
 
   // Simple case: just multiply/divide operations
   // e.g., "(C-road-green-10)*5" -> "10*5" (if C-road-green-10 has qty 10)
-  try {
-    // Only allow safe mathematical operations
-    if (/^[\d\s+\-*/().]+$/.test(expression)) {
-      // Create function to evaluate the expression safely
-      const result = Function(`"use strict"; return (${expression})`)()
-      if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
-        return Math.floor(result)
-      }
-    }
-  } catch {
-    // Formula evaluation failed
+  // Use safe recursive descent parser instead of Function()
+  const result = safeEvaluateMath(expression)
+  if (result !== null && isFinite(result)) {
+    return Math.floor(result)
   }
 
   return null
+}
+
+/**
+ * Safe math expression evaluator using recursive descent parsing.
+ * Only supports: numbers, +, -, *, /, and parentheses.
+ * Returns null if the expression is invalid.
+ */
+function safeEvaluateMath(expr: string): number | null {
+  // Remove whitespace
+  const tokens = tokenize(expr.replace(/\s/g, ''))
+  if (tokens === null) return null
+
+  let pos = 0
+
+  function peek(): string | null {
+    return pos < tokens.length ? tokens[pos] : null
+  }
+
+  function consume(): string | null {
+    return pos < tokens.length ? tokens[pos++] : null
+  }
+
+  // Grammar: expr -> term (('+' | '-') term)*
+  function parseExpr(): number | null {
+    let left = parseTerm()
+    if (left === null) return null
+
+    while (peek() === '+' || peek() === '-') {
+      const op = consume()
+      const right = parseTerm()
+      if (right === null) return null
+      left = op === '+' ? left + right : left - right
+    }
+    return left
+  }
+
+  // Grammar: term -> factor (('*' | '/') factor)*
+  function parseTerm(): number | null {
+    let left = parseFactor()
+    if (left === null) return null
+
+    while (peek() === '*' || peek() === '/') {
+      const op = consume()
+      const right = parseFactor()
+      if (right === null) return null
+      if (op === '/' && right === 0) return null // Division by zero
+      left = op === '*' ? left * right : left / right
+    }
+    return left
+  }
+
+  // Grammar: factor -> number | '(' expr ')'
+  function parseFactor(): number | null {
+    const token = peek()
+    if (token === null) return null
+
+    if (token === '(') {
+      consume() // consume '('
+      const result = parseExpr()
+      if (result === null || peek() !== ')') return null
+      consume() // consume ')'
+      return result
+    }
+
+    // Must be a number
+    const numToken = consume()
+    if (numToken === null) return null
+    const num = parseFloat(numToken)
+    if (isNaN(num)) return null
+    return num
+  }
+
+  const result = parseExpr()
+  // Ensure we consumed all tokens
+  if (pos !== tokens.length) return null
+  return result
+}
+
+/**
+ * Tokenize a math expression into numbers and operators.
+ * Returns null if invalid characters are found.
+ */
+function tokenize(expr: string): string[] | null {
+  const tokens: string[] = []
+  let i = 0
+
+  while (i < expr.length) {
+    const char = expr[i]
+
+    // Operators and parentheses
+    if ('+-*/()'.includes(char)) {
+      tokens.push(char)
+      i++
+      continue
+    }
+
+    // Numbers (including decimals)
+    if (/[0-9.]/.test(char)) {
+      let num = ''
+      while (i < expr.length && /[0-9.]/.test(expr[i])) {
+        num += expr[i]
+        i++
+      }
+      // Validate it's a proper number
+      if (isNaN(parseFloat(num))) return null
+      tokens.push(num)
+      continue
+    }
+
+    // Invalid character
+    return null
+  }
+
+  return tokens
 }
 
 /**
@@ -364,13 +471,13 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
 
   const items: GroupedInventoryItem[] = []
 
-  for (const [groupId, groupRows] of groups) {
+  groups.forEach((groupRowsArr: ParsedInventoryRow[], groupId: string) => {
     const isUngrouped = groupId.startsWith('__ungrouped_')
-    const firstRow = groupRows[0]
+    const firstRow = groupRowsArr[0]
 
     // Collect all unique images from the group
     const allImages: string[] = []
-    for (const row of groupRows) {
+    for (const row of groupRowsArr) {
       for (const img of row.imageUrls) {
         if (!allImages.includes(img)) {
           allImages.push(img)
@@ -380,7 +487,7 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
 
     // Collect all unique tags
     const allTags: string[] = []
-    for (const row of groupRows) {
+    for (const row of groupRowsArr) {
       for (const tag of row.tags) {
         if (!allTags.includes(tag)) {
           allTags.push(tag)
@@ -389,14 +496,14 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
     }
 
     // Determine if this is a variant item
-    const hasVariants = groupRows.length > 1 || (firstRow.variant && groupRows.length === 1)
+    const hasVariants = groupRowsArr.length > 1 || (firstRow.variant && groupRowsArr.length === 1)
 
     if (hasVariants) {
       // Build variant structure
       const variantValues = new Set<string>()
       const subVariantValues = new Set<string>()
 
-      for (const row of groupRows) {
+      for (const row of groupRowsArr) {
         if (row.variant) variantValues.add(row.variant)
         if (row.subVariant) subVariantValues.add(row.subVariant)
       }
@@ -409,7 +516,7 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
         axes.push({ name: 'Size', options: Array.from(subVariantValues) })
       }
 
-      const combinations: VariantCombination[] = groupRows.map(row => {
+      const combinations: VariantCombination[] = groupRowsArr.map((row: ParsedInventoryRow) => {
         let key: string
         if (row.variant && row.subVariant) {
           key = `${row.variant}|${row.subVariant}`
@@ -429,7 +536,7 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
       })
 
       // Find lowest price for basePrice
-      const prices = groupRows.map(r => r.price)
+      const prices = groupRowsArr.map((r: ParsedInventoryRow) => r.price)
       const basePrice = Math.min(...prices)
 
       items.push({
@@ -446,7 +553,7 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
         sku: firstRow.sku,
         weight: firstRow.weight,
         variants: { axes, combinations },
-        rows: groupRows
+        rows: groupRowsArr
       })
     } else {
       // Single item without variants
@@ -464,10 +571,10 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
         sku: firstRow.sku,
         stockQuantity: typeof firstRow.quantity === 'number' ? firstRow.quantity : undefined,
         weight: firstRow.weight,
-        rows: groupRows
+        rows: groupRowsArr
       })
     }
-  }
+  })
 
   return items
 }
