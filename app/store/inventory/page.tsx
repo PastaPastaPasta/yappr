@@ -18,7 +18,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
-import type { Store, StoreItem } from '@/lib/types'
+import type { Store, StoreItem, VariantCombination } from '@/lib/types'
 
 function InventoryPage() {
   const router = useRouter()
@@ -95,7 +95,7 @@ function InventoryPage() {
           ...item,
           variants: {
             ...item.variants,
-            combinations: item.variants.combinations.map(c =>
+            combinations: item.variants.combinations.map((c: VariantCombination) =>
               c.key === variantKey
                 ? { ...c, stock: newStock === Infinity ? undefined : newStock }
                 : c

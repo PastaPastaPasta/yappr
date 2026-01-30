@@ -350,14 +350,16 @@ function safeEvaluateMath(expr: string): number | null {
   const tokens = tokenize(expr.replace(/\s/g, ''))
   if (tokens === null) return null
 
+  // Assign to non-null local for TypeScript narrowing in nested functions
+  const tokenList = tokens
   let pos = 0
 
   function peek(): string | null {
-    return pos < tokens.length ? tokens[pos] : null
+    return pos < tokenList.length ? tokenList[pos] : null
   }
 
   function consume(): string | null {
-    return pos < tokens.length ? tokens[pos++] : null
+    return pos < tokenList.length ? tokenList[pos++] : null
   }
 
   // Grammar: expr -> term (('+' | '-') term)*
@@ -412,7 +414,7 @@ function safeEvaluateMath(expr: string): number | null {
 
   const result = parseExpr()
   // Ensure we consumed all tokens
-  if (pos !== tokens.length) return null
+  if (pos !== tokenList.length) return null
   return result
 }
 

@@ -42,6 +42,7 @@ export function InventoryUploadModal({
   currency = 'USD'
 }: InventoryUploadModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const isUploadingRef = useRef(false)
   const [step, setStep] = useState<UploadStep>('select')
   const [fileName, setFileName] = useState('')
   const [items, setItems] = useState<GroupedInventoryItem[]>([])
@@ -60,6 +61,7 @@ export function InventoryUploadModal({
     setUploadProgress(0)
     setUploadedCount(0)
     setUploadErrors([])
+    isUploadingRef.current = false
   }, [])
 
   const handleClose = useCallback(() => {
@@ -83,6 +85,9 @@ export function InventoryUploadModal({
       setStep('preview')
     } catch (err) {
       console.error('Failed to parse CSV:', err)
+      // Clear any stale preview state before showing error
+      setItems([])
+      setWarnings([])
       setErrors([{ row: 0, message: `Failed to read file: ${err instanceof Error ? err.message : 'Unknown error'}` }])
       setStep('preview')
     }
@@ -94,34 +99,42 @@ export function InventoryUploadModal({
   }, [currency])
 
   const handleUpload = useCallback(async () => {
+    // Re-entry guard to prevent concurrent uploads
+    if (isUploadingRef.current) return
     if (items.length === 0) return
 
-    setStep('uploading')
-    setUploadProgress(0)
-    setUploadedCount(0)
-    setUploadErrors([])
+    isUploadingRef.current = true
 
-    const newErrors: string[] = []
-    let successCount = 0
+    try {
+      setStep('uploading')
+      setUploadProgress(0)
+      setUploadedCount(0)
+      setUploadErrors([])
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      try {
-        const data = toStoreItemData(item)
-        await storeItemService.createItem(ownerId, storeId, data)
-        successCount++
-      } catch (err) {
-        console.error(`Failed to upload item ${item.title}:`, err)
-        newErrors.push(`${item.title}: ${err instanceof Error ? err.message : 'Upload failed'}`)
+      const newErrors: string[] = []
+      let successCount = 0
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        try {
+          const data = toStoreItemData(item)
+          await storeItemService.createItem(ownerId, storeId, data)
+          successCount++
+        } catch (err) {
+          console.error(`Failed to upload item ${item.title}:`, err)
+          newErrors.push(`${item.title}: ${err instanceof Error ? err.message : 'Upload failed'}`)
+        }
+
+        setUploadProgress(Math.round(((i + 1) / items.length) * 100))
+        setUploadedCount(successCount)
       }
 
-      setUploadProgress(Math.round(((i + 1) / items.length) * 100))
-      setUploadedCount(successCount)
+      setUploadErrors(newErrors)
+      setStep('complete')
+      onComplete(successCount)
+    } finally {
+      isUploadingRef.current = false
     }
-
-    setUploadErrors(newErrors)
-    setStep('complete')
-    onComplete(successCount)
   }, [items, ownerId, storeId, onComplete])
 
   const handleDownloadTemplate = useCallback(() => {
@@ -159,8 +172,15 @@ export function InventoryUploadModal({
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
           <h2 className="text-lg font-bold">Upload Inventory</h2>
           <button
-            onClick={handleClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
+            onClick={step === 'uploading' ? undefined : handleClose}
+            disabled={step === 'uploading'}
+            aria-label="Close upload modal"
+            aria-disabled={step === 'uploading'}
+            className={`p-2 rounded-full ${
+              step === 'uploading'
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+            }`}
           >
             <XMarkIcon className="h-5 w-5" />
           </button>
