@@ -384,6 +384,10 @@ function MessagesPage() {
   // Handle focus/blur for mobile keyboard mode
   const handleInputFocus = () => {
     setIsInputFocused(true)
+    // Scroll to bottom to ensure input is visible above keyboard
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }, 100)
   }
 
   const handleInputBlur = () => {
@@ -581,7 +585,7 @@ function MessagesPage() {
   }
 
   return (
-    <div className={`${isInputFocused ? 'h-[calc(100dvh-32px)]' : 'h-[calc(100dvh-32px-56px)]'} md:h-[calc(100dvh-40px)] flex overflow-hidden transition-[height] duration-200`}>
+    <div className={`${isInputFocused ? 'h-[100dvh] pt-[32px]' : 'h-[calc(100dvh-32px-56px)]'} md:h-[calc(100dvh-40px)] md:pt-0 flex overflow-hidden`}>
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
