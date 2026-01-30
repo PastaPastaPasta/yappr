@@ -11,8 +11,11 @@ import {
   ShieldExclamationIcon,
   HeartIcon,
   ArrowPathRoundedSquareIcon,
-  ChatBubbleLeftIcon
+  ChatBubbleLeftIcon,
+  ChevronDownIcon,
+  FunnelIcon
 } from '@heroicons/react/24/outline'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
@@ -69,14 +72,14 @@ const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> 
 
 type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed'
 
-const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'like', label: 'Likes' },
-  { key: 'repost', label: 'Reposts' },
-  { key: 'reply', label: 'Replies' },
-  { key: 'follow', label: 'Follows' },
-  { key: 'mention', label: 'Mentions' },
-  { key: 'privateFeed', label: 'Private' }
+const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }[] = [
+  { key: 'all', label: 'All', icon: <BellIcon className="h-4 w-4" /> },
+  { key: 'like', label: 'Likes', icon: <HeartIcon className="h-4 w-4 text-red-500" /> },
+  { key: 'repost', label: 'Reposts', icon: <ArrowPathRoundedSquareIcon className="h-4 w-4 text-green-500" /> },
+  { key: 'reply', label: 'Replies', icon: <ChatBubbleLeftIcon className="h-4 w-4 text-blue-500" /> },
+  { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-purple-500" /> },
+  { key: 'mention', label: 'Mentions', icon: <AtSymbolIcon className="h-4 w-4 text-yellow-500" /> },
+  { key: 'privateFeed', label: 'Private', icon: <LockClosedIcon className="h-4 w-4 text-blue-500" /> }
 ]
 
 const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
@@ -194,15 +197,69 @@ function NotificationsPage() {
         <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <Link
-              href="/settings?section=notifications"
-              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
-            >
-              <Cog6ToothIcon className="h-5 w-5" />
-            </Link>
+            <div className="flex items-center gap-1">
+              {/* Mobile filter dropdown */}
+              <div className="md:hidden">
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      data-testid="notification-filter-dropdown"
+                    >
+                      <FunnelIcon className="h-4 w-4" />
+                      <span>{FILTER_TABS.find(t => t.key === filter)?.label}</span>
+                      {getUnreadCountForTab(filter) > 0 && (
+                        <span className="w-2 h-2 bg-yappr-500 rounded-full" />
+                      )}
+                      <ChevronDownIcon className="h-4 w-4" />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
+                      sideOffset={8}
+                      align="end"
+                    >
+                      {FILTER_TABS.map((tab) => {
+                        const tabUnreadCount = getUnreadCountForTab(tab.key)
+                        return (
+                          <DropdownMenu.Item
+                            key={tab.key}
+                            data-testid={`notification-filter-${tab.key}`}
+                            onClick={() => setFilter(tab.key)}
+                            className={`flex items-center justify-between px-4 py-3 text-sm cursor-pointer outline-none transition-colors ${
+                              filter === tab.key
+                                ? 'bg-yappr-50 dark:bg-yappr-950/30 text-yappr-600 dark:text-yappr-400'
+                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                            }`}
+                          >
+                            <span className="flex items-center gap-3">
+                              {tab.icon}
+                              <span className="font-medium">{tab.label}</span>
+                            </span>
+                            {tabUnreadCount > 0 && (
+                              <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold bg-yappr-500 text-white rounded-full">
+                                {tabUnreadCount > 99 ? '99+' : tabUnreadCount}
+                              </span>
+                            )}
+                          </DropdownMenu.Item>
+                        )
+                      })}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
+              <Link
+                href="/settings?section=notifications"
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+              >
+                <Cog6ToothIcon className="h-5 w-5" />
+              </Link>
+            </div>
           </div>
 
-          <div className="flex border-b border-gray-200 dark:border-gray-800">
+          {/* Desktop tabs - hidden on mobile */}
+          <div className="hidden md:flex border-b border-gray-200 dark:border-gray-800">
             {FILTER_TABS.map((tab) => {
               const tabUnreadCount = getUnreadCountForTab(tab.key)
               return (
