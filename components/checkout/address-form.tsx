@@ -1,6 +1,6 @@
 'use client'
 
-import { TruckIcon } from '@heroicons/react/24/outline'
+import { TruckIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { SavedAddressPicker } from './saved-address-picker'
 import type { ShippingAddress, BuyerContact, SavedAddress } from '@/lib/types'
@@ -60,6 +60,14 @@ export function AddressForm({
           onManage={onManageSavedAddresses}
         />
       )}
+
+      {/* Encryption notice - always visible */}
+      <div className="px-4 pt-4">
+        <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-800 dark:text-green-200">
+          <LockClosedIcon className="h-4 w-4 mt-0.5 flex-shrink-0" />
+          <span>Your address is encrypted and will only be shared with the merchant after you complete your order.</span>
+        </div>
+      </div>
 
       {/* Show form only if not using a saved address */}
       {!isUsingSavedAddress && (
