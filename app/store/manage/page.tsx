@@ -15,14 +15,16 @@ import {
   ShoppingBagIcon,
   ExclamationTriangleIcon,
   KeyIcon,
-  CreditCardIcon
+  CreditCardIcon,
+  ArrowUpTrayIcon,
+  TableCellsIcon
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { ShippingZoneModal, PaymentMethodModal } from '@/components/store'
+import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal } from '@/components/store'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -56,6 +58,7 @@ function StoreManagePage() {
   const [editingZone, setEditingZone] = useState<ShippingZone | null>(null)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [showEncryptionKeyModal, setShowEncryptionKeyModal] = useState(false)
+  const [showInventoryUpload, setShowInventoryUpload] = useState(false)
 
   // Delete confirmation state
   const [deleteItemId, setDeleteItemId] = useState<string | null>(null)
@@ -441,10 +444,32 @@ function StoreManagePage() {
             <div className="p-4">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium">Products ({items.length})</h3>
-                <Button size="sm" className="flex items-center gap-1" onClick={() => router.push(`/store/item/add?storeId=${store?.id}`)}>
-                  <PlusIcon className="h-4 w-4" />
-                  Add Product
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex items-center gap-1"
+                    onClick={() => setShowInventoryUpload(true)}
+                  >
+                    <ArrowUpTrayIcon className="h-4 w-4" />
+                    Upload CSV
+                  </Button>
+                  {items.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex items-center gap-1"
+                      onClick={() => router.push(`/store/inventory?storeId=${store?.id}`)}
+                    >
+                      <TableCellsIcon className="h-4 w-4" />
+                      Inventory
+                    </Button>
+                  )}
+                  <Button size="sm" className="flex items-center gap-1" onClick={() => router.push(`/store/item/add?storeId=${store?.id}`)}>
+                    <PlusIcon className="h-4 w-4" />
+                    Add Product
+                  </Button>
+                </div>
               </div>
 
               {items.length === 0 ? (
@@ -710,6 +735,26 @@ function StoreManagePage() {
           setHasEncryptionKey(true)
         }}
         context="store"
+      />
+
+      <InventoryUploadModal
+        isOpen={showInventoryUpload}
+        onClose={() => setShowInventoryUpload(false)}
+        storeId={store?.id || ''}
+        ownerId={user?.identityId || ''}
+        currency={store?.defaultCurrency || 'USD'}
+        onComplete={(addedCount) => {
+          setShowInventoryUpload(false)
+          if (addedCount > 0) {
+            toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to your store`)
+            // Reload items
+            if (store?.id) {
+              storeItemService.getByStore(store.id, { limit: 100 })
+                .then(result => setItems(result.items))
+                .catch(console.error)
+            }
+          }
+        }}
       />
 
       {/* Delete Confirmation Dialogs */}
