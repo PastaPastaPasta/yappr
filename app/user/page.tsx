@@ -64,6 +64,7 @@ interface ProfileData {
   nsfw?: boolean
   hasUnifiedProfile?: boolean
   bannerUri?: string
+  joinedAt?: Date
 }
 
 /**
@@ -262,6 +263,7 @@ function UserProfileContent() {
             nsfw: profileResult.nsfw,
             hasUnifiedProfile: profileResult.hasUnifiedProfile,
             bannerUri: profileResult.bannerUri,
+            joinedAt: profileResult.joinedAt,
           })
         } else {
           // Even without a Yappr profile, show follow counts
@@ -1398,7 +1400,9 @@ function UserProfileContent() {
                     )}
                     <span className="flex items-center gap-1">
                       <CalendarIcon className="h-4 w-4" />
-                      Joined recently
+                      Joined {profile?.joinedAt
+                        ? profile.joinedAt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                        : 'recently'}
                     </span>
                   </div>
 
