@@ -1,9 +1,18 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
+import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID } from '../constants';
-import { Notification, User, Post, OrderStatus } from '../types';
+import {
+  Notification,
+  User,
+  Post,
+  OrderStatus,
+  DirectMessageDocument,
+  StoreOrderDocument,
+  OrderStatusUpdateDocument,
+  StoreReviewDocument
+} from '../types';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -260,36 +269,31 @@ class NotificationService {
    * Uses the receiverMessages index: [recipientId, $createdAt]
    */
   async getNewMessages(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
-        dataContractId: YAPPR_DM_CONTRACT_ID,
-        documentTypeName: 'directMessage',
-        where: [
-          ['recipientId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['recipientId', 'asc'], ['$createdAt', 'asc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+    const queryOptions: QueryDocumentsOptions = {
+      dataContractId: YAPPR_DM_CONTRACT_ID,
+      documentTypeName: 'directMessage',
+      where: [
+        ['recipientId', '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [['recipientId', 'asc'], ['$createdAt', 'asc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    };
 
-      const documents = normalizeSDKResponse(response);
+    const documents = await queryDocuments(sdk, queryOptions).catch(() => []) as DirectMessageDocument[];
 
-      return documents.map((doc: any) => {
-        const conversationId = doc.conversationId ? identifierToBase58(doc.conversationId) : undefined;
-        return {
-          id: `message-${doc.$id}`,
-          type: 'newMessage' as const,
-          fromUserId: doc.$ownerId, // The sender
-          conversationId: conversationId ?? undefined,
-          createdAt: doc.$createdAt
-        };
-      });
-    } catch (error) {
-      console.error('Error fetching new messages:', error);
-      return [];
-    }
+    return documents.map((doc) => {
+      const conversationId = doc.conversationId ? identifierToBase58(doc.conversationId) : undefined;
+      return {
+        id: `message-${doc.$id}`,
+        type: 'newMessage' as const,
+        fromUserId: doc.$ownerId, // The sender
+        conversationId: conversationId ?? undefined,
+        createdAt: doc.$createdAt
+      };
+    });
   }
 
   /**
@@ -297,37 +301,32 @@ class NotificationService {
    * Uses the sellerOrders index: [sellerId, $createdAt]
    */
   async getNewOrders(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
-        dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
-        documentTypeName: 'storeOrder',
-        where: [
-          ['sellerId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['sellerId', 'asc'], ['$createdAt', 'asc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+    const queryOptions: QueryDocumentsOptions = {
+      dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
+      documentTypeName: 'storeOrder',
+      where: [
+        ['sellerId', '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [['sellerId', 'asc'], ['$createdAt', 'asc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    };
 
-      const documents = normalizeSDKResponse(response);
+    const documents = await queryDocuments(sdk, queryOptions).catch(() => []) as StoreOrderDocument[];
 
-      return documents.map((doc: any) => {
-        const storeId = doc.storeId ? identifierToBase58(doc.storeId) : undefined;
-        return {
-          id: `order-${doc.$id}`,
-          type: 'orderReceived' as const,
-          fromUserId: doc.$ownerId, // The buyer
-          orderId: doc.$id,
-          storeId: storeId ?? undefined,
-          createdAt: doc.$createdAt
-        };
-      });
-    } catch (error) {
-      console.error('Error fetching new orders:', error);
-      return [];
-    }
+    return documents.map((doc) => {
+      const storeId = doc.storeId ? identifierToBase58(doc.storeId) : undefined;
+      return {
+        id: `order-${doc.$id}`,
+        type: 'orderReceived' as const,
+        fromUserId: doc.$ownerId, // The buyer
+        orderId: doc.$id,
+        storeId: storeId ?? undefined,
+        createdAt: doc.$createdAt
+      };
+    });
   }
 
   /**
@@ -336,77 +335,73 @@ class NotificationService {
    * We first need to get the user's orders, then query for status updates on those orders.
    */
   async getOrderStatusUpdates(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      // First, get orders placed by this user (as buyer)
-      const ordersResponse = await sdk.documents.query({
-        dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
-        documentTypeName: 'storeOrder',
-        where: [
-          ['$ownerId', '==', userId]
-        ],
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+    // First, get orders placed by this user (as buyer)
+    const ordersQueryOptions: QueryDocumentsOptions = {
+      dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
+      documentTypeName: 'storeOrder',
+      where: [
+        ['$ownerId', '==', userId]
+      ],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    };
 
-      const orders = normalizeSDKResponse(ordersResponse);
-      if (orders.length === 0) return [];
+    const orders = await queryDocuments(sdk, ordersQueryOptions).catch(() => []) as StoreOrderDocument[];
+    if (orders.length === 0) return [];
 
-      // Get order IDs
-      const orderIds = orders.map((order: any) => order.$id);
+    // Get order IDs
+    const orderIds = orders.map((order) => order.$id);
 
-      // Query status updates for these orders since timestamp
-      // We need to chunk the order IDs to avoid exceeding platform limits
-      const chunkArray = <T>(arr: T[], size: number): T[][] => {
-        const chunks: T[][] = [];
-        for (let i = 0; i < arr.length; i += size) {
-          chunks.push(arr.slice(i, i + size));
-        }
-        return chunks;
-      };
-
-      const orderChunks = chunkArray(orderIds, NOTIFICATION_QUERY_LIMIT);
-      const statusUpdatePromises = orderChunks.map(chunk =>
-        sdk.documents.query({
-          dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
-          documentTypeName: 'orderStatusUpdate',
-          where: [
-            ['orderId', 'in', chunk],
-            ['$createdAt', '>', sinceTimestamp]
-          ],
-          limit: NOTIFICATION_QUERY_LIMIT
-        } as any).then(normalizeSDKResponse).catch(() => [])
-      );
-
-      const statusUpdateResults = await Promise.all(statusUpdatePromises);
-      const statusUpdates = statusUpdateResults.flat();
-
-      // Build a map of orderId -> storeId from orders for enrichment
-      const orderStoreMap = new Map<string, string>();
-      for (const order of orders as any[]) {
-        const storeId = order.storeId ? identifierToBase58(order.storeId) : undefined;
-        if (storeId) {
-          orderStoreMap.set(order.$id, storeId);
-        }
+    // Query status updates for these orders since timestamp
+    // We need to chunk the order IDs to avoid exceeding platform limits
+    const chunkArray = <T>(arr: T[], size: number): T[][] => {
+      const chunks: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
       }
+      return chunks;
+    };
 
-      return statusUpdates.map((doc: any) => {
-        const orderId = (doc.orderId ? identifierToBase58(doc.orderId) : null) ?? doc.$id;
-        return {
-          id: `status-${doc.$id}`,
-          type: 'orderStatusUpdate' as const,
-          fromUserId: doc.$ownerId, // The seller who posted the update
-          orderId,
-          storeId: orderStoreMap.get(orderId),
-          orderStatus: doc.status as OrderStatus,
-          createdAt: doc.$createdAt
-        };
-      });
-    } catch (error) {
-      console.error('Error fetching order status updates:', error);
-      return [];
+    const orderChunks = chunkArray(orderIds, NOTIFICATION_QUERY_LIMIT);
+    const statusUpdatePromises = orderChunks.map(chunk => {
+      const statusQueryOptions: QueryDocumentsOptions = {
+        dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
+        documentTypeName: 'orderStatusUpdate',
+        where: [
+          ['orderId', 'in', chunk],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        limit: NOTIFICATION_QUERY_LIMIT
+      };
+      return queryDocuments(sdk, statusQueryOptions).catch(() => []) as Promise<OrderStatusUpdateDocument[]>;
+    });
+
+    const statusUpdateResults = await Promise.all(statusUpdatePromises);
+    const statusUpdates = statusUpdateResults.flat();
+
+    // Build a map of orderId -> storeId from orders for enrichment
+    const orderStoreMap = new Map<string, string>();
+    for (const order of orders) {
+      const storeId = order.storeId ? identifierToBase58(order.storeId) : undefined;
+      if (storeId) {
+        orderStoreMap.set(order.$id, storeId);
+      }
     }
+
+    return statusUpdates.map((doc) => {
+      const orderId = (doc.orderId ? identifierToBase58(doc.orderId) : null) ?? doc.$id;
+      return {
+        id: `status-${doc.$id}`,
+        type: 'orderStatusUpdate' as const,
+        fromUserId: doc.$ownerId, // The seller who posted the update
+        orderId,
+        storeId: orderStoreMap.get(orderId),
+        orderStatus: doc.status,
+        createdAt: doc.$createdAt
+      };
+    });
   }
 
   /**
@@ -414,40 +409,35 @@ class NotificationService {
    * Uses the sellerReviews index: [sellerId, $createdAt]
    */
   async getNewReviews(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
-        dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
-        documentTypeName: 'storeReview',
-        where: [
-          ['sellerId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['sellerId', 'asc'], ['$createdAt', 'asc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+    const queryOptions: QueryDocumentsOptions = {
+      dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
+      documentTypeName: 'storeReview',
+      where: [
+        ['sellerId', '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [['sellerId', 'asc'], ['$createdAt', 'asc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    };
 
-      const documents = normalizeSDKResponse(response);
+    const documents = await queryDocuments(sdk, queryOptions).catch(() => []) as StoreReviewDocument[];
 
-      return documents.map((doc: any) => {
-        const storeId = doc.storeId ? identifierToBase58(doc.storeId) : undefined;
-        const orderId = doc.orderId ? identifierToBase58(doc.orderId) : undefined;
-        return {
-          id: `review-${doc.$id}`,
-          type: 'newReview' as const,
-          fromUserId: doc.$ownerId, // The reviewer (buyer)
-          storeId: storeId ?? undefined,
-          orderId: orderId ?? undefined,
-          reviewRating: doc.rating,
-          reviewTitle: doc.title,
-          createdAt: doc.$createdAt
-        };
-      });
-    } catch (error) {
-      console.error('Error fetching new reviews:', error);
-      return [];
-    }
+    return documents.map((doc) => {
+      const storeId = doc.storeId ? identifierToBase58(doc.storeId) : undefined;
+      const orderId = doc.orderId ? identifierToBase58(doc.orderId) : undefined;
+      return {
+        id: `review-${doc.$id}`,
+        type: 'newReview' as const,
+        fromUserId: doc.$ownerId, // The reviewer (buyer)
+        storeId: storeId ?? undefined,
+        orderId: orderId ?? undefined,
+        reviewRating: doc.rating,
+        reviewTitle: doc.title,
+        createdAt: doc.$createdAt
+      };
+    });
   }
 
   /**

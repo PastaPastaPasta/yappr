@@ -173,6 +173,7 @@ export interface DirectMessageDocument {
   $id: string
   $ownerId: string  // sender
   $createdAt: number
+  recipientId: Uint8Array | string  // 32 bytes - recipient of the message
   conversationId: Uint8Array  // 10 bytes
   encryptedContent: Uint8Array  // binary: [12 bytes IV | ciphertext], max 5KB
 }
