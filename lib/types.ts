@@ -528,6 +528,7 @@ export interface OrderPayload {
   paymentUri: string
   txid?: string
   notes?: string
+  refundAddress?: string
 }
 
 // Store order document (from platform)

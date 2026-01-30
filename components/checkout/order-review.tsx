@@ -16,6 +16,9 @@ interface OrderReviewProps {
   currency: string
   notes: string
   onNotesChange: (notes: string) => void
+  refundAddress: string
+  onRefundAddressChange: (addr: string) => void
+  paymentScheme?: string
   onSubmit: () => void
   isSubmitting: boolean
 }
@@ -30,6 +33,9 @@ export function OrderReview({
   currency,
   notes,
   onNotesChange,
+  refundAddress,
+  onRefundAddressChange,
+  paymentScheme,
   onSubmit,
   isSubmitting
 }: OrderReviewProps) {
@@ -113,6 +119,20 @@ export function OrderReview({
           placeholder="Any special instructions for the seller"
           rows={2}
           className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+        />
+      </div>
+
+      {/* Refund Address */}
+      <div>
+        <label className="block text-sm font-medium mb-1">
+          Refund Address (optional){paymentScheme && <span className="text-gray-500 font-normal"> - {paymentScheme}</span>}
+        </label>
+        <input
+          type="text"
+          value={refundAddress}
+          onChange={(e) => onRefundAddressChange(e.target.value)}
+          placeholder={`Your ${paymentScheme || 'crypto'} address for refunds`}
+          className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
         />
       </div>
 
