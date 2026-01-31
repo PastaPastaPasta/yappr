@@ -106,10 +106,11 @@ export function MobileBottomNav() {
         />
       )}
 
-      {/* More Menu Sheet */}
+      {/* More Menu Sheet - completely unmounted when keyboard is visible */}
+      {!isKeyboardVisible && (
       <div className={cn(
         "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
-        moreMenuOpen && !isKeyboardVisible ? "translate-y-0" : "translate-y-full pointer-events-none"
+        moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
@@ -183,6 +184,7 @@ export function MobileBottomNav() {
           )}
         </div>
       </div>
+      )}
 
       {/* Bottom Navigation Bar */}
       <nav className={cn(
