@@ -64,7 +64,7 @@ function InventoryPage() {
         }
 
         // Load all items
-        const itemsResult = await storeItemService.getByStore(currentStoreId, { limit: 500 })
+        const itemsResult = await storeItemService.getByStore(currentStoreId, { limit: 100 })
         setItems(itemsResult.items)
       } catch (error) {
         console.error('Failed to load inventory:', error)
@@ -221,7 +221,7 @@ function InventoryPage() {
       toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to inventory`)
       // Reload items
       if (store?.id) {
-        storeItemService.getByStore(store.id, { limit: 500 })
+        storeItemService.getByStore(store.id, { limit: 100 })
           .then(result => setItems(result.items))
           .catch(console.error)
       }
