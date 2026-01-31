@@ -246,6 +246,10 @@ function InventoryPage() {
     return null
   }
 
+  if (!user?.identityId) {
+    return null
+  }
+
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
@@ -293,7 +297,7 @@ function InventoryPage() {
             <InventoryTable
               items={items}
               storeId={store.id}
-              ownerId={user?.identityId || ''}
+              ownerId={user.identityId}
               currency={store.defaultCurrency || 'USD'}
               onEditItem={handleEditItem}
               onItemDeleted={handleItemDeleted}
@@ -309,7 +313,7 @@ function InventoryPage() {
         isOpen={showUploadModal}
         onClose={() => setShowUploadModal(false)}
         storeId={store.id}
-        ownerId={user?.identityId || ''}
+        ownerId={user.identityId}
         currency={store.defaultCurrency || 'USD'}
         onComplete={handleUploadComplete}
       />
