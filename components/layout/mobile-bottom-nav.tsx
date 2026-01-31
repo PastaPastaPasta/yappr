@@ -29,6 +29,7 @@ import {
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { useKeyboardVisible } from '@/hooks/use-keyboard-visible'
 
 export function MobileBottomNav() {
   const pathname = usePathname()
@@ -38,6 +39,7 @@ export function MobileBottomNav() {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+  const isKeyboardVisible = useKeyboardVisible()
 
   useEffect(() => {
     setIsHydrated(true)
@@ -47,6 +49,13 @@ export function MobileBottomNav() {
   useEffect(() => {
     setMoreMenuOpen(false)
   }, [pathname])
+
+  // Close more menu when keyboard opens
+  useEffect(() => {
+    if (isKeyboardVisible) {
+      setMoreMenuOpen(false)
+    }
+  }, [isKeyboardVisible])
 
   const navItems = [
     {
@@ -90,7 +99,7 @@ export function MobileBottomNav() {
   return (
     <>
       {/* Overlay */}
-      {moreMenuOpen && (
+      {moreMenuOpen && !isKeyboardVisible && (
         <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
           onClick={() => setMoreMenuOpen(false)}
@@ -100,7 +109,7 @@ export function MobileBottomNav() {
       {/* More Menu Sheet */}
       <div className={cn(
         "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
-        moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
+        moreMenuOpen && !isKeyboardVisible ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
@@ -176,7 +185,10 @@ export function MobileBottomNav() {
       </div>
 
       {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
+      <nav className={cn(
+        "fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom transition-transform duration-200 ease-out",
+        isKeyboardVisible && "translate-y-full"
+      )}>
         <div className="flex items-center justify-around h-14">
           {/* First two nav items */}
           {navItems.slice(0, 2).map((item) => {
