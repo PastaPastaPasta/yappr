@@ -3,11 +3,12 @@
 import { forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
-import { BuildingStorefrontIcon } from '@heroicons/react/24/outline'
+import { BuildingStorefrontIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService } from '@/lib/services/cart-service'
+import { useBlock } from '@/hooks/use-block'
 import type { CartItem, Store } from '@/lib/types'
 
 interface CartStoreSectionProps {
@@ -20,6 +21,9 @@ interface CartStoreSectionProps {
 export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps>(
   function CartStoreSection({ storeId, store, items, onRemoveAll }, ref) {
     const router = useRouter()
+
+    // Check if store owner is blocked
+    const { isBlocked: isOwnerBlocked } = useBlock(store?.ownerId ?? '')
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
     const currency = items[0]?.currency || 'USD'
@@ -70,6 +74,18 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
           Remove all
         </button>
       </div>
+
+      {/* Blocked Store Owner Warning */}
+      {isOwnerBlocked && (
+        <div className="mx-4 mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+          <div className="flex items-center gap-2">
+            <ExclamationTriangleIcon className="h-5 w-5 text-amber-500 flex-shrink-0" />
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              You have blocked this store owner. Consider removing these items.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Items */}
       <div className="divide-y divide-gray-100 dark:divide-gray-900">

@@ -9,7 +9,8 @@ import {
   ChatBubbleLeftIcon,
   MapPinIcon,
   ShoppingCartIcon,
-  StarIcon
+  StarIcon,
+  NoSymbolIcon
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -25,6 +26,7 @@ import { storeItemService } from '@/lib/services/store-item-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { cartService } from '@/lib/services/cart-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
+import { useBlock } from '@/hooks/use-block'
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy } from '@/lib/types'
 
 function LoadingFallback() {
@@ -67,6 +69,9 @@ function StoreDetailContent() {
   const [cartItemCount, setCartItemCount] = useState(0)
   const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
   const [ownerUsername, setOwnerUsername] = useState<string | null>(null)
+
+  // Check if store owner is blocked
+  const { isBlocked: isOwnerBlocked, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '')
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -300,6 +305,32 @@ function StoreDetailContent() {
               )}
             </div>
           </div>
+
+          {/* Blocked Store Banner */}
+          {isOwnerBlocked && (
+            <div className="mx-4 mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+              <div className="flex items-center gap-3">
+                <NoSymbolIcon className="h-6 w-6 text-red-500" />
+                <div className="flex-1">
+                  <p className="font-medium text-red-700 dark:text-red-400">
+                    You have blocked this store owner
+                  </p>
+                  <p className="text-sm text-red-600 dark:text-red-400/80">
+                    This store&apos;s products won&apos;t appear in browse listings.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => toggleBlock()}
+                  disabled={isBlockLoading}
+                  className="border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40"
+                >
+                  Unblock
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="flex border-b border-gray-200 dark:border-gray-800">
