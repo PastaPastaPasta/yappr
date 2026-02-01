@@ -842,6 +842,49 @@ export function ComposeModal() {
     fileInputRef.current?.click()
   }, [isProviderConnected])
 
+  // Handle paste event for image upload from clipboard
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    // Find an image item in the clipboard
+    const imageItem = Array.from(items).find(item => item.type.startsWith('image/'))
+    if (!imageItem) return
+
+    // Check if we can attach an image (not encrypted, no existing attachment)
+    if (willBeEncrypted) {
+      toast.error('Images not supported for private posts')
+      return
+    }
+    if (attachedImage) {
+      toast.error('Only one image can be attached per post')
+      return
+    }
+    if (!isProviderConnected) {
+      setShowStorageProviderModal(true)
+      return
+    }
+
+    const file = imageItem.getAsFile()
+    if (!file) return
+
+    // Validate file type (should always be image since we checked above, but just in case)
+    if (!file.type.startsWith('image/')) {
+      toast.error('Only images are supported')
+      return
+    }
+
+    // Validate file size (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image must be under 10MB')
+      return
+    }
+
+    // Create preview URL and set attached image
+    const preview = URL.createObjectURL(file)
+    setAttachedImage({ file, preview })
+  }, [willBeEncrypted, attachedImage, isProviderConnected])
+
   const handlePost = async () => {
     const authedUser = requireAuth('post')
     if (!authedUser || !canPost) return
@@ -1291,6 +1334,7 @@ export function ComposeModal() {
                     className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                   >
                     {/* Accessibility */}
                     <Dialog.Title className="sr-only">
