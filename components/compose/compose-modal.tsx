@@ -880,6 +880,9 @@ export function ComposeModal() {
       return
     }
 
+    // Prevent browser's default paste behavior (e.g., inserting data URL into textarea)
+    e.preventDefault()
+
     // Create preview URL and set attached image
     const preview = URL.createObjectURL(file)
     setAttachedImage({ file, preview })
