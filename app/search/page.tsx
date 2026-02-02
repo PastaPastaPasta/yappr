@@ -7,6 +7,7 @@ import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon } from '@hero
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { hashtagService } from '@/lib/services/hashtag-service'
@@ -263,7 +264,7 @@ function SearchPageContent() {
           {/* Content */}
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Searching...</p>
             </div>
           ) : (
@@ -353,7 +354,7 @@ export default function SearchPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+        <Spinner size="md" />
       </div>
     }>
       <SearchPageContent />

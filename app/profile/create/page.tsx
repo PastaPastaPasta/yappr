@@ -10,8 +10,8 @@ import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
-import { Loader2 } from 'lucide-react'
 import { ArrowPathIcon, SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { Spinner } from '@/components/ui/spinner'
 import Image from 'next/image'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
@@ -239,7 +239,7 @@ function CreateProfilePage() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
         <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-yappr-500 mx-auto mb-4" />
+          <Spinner size="lg" className="mx-auto mb-4" />
           <p className="text-gray-600 dark:text-gray-400">Checking profile status...</p>
         </div>
       </div>

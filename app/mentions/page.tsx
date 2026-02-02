@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { mentionService } from '@/lib/services/mention-service'
 import { Post } from '@/lib/types'
@@ -166,7 +167,7 @@ function MentionsPageContent() {
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
             {isLoading ? (
               <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                <Spinner size="md" className="mx-auto mb-4" />
                 <p className="text-gray-500">Loading mentions...</p>
               </div>
             ) : posts.length === 0 ? (
@@ -206,7 +207,7 @@ export default function MentionsPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500"></div>
+        <Spinner size="md" />
       </div>
     }>
       <MentionsPageContent />

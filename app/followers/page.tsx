@@ -14,6 +14,7 @@ import { followService, dpnsService, unifiedProfileService } from '@/lib/service
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -440,7 +441,7 @@ function FollowersPage() {
                                 disabled={actionInProgress.has(follower.id)}
                               >
                                 {actionInProgress.has(follower.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                  <Spinner size="sm" className="border-gray-600" />
                                 ) : (
                                   'Following'
                                 )}
@@ -453,7 +454,7 @@ function FollowersPage() {
                                 disabled={actionInProgress.has(follower.id)}
                               >
                                 {actionInProgress.has(follower.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                  <Spinner size="sm" className="border-white" />
                                 ) : (
                                   'Follow back'
                                 )}

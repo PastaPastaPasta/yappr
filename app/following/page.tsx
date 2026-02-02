@@ -14,6 +14,7 @@ import { followService, dpnsService, unifiedProfileService } from '@/lib/service
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/input'
@@ -527,7 +528,7 @@ function FollowingPage() {
               <div>
                 {isSearching ? (
                   <div className="p-8 text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                    <Spinner size="md" className="mx-auto mb-4" />
                     <p className="text-gray-500">Searching for DPNS users...</p>
                   </div>
                 ) : searchResults.length > 0 ? (
@@ -587,7 +588,7 @@ function FollowingPage() {
                                     disabled={followingInProgress.has(searchUser.id)}
                                   >
                                     {followingInProgress.has(searchUser.id) ? (
-                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                      <Spinner size="sm" className="border-gray-600" />
                                     ) : (
                                       'Following'
                                     )}
@@ -599,7 +600,7 @@ function FollowingPage() {
                                     disabled={followingInProgress.has(searchUser.id)}
                                   >
                                     {followingInProgress.has(searchUser.id) ? (
-                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                      <Spinner size="sm" className="border-white" />
                                     ) : (
                                       'Follow'
                                     )}
@@ -740,7 +741,7 @@ function FollowingPage() {
                                 disabled={followingInProgress.has(followingUser.id)}
                               >
                                 {followingInProgress.has(followingUser.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                  <Spinner size="sm" className="border-gray-600" />
                                 ) : (
                                   'Following'
                                 )}
