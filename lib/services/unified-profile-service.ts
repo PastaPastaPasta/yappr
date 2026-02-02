@@ -485,7 +485,6 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       pronouns: profileDoc.pronouns,
       nsfw: profileDoc.nsfw,
       socialLinks: this.parseSocialLinks(profileDoc.socialLinks),
-      hasUnifiedProfile: true,
     };
 
     // Queue async enrichment
