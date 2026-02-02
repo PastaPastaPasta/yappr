@@ -26,6 +26,7 @@ interface AuthContextType {
   error: string | null
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
+  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number, options?: { rememberMe?: boolean }) => Promise<void>
   logout: () => void
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
@@ -445,6 +446,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [login])
 
+  /**
+   * Login using a key exchange login key from a wallet.
+   *
+   * This method is called after successful key exchange with a wallet app.
+   * It derives auth and encryption keys from the login key and completes login.
+   *
+   * Spec: YAPPR_DET_SIGNER_SPEC.md sections 5.2, 5.3
+   */
+  const loginWithKeyExchange = useCallback(async (
+    identityId: string,
+    loginKey: Uint8Array,
+    keyIndex: number,
+    options: { rememberMe?: boolean } = {}
+  ) => {
+    const { rememberMe = true } = options
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      // Import key derivation functions
+      const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
+      const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
+      const { privateKeyToWif } = await import('@/lib/crypto/wif')
+      const { storePrivateKey, storeEncryptionKey, setRememberMe } = await import('@/lib/secure-storage')
+
+      // Decode identity ID to bytes
+      const identityIdBytes = decodeIdentityId(identityId)
+
+      // Derive auth and encryption keys from login key
+      const authKey = deriveAuthKeyFromLogin(loginKey, identityIdBytes)
+      const encryptionKey = deriveEncryptionKeyFromLogin(loginKey, identityIdBytes)
+
+      // Get network for WIF encoding
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+
+      // Convert to WIF format for storage
+      const authKeyWif = privateKeyToWif(authKey, network, true)
+      const encryptionKeyWif = privateKeyToWif(encryptionKey, network, true)
+
+      // Set storage mode
+      setRememberMe(rememberMe)
+
+      // Store keys
+      storePrivateKey(identityId, authKeyWif)
+      storeEncryptionKey(identityId, encryptionKeyWif)
+
+      console.log(`Auth: Key exchange login - keyIndex=${keyIndex}`)
+
+      // Continue with normal login flow
+      await login(identityId, authKeyWif, { skipUsernameCheck: false, rememberMe })
+    } catch (err) {
+      console.error('Key exchange login error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to login with key exchange')
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [login])
+
   const updateDPNSUsername = useCallback((username: string) => {
     if (!user) return
 
@@ -518,6 +578,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       error,
       login,
       loginWithPassword,
+      loginWithKeyExchange,
       logout,
       updateDPNSUsername,
       refreshDpnsUsernames,

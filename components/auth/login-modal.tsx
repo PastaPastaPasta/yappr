@@ -14,6 +14,8 @@ import { keyValidationService, type KeyValidationResult } from '@/lib/services/k
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { isLikelyWif } from '@/lib/crypto/wif'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
+import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
+import { QrCode } from 'lucide-react'
 
 // Check if input looks like an Identity ID (base58, ~44 chars)
 function isLikelyIdentityId(input: string): boolean {
@@ -65,6 +67,7 @@ export function LoginModal() {
 
   const { login, loginWithPassword } = useAuth()
   const openBackupModal = useKeyBackupModal((state) => state.open)
+  const openKeyExchangeModal = useKeyExchangeModal((state) => state.open)
 
   // Reset form when modal closes
   useEffect(() => {
@@ -465,6 +468,21 @@ export function LoginModal() {
                     'Sign In'
                   )}
                 </Button>
+
+                {/* Wallet Login Option */}
+                {resolvedIdentity && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      close()
+                      openKeyExchangeModal(resolvedIdentity.id, resolvedIdentity.dpnsUsername)
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    Login with Wallet (QR)
+                  </button>
+                )}
 
                 {/* Onboarding Gateway */}
                 <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">

@@ -12,6 +12,7 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9Mx
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
+export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID || 'TBD' // Key exchange protocol contract (to be deployed)
 
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
@@ -53,7 +54,9 @@ export const DOCUMENT_TYPES = {
   FOLLOW_REQUEST: 'followRequest',
   PRIVATE_FEED_GRANT: 'privateFeedGrant',
   PRIVATE_FEED_REKEY: 'privateFeedRekey',
-  PRIVATE_FEED_STATE: 'privateFeedState'
+  PRIVATE_FEED_STATE: 'privateFeedState',
+  // Key exchange protocol document types (separate contract)
+  LOGIN_KEY_RESPONSE: 'loginKeyResponse'
 } as const
 
 // Storefront document types (separate contract)
