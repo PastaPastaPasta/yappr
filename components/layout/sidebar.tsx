@@ -30,7 +30,7 @@ import {
   BellIcon as BellIconSolid,
   BuildingStorefrontIcon as BuildingStorefrontIconSolid,
 } from '@heroicons/react/24/solid'
-import { cn } from '@/lib/utils'
+import { cn, truncateId } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
 import { useNotificationStore } from '@/lib/stores/notification-store'
@@ -180,10 +180,7 @@ export function Sidebar() {
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
   
   // Format identity ID for display (show first 6 and last 4 chars)
-  const formatIdentityId = (id: string) => {
-    if (id.length <= 10) return id
-    return `${id.slice(0, 6)}...${id.slice(-4)}`
-  }
+  const formatIdentityId = (id: string) => truncateId(id, 6, 4)
 
   return (
     <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">

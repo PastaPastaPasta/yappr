@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { withAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { formatTimeCompact } from '@/lib/utils'
 import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { Notification } from '@/lib/types'
@@ -112,19 +113,6 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
   follow: 'When someone follows you, you\'ll see it here',
   mention: 'When someone mentions you, you\'ll see it here',
   privateFeed: 'Private feed requests and updates will appear here'
-}
-
-function formatTime(date: Date): string {
-  const diff = Date.now() - date.getTime()
-  const minutes = Math.floor(diff / 60000)
-  const hours = Math.floor(diff / 3600000)
-  const days = Math.floor(diff / 86400000)
-
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m`
-  if (hours < 24) return `${hours}h`
-  if (days < 7) return `${days}d`
-  return date.toLocaleDateString()
 }
 
 function NotificationsPage() {
@@ -361,7 +349,7 @@ function NotificationsPage() {
                             {' '}
                             {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
                             <span className="text-gray-500 ml-2">
-                              {formatTime(notification.createdAt)}
+                              {formatTimeCompact(notification.createdAt)}
                             </span>
                           </p>
 

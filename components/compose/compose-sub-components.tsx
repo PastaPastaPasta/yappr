@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { getInitials, formatTime } from '@/lib/utils'
+import { getInitials, formatTime, truncateId } from '@/lib/utils'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
@@ -624,7 +624,7 @@ function getAuthorDisplayName(author: Post['author']): string {
   }
 
   // Last resort: truncated identity ID
-  return `${author.id.slice(0, 8)}...${author.id.slice(-6)}`
+  return truncateId(author.id)
 }
 
 /**
