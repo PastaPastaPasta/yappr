@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type FocusEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -9,7 +9,10 @@ import {
   PaperAirplaneIcon,
   InformationCircleIcon,
   EllipsisHorizontalIcon,
-  PlusIcon
+  PlusIcon,
+  ChevronDownIcon,
+  ArrowLeftIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
@@ -22,7 +25,6 @@ import { directMessageService, dpnsService, identityService, unifiedProfileServi
 import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
-import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 
 interface UserSearchResult {
   id: string
@@ -52,6 +54,12 @@ function MessagesPage() {
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const searchIdRef = useRef(0)
+  const [isComposerFocused, setIsComposerFocused] = useState(false)
+  const [isNearBottom, setIsNearBottom] = useState(true)
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const composerRef = useRef<HTMLDivElement | null>(null)
+  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -60,6 +68,101 @@ function MessagesPage() {
   selectedConversationRef.current = selectedConversation
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    container.scrollTo({ top: container.scrollHeight, behavior })
+  }
+
+  const updateIsNearBottom = () => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight
+    const nearBottom = distance < 48
+    setIsNearBottom(nearBottom)
+    if (nearBottom) {
+      setShowJumpToLatest(false)
+    }
+  }
+
+  const handleComposerFocus = () => {
+    if (blurTimeoutRef.current) {
+      clearTimeout(blurTimeoutRef.current)
+      blurTimeoutRef.current = null
+    }
+    setIsComposerFocused(true)
+    requestAnimationFrame(() => scrollToBottom('smooth'))
+    setTimeout(() => scrollToBottom('smooth'), 180)
+  }
+
+  const handleComposerBlur = (event: FocusEvent<HTMLDivElement>) => {
+    const currentTarget = event.currentTarget
+    requestAnimationFrame(() => {
+      if (!currentTarget.contains(document.activeElement)) {
+        if (blurTimeoutRef.current) {
+          clearTimeout(blurTimeoutRef.current)
+        }
+        blurTimeoutRef.current = setTimeout(() => {
+          if (!currentTarget.contains(document.activeElement)) {
+            setIsComposerFocused(false)
+          }
+          blurTimeoutRef.current = null
+        }, 150)
+      }
+    })
+  }
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    if (isComposerFocused) {
+      document.body.classList.add('mobile-nav-hidden')
+    } else {
+      document.body.classList.remove('mobile-nav-hidden')
+    }
+    return () => {
+      document.body.classList.remove('mobile-nav-hidden')
+    }
+  }, [isComposerFocused])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.body.classList.add('messages-scroll-lock')
+    return () => {
+      document.body.classList.remove('messages-scroll-lock')
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (blurTimeoutRef.current) {
+        clearTimeout(blurTimeoutRef.current)
+        blurTimeoutRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedConversation) return
+    setIsNearBottom(true)
+    setShowJumpToLatest(false)
+    if (!isLoadingMessages) {
+      requestAnimationFrame(() => scrollToBottom('auto'))
+    }
+  }, [selectedConversation?.id, isLoadingMessages])
+
+  useEffect(() => {
+    if (!selectedConversation) return
+    if (messages.length === 0) return
+    const lastMessage = messages[messages.length - 1]
+    const isOwn = lastMessage.senderId === user?.identityId
+    if (isNearBottom || isOwn) {
+      requestAnimationFrame(() => scrollToBottom('smooth'))
+      setShowJumpToLatest(false)
+    } else {
+      setShowJumpToLatest(true)
+    }
+  }, [messages, isNearBottom, selectedConversation?.id, user?.identityId])
 
   // Load conversations on mount
   useEffect(() => {
@@ -540,12 +643,12 @@ function MessagesPage() {
   }
 
   return (
-    <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
+    <div className="h-[calc(100dvh-32px-var(--mobile-nav-offset,56px))] md:h-[calc(100dvh-40px)] flex overflow-hidden min-h-0">
       <Sidebar />
 
-      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
+      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden min-h-0">
         {/* Conversations List */}
-        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
+        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden min-h-0 ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
           <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
               <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
@@ -638,7 +741,7 @@ function MessagesPage() {
 
         {/* Message Thread */}
         {selectedConversation ? (
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden min-h-0">
             <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
@@ -678,60 +781,85 @@ function MessagesPage() {
               </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
-              {isLoadingMessages ? (
-                <div className="flex items-center justify-center h-full">
-                  <Spinner size="md" />
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-500">
-                  <p>No messages yet. Start the conversation!</p>
-                </div>
-              ) : (
-                messages.map((message, index) => {
-                  const isOwn = message.senderId === user?.identityId
-                  // Check if this sent message was read by the other party
-                  const isRead = isOwn && participantLastRead && message.createdAt.getTime() <= participantLastRead
-                  // Only show "Read" on the last read message (not all of them)
-                  const isLastReadMessage = isRead && (
-                    index === messages.length - 1 ||
-                    !messages.slice(index + 1).some(m =>
-                      m.senderId === user?.identityId && m.createdAt.getTime() <= participantLastRead
+            <div
+              ref={scrollContainerRef}
+              onScroll={updateIsNearBottom}
+              className="relative flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-gray-50/80 to-white dark:from-neutral-950/60 dark:to-neutral-900/40"
+            >
+              <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 min-h-full">
+                {isLoadingMessages ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Spinner size="md" />
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="flex items-center justify-center h-full text-gray-500">
+                    <p>No messages yet. Start the conversation!</p>
+                  </div>
+                ) : (
+                  messages.map((message, index) => {
+                    const isOwn = message.senderId === user?.identityId
+                    // Check if this sent message was read by the other party
+                    const isRead = isOwn && participantLastRead && message.createdAt.getTime() <= participantLastRead
+                    // Only show "Read" on the last read message (not all of them)
+                    const isLastReadMessage = isRead && (
+                      index === messages.length - 1 ||
+                      !messages.slice(index + 1).some(m =>
+                        m.senderId === user?.identityId && m.createdAt.getTime() <= participantLastRead
+                      )
                     )
-                  )
-                  return (
-                    <motion.div
-                      key={message.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${isOwn ? 'order-2' : 'order-1'}`}>
-                        <div
-                          className={`px-4 py-2 rounded-2xl ${
-                            isOwn
-                              ? 'bg-yappr-500 text-white'
-                              : 'bg-gray-100 dark:bg-gray-900'
-                          }`}
-                        >
-                          <p className="text-sm">{message.content}</p>
+                    return (
+                      <motion.div
+                        key={message.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div className={`max-w-[88%] sm:max-w-[75%] md:max-w-[70%] ${isOwn ? 'order-2' : 'order-1'}`}>
+                          <div
+                            className={`px-4 py-2 rounded-2xl shadow-sm ${
+                              isOwn
+                                ? 'bg-yappr-500 text-white rounded-br-md'
+                                : 'bg-white dark:bg-neutral-900 text-gray-900 dark:text-gray-100 border border-gray-200/70 dark:border-gray-800/80 rounded-bl-md'
+                            }`}
+                          >
+                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{message.content}</p>
+                          </div>
+                          <div className={`flex items-center gap-1 mt-1 px-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                            <p className="text-xs text-gray-500">
+                              {formatDistanceToNow(message.createdAt, { addSuffix: true })}
+                            </p>
+                            {isLastReadMessage && (
+                              <span className="text-xs text-yappr-500 font-medium">· Read</span>
+                            )}
+                          </div>
                         </div>
-                        <div className={`flex items-center gap-1 mt-1 px-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
-                          <p className="text-xs text-gray-500">
-                            {formatDistanceToNow(message.createdAt, { addSuffix: true })}
-                          </p>
-                          {isLastReadMessage && (
-                            <span className="text-xs text-yappr-500 font-medium">· Read</span>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  )
-                })
+                      </motion.div>
+                    )
+                  })
+                )}
+              </div>
+
+              {showJumpToLatest && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    scrollToBottom('smooth')
+                    setShowJumpToLatest(false)
+                  }}
+                  className="absolute bottom-4 right-4 inline-flex items-center gap-1 rounded-full bg-white/90 dark:bg-neutral-900/90 text-sm font-medium px-3 py-2 shadow-lg border border-gray-200/80 dark:border-gray-800/80 backdrop-blur"
+                >
+                  New messages
+                  <ChevronDownIcon className="h-4 w-4" />
+                </button>
               )}
             </div>
 
-            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom">
+            <div
+              ref={composerRef}
+              onFocus={handleComposerFocus}
+              onBlur={handleComposerBlur}
+              className="flex-shrink-0 border-t border-gray-200/80 dark:border-gray-800/80 p-2 sm:p-4 safe-area-inset-bottom bg-white/90 dark:bg-neutral-900/90 backdrop-blur"
+            >
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -745,17 +873,17 @@ function MessagesPage() {
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   disabled={isSending}
-                  className="flex-1 min-w-0 h-9 sm:h-10 text-base"
+                  className="flex-1 min-w-0 h-11 sm:h-12 text-base rounded-full border-transparent bg-gray-100 dark:bg-neutral-800 focus-visible:ring-yappr-500 focus-visible:ring-offset-0"
                 />
 
                 <Button
                   type="submit"
                   size="sm"
                   disabled={!newMessage.trim() || isSending}
-                  className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
+                  className="flex-shrink-0 h-11 w-11 sm:h-12 sm:w-12 p-0 shadow-yappr"
                 >
                   {isSending ? (
-                    <Spinner size="sm" className="border-white" />
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
                   ) : (
                     <PaperAirplaneIcon className="h-4 w-4" />
                   )}
