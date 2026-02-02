@@ -6,6 +6,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials, formatTime, truncateId } from '@/lib/utils'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
+import { Spinner } from '@/components/ui/spinner'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import { useAuth } from '@/contexts/auth-context'
 import { isPrivatePost } from '@/components/post/private-post-content'
@@ -208,7 +209,7 @@ export function PostButtonContent({ state }: PostButtonContentProps) {
     case 'posting-progress':
       return (
         <span className="flex items-center gap-2">
-          <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
+          <Spinner size="sm" className="border-current" />
           <span>
             {state.progress.current}/{state.progress.total}
           </span>
@@ -218,7 +219,7 @@ export function PostButtonContent({ state }: PostButtonContentProps) {
     case 'posting':
       return (
         <span className="flex items-center gap-2">
-          <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
+          <Spinner size="sm" className="border-current" />
           <span>Posting</span>
         </span>
       )

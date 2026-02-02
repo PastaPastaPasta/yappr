@@ -5,6 +5,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { LoadingState } from '@/components/ui/loading-state'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useAuth } from '@/contexts/auth-context'
@@ -183,7 +184,7 @@ export function DashPayContactsModal() {
               >
                 {state === 'following' ? (
                   <span className="flex items-center gap-2">
-                    <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                    <Spinner size="sm" className="border-white" />
                     Following...
                   </span>
                 ) : (

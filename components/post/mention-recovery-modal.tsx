@@ -7,6 +7,7 @@ import { XMarkIcon, ExclamationTriangleIcon, AtSymbolIcon } from '@heroicons/rea
 import { ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { mentionService } from '@/lib/services/mention-service'
@@ -176,7 +177,7 @@ export function MentionRecoveryModal() {
                         {/* Resolving state */}
                         {isResolving && (
                           <div className="text-sm text-gray-500 flex items-center gap-2">
-                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-yappr-500 border-t-transparent" />
+                            <Spinner size="sm" />
                             Resolving username...
                           </div>
                         )}
@@ -228,7 +229,7 @@ export function MentionRecoveryModal() {
                     {/* Registering State */}
                     {isRegistering && (
                       <div className="py-8 text-center space-y-4">
-                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-yappr-500 border-t-transparent mx-auto" />
+                        <Spinner size="lg" className="mx-auto" />
                         <p className="text-gray-600 dark:text-gray-400">
                           Registering mention...
                         </p>

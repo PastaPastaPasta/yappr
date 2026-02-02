@@ -13,6 +13,7 @@ import ErrorBoundary from '@/components/error-boundary'
 import { followService, dpnsService, unifiedProfileService, likeService, repostService, postService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -447,7 +448,7 @@ function EngagementsPageContent() {
                                 disabled={actionInProgress.has(engagement.id)}
                               >
                                 {actionInProgress.has(engagement.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                  <Spinner size="sm" />
                                 ) : (
                                   'Following'
                                 )}
@@ -460,7 +461,7 @@ function EngagementsPageContent() {
                                 disabled={actionInProgress.has(engagement.id)}
                               >
                                 {actionInProgress.has(engagement.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                  <Spinner size="sm" className="border-white" />
                                 ) : (
                                   'Follow'
                                 )}
@@ -487,7 +488,7 @@ function EngagementsPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500"></div>
+        <Spinner size="md" />
       </div>
     }>
       <EngagementsPageContent />

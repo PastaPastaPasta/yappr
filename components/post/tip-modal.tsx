@@ -6,6 +6,7 @@ import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } f
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
@@ -543,7 +544,7 @@ export function TipModal() {
                 {/* Processing State */}
                 {state === 'processing' && (
                   <div className="py-8 text-center space-y-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-amber-500 border-t-transparent mx-auto" />
+                    <Spinner size="lg" className="mx-auto border-amber-500" />
                     <p className="text-gray-600 dark:text-gray-400">Sending tip...</p>
                     <p className="text-xs text-gray-500">Please wait, this may take a moment.</p>
                   </div>

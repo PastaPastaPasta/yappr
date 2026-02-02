@@ -7,6 +7,7 @@ import { XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { hashtagService } from '@/lib/services/hashtag-service'
@@ -169,7 +170,7 @@ export function HashtagRecoveryModal() {
                     {/* Registering State */}
                     {isRegistering && (
                       <div className="py-8 text-center space-y-4">
-                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-yappr-500 border-t-transparent mx-auto" />
+                        <Spinner size="lg" className="mx-auto" />
                         <p className="text-gray-600 dark:text-gray-400">
                           Registering hashtag...
                         </p>
