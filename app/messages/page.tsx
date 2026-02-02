@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type FocusEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -58,6 +58,8 @@ function MessagesPage() {
   const [isNearBottom, setIsNearBottom] = useState(true)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const composerRef = useRef<HTMLDivElement | null>(null)
+  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -85,13 +87,30 @@ function MessagesPage() {
   }
 
   const handleComposerFocus = () => {
+    if (blurTimeoutRef.current) {
+      clearTimeout(blurTimeoutRef.current)
+      blurTimeoutRef.current = null
+    }
     setIsComposerFocused(true)
     requestAnimationFrame(() => scrollToBottom('smooth'))
     setTimeout(() => scrollToBottom('smooth'), 180)
   }
 
-  const handleComposerBlur = () => {
-    setIsComposerFocused(false)
+  const handleComposerBlur = (event: FocusEvent<HTMLDivElement>) => {
+    const currentTarget = event.currentTarget
+    requestAnimationFrame(() => {
+      if (!currentTarget.contains(document.activeElement)) {
+        if (blurTimeoutRef.current) {
+          clearTimeout(blurTimeoutRef.current)
+        }
+        blurTimeoutRef.current = setTimeout(() => {
+          if (!currentTarget.contains(document.activeElement)) {
+            setIsComposerFocused(false)
+          }
+          blurTimeoutRef.current = null
+        }, 150)
+      }
+    })
   }
 
   useEffect(() => {
@@ -105,6 +124,15 @@ function MessagesPage() {
       document.body.classList.remove('mobile-nav-hidden')
     }
   }, [isComposerFocused])
+
+  useEffect(() => {
+    return () => {
+      if (blurTimeoutRef.current) {
+        clearTimeout(blurTimeoutRef.current)
+        blurTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!selectedConversation) return
@@ -818,7 +846,12 @@ function MessagesPage() {
               )}
             </div>
 
-            <div className="flex-shrink-0 border-t border-gray-200/80 dark:border-gray-800/80 p-2 sm:p-4 safe-area-inset-bottom bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
+            <div
+              ref={composerRef}
+              onFocus={handleComposerFocus}
+              onBlur={handleComposerBlur}
+              className="flex-shrink-0 border-t border-gray-200/80 dark:border-gray-800/80 p-2 sm:p-4 safe-area-inset-bottom bg-white/90 dark:bg-neutral-900/90 backdrop-blur"
+            >
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -831,8 +864,6 @@ function MessagesPage() {
                   placeholder="Type a message..."
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  onFocus={handleComposerFocus}
-                  onBlur={handleComposerBlur}
                   disabled={isSending}
                   className="flex-1 min-w-0 h-11 sm:h-12 text-base rounded-full border-transparent bg-gray-100 dark:bg-neutral-800 focus-visible:ring-yappr-500 focus-visible:ring-offset-0"
                 />
@@ -844,7 +875,7 @@ function MessagesPage() {
                   className="flex-shrink-0 h-11 w-11 sm:h-12 sm:w-12 p-0 shadow-yappr"
                 >
                   {isSending ? (
-                    <Spinner size="sm" className="border-white" />
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
                   ) : (
                     <PaperAirplaneIcon className="h-4 w-4" />
                   )}
