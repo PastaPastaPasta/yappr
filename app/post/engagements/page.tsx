@@ -160,9 +160,19 @@ function EngagementsPageContent() {
       const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
       const baseUsers = await resolveEngagementUsers(ownerIds, user?.identityId)
 
-      // Add quote-specific fields by joining with quotePosts data
-      const users: EngagementUser[] = quotePosts.map((post, index) => ({
-        ...baseUsers[index],
+      // Create Map for O(1) lookups - avoids index mismatch when filter(Boolean) removes IDs
+      const baseUsersMap = new Map(baseUsers.map(u => [u.id, u]))
+
+      // Add quote-specific fields by joining with quotePosts data using ID-based lookup
+      const users: EngagementUser[] = quotePosts.map((post) => ({
+        ...(baseUsersMap.get(post.author.id) || {
+          id: post.author.id,
+          username: post.author.id?.slice(-8) || 'unknown',
+          displayName: 'User ' + (post.author.id?.slice(-8) || 'unknown'),
+          hasDpnsName: false,
+          hasProfile: false,
+          isFollowing: false
+        }),
         quoteContent: post.content,
         quotePostId: post.id
       }))
