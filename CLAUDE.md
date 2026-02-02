@@ -53,7 +53,7 @@ Use the Task tool with subagent_type=Plan to review the changes for:
 - Potential performance issues
 ```
 
-This "trust but verify" approach helps catch issues that automated tools miss.
+**Trust but verify**: The review agent may flag potential issues that aren't actually problems, or miss real issues. Treat its output as suggestions to investigate, not definitive judgments. Verify each finding before acting on it.
 
 ### 4. Manual Verification (when applicable)
 - For UI changes: Run `npm run dev` and visually verify the changes
