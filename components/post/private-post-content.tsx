@@ -555,17 +555,24 @@ export function PrivatePostContent({
     // Don't use state.reason since it doesn't update when request is cancelled
     const isPending = requestStatus === 'pending'
 
-    // Compact status text with explanation inline
-    // For pending, keep text subtle - the badge on the right indicates status
-    const statusText = state.reason === 'revoked'
-      ? 'Access revoked'
-      : state.reason === 'no-auth'
-      ? 'Log in to view'
-      : state.reason === 'approved-no-keys'
-      ? 'Key recovery required'
-      : state.reason === 'no-keys' && isOwner
-      ? 'Enter encryption key to view'
-      : 'Private content'
+    // Get status text based on lock reason
+    let statusText: string
+    switch (state.reason) {
+      case 'revoked':
+        statusText = 'Access revoked'
+        break
+      case 'no-auth':
+        statusText = 'Log in to view'
+        break
+      case 'approved-no-keys':
+        statusText = 'Key recovery required'
+        break
+      case 'no-keys':
+        statusText = isOwner ? 'Enter encryption key to view' : 'Private content'
+        break
+      default:
+        statusText = 'Private content'
+    }
 
     // Render the Request Access button based on current state
     const renderRequestButton = () => {

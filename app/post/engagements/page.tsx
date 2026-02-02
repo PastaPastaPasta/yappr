@@ -33,6 +33,42 @@ interface EngagementUser {
   quotePostId?: string
 }
 
+/**
+ * Batch resolve user data for a list of owner IDs.
+ * Returns engagement user objects with DPNS names, profiles, and follow status.
+ */
+async function resolveEngagementUsers(
+  ownerIds: string[],
+  currentUserId: string | undefined
+): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile' | 'isFollowing'>[]> {
+  const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
+    dpnsService.resolveUsernamesBatch(ownerIds),
+    unifiedProfileService.getProfilesByIdentityIds(ownerIds),
+    currentUserId
+      ? followService.getFollowStatusBatch(ownerIds, currentUserId)
+      : Promise.resolve(new Map<string, boolean>())
+  ])
+
+  const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+
+  return ownerIds.map((id) => {
+    const username = dpnsNamesMap.get(id) || null
+    const profile = profileMap.get(id)
+    const profileData = (profile as any)?.data || profile
+    const profileDisplayName = profileData?.displayName
+
+    return {
+      id,
+      username: username || id.slice(-8),
+      displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
+      bio: profileData?.bio,
+      hasDpnsName: !!username,
+      hasProfile: !!profileDisplayName,
+      isFollowing: followStatus.get(id) || false
+    }
+  })
+}
+
 function EngagementsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -67,34 +103,7 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = ownerIds.map((id) => {
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false
-        }
-      })
-
+      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
       console.error('Failed to load likes:', error)
@@ -121,34 +130,7 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = ownerIds.map((id) => {
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false
-        }
-      })
-
+      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
       console.error('Failed to load reposts:', error)
@@ -175,37 +157,14 @@ function EngagementsPageContent() {
       }
 
       const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
+      const baseUsers = await resolveEngagementUsers(ownerIds, user?.identityId)
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = quotePosts.map((post) => {
-        const id = post.author.id
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false,
-          quoteContent: post.content,
-          quotePostId: post.id
-        }
-      })
+      // Add quote-specific fields by joining with quotePosts data
+      const users: EngagementUser[] = quotePosts.map((post, index) => ({
+        ...baseUsers[index],
+        quoteContent: post.content,
+        quotePostId: post.id
+      }))
 
       setData(users)
     } catch (error) {
