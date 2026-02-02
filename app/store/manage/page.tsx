@@ -24,9 +24,11 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal } from '@/components/store'
+import { Spinner } from '@/components/ui/spinner'
+import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRangeDisplay } from '@/components/store'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
+import { getStoreStatusLabel, getStoreStatusDescription } from '@/lib/utils/store-status'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -221,18 +223,8 @@ function StoreManagePage() {
         label: data.label
       }
       const currentUris = store.paymentUris || []
-      // Preserve all existing fields during update (SDK replace operation)
-      const updatedStore = await storeService.updateStore(store.id, user.identityId, {
-        name: store.name,
-        description: store.description,
-        logoUrl: store.logoUrl,
-        bannerUrl: store.bannerUrl,
-        status: store.status,
-        paymentUris: [...currentUris, newUri],
-        defaultCurrency: store.defaultCurrency,
-        policies: store.policies,
-        location: store.location,
-        contactMethods: store.contactMethods
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: [...currentUris, newUri]
       })
       setStore(updatedStore)
       setShowPaymentModal(false)
@@ -248,18 +240,8 @@ function StoreManagePage() {
     try {
       setIsDeleting(true)
       const updatedUris = store.paymentUris.filter((_, i) => i !== deletePaymentIndex)
-      // Preserve all existing fields during update (SDK replace operation)
-      const updatedStore = await storeService.updateStore(store.id, user.identityId, {
-        name: store.name,
-        description: store.description,
-        logoUrl: store.logoUrl,
-        bannerUrl: store.bannerUrl,
-        status: store.status,
-        paymentUris: updatedUris,
-        defaultCurrency: store.defaultCurrency,
-        policies: store.policies,
-        location: store.location,
-        contactMethods: store.contactMethods
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: updatedUris
       })
       setStore(updatedStore)
       setDeletePaymentIndex(null)
@@ -276,7 +258,7 @@ function StoreManagePage() {
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+            <Spinner />
           </main>
         </div>
         <RightSidebar />
@@ -335,7 +317,7 @@ function StoreManagePage() {
               <div className="flex-1 min-w-0">
                 <h2 className="font-bold truncate">{store.name}</h2>
                 <p className="text-sm text-gray-500">
-                  {store.status === 'active' ? 'Active' : store.status === 'paused' ? 'Paused' : 'Closed'}
+                  {getStoreStatusLabel(store.status)}
                 </p>
               </div>
               <Button
@@ -505,12 +487,12 @@ function StoreManagePage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium truncate">{item.title}</h4>
-                          <p className="text-sm text-yappr-600">
-                            {priceRange.min === priceRange.max
-                              ? formatPrice(priceRange.min, item.currency)
-                              : `${formatPrice(priceRange.min, item.currency)} - ${formatPrice(priceRange.max, item.currency)}`
-                            }
-                          </p>
+                          <PriceRangeDisplay
+                            minPrice={priceRange.min}
+                            maxPrice={priceRange.max}
+                            currency={item.currency}
+                            size="sm"
+                          />
                           <p className="text-xs text-gray-500">
                             {item.status === 'active' ? 'Active' : item.status}
                             {item.stockQuantity !== undefined && ` • ${item.stockQuantity} in stock`}
@@ -613,12 +595,7 @@ function StoreManagePage() {
                       <div>
                         <h4 className="font-medium">Store Status</h4>
                         <p className="text-sm text-gray-500">
-                          {store.status === 'active'
-                            ? 'Your store is visible to buyers'
-                            : store.status === 'paused'
-                              ? 'Your store is temporarily hidden'
-                              : 'Your store is closed'
-                          }
+                          {getStoreStatusDescription(store.status)}
                         </p>
                       </div>
                       <select
@@ -626,18 +603,8 @@ function StoreManagePage() {
                         onChange={async (e) => {
                           const newStatus = e.target.value as 'active' | 'paused' | 'closed'
                           try {
-                            // Preserve all existing fields during update (SDK replace operation)
-                            const updated = await storeService.updateStore(store.id, user!.identityId, {
-                              name: store.name,
-                              description: store.description,
-                              logoUrl: store.logoUrl,
-                              bannerUrl: store.bannerUrl,
-                              status: newStatus,
-                              paymentUris: store.paymentUris,
-                              defaultCurrency: store.defaultCurrency,
-                              policies: store.policies,
-                              location: store.location,
-                              contactMethods: store.contactMethods
+                            const updated = await storeService.patchStore(store.id, user!.identityId, {
+                              status: newStatus
                             })
                             setStore(updated)
                           } catch (error) {

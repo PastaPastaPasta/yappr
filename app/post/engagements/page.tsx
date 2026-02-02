@@ -13,6 +13,7 @@ import ErrorBoundary from '@/components/error-boundary'
 import { followService, dpnsService, unifiedProfileService, likeService, repostService, postService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -31,6 +32,42 @@ interface EngagementUser {
   // For quotes tab
   quoteContent?: string
   quotePostId?: string
+}
+
+/**
+ * Batch resolve user data for a list of owner IDs.
+ * Returns engagement user objects with DPNS names, profiles, and follow status.
+ */
+async function resolveEngagementUsers(
+  ownerIds: string[],
+  currentUserId: string | undefined
+): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile' | 'isFollowing'>[]> {
+  const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
+    dpnsService.resolveUsernamesBatch(ownerIds),
+    unifiedProfileService.getProfilesByIdentityIds(ownerIds),
+    currentUserId
+      ? followService.getFollowStatusBatch(ownerIds, currentUserId)
+      : Promise.resolve(new Map<string, boolean>())
+  ])
+
+  const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+
+  return ownerIds.map((id) => {
+    const username = dpnsNamesMap.get(id) || null
+    const profile = profileMap.get(id)
+    const profileData = (profile as any)?.data || profile
+    const profileDisplayName = profileData?.displayName
+
+    return {
+      id,
+      username: username || id.slice(-8),
+      displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
+      bio: profileData?.bio,
+      hasDpnsName: !!username,
+      hasProfile: !!profileDisplayName,
+      isFollowing: followStatus.get(id) || false
+    }
+  })
 }
 
 function EngagementsPageContent() {
@@ -67,34 +104,7 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = ownerIds.map((id) => {
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false
-        }
-      })
-
+      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
       console.error('Failed to load likes:', error)
@@ -121,34 +131,7 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = ownerIds.map((id) => {
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false
-        }
-      })
-
+      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
       console.error('Failed to load reposts:', error)
@@ -175,37 +158,24 @@ function EngagementsPageContent() {
       }
 
       const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
+      const baseUsers = await resolveEngagementUsers(ownerIds, user?.identityId)
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
+      // Create Map for O(1) lookups - avoids index mismatch when filter(Boolean) removes IDs
+      const baseUsersMap = new Map(baseUsers.map(u => [u.id, u]))
 
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = quotePosts.map((post) => {
-        const id = post.author.id
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false,
-          quoteContent: post.content,
-          quotePostId: post.id
-        }
-      })
+      // Add quote-specific fields by joining with quotePosts data using ID-based lookup
+      const users: EngagementUser[] = quotePosts.map((post) => ({
+        ...(baseUsersMap.get(post.author.id) || {
+          id: post.author.id,
+          username: post.author.id?.slice(-8) || 'unknown',
+          displayName: 'User ' + (post.author.id?.slice(-8) || 'unknown'),
+          hasDpnsName: false,
+          hasProfile: false,
+          isFollowing: false
+        }),
+        quoteContent: post.content,
+        quotePostId: post.id
+      }))
 
       setData(users)
     } catch (error) {
@@ -488,7 +458,7 @@ function EngagementsPageContent() {
                                 disabled={actionInProgress.has(engagement.id)}
                               >
                                 {actionInProgress.has(engagement.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                  <Spinner size="sm" />
                                 ) : (
                                   'Following'
                                 )}
@@ -501,7 +471,7 @@ function EngagementsPageContent() {
                                 disabled={actionInProgress.has(engagement.id)}
                               >
                                 {actionInProgress.has(engagement.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                  <Spinner size="sm" className="border-white" />
                                 ) : (
                                   'Follow'
                                 )}
@@ -528,7 +498,7 @@ function EngagementsPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500"></div>
+        <Spinner size="md" />
       </div>
     }>
       <EngagementsPageContent />

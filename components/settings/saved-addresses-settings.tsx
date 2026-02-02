@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { MapPinIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { SavedAddressModal } from '@/components/checkout/saved-address-modal'
 import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
@@ -128,7 +129,7 @@ export function SavedAddressesSettings() {
       <div>
         <h3 className="font-semibold mb-4">Saved Shipping Addresses</h3>
         <div className="flex items-center justify-center py-6">
-          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yappr-500" />
+          <Spinner size="sm" />
         </div>
       </div>
     )

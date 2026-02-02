@@ -83,6 +83,33 @@ function hasRealProfile(displayName: string | undefined): boolean {
   return true
 }
 
+/**
+ * Reusable tooltip wrapper for action buttons.
+ * Reduces boilerplate for the repetitive Tooltip.Root/Trigger/Portal/Content pattern.
+ */
+interface ActionTooltipProps {
+  label: string
+  children: React.ReactNode
+}
+
+function ActionTooltip({ label, children }: ActionTooltipProps): React.ReactElement {
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        {children}
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+          sideOffset={5}
+        >
+          {label}
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  )
+}
+
 // Enrichment data from progressive loading
 export interface ProgressiveEnrichment {
   username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
@@ -143,10 +170,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const initialReposted = progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false
   const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
 
-  // Posts no longer have replyTo information - replies are a separate document type
-  // This is kept for the hideReplyTo prop and future reply card compatibility
-  const replyTo: Post | undefined = undefined
-  const replyToDisplay = { text: '', showAt: false }
 
   // Memoize enriched post for use in compose/tip modals and caching
   // Includes all resolved values so cached posts display correctly
@@ -764,43 +787,33 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           <div className="flex items-center justify-between mt-3 -ml-2">
             <Tooltip.Provider>
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleReply(); }}
-                    disabled={!canReplyToPrivate}
-                    className={cn(
-                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
-                      !canReplyToPrivate
-                        ? "opacity-50 cursor-not-allowed"
-                        : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
-                    )}
-                  >
-                    <ChatBubbleOvalLeftIcon className={cn(
-                      "h-5 w-5 transition-colors",
-                      !canReplyToPrivate
-                        ? "text-gray-400"
-                        : "text-gray-500 group-hover:text-yappr-500"
-                    )} />
-                    <span className={cn(
-                      "text-sm transition-colors",
-                      !canReplyToPrivate
-                        ? "text-gray-400"
-                        : "text-gray-500 group-hover:text-yappr-500"
-                    )}>
-                      {statsReplies > 0 && formatNumber(statsReplies)}
-                    </span>
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                    sideOffset={5}
-                  >
-                    {cantReplyReason || 'Reply'}
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+              <ActionTooltip label={cantReplyReason || 'Reply'}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleReply(); }}
+                  disabled={!canReplyToPrivate}
+                  className={cn(
+                    "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                    !canReplyToPrivate
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
+                  )}
+                >
+                  <ChatBubbleOvalLeftIcon className={cn(
+                    "h-5 w-5 transition-colors",
+                    !canReplyToPrivate
+                      ? "text-gray-400"
+                      : "text-gray-500 group-hover:text-yappr-500"
+                  )} />
+                  <span className={cn(
+                    "text-sm transition-colors",
+                    !canReplyToPrivate
+                      ? "text-gray-400"
+                      : "text-gray-500 group-hover:text-yappr-500"
+                  )}>
+                    {statsReplies > 0 && formatNumber(statsReplies)}
+                  </span>
+                </button>
+              </ActionTooltip>
 
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
@@ -852,122 +865,82 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
 
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleLike().catch(console.error); }}
-                    disabled={likeLoading}
-                    className={cn(
-                      'group flex items-center gap-1 p-2 rounded-full transition-colors',
-                      likeLoading && 'opacity-50 cursor-wait',
-                      liked
-                        ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-950'
-                        : 'hover:bg-red-50 dark:hover:bg-red-950'
+              <ActionTooltip label="Like">
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleLike().catch(console.error); }}
+                  disabled={likeLoading}
+                  className={cn(
+                    'group flex items-center gap-1 p-2 rounded-full transition-colors',
+                    likeLoading && 'opacity-50 cursor-wait',
+                    liked
+                      ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-950'
+                      : 'hover:bg-red-50 dark:hover:bg-red-950'
+                  )}
+                >
+                  <motion.div
+                    whileTap={{ scale: 0.8 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                  >
+                    {liked ? (
+                      <HeartIconSolid className="h-5 w-5 text-red-500" />
+                    ) : (
+                      <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />
                     )}
-                  >
-                    <motion.div
-                      whileTap={{ scale: 0.8 }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
-                    >
-                      {liked ? (
-                        <HeartIconSolid className="h-5 w-5 text-red-500" />
-                      ) : (
-                        <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />
-                      )}
-                    </motion.div>
-                    <span className={cn(
-                      'text-sm transition-colors',
-                      liked ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500'
-                    )}>
-                      {likes > 0 && formatNumber(likes)}
-                    </span>
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                    sideOffset={5}
-                  >
-                    Like
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+                  </motion.div>
+                  <span className={cn(
+                    'text-sm transition-colors',
+                    liked ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500'
+                  )}>
+                    {likes > 0 && formatNumber(likes)}
+                  </span>
+                </button>
+              </ActionTooltip>
 
               {/* Tip button - disabled for own posts */}
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); if (!isOwnPost) handleTip(); }}
-                    disabled={isOwnPost}
-                    className={cn(
-                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
-                      isOwnPost
-                        ? "opacity-40 cursor-not-allowed"
-                        : "hover:bg-amber-50 dark:hover:bg-amber-950"
-                    )}
-                  >
-                    <CurrencyDollarIcon className={cn(
-                      "h-5 w-5 transition-colors",
-                      isOwnPost ? "text-gray-400" : "text-gray-500 group-hover:text-amber-500"
-                    )} />
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                    sideOffset={5}
-                  >
-                    {isOwnPost ? "Can't tip yourself" : "Tip"}
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+              <ActionTooltip label={isOwnPost ? "Can't tip yourself" : "Tip"}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (!isOwnPost) handleTip(); }}
+                  disabled={isOwnPost}
+                  className={cn(
+                    "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                    isOwnPost
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:bg-amber-50 dark:hover:bg-amber-950"
+                  )}
+                >
+                  <CurrencyDollarIcon className={cn(
+                    "h-5 w-5 transition-colors",
+                    isOwnPost ? "text-gray-400" : "text-gray-500 group-hover:text-amber-500"
+                  )} />
+                </button>
+              </ActionTooltip>
 
               <div className="flex items-center gap-1">
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
-                      disabled={bookmarkLoading}
-                      className={cn(
-                        'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
-                        bookmarkLoading && 'opacity-50 cursor-wait'
-                      )}
-                    >
-                      {bookmarked ? (
-                        <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
-                      ) : (
-                        <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
-                      )}
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                      sideOffset={5}
-                    >
-                      Bookmark
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
+                <ActionTooltip label="Bookmark">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
+                    disabled={bookmarkLoading}
+                    className={cn(
+                      'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
+                      bookmarkLoading && 'opacity-50 cursor-wait'
+                    )}
+                  >
+                    {bookmarked ? (
+                      <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
+                    ) : (
+                      <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                    )}
+                  </button>
+                </ActionTooltip>
 
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleShare(); }}
-                      className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
-                    >
-                      <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                      sideOffset={5}
-                    >
-                      Share
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
+                <ActionTooltip label="Share">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleShare(); }}
+                    className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
+                  >
+                    <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                  </button>
+                </ActionTooltip>
               </div>
             </Tooltip.Provider>
           </div>

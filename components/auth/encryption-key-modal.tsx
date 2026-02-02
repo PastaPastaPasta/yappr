@@ -2,10 +2,10 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { useEncryptionKeyModal, getEncryptionKeyActionDescription } from '@/hooks/use-encryption-key-modal'
 import { useAuth } from '@/contexts/auth-context'
@@ -257,7 +257,7 @@ export function EncryptionKeyModal() {
                           {autoRecoveryStatus === 'found' ? (
                             <CheckCircleIcon className="h-6 w-6 text-green-500" />
                           ) : (
-                            <ArrowPathIcon className="h-6 w-6 text-yappr-500 animate-spin" />
+                            <Spinner size="sm" className="h-6 w-6" />
                           )}
                           {autoRecoveryStatus === 'found' ? 'Key Recovered!' : 'Recovering Key...'}
                         </Dialog.Title>
@@ -271,7 +271,7 @@ export function EncryptionKeyModal() {
                         <div className="flex flex-col items-center justify-center py-8">
                           {autoRecoveryStatus === 'checking' ? (
                             <>
-                              <Loader2 className="h-12 w-12 text-yappr-500 animate-spin mb-4" />
+                              <Spinner size="lg" className="mb-4" />
                               <p className="text-sm text-gray-500">{autoRecoveryMessage}</p>
                             </>
                           ) : (
@@ -367,7 +367,7 @@ export function EncryptionKeyModal() {
                           >
                             {isValidating ? (
                               <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                <Spinner size="xs" className="mr-2" />
                                 Validating...
                               </>
                             ) : (

@@ -1,8 +1,8 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Reply, User, PostQueryOptions } from '../types';
+import { Reply, PostQueryOptions } from '../types';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 
 export interface ReplyDocument {
@@ -70,12 +70,12 @@ class ReplyService extends BaseDocumentService<Reply> {
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays
-    const encryptedContent = rawEncryptedContent ? this.normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
-    const nonce = rawNonce ? this.normalizeBytes(rawNonce) ?? undefined : undefined;
+    const encryptedContent = rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
+    const nonce = rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined;
 
     const reply: Reply = {
       id,
-      author: this.getDefaultUser(ownerId),
+      author: createDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
       likes: 0,
@@ -101,72 +101,6 @@ class ReplyService extends BaseDocumentService<Reply> {
     return reply;
   }
 
-  /**
-   * Get default user object when profile not found.
-   */
-  private getDefaultUser(userId: string | undefined): User & { hasDpns: boolean } {
-    const id = userId || 'unknown';
-    return {
-      id,
-      username: '',
-      displayName: 'Unknown User',
-      avatar: '',
-      bio: '',
-      followers: 0,
-      following: 0,
-      verified: false,
-      joinedAt: new Date(),
-      hasDpns: false
-    };
-  }
-
-  /**
-   * Normalize bytes from SDK response (may be base64 string, Uint8Array, or regular array).
-   */
-  private normalizeBytes(value: unknown): Uint8Array | null {
-    if (value instanceof Uint8Array) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return new Uint8Array(value);
-    }
-    if (typeof value === 'string') {
-      try {
-        const binary = atob(value);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-      } catch {
-        if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
-          const bytes = new Uint8Array(value.length / 2);
-          for (let i = 0; i < bytes.length; i++) {
-            bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-          }
-          return bytes;
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Get current user ID from localStorage session
-   */
-  private getCurrentUserId(): string | null {
-    if (typeof window === 'undefined') return null;
-    try {
-      const savedSession = localStorage.getItem('yappr_session');
-      if (savedSession) {
-        const sessionData = JSON.parse(savedSession);
-        return sessionData.user?.identityId || null;
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  }
 
   /**
    * Delete a reply by its ID.

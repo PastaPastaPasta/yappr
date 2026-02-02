@@ -1,9 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { ShoppingCartIcon } from '@heroicons/react/24/outline'
-import { cartService } from '@/lib/services/cart-service'
+import { useCartCount } from '@/hooks/use-cart-count'
 
 interface CartIconProps {
   className?: string
@@ -11,19 +10,7 @@ interface CartIconProps {
 
 export function CartIcon({ className }: CartIconProps) {
   const router = useRouter()
-  const [itemCount, setItemCount] = useState(0)
-
-  useEffect(() => {
-    // Initial count
-    setItemCount(cartService.getItemCount())
-
-    // Subscribe to cart changes
-    const unsubscribe = cartService.subscribe(() => {
-      setItemCount(cartService.getItemCount())
-    })
-
-    return unsubscribe
-  }, [])
+  const { count: itemCount } = useCartCount()
 
   return (
     <button

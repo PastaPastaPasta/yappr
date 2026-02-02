@@ -6,6 +6,7 @@ import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   AddressForm,
   ShippingSelector,
@@ -525,7 +526,7 @@ function CheckoutPage() {
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+            <Spinner size="md" />
           </main>
         </div>
         <RightSidebar />

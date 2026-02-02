@@ -7,6 +7,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
@@ -168,7 +169,7 @@ export default function ExplorePage() {
               >
                 {isSearching ? (
                   <div className="p-8 text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                    <Spinner size="md" className="mx-auto mb-4" />
                     <p className="text-gray-500">Searching...</p>
                   </div>
                 ) : searchResults.length > 0 ? (
@@ -202,7 +203,7 @@ export default function ExplorePage() {
                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
                   {isLoadingTrends ? (
                     <div className="p-8 text-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                      <Spinner size="md" className="mx-auto mb-4" />
                       <p className="text-gray-500">Loading trending hashtags...</p>
                     </div>
                   ) : trendingHashtags.length === 0 ? (

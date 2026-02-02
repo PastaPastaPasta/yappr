@@ -111,6 +111,49 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
 }
 
 /**
+ * Common teaser props for rendering PostContent with validation callbacks.
+ */
+interface TeaserProps {
+  content: string
+  hashtagValidations?: Map<string, HashtagValidationStatus>
+  onFailedHashtagClick?: (hashtag: string) => void
+  mentionValidations?: Map<string, MentionValidationStatus>
+  onFailedMentionClick?: (username: string) => void
+}
+
+/**
+ * Renders the teaser content for private posts.
+ * Used across multiple decryption states to avoid prop drilling repetition.
+ */
+function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
+  if (muted) {
+    return (
+      <div className="text-gray-500 dark:text-gray-400 text-sm">
+        <PostContent
+          content={content}
+          hashtagValidations={hashtagValidations}
+          onFailedHashtagClick={onFailedHashtagClick}
+          mentionValidations={mentionValidations}
+          onFailedMentionClick={onFailedMentionClick}
+          disableLinkPreview={disableLinkPreview}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <PostContent
+      content={content}
+      hashtagValidations={hashtagValidations}
+      onFailedHashtagClick={onFailedHashtagClick}
+      mentionValidations={mentionValidations}
+      onFailedMentionClick={onFailedMentionClick}
+      disableLinkPreview={disableLinkPreview}
+    />
+  )
+}
+
+/**
  * Renders private post content based on user's access status.
  * - For the post owner: Always decrypts and shows full content
  * - For approved followers: Decrypts and shows full content
@@ -152,6 +195,15 @@ export function PrivatePostContent({
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = post.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
+
+  // Common teaser props to avoid repetition
+  const teaserProps: TeaserProps = {
+    content: post.content,
+    hashtagValidations,
+    onFailedHashtagClick,
+    mentionValidations,
+    onFailedMentionClick,
+  }
 
   // Attempt follower key recovery using encryption key
   const attemptRecovery = useCallback(async () => {
@@ -460,17 +512,7 @@ export function PrivatePostContent({
   if (state.status === 'idle' || state.status === 'loading') {
     return (
       <div className={cn('space-y-2', className)}>
-        {/* Show teaser if available */}
-        {hasTeaser && (
-          <PostContent
-            content={post.content}
-            hashtagValidations={hashtagValidations}
-            onFailedHashtagClick={onFailedHashtagClick}
-            mentionValidations={mentionValidations}
-            onFailedMentionClick={onFailedMentionClick}
-          />
-        )}
-        {/* Decrypting skeleton in card */}
+        {hasTeaser && <Teaser {...teaserProps} />}
         <PrivateContentCard status="loading">
           <div className="space-y-2">
             <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-full" />
@@ -485,17 +527,7 @@ export function PrivatePostContent({
   if (state.status === 'recovering') {
     return (
       <div className={cn('space-y-2', className)}>
-        {/* Show teaser if available */}
-        {hasTeaser && (
-          <PostContent
-            content={post.content}
-            hashtagValidations={hashtagValidations}
-            onFailedHashtagClick={onFailedHashtagClick}
-            mentionValidations={mentionValidations}
-            onFailedMentionClick={onFailedMentionClick}
-          />
-        )}
-        {/* Recovering keys skeleton in card */}
+        {hasTeaser && <Teaser {...teaserProps} />}
         <PrivateContentCard status="recovering">
           <div className="space-y-2">
             <div className="h-4 bg-blue-200 dark:bg-blue-800 rounded animate-pulse w-full" />
@@ -519,20 +551,7 @@ export function PrivatePostContent({
 
     return (
       <div data-testid="decrypted-content" className={cn('space-y-2', className)}>
-        {/* Show teaser with muted style if present */}
-        {hasTeaser && (
-          <div className="text-gray-500 dark:text-gray-400 text-sm">
-            <PostContent
-              content={post.content}
-              hashtagValidations={hashtagValidations}
-              onFailedHashtagClick={onFailedHashtagClick}
-              mentionValidations={mentionValidations}
-              onFailedMentionClick={onFailedMentionClick}
-              disableLinkPreview
-            />
-          </div>
-        )}
-        {/* Decrypted content in card */}
+        {hasTeaser && <Teaser {...teaserProps} muted disableLinkPreview />}
         <PrivateContentCard status="decrypted" footer={followerFooter}>
           <PostContent
             content={state.content}
@@ -555,17 +574,24 @@ export function PrivatePostContent({
     // Don't use state.reason since it doesn't update when request is cancelled
     const isPending = requestStatus === 'pending'
 
-    // Compact status text with explanation inline
-    // For pending, keep text subtle - the badge on the right indicates status
-    const statusText = state.reason === 'revoked'
-      ? 'Access revoked'
-      : state.reason === 'no-auth'
-      ? 'Log in to view'
-      : state.reason === 'approved-no-keys'
-      ? 'Key recovery required'
-      : state.reason === 'no-keys' && isOwner
-      ? 'Enter encryption key to view'
-      : 'Private content'
+    // Get status text based on lock reason
+    let statusText: string
+    switch (state.reason) {
+      case 'revoked':
+        statusText = 'Access revoked'
+        break
+      case 'no-auth':
+        statusText = 'Log in to view'
+        break
+      case 'approved-no-keys':
+        statusText = 'Key recovery required'
+        break
+      case 'no-keys':
+        statusText = isOwner ? 'Enter encryption key to view' : 'Private content'
+        break
+      default:
+        statusText = 'Private content'
+    }
 
     // Render the Request Access button based on current state
     const renderRequestButton = () => {
@@ -638,16 +664,7 @@ export function PrivatePostContent({
     return (
       <>
         <div data-testid="encrypted-content" className={cn('space-y-2', className)}>
-          {/* Show teaser if available */}
-          {hasTeaser && (
-            <PostContent
-              content={post.content}
-              hashtagValidations={hashtagValidations}
-              onFailedHashtagClick={onFailedHashtagClick}
-              mentionValidations={mentionValidations}
-              onFailedMentionClick={onFailedMentionClick}
-            />
-          )}
+          {hasTeaser && <Teaser {...teaserProps} />}
           {/* Compact locked content card */}
           <div className={cn(
             'rounded-lg border flex items-center justify-between px-3 py-2',
@@ -714,16 +731,7 @@ export function PrivatePostContent({
   // Error state - with Retry button (PRD §4.12, Test 5.7)
   return (
     <div className={cn('space-y-2', className)}>
-      {hasTeaser && (
-        <PostContent
-          content={post.content}
-          hashtagValidations={hashtagValidations}
-          onFailedHashtagClick={onFailedHashtagClick}
-          mentionValidations={mentionValidations}
-          onFailedMentionClick={onFailedMentionClick}
-        />
-      )}
-      {/* Error content in card */}
+      {hasTeaser && <Teaser {...teaserProps} />}
       <PrivateContentCard status="error">
         <div className="flex flex-col items-center justify-center text-center gap-2 py-2">
           <p className="text-sm text-red-600 dark:text-red-400">{state.message}</p>

@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { CubeIcon } from '@heroicons/react/24/outline'
 import { storeItemService } from '@/lib/services/store-item-service'
-import { formatPrice } from '@/lib/utils/format'
+import { PriceRangeDisplay } from './price-display'
 import type { StoreItem } from '@/lib/types'
 
 interface ItemCardProps {
@@ -78,12 +78,13 @@ export function ItemCard({ item, onClick, showStore }: ItemCardProps) {
           </p>
         )}
 
-        <p className="text-sm text-yappr-600 font-medium mt-0.5">
-          {priceRange.min === priceRange.max
-            ? formatPrice(priceRange.min, item.currency)
-            : `${formatPrice(priceRange.min, item.currency)} - ${formatPrice(priceRange.max, item.currency)}`
-          }
-        </p>
+        <PriceRangeDisplay
+          minPrice={priceRange.min}
+          maxPrice={priceRange.max}
+          currency={item.currency}
+          size="sm"
+          className="mt-0.5"
+        />
 
         {item.variants && item.variants.axes.length > 0 && (
           <p className="text-xs text-gray-400 mt-0.5">

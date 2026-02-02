@@ -8,18 +8,12 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { NoSymbolIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
-
-interface BlockedUser {
-  id: string
-  username?: string
-  displayName: string
-  hasDpns: boolean
-}
+import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
 
 export function BlockedUsersSettings() {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
-  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([])
+  const [blockedUsers, setBlockedUsers] = useState<UserDetails[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [unblockingId, setUnblockingId] = useState<string | null>(null)
 
@@ -32,10 +26,7 @@ export function BlockedUsersSettings() {
     try {
       setIsLoading(true)
       const { blockService } = await import('@/lib/services/block-service')
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
-      // Get all blocks
       const blocks = await blockService.getUserBlocks(user.identityId)
 
       if (blocks.length === 0) {
@@ -43,42 +34,8 @@ export function BlockedUsersSettings() {
         return
       }
 
-      // Resolve usernames and profiles for blocked users
       const usersWithDetails = await Promise.all(
-        blocks.map(async (block) => {
-          const blockedId = block.blockedId
-          let username: string | undefined
-          let displayName = `User ${blockedId.slice(-6)}`
-          let hasDpns = false
-
-          // Try to get DPNS username
-          try {
-            const resolvedUsername = await dpnsService.resolveUsername(blockedId)
-            if (resolvedUsername) {
-              username = resolvedUsername
-              hasDpns = true
-            }
-          } catch {
-            // DPNS resolution is optional
-          }
-
-          // Try to get profile display name
-          try {
-            const profile = await unifiedProfileService.getProfile(blockedId)
-            if (profile?.displayName) {
-              displayName = profile.displayName
-            }
-          } catch {
-            // Profile is optional
-          }
-
-          return {
-            id: blockedId,
-            username,
-            displayName,
-            hasDpns
-          }
-        })
+        blocks.map((block) => resolveUserDetails(block.blockedId))
       )
 
       setBlockedUsers(usersWithDetails)

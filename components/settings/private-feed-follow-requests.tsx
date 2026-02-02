@@ -11,13 +11,10 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { formatTime } from '@/lib/utils'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
 
-interface FollowRequestUser {
-  id: string
+interface FollowRequestUser extends UserDetails {
   requestId: string
-  username?: string
-  displayName: string
-  hasDpns: boolean
   requestedAt: Date
   publicKey?: Uint8Array
 }
@@ -39,8 +36,6 @@ export function PrivateFeedFollowRequests() {
     try {
       setIsLoading(true)
       const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
       // Check if user has private feed enabled
       const hasFeed = await privateFeedService.hasPrivateFeed(user.identityId)
@@ -62,38 +57,10 @@ export function PrivateFeedFollowRequests() {
       // Resolve usernames and profiles for requesters
       const requestsWithDetails = await Promise.all(
         followRequests.map(async (request) => {
-          const requesterId = request.$ownerId
-          let username: string | undefined
-          let displayName = `User ${requesterId.slice(-6)}`
-          let hasDpns = false
-
-          // Try to get DPNS username
-          try {
-            const resolvedUsername = await dpnsService.resolveUsername(requesterId)
-            if (resolvedUsername) {
-              username = resolvedUsername
-              hasDpns = true
-            }
-          } catch {
-            // DPNS resolution is optional
-          }
-
-          // Try to get profile display name
-          try {
-            const profile = await unifiedProfileService.getProfile(requesterId)
-            if (profile?.displayName) {
-              displayName = profile.displayName
-            }
-          } catch {
-            // Profile is optional
-          }
-
+          const details = await resolveUserDetails(request.$ownerId)
           return {
-            id: requesterId,
+            ...details,
             requestId: request.$id,
-            username,
-            displayName,
-            hasDpns,
             requestedAt: new Date(request.$createdAt),
             publicKey: request.publicKey
           }

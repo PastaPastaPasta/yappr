@@ -10,6 +10,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { CartStoreSection } from '@/components/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -96,7 +97,7 @@ export default function CartPage() {
 
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4" />
+              <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Loading cart...</p>
             </div>
           ) : isEmpty ? (

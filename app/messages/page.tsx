@@ -14,6 +14,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
@@ -572,7 +573,7 @@ function MessagesPage() {
 
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Loading conversations...</p>
             </div>
           ) : conversations.length === 0 ? (
@@ -680,7 +681,7 @@ function MessagesPage() {
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
               {isLoadingMessages ? (
                 <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                  <Spinner size="md" />
                 </div>
               ) : messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-gray-500">
@@ -754,7 +755,7 @@ function MessagesPage() {
                   className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
                 >
                   {isSending ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <Spinner size="sm" className="border-white" />
                   ) : (
                     <PaperAirplaneIcon className="h-4 w-4" />
                   )}
@@ -860,7 +861,7 @@ function MessagesPage() {
                 <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
                   {isSearchingUsers ? (
                     <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500"></div>
+                      <Spinner size="sm" className="border-gray-500" />
                       <span className="text-sm">Searching...</span>
                     </div>
                   ) : (
@@ -916,7 +917,7 @@ function MessagesPage() {
                   disabled={!newConversationInput.trim() || isResolvingUser}
                 >
                   {isResolvingUser ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <Spinner size="sm" className="border-white" />
                   ) : (
                     'Start Chat'
                   )}

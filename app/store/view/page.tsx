@@ -8,15 +8,13 @@ import {
   BuildingStorefrontIcon,
   ChatBubbleLeftIcon,
   MapPinIcon,
-  ShoppingCartIcon,
-  StarIcon
+  ShoppingCartIcon
 } from '@heroicons/react/24/outline'
-import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { ReviewCard, PoliciesDisplay, MobileCartFab } from '@/components/store'
-import { formatPrice } from '@/lib/utils/format'
+import { Spinner } from '@/components/ui/spinner'
+import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay } from '@/components/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -33,7 +31,7 @@ function LoadingFallback() {
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+          <Spinner />
         </main>
       </div>
       <RightSidebar />
@@ -134,25 +132,13 @@ function StoreDetailContent() {
     router.push(`/item?id=${itemId}`)
   }
 
-  const renderStars = (rating: number) => {
-    const stars = []
-    for (let i = 1; i <= 5; i++) {
-      if (i <= rating) {
-        stars.push(<StarIconSolid key={i} className="h-5 w-5 text-yellow-400" />)
-      } else {
-        stars.push(<StarIcon key={i} className="h-5 w-5 text-gray-300" />)
-      }
-    }
-    return stars
-  }
-
   if (isLoading) {
     return (
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+            <Spinner />
           </main>
         </div>
         <RightSidebar />
@@ -270,7 +256,7 @@ function StoreDetailContent() {
                   <h2 className="text-xl font-bold truncate">{store.name}</h2>
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
-                      <div className="flex">{renderStars(ratingSummary.averageRating)}</div>
+                      <RatingStars rating={ratingSummary.averageRating} size="lg" />
                       <span className="text-sm text-gray-500">
                         {ratingSummary.averageRating.toFixed(1)} ({ratingSummary.reviewCount} reviews)
                       </span>
@@ -385,12 +371,12 @@ function StoreDetailContent() {
                       </div>
                       <div className="mt-2">
                         <h3 className="font-medium truncate">{item.title}</h3>
-                        <p className="text-sm text-yappr-600 font-medium">
-                          {priceRange.min === priceRange.max
-                            ? formatPrice(priceRange.min, item.currency)
-                            : `${formatPrice(priceRange.min, item.currency)} - ${formatPrice(priceRange.max, item.currency)}`
-                          }
-                        </p>
+                        <PriceRangeDisplay
+                          minPrice={priceRange.min}
+                          maxPrice={priceRange.max}
+                          currency={item.currency}
+                          size="sm"
+                        />
                       </div>
                     </motion.div>
                   )

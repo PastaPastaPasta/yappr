@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { dpnsService, unifiedProfileService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { Spinner } from '@/components/ui/spinner'
 
 // Minimum characters after @ to trigger search (like DashPay)
 const MIN_SEARCH_LENGTH = 3
@@ -318,7 +319,7 @@ export function MentionAutocomplete({
       >
         {isLoading ? (
           <div className="p-3 flex items-center justify-center gap-2 text-gray-500">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500" />
+            <Spinner size="sm" className="h-4 w-4 border-gray-500" />
             <span className="text-sm">Searching...</span>
           </div>
         ) : (

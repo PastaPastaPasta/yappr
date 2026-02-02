@@ -10,6 +10,7 @@ import { ReplyThreadItem } from '@/components/post/reply-thread'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { usePostDetail } from '@/hooks/use-post-detail'
 import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -112,7 +113,7 @@ function PostDetailContent() {
 
         {isLoading && !post ? (
           <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+            <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading post...</p>
           </div>
         ) : post ? (
@@ -180,7 +181,7 @@ function PostDetailContent() {
             <div className="divide-y divide-gray-200 dark:divide-gray-800">
               {isLoadingReplies ? (
                 <div className="p-6 text-center">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600 mx-auto mb-2"></div>
+                  <Spinner size="sm" className="mx-auto mb-2" />
                   <p className="text-gray-500 text-sm">Loading replies...</p>
                 </div>
               ) : replyThreads.length === 0 ? (
@@ -220,7 +221,7 @@ function LoadingFallback() {
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
           <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+            <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading post...</p>
           </div>
         </main>

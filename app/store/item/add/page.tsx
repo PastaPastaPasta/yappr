@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   ArrowLeftIcon,
-  PhotoIcon,
   XMarkIcon,
   PlusIcon,
   TrashIcon
@@ -13,6 +12,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -252,7 +252,7 @@ function AddItemPage() {
 
           {isLoading ? (
             <div className="flex items-center justify-center py-20">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+              <Spinner />
             </div>
           ) : (
           <form onSubmit={handleSubmit} className="p-4 space-y-6">

@@ -7,6 +7,7 @@ import { XMarkIcon, ExclamationTriangleIcon, AtSymbolIcon } from '@heroicons/rea
 import { ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { mentionService } from '@/lib/services/mention-service'
@@ -176,7 +177,7 @@ export function MentionRecoveryModal() {
                         {/* Resolving state */}
                         {isResolving && (
                           <div className="text-sm text-gray-500 flex items-center gap-2">
-                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-yappr-500 border-t-transparent" />
+                            <Spinner size="sm" />
                             Resolving username...
                           </div>
                         )}
@@ -188,8 +189,8 @@ export function MentionRecoveryModal() {
                           </div>
                         )}
 
-                        {/* Action */}
-                        {isOwner && resolvedIdentityId ? (
+                        {/* Action - owner with resolved identity can register */}
+                        {isOwner && resolvedIdentityId && (
                           <div className="space-y-3 pt-2">
                             <p className="text-sm text-gray-500">
                               Since you own this post, you can register the mention now.
@@ -201,27 +202,23 @@ export function MentionRecoveryModal() {
                               Register Mention
                             </Button>
                           </div>
-                        ) : isOwner && !resolvedIdentityId && !isResolving ? (
+                        )}
+                        {/* Owner but username not found - just close */}
+                        {isOwner && !resolvedIdentityId && !isResolving && (
                           <div className="pt-2">
-                            <Button
-                              onClick={close}
-                              variant="outline"
-                              className="w-full"
-                            >
+                            <Button onClick={close} variant="outline" className="w-full">
                               Close
                             </Button>
                           </div>
-                        ) : (
+                        )}
+                        {/* Non-owner - can't register */}
+                        {!isOwner && (
                           <div className="pt-2">
                             <p className="text-sm text-gray-500 bg-gray-50 dark:bg-neutral-800 p-3 rounded-lg">
                               Only the post author can register this mention. They can
                               click the warning icon on their post to fix it.
                             </p>
-                            <Button
-                              onClick={close}
-                              variant="outline"
-                              className="w-full mt-3"
-                            >
+                            <Button onClick={close} variant="outline" className="w-full mt-3">
                               Got it
                             </Button>
                           </div>
@@ -232,7 +229,7 @@ export function MentionRecoveryModal() {
                     {/* Registering State */}
                     {isRegistering && (
                       <div className="py-8 text-center space-y-4">
-                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-yappr-500 border-t-transparent mx-auto" />
+                        <Spinner size="lg" className="mx-auto" />
                         <p className="text-gray-600 dark:text-gray-400">
                           Registering mention...
                         </p>

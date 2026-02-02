@@ -4,6 +4,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../types';
+import { truncateId } from '../utils';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -476,8 +477,7 @@ class NotificationService {
    * Helper to truncate identity ID for display
    */
   private truncateId(id: string): string {
-    if (id.length <= 10) return id;
-    return `${id.slice(0, 6)}...${id.slice(-4)}`;
+    return truncateId(id, 6, 4);
   }
 
   /**

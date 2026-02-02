@@ -4,7 +4,7 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, type DocumentWhereClause } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentWhereClause } from './sdk-helpers';
 import type { DocumentsQuery } from '@dashevo/wasm-sdk';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
 import { retryAsync } from '../retry-utils';
@@ -101,13 +101,13 @@ class PostService extends BaseDocumentService<Post> {
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
     // normalizeBytes returns null on decode failure to avoid treating malformed data as encrypted
-    const encryptedContent = rawEncryptedContent ? this.normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
-    const nonce = rawNonce ? this.normalizeBytes(rawNonce) ?? undefined : undefined;
+    const encryptedContent = rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
+    const nonce = rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined;
 
     // Return a basic Post object - additional data will be loaded separately
     const post: Post = {
       id,
-      author: this.getDefaultUser(ownerId),
+      author: createDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
       likes: 0,
@@ -791,74 +791,7 @@ class PostService extends BaseDocumentService<Post> {
    * Get current user ID from localStorage session
    */
   private getCurrentUserId(): string | null {
-    if (typeof window === 'undefined') return null;
-    try {
-      const savedSession = localStorage.getItem('yappr_session');
-      if (savedSession) {
-        const sessionData = JSON.parse(savedSession);
-        return sessionData.user?.identityId || null;
-      }
-    } catch (e) {
-      return null;
-    }
-    return null;
-  }
-
-  /**
-   * Get default user object when profile not found.
-   * Sets username to empty string and hasDpns to false so display components
-   * can properly show the identity ID instead of a fake username.
-   */
-  private getDefaultUser(userId: string | undefined): User & { hasDpns: boolean } {
-    const id = userId || 'unknown';
-    return {
-      id,
-      // Don't use fake username format - leave empty for display components to handle
-      username: '',
-      displayName: 'Unknown User',
-      avatar: '',
-      bio: '',
-      followers: 0,
-      following: 0,
-      verified: false,
-      joinedAt: new Date(),
-      hasDpns: false
-    };
-  }
-
-  /**
-   * Normalize bytes from SDK response (may be base64 string, Uint8Array, or regular array).
-   * Returns null on decode failure to prevent malformed data from being treated as valid encrypted content.
-   */
-  private normalizeBytes(value: unknown): Uint8Array | null {
-    if (value instanceof Uint8Array) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return new Uint8Array(value);
-    }
-    if (typeof value === 'string') {
-      // Try base64 decode
-      try {
-        const binary = atob(value);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-      } catch {
-        // Might be hex - validate even length for proper decoding
-        if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
-          const bytes = new Uint8Array(value.length / 2);
-          for (let i = 0; i < bytes.length; i++) {
-            bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-          }
-          return bytes;
-        }
-      }
-    }
-    console.warn('Unable to normalize bytes in post-service:', value);
-    return null;
+    return getSessionUserId();
   }
 
   /**

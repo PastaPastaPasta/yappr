@@ -7,6 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { parseJsonArray } from '../utils/json-parsing';
 import type {
   Store,
   StoreDocument,
@@ -16,6 +17,46 @@ import type {
   ParsedPaymentUri
 } from '../types';
 
+/**
+ * Convert legacy contact methods format to SocialLink array.
+ */
+function convertLegacyContactMethods(legacy: LegacyStoreContactMethods): SocialLink[] | undefined {
+  const result: SocialLink[] = [];
+  if (legacy.email) result.push({ platform: 'email', handle: legacy.email });
+  if (legacy.signal) result.push({ platform: 'signal', handle: legacy.signal });
+  if (legacy.twitter) result.push({ platform: 'twitter', handle: legacy.twitter });
+  if (legacy.telegram) result.push({ platform: 'telegram', handle: legacy.telegram });
+  return result.length > 0 ? result : undefined;
+}
+
+/**
+ * Parse contact methods that may be in new format (SocialLink[]) or legacy format.
+ */
+function parseContactMethods(value: unknown): SocialLink[] | undefined {
+  if (!value) return undefined;
+
+  // Already an array - could be new format directly
+  if (Array.isArray(value)) return value as SocialLink[];
+
+  // Legacy object format (not a string)
+  if (typeof value === 'object') {
+    return convertLegacyContactMethods(value as LegacyStoreContactMethods);
+  }
+
+  // JSON string - could be new or legacy format
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed as SocialLink[];
+      return convertLegacyContactMethods(parsed as LegacyStoreContactMethods);
+    } catch {
+      console.error('Failed to parse contactMethods:', value);
+    }
+  }
+
+  return undefined;
+}
+
 class StoreService extends BaseDocumentService<Store> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.STORE, YAPPR_STOREFRONT_CONTRACT_ID);
@@ -23,56 +64,6 @@ class StoreService extends BaseDocumentService<Store> {
 
   protected transformDocument(doc: Record<string, unknown>): Store {
     const data = (doc.data || doc) as StoreDocument;
-
-    // Parse JSON fields - handle both string (from SDK query) and object (from state transition)
-    let paymentUris: ParsedPaymentUri[] | undefined;
-    if (data.paymentUris) {
-      if (Array.isArray(data.paymentUris)) {
-        paymentUris = data.paymentUris;
-      } else if (typeof data.paymentUris === 'string') {
-        try {
-          paymentUris = JSON.parse(data.paymentUris);
-        } catch {
-          console.error('Failed to parse paymentUris:', data.paymentUris);
-        }
-      }
-    }
-
-    let contactMethods: SocialLink[] | undefined;
-    if (data.contactMethods) {
-      if (Array.isArray(data.contactMethods)) {
-        // New format: SocialLink[]
-        contactMethods = data.contactMethods;
-      } else if (typeof data.contactMethods === 'object') {
-        // Legacy format: { email?: string, twitter?: string, ... } - convert to SocialLink[]
-        const legacy = data.contactMethods as LegacyStoreContactMethods;
-        contactMethods = [];
-        if (legacy.email) contactMethods.push({ platform: 'email', handle: legacy.email });
-        if (legacy.signal) contactMethods.push({ platform: 'signal', handle: legacy.signal });
-        if (legacy.twitter) contactMethods.push({ platform: 'twitter', handle: legacy.twitter });
-        if (legacy.telegram) contactMethods.push({ platform: 'telegram', handle: legacy.telegram });
-        if (contactMethods.length === 0) contactMethods = undefined;
-      } else if (typeof data.contactMethods === 'string') {
-        try {
-          const parsed = JSON.parse(data.contactMethods);
-          if (Array.isArray(parsed)) {
-            // New format stored as JSON string
-            contactMethods = parsed;
-          } else {
-            // Legacy format stored as JSON string - convert to SocialLink[]
-            const legacy = parsed as LegacyStoreContactMethods;
-            contactMethods = [];
-            if (legacy.email) contactMethods.push({ platform: 'email', handle: legacy.email });
-            if (legacy.signal) contactMethods.push({ platform: 'signal', handle: legacy.signal });
-            if (legacy.twitter) contactMethods.push({ platform: 'twitter', handle: legacy.twitter });
-            if (legacy.telegram) contactMethods.push({ platform: 'telegram', handle: legacy.telegram });
-            if (contactMethods.length === 0) contactMethods = undefined;
-          }
-        } catch {
-          console.error('Failed to parse contactMethods:', data.contactMethods);
-        }
-      }
-    }
 
     return {
       id: (doc.$id || doc.id) as string,
@@ -84,11 +75,11 @@ class StoreService extends BaseDocumentService<Store> {
       logoUrl: data.logoUrl,
       bannerUrl: data.bannerUrl,
       status: data.status,
-      paymentUris,
+      paymentUris: parseJsonArray<ParsedPaymentUri>(data.paymentUris, 'paymentUris'),
       defaultCurrency: data.defaultCurrency,
       policies: data.policies,
       location: data.location,
-      contactMethods
+      contactMethods: parseContactMethods(data.contactMethods)
     };
   }
 
@@ -209,6 +200,50 @@ class StoreService extends BaseDocumentService<Store> {
   async hasStore(ownerId: string): Promise<boolean> {
     const store = await this.getByOwner(ownerId);
     return store !== null;
+  }
+
+  /**
+   * Update store with partial data, automatically preserving existing fields.
+   * This is a convenience method that fetches the current store, merges changes,
+   * and submits the update. Use this instead of updateStore when you only want
+   * to change a few fields without manually specifying all existing values.
+   */
+  async patchStore(
+    storeId: string,
+    ownerId: string,
+    changes: Partial<{
+      name: string;
+      description: string;
+      logoUrl: string;
+      bannerUrl: string;
+      status: StoreStatus;
+      paymentUris: ParsedPaymentUri[];
+      defaultCurrency: string;
+      policies: string;
+      location: string;
+      contactMethods: SocialLink[];
+    }>
+  ): Promise<Store> {
+    const existing = await this.getById(storeId);
+    if (!existing) {
+      throw new Error('Store not found');
+    }
+
+    // Merge existing values with changes
+    const merged = {
+      name: changes.name ?? existing.name,
+      description: changes.description ?? existing.description,
+      logoUrl: changes.logoUrl ?? existing.logoUrl,
+      bannerUrl: changes.bannerUrl ?? existing.bannerUrl,
+      status: changes.status ?? existing.status,
+      paymentUris: changes.paymentUris ?? existing.paymentUris,
+      defaultCurrency: changes.defaultCurrency ?? existing.defaultCurrency,
+      policies: changes.policies ?? existing.policies,
+      location: changes.location ?? existing.location,
+      contactMethods: changes.contactMethods ?? existing.contactMethods
+    };
+
+    return this.updateStore(storeId, ownerId, merged);
   }
 }
 

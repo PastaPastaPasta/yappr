@@ -26,6 +26,7 @@ import { PrivateFeedAccessButton } from '@/components/profile/private-feed-acces
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
@@ -1596,7 +1597,7 @@ function UserProfileContent() {
                   {/* Posts List */}
                   {postFilter === 'replies' && repliesLoading ? (
                     <div className="p-8 text-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                      <Spinner size="md" className="mx-auto mb-4" />
                       <p className="text-gray-500">Loading replies...</p>
                     </div>
                   ) : filteredPosts.length === 0 ? (
@@ -1633,7 +1634,7 @@ function UserProfileContent() {
                 // Mentions Tab
                 mentionsLoading ? (
                   <div className="p-8 text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                    <Spinner size="md" className="mx-auto mb-4" />
                     <p className="text-gray-500">Loading mentions...</p>
                   </div>
                 ) : mentions.length === 0 ? (

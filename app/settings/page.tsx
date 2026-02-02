@@ -25,8 +25,8 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useTheme } from 'next-themes'
-import * as Switch from '@radix-ui/react-switch'
 import * as RadioGroup from '@radix-ui/react-radio-group'
+import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
@@ -59,6 +59,15 @@ const settingsSections = [
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
+
+const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
+  likes: 'When someone likes your posts',
+  reposts: 'When someone reposts your content',
+  replies: 'When someone replies to you',
+  follows: 'When someone follows you',
+  mentions: 'When someone mentions you',
+  messages: 'When you receive new messages',
+}
 
 function SettingsPage() {
   const router = useRouter()
@@ -327,25 +336,15 @@ function SettingsPage() {
               <div>
                 <p className="font-medium capitalize">{key}</p>
                 <p className="text-sm text-gray-500">
-                  {key === 'likes' && 'When someone likes your posts'}
-                  {key === 'reposts' && 'When someone reposts your content'}
-                  {key === 'replies' && 'When someone replies to you'}
-                  {key === 'follows' && 'When someone follows you'}
-                  {key === 'mentions' && 'When someone mentions you'}
-                  {key === 'messages' && 'When you receive new messages'}
+                  {NOTIFICATION_DESCRIPTIONS[key]}
                 </p>
               </div>
-              <Switch.Root
+              <SettingsSwitch
                 checked={value}
                 onCheckedChange={(checked) =>
                   setNotificationSettings({ [key as keyof typeof notificationSettings]: checked })
                 }
-                className={`w-11 h-6 rounded-full relative transition-colors ${
-                  value ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-                }`}
-              >
-                <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-              </Switch.Root>
+              />
             </div>
           ))}
         </div>
@@ -366,17 +365,12 @@ function SettingsPage() {
               <p className="font-medium">Public Profile</p>
               <p className="text-sm text-gray-500">Allow anyone to view your profile</p>
             </div>
-            <Switch.Root
+            <SettingsSwitch
               checked={privacySettings.publicProfile}
-              onCheckedChange={(checked) => 
+              onCheckedChange={(checked) =>
                 setPrivacySettings(prev => ({ ...prev, publicProfile: checked }))
               }
-              className={`w-11 h-6 rounded-full relative transition-colors ${
-                privacySettings.publicProfile ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-              }`}
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-            </Switch.Root>
+            />
           </div>
           
           <div className="flex items-center justify-between">
@@ -384,17 +378,12 @@ function SettingsPage() {
               <p className="font-medium">Show Activity Status</p>
               <p className="text-sm text-gray-500">Let others see when you&apos;re active</p>
             </div>
-            <Switch.Root
+            <SettingsSwitch
               checked={privacySettings.showActivity}
               onCheckedChange={(checked) =>
                 setPrivacySettings(prev => ({ ...prev, showActivity: checked }))
               }
-              className={`w-11 h-6 rounded-full relative transition-colors ${
-                privacySettings.showActivity ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-              }`}
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-            </Switch.Root>
+            />
           </div>
 
           <div className="flex items-center justify-between">
@@ -402,15 +391,10 @@ function SettingsPage() {
               <p className="font-medium">Link Previews</p>
               <p className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
             </div>
-            <Switch.Root
+            <SettingsSwitch
               checked={linkPreviewsEnabled}
               onCheckedChange={(checked) => setLinkPreviewsChoice(checked ? 'enabled' : 'disabled')}
-              className={`w-11 h-6 rounded-full relative transition-colors ${
-                linkPreviewsEnabled ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-              }`}
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-            </Switch.Root>
+            />
           </div>
           {linkPreviewsEnabled && (
             <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
@@ -445,15 +429,10 @@ function SettingsPage() {
             <p className="font-medium">Read Receipts</p>
             <p className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
           </div>
-          <Switch.Root
+          <SettingsSwitch
             checked={sendReadReceipts}
             onCheckedChange={setSendReadReceipts}
-            className={`w-11 h-6 rounded-full relative transition-colors ${
-              sendReadReceipts ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-            }`}
-          >
-            <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-          </Switch.Root>
+          />
         </div>
       </div>
 
@@ -539,15 +518,10 @@ function SettingsPage() {
               Disable blur effects and visual flair. Enable this if Yappr feels sluggish on your device.
             </p>
           </div>
-          <Switch.Root
+          <SettingsSwitch
             checked={potatoMode}
             onCheckedChange={setPotatoMode}
-            className={`w-11 h-6 rounded-full relative transition-colors ${
-              potatoMode ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-            }`}
-          >
-            <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-          </Switch.Root>
+          />
         </div>
       </div>
 
