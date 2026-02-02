@@ -10,6 +10,105 @@ import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid
 import { useAuth } from '@/contexts/auth-context'
 import { isPrivatePost } from '@/components/post/private-post-content'
 
+// Formatting button for the compose toolbar
+interface FormatButtonProps {
+  onClick: () => void
+  title: string
+  children: React.ReactNode
+  disabled?: boolean
+}
+
+export function FormatButton({ onClick, title, children, disabled = false }: FormatButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      {children}
+    </button>
+  )
+}
+
+// Character counter with visual progress indicator
+interface CharacterCounterProps {
+  current: number
+  limit: number
+}
+
+export function CharacterCounter({ current, limit }: CharacterCounterProps) {
+  const remaining = limit - current
+  const percentage = Math.min((current / limit) * 100, 100)
+  const isWarning = remaining <= 50 && remaining > 20
+  const isDanger = remaining <= 20
+  const isValid = current > 0 && current <= limit
+
+  const radius = 10
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference * (1 - percentage / 100)
+
+  function getProgressColor(): string {
+    if (isDanger) return 'text-red-500'
+    if (isWarning) return 'text-amber-500'
+    return 'text-yappr-500'
+  }
+
+  if (current === 0) {
+    return <div className="flex items-center gap-2" />
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="relative w-6 h-6">
+        <svg className="w-6 h-6 -rotate-90" viewBox="0 0 24 24">
+          {/* Background circle */}
+          <circle
+            cx="12"
+            cy="12"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="text-gray-200 dark:text-gray-700"
+          />
+          {/* Progress circle */}
+          <circle
+            cx="12"
+            cy="12"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            className={getProgressColor()}
+          />
+        </svg>
+        {/* Checkmark when valid and not in danger zone */}
+        {isValid && !isDanger && !isWarning && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <svg className="w-3 h-3 text-yappr-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+        )}
+      </div>
+      {isDanger && (
+        <span
+          className={`text-xs font-medium tabular-nums ${
+            remaining < 0 ? 'text-red-500' : 'text-amber-500'
+          }`}
+        >
+          {remaining}
+        </span>
+      )}
+    </div>
+  )
+}
+
 // Icons as simple SVG components
 function RetryIcon({ className }: { className?: string }) {
   return (
@@ -220,7 +319,6 @@ interface QuotedPostPreviewProps {
   post: Post
 }
 
-
 type DecryptionState =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -228,9 +326,47 @@ type DecryptionState =
   | { status: 'locked' }
   | { status: 'error' }
 
+// Shared header component for post previews
+interface PostPreviewHeaderProps {
+  author: Post['author']
+  createdAt: Date
+  showLockIcon?: boolean
+  /** For private posts, show truncated username for non-@prefixed displays */
+  authorDisplayOverride?: string
+}
+
+function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverride }: PostPreviewHeaderProps) {
+  const usernameDisplay = authorDisplayOverride?.startsWith('@') ? authorDisplayOverride : `@${author.username}`
+
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <Avatar className="h-5 w-5">
+        <AvatarImage src={author.avatar} />
+        <AvatarFallback>{getInitials(author.displayName)}</AvatarFallback>
+      </Avatar>
+      <span className="font-semibold text-gray-900 dark:text-gray-100">
+        {author.displayName}
+      </span>
+      <span className="text-gray-500">{usernameDisplay}</span>
+      <span className="text-gray-500">·</span>
+      <span className="text-gray-500">{formatTime(createdAt)}</span>
+      {showLockIcon && <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />}
+    </div>
+  )
+}
+
+// Container wrapper for quoted post previews
+function QuotedPostContainer({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
+      {children}
+    </div>
+  )
+}
+
 /**
  * Shows a preview of the post being quoted.
- * PRD §5.3: Handles both public and private quoted posts.
+ * PRD 5.3: Handles both public and private quoted posts.
  * For private posts, attempts decryption and shows locked state if unable.
  */
 export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
@@ -357,11 +493,11 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
   useEffect(() => {
     if (isPrivate && state.status === 'idle') {
-      void attemptDecryption()
+      attemptDecryption().catch(err => console.error('Failed to decrypt:', err))
     }
   }, [isPrivate, state.status, attemptDecryption])
 
-  // Get author display
+  // Get author display for private posts (shows truncated ID as fallback)
   const authorDisplay = post.author.username && !post.author.username.startsWith('user_')
     ? `@${post.author.username}`
     : post.author.displayName !== 'Unknown User' && !post.author.displayName?.startsWith('User ')
@@ -371,43 +507,25 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
   // Public post - simple display
   if (!isPrivate) {
     return (
-      <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
-        <div className="flex items-center gap-2 text-sm">
-          <Avatar className="h-5 w-5">
-            <AvatarImage src={post.author.avatar} />
-            <AvatarFallback>{getInitials(post.author.displayName)}</AvatarFallback>
-          </Avatar>
-          <span className="font-semibold text-gray-900 dark:text-gray-100">
-            {post.author.displayName}
-          </span>
-          <span className="text-gray-500">@{post.author.username}</span>
-          <span className="text-gray-500">·</span>
-          <span className="text-gray-500">{formatTime(post.createdAt)}</span>
-        </div>
+      <QuotedPostContainer>
+        <PostPreviewHeader author={post.author} createdAt={post.createdAt} />
         <p className="mt-2 text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
           {post.content}
         </p>
-      </div>
+      </QuotedPostContainer>
     )
   }
 
   // Private post - loading state
   if (state.status === 'idle' || state.status === 'loading') {
     return (
-      <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
-        <div className="flex items-center gap-2 text-sm">
-          <Avatar className="h-5 w-5">
-            <AvatarImage src={post.author.avatar} />
-            <AvatarFallback>{getInitials(post.author.displayName)}</AvatarFallback>
-          </Avatar>
-          <span className="font-semibold text-gray-900 dark:text-gray-100">
-            {post.author.displayName}
-          </span>
-          <span className="text-gray-500">{authorDisplay.startsWith('@') ? authorDisplay : ''}</span>
-          <span className="text-gray-500">·</span>
-          <span className="text-gray-500">{formatTime(post.createdAt)}</span>
-          <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />
-        </div>
+      <QuotedPostContainer>
+        <PostPreviewHeader
+          author={post.author}
+          createdAt={post.createdAt}
+          showLockIcon
+          authorDisplayOverride={authorDisplay}
+        />
         <div className="mt-2 flex items-center gap-2 text-gray-500">
           <LockOpenIcon className="h-4 w-4 animate-pulse" />
           <span className="text-sm">Decrypting...</span>
@@ -417,27 +535,20 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
             {post.content}
           </p>
         )}
-      </div>
+      </QuotedPostContainer>
     )
   }
 
   // Private post - decrypted state
   if (state.status === 'decrypted') {
     return (
-      <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
-        <div className="flex items-center gap-2 text-sm">
-          <Avatar className="h-5 w-5">
-            <AvatarImage src={post.author.avatar} />
-            <AvatarFallback>{getInitials(post.author.displayName)}</AvatarFallback>
-          </Avatar>
-          <span className="font-semibold text-gray-900 dark:text-gray-100">
-            {post.author.displayName}
-          </span>
-          <span className="text-gray-500">{authorDisplay.startsWith('@') ? authorDisplay : ''}</span>
-          <span className="text-gray-500">·</span>
-          <span className="text-gray-500">{formatTime(post.createdAt)}</span>
-          <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />
-        </div>
+      <QuotedPostContainer>
+        <PostPreviewHeader
+          author={post.author}
+          createdAt={post.createdAt}
+          showLockIcon
+          authorDisplayOverride={authorDisplay}
+        />
         {hasTeaser && (
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
             {post.content}
@@ -446,26 +557,19 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         <p className="mt-1 text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
           {state.content}
         </p>
-      </div>
+      </QuotedPostContainer>
     )
   }
 
   // Private post - locked/error state
   return (
-    <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
-      <div className="flex items-center gap-2 text-sm">
-        <Avatar className="h-5 w-5">
-          <AvatarImage src={post.author.avatar} />
-          <AvatarFallback>{getInitials(post.author.displayName)}</AvatarFallback>
-        </Avatar>
-        <span className="font-semibold text-gray-900 dark:text-gray-100">
-          {post.author.displayName}
-        </span>
-        <span className="text-gray-500">{authorDisplay.startsWith('@') ? authorDisplay : ''}</span>
-        <span className="text-gray-500">·</span>
-        <span className="text-gray-500">{formatTime(post.createdAt)}</span>
-        <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />
-      </div>
+    <QuotedPostContainer>
+      <PostPreviewHeader
+        author={post.author}
+        createdAt={post.createdAt}
+        showLockIcon
+        authorDisplayOverride={authorDisplay}
+      />
       {hasTeaser && (
         <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
           {post.content}
@@ -477,7 +581,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
           Private post from {authorDisplay}
         </span>
       </div>
-    </div>
+    </QuotedPostContainer>
   )
 }
 

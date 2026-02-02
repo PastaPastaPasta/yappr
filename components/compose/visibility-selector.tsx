@@ -17,7 +17,6 @@ interface VisibilitySelectorProps {
 }
 
 const TEASER_LIMIT = 280
-const PRIVATE_CONTENT_LIMIT = 500
 
 interface VisibilityOption {
   value: PostVisibility
@@ -216,4 +215,4 @@ export function VisibilitySelector({
   )
 }
 
-export { TEASER_LIMIT, PRIVATE_CONTENT_LIMIT }
+export { TEASER_LIMIT }
