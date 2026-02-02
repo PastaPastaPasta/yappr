@@ -188,8 +188,8 @@ export function MentionRecoveryModal() {
                           </div>
                         )}
 
-                        {/* Action */}
-                        {isOwner && resolvedIdentityId ? (
+                        {/* Action - owner with resolved identity can register */}
+                        {isOwner && resolvedIdentityId && (
                           <div className="space-y-3 pt-2">
                             <p className="text-sm text-gray-500">
                               Since you own this post, you can register the mention now.
@@ -201,27 +201,23 @@ export function MentionRecoveryModal() {
                               Register Mention
                             </Button>
                           </div>
-                        ) : isOwner && !resolvedIdentityId && !isResolving ? (
+                        )}
+                        {/* Owner but username not found - just close */}
+                        {isOwner && !resolvedIdentityId && !isResolving && (
                           <div className="pt-2">
-                            <Button
-                              onClick={close}
-                              variant="outline"
-                              className="w-full"
-                            >
+                            <Button onClick={close} variant="outline" className="w-full">
                               Close
                             </Button>
                           </div>
-                        ) : (
+                        )}
+                        {/* Non-owner - can't register */}
+                        {!isOwner && (
                           <div className="pt-2">
                             <p className="text-sm text-gray-500 bg-gray-50 dark:bg-neutral-800 p-3 rounded-lg">
                               Only the post author can register this mention. They can
                               click the warning icon on their post to fix it.
                             </p>
-                            <Button
-                              onClick={close}
-                              variant="outline"
-                              className="w-full mt-3"
-                            >
+                            <Button onClick={close} variant="outline" className="w-full mt-3">
                               Got it
                             </Button>
                           </div>
