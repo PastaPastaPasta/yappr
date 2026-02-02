@@ -79,7 +79,7 @@ function MessagesPage() {
     const container = scrollContainerRef.current
     if (!container) return
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight
-    const nearBottom = distance < 120
+    const nearBottom = distance < 48
     setIsNearBottom(nearBottom)
     if (nearBottom) {
       setShowJumpToLatest(false)
@@ -124,6 +124,14 @@ function MessagesPage() {
       document.body.classList.remove('mobile-nav-hidden')
     }
   }, [isComposerFocused])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.body.classList.add('messages-scroll-lock')
+    return () => {
+      document.body.classList.remove('messages-scroll-lock')
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -635,12 +643,12 @@ function MessagesPage() {
   }
 
   return (
-    <div className="h-[calc(100dvh-32px-var(--mobile-nav-offset,56px))] md:h-[calc(100dvh-40px)] flex overflow-hidden">
+    <div className="h-[calc(100dvh-32px-var(--mobile-nav-offset,56px))] md:h-[calc(100dvh-40px)] flex overflow-hidden min-h-0">
       <Sidebar />
 
-      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
+      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden min-h-0">
         {/* Conversations List */}
-        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
+        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden min-h-0 ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
           <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
               <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
@@ -733,7 +741,7 @@ function MessagesPage() {
 
         {/* Message Thread */}
         {selectedConversation ? (
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden min-h-0">
             <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
@@ -776,7 +784,7 @@ function MessagesPage() {
             <div
               ref={scrollContainerRef}
               onScroll={updateIsNearBottom}
-              className="relative flex-1 overflow-y-auto bg-gradient-to-b from-gray-50/80 to-white dark:from-neutral-950/60 dark:to-neutral-900/40"
+              className="relative flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-gray-50/80 to-white dark:from-neutral-950/60 dark:to-neutral-900/40"
             >
               <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 min-h-full">
                 {isLoadingMessages ? (

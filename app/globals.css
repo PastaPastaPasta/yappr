@@ -14,7 +14,7 @@
   }
 
   body {
-    --mobile-nav-offset: 56px;
+    --mobile-nav-offset: calc(56px + env(safe-area-inset-bottom, 0px));
   }
 
   .mobile-bottom-nav-spacer {
@@ -28,6 +28,11 @@
   body.mobile-nav-hidden .mobile-bottom-nav,
   body.mobile-nav-hidden .mobile-bottom-nav-spacer {
     display: none !important;
+  }
+
+  body.messages-scroll-lock {
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 }
 
