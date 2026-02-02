@@ -13,8 +13,8 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars } from '@/components/store'
-import { formatPrice } from '@/lib/utils/format'
+import { Spinner } from '@/components/ui/spinner'
+import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay } from '@/components/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -31,7 +31,7 @@ function LoadingFallback() {
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+          <Spinner />
         </main>
       </div>
       <RightSidebar />
@@ -138,7 +138,7 @@ function StoreDetailContent() {
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+            <Spinner />
           </main>
         </div>
         <RightSidebar />
@@ -371,12 +371,12 @@ function StoreDetailContent() {
                       </div>
                       <div className="mt-2">
                         <h3 className="font-medium truncate">{item.title}</h3>
-                        <p className="text-sm text-yappr-600 font-medium">
-                          {priceRange.min === priceRange.max
-                            ? formatPrice(priceRange.min, item.currency)
-                            : `${formatPrice(priceRange.min, item.currency)} - ${formatPrice(priceRange.max, item.currency)}`
-                          }
-                        </p>
+                        <PriceRangeDisplay
+                          minPrice={priceRange.min}
+                          maxPrice={priceRange.max}
+                          currency={item.currency}
+                          size="sm"
+                        />
                       </div>
                     </motion.div>
                   )
