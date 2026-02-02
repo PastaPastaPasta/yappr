@@ -7,6 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { parseJsonArray } from '../utils/json-parsing';
 import type {
   Store,
   StoreDocument,
@@ -15,22 +16,6 @@ import type {
   LegacyStoreContactMethods,
   ParsedPaymentUri
 } from '../types';
-
-/**
- * Parse a JSON field that may be an array, JSON string, or already parsed object.
- */
-function parseJsonArray<T>(value: unknown, fieldName: string): T[] | undefined {
-  if (!value) return undefined;
-  if (Array.isArray(value)) return value as T[];
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T[];
-    } catch {
-      console.error(`Failed to parse ${fieldName}:`, value);
-    }
-  }
-  return undefined;
-}
 
 /**
  * Convert legacy contact methods format to SocialLink array.
@@ -215,6 +200,50 @@ class StoreService extends BaseDocumentService<Store> {
   async hasStore(ownerId: string): Promise<boolean> {
     const store = await this.getByOwner(ownerId);
     return store !== null;
+  }
+
+  /**
+   * Update store with partial data, automatically preserving existing fields.
+   * This is a convenience method that fetches the current store, merges changes,
+   * and submits the update. Use this instead of updateStore when you only want
+   * to change a few fields without manually specifying all existing values.
+   */
+  async patchStore(
+    storeId: string,
+    ownerId: string,
+    changes: Partial<{
+      name: string;
+      description: string;
+      logoUrl: string;
+      bannerUrl: string;
+      status: StoreStatus;
+      paymentUris: ParsedPaymentUri[];
+      defaultCurrency: string;
+      policies: string;
+      location: string;
+      contactMethods: SocialLink[];
+    }>
+  ): Promise<Store> {
+    const existing = await this.getById(storeId);
+    if (!existing) {
+      throw new Error('Store not found');
+    }
+
+    // Merge existing values with changes
+    const merged = {
+      name: changes.name ?? existing.name,
+      description: changes.description ?? existing.description,
+      logoUrl: changes.logoUrl ?? existing.logoUrl,
+      bannerUrl: changes.bannerUrl ?? existing.bannerUrl,
+      status: changes.status ?? existing.status,
+      paymentUris: changes.paymentUris ?? existing.paymentUris,
+      defaultCurrency: changes.defaultCurrency ?? existing.defaultCurrency,
+      policies: changes.policies ?? existing.policies,
+      location: changes.location ?? existing.location,
+      contactMethods: changes.contactMethods ?? existing.contactMethods
+    };
+
+    return this.updateStore(storeId, ownerId, merged);
   }
 }
 

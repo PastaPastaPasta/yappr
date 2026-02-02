@@ -8,6 +8,7 @@
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
 import { identifierToBase58, stringToIdentifierBytes, type DocumentWhereClause } from './sdk-helpers';
+import { parseJsonArray, parseJsonObject } from '../utils/json-parsing';
 import type {
   StoreItem,
   StoreItemDocument,
@@ -16,38 +17,6 @@ import type {
   VariantAxis,
   VariantCombination
 } from '../types';
-
-/**
- * Parse a JSON field that may be an array or a JSON string.
- */
-function parseJsonArray<T>(value: unknown, fieldName: string): T[] | undefined {
-  if (!value) return undefined;
-  if (Array.isArray(value)) return value as T[];
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T[];
-    } catch {
-      console.error(`Failed to parse ${fieldName}:`, value);
-    }
-  }
-  return undefined;
-}
-
-/**
- * Parse a JSON field that may be an object or a JSON string.
- */
-function parseJsonObject<T>(value: unknown, fieldName: string): T | undefined {
-  if (!value) return undefined;
-  if (typeof value === 'object' && !Array.isArray(value)) return value as T;
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      console.error(`Failed to parse ${fieldName}:`, value);
-    }
-  }
-  return undefined;
-}
 
 class StoreItemService extends BaseDocumentService<StoreItem> {
   constructor() {
