@@ -225,10 +225,14 @@ export function usePostDetail({
       currentParentId = parent.parentId
     }
 
-    // Enrich all posts in the chain
+    // Enrich all posts in the chain and return the enriched versions
+    // Important: Return the enriched posts so setState uses enriched data,
+    // otherwise the subsequent setState in loadPost would overwrite the
+    // enriched data that onEnriched callback set
     if (chain.length > 0) {
       try {
-        await enrich(chain)
+        const enrichedChain = await enrich(chain)
+        return enrichedChain
       } catch (err) {
         console.error('usePostDetail: Failed to enrich reply chain:', err)
       }
