@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { LockClosedIcon, GlobeAltIcon, EyeIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import type { PostVisibility } from '@/lib/store'
+import { Spinner } from '@/components/ui/spinner'
 
 interface VisibilitySelectorProps {
   visibility: PostVisibility
@@ -93,7 +94,7 @@ export function VisibilitySelector({
   if (privateFeedLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-gray-400">
-        <div className="w-4 h-4 rounded-full border-2 border-gray-300 border-t-transparent animate-spin" />
+        <Spinner size="sm" className="h-4 w-4 border-gray-300" />
         <span>Loading...</span>
       </div>
     )

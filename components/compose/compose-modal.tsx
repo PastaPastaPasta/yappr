@@ -35,6 +35,7 @@ import {
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
+import { Spinner } from '@/components/ui/spinner'
 import { ThreadPostEditor, CHARACTER_LIMIT } from './thread-post-editor'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
 import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
@@ -992,7 +993,7 @@ export function ComposeModal() {
                               animate={{ opacity: 1 }}
                               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
                             >
-                              <div className="w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full animate-spin" />
+                              <Spinner size="sm" className="h-4 w-4 border-purple-500" />
                               <span className="text-sm text-gray-500 dark:text-gray-400">
                                 Checking encryption inheritance...
                               </span>
