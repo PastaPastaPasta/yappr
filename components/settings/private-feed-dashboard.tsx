@@ -15,6 +15,13 @@ import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
 import { formatTime } from '@/lib/utils'
 import Link from 'next/link'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { resolveUserDetails } from '@/lib/utils/resolve-user-details'
+
+function getEpochProgressColor(isWarning: boolean, percent: number): string {
+  if (isWarning) return 'bg-gradient-to-r from-red-500 to-red-600'
+  if (percent > 50) return 'bg-gradient-to-r from-amber-400 to-amber-500'
+  return 'bg-gradient-to-r from-green-400 to-green-500'
+}
 
 interface ActivityItem {
   id: string
@@ -75,8 +82,6 @@ export function PrivateFeedDashboard() {
         setIsLoading(false)
         return
       }
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
       const { postService } = await import('@/lib/services/post-service')
 
       // Get followers from grants
@@ -130,29 +135,14 @@ export function PrivateFeedDashboard() {
         // Bail out if a newer request has started
         if (currentRequestId !== requestIdRef.current) return
 
-        let username: string | undefined
-        let displayName = `User ${follower.recipientId.slice(-6)}`
-
-        try {
-          const resolvedUsername = await dpnsService.resolveUsername(follower.recipientId)
-          if (resolvedUsername) username = resolvedUsername
-        } catch {
-          // Optional
-        }
-
-        try {
-          const profile = await unifiedProfileService.getProfile(follower.recipientId)
-          if (profile?.displayName) displayName = profile.displayName
-        } catch {
-          // Optional
-        }
+        const details = await resolveUserDetails(follower.recipientId)
 
         activity.push({
           id: `grant-${follower.recipientId}`,
           type: 'approved',
           userId: follower.recipientId,
-          username,
-          displayName,
+          username: details.username,
+          displayName: details.displayName,
           timestamp: new Date(follower.grantedAt),
         })
       }
@@ -279,13 +269,7 @@ export function PrivateFeedDashboard() {
           </div>
           <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                isEpochWarning
-                  ? 'bg-gradient-to-r from-red-500 to-red-600'
-                  : epochUsagePercent > 50
-                  ? 'bg-gradient-to-r from-amber-400 to-amber-500'
-                  : 'bg-gradient-to-r from-green-400 to-green-500'
-              }`}
+              className={`h-full rounded-full transition-all duration-500 ${getEpochProgressColor(isEpochWarning, epochUsagePercent)}`}
               style={{ width: `${Math.max(epochUsagePercent, 1)}%` }}
             />
           </div>

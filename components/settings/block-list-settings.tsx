@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
-import * as Switch from '@radix-ui/react-switch'
+import { SettingsSwitch } from '@/components/settings/settings-switch'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 
@@ -222,16 +222,12 @@ export function BlockListSettings() {
                     )}
                   </div>
                 </Link>
-                <Switch.Root
+                <SettingsSwitch
                   checked={followedUser.isFollowingBlocks}
                   onCheckedChange={() => handleToggle(followedUser.id, followedUser.isFollowingBlocks)}
                   disabled={togglingId === followedUser.id}
-                  className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ml-3 ${
-                    followedUser.isFollowingBlocks ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-                  } ${togglingId === followedUser.id ? 'opacity-50' : ''}`}
-                >
-                  <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-                </Switch.Root>
+                  className="flex-shrink-0 ml-3"
+                />
               </div>
             ))}
           </div>
