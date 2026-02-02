@@ -19,6 +19,7 @@ export function useCartCount(options: UseCartCountOptions = {}): UseCartCountRes
   const [count, setCount] = useState(0)
   const [isAnimating, setIsAnimating] = useState(false)
   const prevCountRef = useRef(0)
+  const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     // Initialize from current cart state
@@ -30,15 +31,25 @@ export function useCartCount(options: UseCartCountOptions = {}): UseCartCountRes
       const newCount = cartService.getItemCount()
 
       if (animateOnIncrease && newCount > prevCountRef.current) {
+        // Clear any existing animation timer
+        if (animationTimerRef.current) {
+          clearTimeout(animationTimerRef.current)
+        }
         setIsAnimating(true)
-        setTimeout(() => setIsAnimating(false), 300)
+        animationTimerRef.current = setTimeout(() => setIsAnimating(false), 300)
       }
 
       prevCountRef.current = newCount
       setCount(newCount)
     })
 
-    return unsubscribe
+    return () => {
+      unsubscribe()
+      // Clear animation timer on cleanup
+      if (animationTimerRef.current) {
+        clearTimeout(animationTimerRef.current)
+      }
+    }
   }, [animateOnIncrease])
 
   return { count, isAnimating }

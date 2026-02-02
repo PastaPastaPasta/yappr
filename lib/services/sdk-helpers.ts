@@ -220,14 +220,9 @@ export function normalizeBytes(value: unknown): Uint8Array | null {
     return new Uint8Array(value);
   }
   if (typeof value === 'string') {
-    // Try base64 decode first
+    // Try base64 decode first using SSR-compatible helper
     try {
-      const binary = atob(value);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return bytes;
+      return base64ToBytes(value);
     } catch {
       // Not valid base64 - try hex
       if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {

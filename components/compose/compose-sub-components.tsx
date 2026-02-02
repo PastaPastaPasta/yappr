@@ -337,7 +337,16 @@ interface PostPreviewHeaderProps {
 }
 
 function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverride }: PostPreviewHeaderProps) {
-  const usernameDisplay = authorDisplayOverride?.startsWith('@') ? authorDisplayOverride : `@${author.username}`
+  // Compute username display, avoiding "@undefined" for users without DPNS
+  const hasValidUsername = author.username &&
+    author.username !== 'undefined' &&
+    !author.username.startsWith('user_')
+
+  const usernameDisplay = authorDisplayOverride?.startsWith('@')
+    ? authorDisplayOverride
+    : hasValidUsername
+      ? `@${author.username}`
+      : (authorDisplayOverride || '')
 
   return (
     <div className="flex items-center gap-2 text-sm">
@@ -348,7 +357,7 @@ function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverr
       <span className="font-semibold text-gray-900 dark:text-gray-100">
         {author.displayName}
       </span>
-      <span className="text-gray-500">{usernameDisplay}</span>
+      {usernameDisplay && <span className="text-gray-500">{usernameDisplay}</span>}
       <span className="text-gray-500">·</span>
       <span className="text-gray-500">{formatTime(createdAt)}</span>
       {showLockIcon && <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />}

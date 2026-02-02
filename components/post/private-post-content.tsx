@@ -148,6 +148,7 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
       onFailedHashtagClick={onFailedHashtagClick}
       mentionValidations={mentionValidations}
       onFailedMentionClick={onFailedMentionClick}
+      disableLinkPreview={disableLinkPreview}
     />
   )
 }
