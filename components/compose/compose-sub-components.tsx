@@ -26,6 +26,7 @@ export function FormatButton({ onClick, title, children, disabled = false }: For
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={title}
       className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
     >
       {children}
