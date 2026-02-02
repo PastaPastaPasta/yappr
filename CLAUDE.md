@@ -21,6 +21,53 @@ node test-dpns-resolve.js           # Test DPNS resolution
 
 When completing a task, commit the changes automatically unless directed otherwise.
 
+## Validating Changes
+
+**Always validate your changes before committing.** Follow this checklist:
+
+### 1. Run the Linter
+```bash
+npm run lint
+```
+- Fix all errors and warnings properly (see Code Quality Guidelines below)
+- Do not commit code with linter failures
+
+### 2. Run the Build
+```bash
+npm run build
+```
+- Ensures TypeScript compilation succeeds
+- Verifies static export works correctly
+- Catches missing imports, type errors, and build-time issues
+- Do not commit code that fails to build
+
+### 3. Code Review for Complex Changes
+For complex or multi-file changes, use a code review sub-agent to identify potential issues:
+
+```
+Use the Task tool with subagent_type=Plan to review the changes for:
+- Logic errors or edge cases
+- Security vulnerabilities (XSS, injection, etc.)
+- Consistency with existing patterns in the codebase
+- Missing error handling
+- Potential performance issues
+```
+
+**Trust but verify**: The review agent may flag potential issues that aren't actually problems, or miss real issues. Treat its output as suggestions to investigate, not definitive judgments. Verify each finding before acting on it.
+
+### 4. Manual Verification (when applicable)
+- For UI changes: Run `npm run dev` and visually verify the changes
+- For new features: Test the happy path and common error cases
+- For bug fixes: Confirm the original issue is resolved
+
+### Validation Summary
+| Check | Command | Required |
+|-------|---------|----------|
+| Linter | `npm run lint` | Always |
+| Build | `npm run build` | Always |
+| Code Review | Task sub-agent | Complex changes |
+| Dev Server | `npm run dev` | UI changes |
+
 ## Code Quality Guidelines
 
 ### Linter Errors and Warnings
