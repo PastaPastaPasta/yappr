@@ -17,6 +17,38 @@ import type {
   VariantCombination
 } from '../types';
 
+/**
+ * Parse a JSON field that may be an array or a JSON string.
+ */
+function parseJsonArray<T>(value: unknown, fieldName: string): T[] | undefined {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T[];
+    } catch {
+      console.error(`Failed to parse ${fieldName}:`, value);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Parse a JSON field that may be an object or a JSON string.
+ */
+function parseJsonObject<T>(value: unknown, fieldName: string): T | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as T;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      console.error(`Failed to parse ${fieldName}:`, value);
+    }
+  }
+  return undefined;
+}
+
 class StoreItemService extends BaseDocumentService<StoreItem> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, YAPPR_STOREFRONT_CONTRACT_ID);
@@ -25,53 +57,10 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   protected transformDocument(doc: Record<string, unknown>): StoreItem {
     const data = (doc.data || doc) as StoreItemDocument;
 
-    // Convert storeId from byte array to base58
-    const storeId = identifierToBase58(data.storeId) || '';
-
-    // Parse JSON fields
-    let tags: string[] | undefined;
-    if (data.tags) {
-      if (Array.isArray(data.tags)) {
-        tags = data.tags;
-      } else if (typeof data.tags === 'string') {
-        try {
-          tags = JSON.parse(data.tags);
-        } catch {
-          console.error('Failed to parse tags:', data.tags);
-        }
-      }
-    }
-
-    let imageUrls: string[] | undefined;
-    if (data.imageUrls) {
-      if (Array.isArray(data.imageUrls)) {
-        imageUrls = data.imageUrls;
-      } else if (typeof data.imageUrls === 'string') {
-        try {
-          imageUrls = JSON.parse(data.imageUrls);
-        } catch {
-          console.error('Failed to parse imageUrls:', data.imageUrls);
-        }
-      }
-    }
-
-    let variants: ItemVariants | undefined;
-    if (data.variants) {
-      if (typeof data.variants === 'object' && !Array.isArray(data.variants)) {
-        variants = data.variants as ItemVariants;
-      } else if (typeof data.variants === 'string') {
-        try {
-          variants = JSON.parse(data.variants);
-        } catch {
-          console.error('Failed to parse variants:', data.variants);
-        }
-      }
-    }
-
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
-      storeId,
+      storeId: identifierToBase58(data.storeId) || '',
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       $revision: doc.$revision as number | undefined,
       title: data.title,
@@ -79,15 +68,15 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       section: data.section,
       category: data.category,
       subcategory: data.subcategory,
-      tags,
-      imageUrls,
+      tags: parseJsonArray<string>(data.tags, 'tags'),
+      imageUrls: parseJsonArray<string>(data.imageUrls, 'imageUrls'),
       basePrice: data.basePrice,
       currency: data.currency,
       status: data.status,
       weight: data.weight,
       stockQuantity: data.stockQuantity,
       sku: data.sku,
-      variants
+      variants: parseJsonObject<ItemVariants>(data.variants, 'variants')
     };
   }
 

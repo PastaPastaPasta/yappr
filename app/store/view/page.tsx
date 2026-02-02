@@ -8,14 +8,12 @@ import {
   BuildingStorefrontIcon,
   ChatBubbleLeftIcon,
   MapPinIcon,
-  ShoppingCartIcon,
-  StarIcon
+  ShoppingCartIcon
 } from '@heroicons/react/24/outline'
-import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
-import { ReviewCard, PoliciesDisplay, MobileCartFab } from '@/components/store'
+import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars } from '@/components/store'
 import { formatPrice } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -132,18 +130,6 @@ function StoreDetailContent() {
 
   const handleItemClick = (itemId: string) => {
     router.push(`/item?id=${itemId}`)
-  }
-
-  const renderStars = (rating: number) => {
-    const stars = []
-    for (let i = 1; i <= 5; i++) {
-      if (i <= rating) {
-        stars.push(<StarIconSolid key={i} className="h-5 w-5 text-yellow-400" />)
-      } else {
-        stars.push(<StarIcon key={i} className="h-5 w-5 text-gray-300" />)
-      }
-    }
-    return stars
   }
 
   if (isLoading) {
@@ -270,7 +256,7 @@ function StoreDetailContent() {
                   <h2 className="text-xl font-bold truncate">{store.name}</h2>
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
-                      <div className="flex">{renderStars(ratingSummary.averageRating)}</div>
+                      <RatingStars rating={ratingSummary.averageRating} size="lg" />
                       <span className="text-sm text-gray-500">
                         {ratingSummary.averageRating.toFixed(1)} ({ratingSummary.reviewCount} reviews)
                       </span>

@@ -3,9 +3,8 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { StarIcon } from '@heroicons/react/24/outline'
-import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { RatingStars } from './rating-stars'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { formatDate } from '@/lib/utils/format'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -57,18 +56,6 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
     }
   }, [review.reviewerId, review.reviewerUsername, review.reviewerDisplayName])
 
-  const renderStars = (rating: number) => {
-    const stars = []
-    for (let i = 1; i <= 5; i++) {
-      if (i <= rating) {
-        stars.push(<StarIconSolid key={i} className="h-4 w-4 text-yellow-400" />)
-      } else {
-        stars.push(<StarIcon key={i} className="h-4 w-4 text-gray-300" />)
-      }
-    }
-    return stars
-  }
-
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -117,7 +104,7 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
               <span className="text-sm text-gray-500 truncate">{displayName}</span>
             )}
             <span className="text-gray-300 dark:text-gray-600">·</span>
-            <div className="flex">{renderStars(review.rating)}</div>
+            <RatingStars rating={review.rating} size="sm" />
             <span className="text-gray-300 dark:text-gray-600">·</span>
             <span className="text-sm text-gray-500">
               {formatDate(review.createdAt)}
