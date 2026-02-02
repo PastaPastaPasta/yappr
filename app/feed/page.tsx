@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
@@ -20,7 +19,6 @@ import { cacheManager } from '@/lib/cache-manager'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { identifierToBase58 } from '@/lib/services/sdk-helpers'
 import { Button } from '@/components/ui/button'
-import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 
 /**
  * Helper to normalize byte arrays from SDK (may be base64 string, hex string, Uint8Array, or regular array)
@@ -101,7 +99,6 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
 }
 
 function FeedPage() {
-  const router = useRouter()
   const [isHydrated, setIsHydrated] = useState(false)
   const { setComposeOpen } = useAppStore()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
@@ -109,7 +106,6 @@ function FeedPage() {
   const { user } = useAuth()
   const { open: openLoginPrompt } = useLoginPromptModal()
   const postsState = useAsyncState<any[]>(null)
-  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
@@ -139,23 +135,6 @@ function FeedPage() {
   useEffect(() => {
     setIsHydrated(true)
   }, [])
-
-  // Check migration status on mount
-  useEffect(() => {
-    if (!user?.identityId) return
-
-    const checkMigration = async () => {
-      try {
-        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
-        const status = await profileMigrationService.getMigrationStatus(user.identityId)
-        setMigrationStatus(status)
-      } catch (error) {
-        console.error('Failed to check migration status:', error)
-      }
-    }
-
-    checkMigration().catch(err => console.error('Failed to check migration:', err))
-  }, [user?.identityId])
 
   // Load posts function - using real WASM SDK with updated version
   const loadPosts = useCallback(async (
@@ -1070,30 +1049,6 @@ function FeedPage() {
             </div>
           )}
         </div>
-
-        {/* Migration Banner */}
-        {migrationStatus === 'needs_migration' && (
-          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                  <ArrowPathIcon className="h-5 w-5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="font-medium text-blue-800 dark:text-blue-200">Migrate Your Profile</p>
-                  <p className="text-sm text-blue-700 dark:text-blue-300">Your profile is not visible to others until you migrate.</p>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                onClick={() => router.push('/profile/create')}
-                className="bg-blue-500 hover:bg-blue-600"
-              >
-                Migrate
-              </Button>
-            </div>
-          </div>
-        )}
 
         {/* Login prompt for non-authenticated users on Following tab */}
         {activeTab === 'following' && !user ? (

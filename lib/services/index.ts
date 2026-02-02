@@ -25,7 +25,6 @@ export {
   DICEBEAR_STYLE_LABELS,
   DEFAULT_AVATAR_STYLE,
 } from './unified-profile-service';
-export { profileMigrationService } from './profile-migration-service';
 
 // Export types
 export type { EvoSdkConfig } from './evo-sdk-service';
@@ -56,7 +55,6 @@ export type {
   AvatarConfig,
   DiceBearStyle,
 } from './unified-profile-service';
-export type { LegacyProfileData, LegacyAvatarData, MigrationStatus } from './profile-migration-service';
 
 // Private feed crypto service
 export { privateFeedCryptoService } from './private-feed-crypto-service';
