@@ -88,7 +88,7 @@ export function MobileBottomNav() {
   const isMoreActive = moreMenuItems.some(item => pathname === item.href || pathname.startsWith(item.href + '/')) || pathname.startsWith('/store')
 
   return (
-    <>
+    <div className="mobile-bottom-nav md:hidden">
       {/* Overlay */}
       {moreMenuOpen && (
         <div
@@ -246,6 +246,6 @@ export function MobileBottomNav() {
           </button>
         </div>
       </nav>
-    </>
+    </div>
   )
 }

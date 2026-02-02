@@ -35,7 +35,7 @@ export default function RootLayout({
               <ErrorBoundary level="page">
                 {children}
               </ErrorBoundary>
-              <div className="h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
+              <div className="mobile-bottom-nav-spacer h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
               <MobileBottomNav />
               <LoginModal />
             </LinkPreviewModalProvider>

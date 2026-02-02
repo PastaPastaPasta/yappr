@@ -12,6 +12,19 @@
     --background: 0 0% 7%;
     --foreground: 210 40% 98%;
   }
+
+  body {
+    --mobile-nav-offset: 56px;
+  }
+
+  body.mobile-nav-hidden {
+    --mobile-nav-offset: 0px;
+  }
+
+  body.mobile-nav-hidden .mobile-bottom-nav,
+  body.mobile-nav-hidden .mobile-bottom-nav-spacer {
+    display: none !important;
+  }
 }
 
 @layer utilities {
