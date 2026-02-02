@@ -17,6 +17,10 @@
     --mobile-nav-offset: 56px;
   }
 
+  .mobile-bottom-nav-spacer {
+    height: var(--mobile-nav-offset);
+  }
+
   body.mobile-nav-hidden {
     --mobile-nav-offset: 0px;
   }
