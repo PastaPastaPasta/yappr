@@ -1,11 +1,12 @@
 'use client'
 
 interface SpinnerProps {
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'xs' | 'sm' | 'md' | 'lg'
   className?: string
 }
 
 const sizeClasses = {
+  xs: 'h-4 w-4',
   sm: 'h-5 w-5',
   md: 'h-8 w-8',
   lg: 'h-12 w-12'

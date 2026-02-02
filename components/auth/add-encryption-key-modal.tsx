@@ -4,8 +4,8 @@ import { useState, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, KeyIcon, ExclamationTriangleIcon, CheckCircleIcon, ClipboardIcon, EyeIcon, EyeSlashIcon, ShieldCheckIcon, CheckIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
@@ -462,7 +462,7 @@ export function AddEncryptionKeyModal({
               >
                 {isValidatingKey ? (
                   <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <Spinner size="xs" className="mr-2" />
                     Validating...
                   </>
                 ) : (
@@ -488,7 +488,7 @@ export function AddEncryptionKeyModal({
             </Dialog.Title>
 
             <div className="flex flex-col items-center justify-center py-8">
-              <Loader2 className="h-12 w-12 text-yappr-500 animate-spin mb-4" />
+              <Spinner size="lg" className="mb-4" />
               <p className="text-gray-600 dark:text-gray-400 text-center">
                 Broadcasting identity update transaction...
               </p>

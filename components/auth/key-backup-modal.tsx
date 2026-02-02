@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { X, Loader2, Eye, EyeOff, Shield, AlertTriangle, Key, Check } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
+import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
@@ -300,7 +301,7 @@ export function KeyBackupModal() {
                     <div className="text-center text-sm">
                       {isBenchmarking ? (
                         <span className="text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Spinner size="xs" />
                           Calibrating...
                         </span>
                       ) : (
@@ -347,7 +348,7 @@ export function KeyBackupModal() {
                   >
                     {isSubmitting ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Spinner size="xs" className="mr-2" />
                         Encrypting...
                       </>
                     ) : (
