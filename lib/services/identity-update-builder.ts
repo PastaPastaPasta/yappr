@@ -294,23 +294,26 @@ export async function checkKeysRegistered(
 
   const publicKeys = identity.getPublicKeys()
 
-  // Helper to extract key data as Uint8Array from IdentityPublicKey
-  const getKeyData = (key: { toJSON: () => { data: string | Uint8Array } }): Uint8Array => {
-    const keyJson = key.toJSON()
-    const data = keyJson.data
-    if (data instanceof Uint8Array) {
-      return data
+  // Helper to extract key data as Uint8Array from a WASM IdentityPublicKey.
+  // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
+  // Try the direct `.data` hex property first, then toJSON as fallback.
+  const getKeyData = (key: { data?: string; toJSON: () => { data: string | Uint8Array } }): Uint8Array => {
+    // Prefer the direct .data hex getter from WASM objects
+    const raw = key.data ?? key.toJSON().data
+    if (raw instanceof Uint8Array) {
+      return raw
     }
-    // Check if it's hex encoded (only hex characters)
-    if (/^[0-9a-fA-F]+$/.test(data)) {
-      const bytes = new Uint8Array(data.length / 2)
+    // Hex-encoded string (with or without 0x prefix)
+    const hex = raw.startsWith('0x') ? raw.slice(2) : raw
+    if (/^[0-9a-fA-F]+$/.test(hex) && hex.length % 2 === 0) {
+      const bytes = new Uint8Array(hex.length / 2)
       for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(data.substr(i * 2, 2), 16)
+        bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
       }
       return bytes
     }
-    // Otherwise assume base64 encoded string
-    const binary = atob(data)
+    // Base64 fallback
+    const binary = atob(raw)
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i)
