@@ -706,6 +706,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <PostContent
               content={post.content}
               className="mt-1"
+              disableLinkPreview={post.media && post.media.length > 0}
               hashtagValidations={hashtagValidations}
               onFailedHashtagClick={handleFailedHashtagClick}
               mentionValidations={mentionValidations}
