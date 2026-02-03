@@ -48,7 +48,7 @@ function FollowersPage() {
 
   // Get target user ID from URL params (if viewing another user's followers list)
   const targetUserId = searchParams.get('id')
-  const isOwnProfile = !targetUserId || targetUserId === user?.identityId
+  const isOwnProfile = !!user && (!targetUserId || targetUserId === user.identityId)
 
   // Load followers list
   const loadFollowers = useCallback(async (forceRefresh: boolean = false) => {
@@ -477,4 +477,4 @@ function FollowersPage() {
   )
 }
 
-export default withAuth(FollowersPage)
+export default withAuth(FollowersPage, { optional: true })

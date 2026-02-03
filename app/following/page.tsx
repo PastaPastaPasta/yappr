@@ -71,7 +71,7 @@ function FollowingPage() {
 
   // Get target user ID from URL params (if viewing another user's following list)
   const targetUserId = searchParams.get('id')
-  const isOwnProfile = !targetUserId || targetUserId === user?.identityId
+  const isOwnProfile = !!user && (!targetUserId || targetUserId === user.identityId)
 
   // Load following list
   const loadFollowing = useCallback(async (forceRefresh: boolean = false) => {
@@ -777,4 +777,4 @@ function FollowingPage() {
   )
 }
 
-export default withAuth(FollowingPage)
+export default withAuth(FollowingPage, { optional: true })
