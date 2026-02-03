@@ -11,6 +11,7 @@ interface AddressFormProps {
   onAddressChange: (address: ShippingAddress) => void
   onContactChange: (contact: BuyerContact) => void
   onSubmit: () => void
+  requireEmail?: boolean
   // Saved address props (optional)
   savedAddresses?: SavedAddress[]
   selectedSavedAddressId?: string | null
@@ -24,6 +25,7 @@ export function AddressForm({
   onAddressChange,
   onContactChange,
   onSubmit,
+  requireEmail = false,
   savedAddresses,
   selectedSavedAddressId,
   onSavedAddressSelect,
@@ -32,6 +34,7 @@ export function AddressForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!address.name || !address.street || !address.city || !address.postalCode || !address.country) return
+    if (requireEmail && !contact.email) return
     onSubmit()
   }
 
@@ -155,11 +158,14 @@ export function AddressForm({
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Email</label>
+                <label className="block text-sm font-medium mb-1">
+                  Email {requireEmail && <span className="text-red-500">*</span>}
+                </label>
                 <input
                   type="email"
                   value={contact.email || ''}
                   onChange={(e) => updateContact('email', e.target.value)}
+                  required={requireEmail}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>

@@ -42,6 +42,7 @@ function AddItemPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadedStoreId, setLoadedStoreId] = useState<string | null>(null)
+  const [fulfillmentType, setFulfillmentType] = useState<'physical' | 'digital'>('physical')
 
   // Variant state
   const [hasVariants, setHasVariants] = useState(false)
@@ -74,6 +75,7 @@ function AddItemPage() {
         setCategory(item.category || '')
         setImageUrls(item.imageUrls || [])
         setLoadedStoreId(item.storeId)
+        setFulfillmentType(item.fulfillmentType || 'physical')
 
         // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
@@ -196,7 +198,8 @@ function AddItemPage() {
         category: category.trim() || undefined,
         stockQuantity: hasVariants ? undefined : (stockQuantity ? parseInt(stockQuantity, 10) : undefined),
         status: 'active' as const,
-        variants
+        variants,
+        fulfillmentType
       }
 
       // Use URL storeId or fall back to loaded item's storeId for edit mode
@@ -348,6 +351,38 @@ function AddItemPage() {
                 className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 maxLength={50}
               />
+            </div>
+
+            {/* Fulfillment Type */}
+            <div>
+              <label className="block text-sm font-medium mb-2">Fulfillment</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFulfillmentType('physical')}
+                  className={`flex-1 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                    fulfillmentType === 'physical'
+                      ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20 text-yappr-600'
+                      : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700'
+                  }`}
+                >
+                  Physical
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFulfillmentType('digital')}
+                  className={`flex-1 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                    fulfillmentType === 'digital'
+                      ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20 text-yappr-600'
+                      : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700'
+                  }`}
+                >
+                  Digital
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Digital items skip shipping and require a buyer email for delivery.
+              </p>
             </div>
 
             {/* Variants Toggle */}

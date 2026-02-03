@@ -129,6 +129,7 @@ class CartService {
     unitPrice: number;
     imageUrl?: string;
     currency: string;
+    fulfillmentType?: 'physical' | 'digital';
   }): void {
     const cart = this.getCart();
 
@@ -172,7 +173,8 @@ class CartService {
       quantity,
       unitPrice: price,
       imageUrl: variantImageUrl,
-      currency: storeItem.currency || 'USD'
+      currency: storeItem.currency || 'USD',
+      fulfillmentType: storeItem.fulfillmentType || 'physical'
     });
   }
 
@@ -249,6 +251,10 @@ class CartService {
 
     for (const cartItem of items) {
       const item = await storeItemService.get(cartItem.itemId);
+      const fulfillmentType = item?.fulfillmentType || cartItem.fulfillmentType || 'physical';
+      if (fulfillmentType === 'digital') {
+        continue;
+      }
       if (item?.weight) {
         totalWeight += item.weight * cartItem.quantity;
       }

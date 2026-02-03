@@ -281,6 +281,9 @@ export type StoreStatus = 'active' | 'paused' | 'closed'
 // Item status values
 export type StoreItemStatus = 'active' | 'paused' | 'sold_out' | 'deleted'
 
+// Item fulfillment type
+export type FulfillmentType = 'physical' | 'digital'
+
 // Order status values
 export type OrderStatus = 'pending' | 'payment_received' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'disputed'
 
@@ -381,6 +384,7 @@ export interface StoreItemDocument {
   stockQuantity?: number
   sku?: string
   variants?: string // JSON string of ItemVariants
+  fulfillmentType?: FulfillmentType
 }
 
 // Parsed store item for UI display
@@ -404,6 +408,7 @@ export interface StoreItem {
   stockQuantity?: number
   sku?: string
   variants?: ItemVariants
+  fulfillmentType?: FulfillmentType
   // Enriched fields
   storeName?: string
   storeLogoUrl?: string
@@ -482,6 +487,7 @@ export interface CartItem {
   unitPrice: number
   imageUrl?: string
   currency: string
+  fulfillmentType?: FulfillmentType
 }
 
 // Cart (localStorage)
@@ -519,7 +525,7 @@ export interface OrderItem {
 // Encrypted order payload structure
 export interface OrderPayload {
   items: OrderItem[]
-  shippingAddress: ShippingAddress
+  shippingAddress?: ShippingAddress
   buyerContact: BuyerContact
   subtotal: number
   shippingCost: number

@@ -8,6 +8,7 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import {
   AddressForm,
+  DeliveryDetailsForm,
   ShippingSelector,
   PaymentSelector,
   PolicyAgreement,
@@ -59,7 +60,7 @@ function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
-  const [step, setStep] = useState<'address' | 'shipping' | 'policies' | 'payment' | 'review'>('address')
+  const [step, setStep] = useState<'address' | 'delivery' | 'shipping' | 'policies' | 'payment' | 'review'>('address')
   const [error, setError] = useState<string | null>(null)
 
   // Policies
@@ -84,6 +85,33 @@ function CheckoutPage() {
   const [shippingCost, setShippingCost] = useState(0)
   const [zonesLoadFailed, setZonesLoadFailed] = useState(false)
   const [hasNoZones, setHasNoZones] = useState(false)
+
+  const fulfillmentSummary = useMemo(() => {
+    const isPhysical = (item: CartItem) => (item.fulfillmentType || 'physical') === 'physical'
+    const physicalItems = cartItems.filter(isPhysical)
+    const digitalItems = cartItems.filter(item => !isPhysical(item))
+    return {
+      hasPhysicalItems: physicalItems.length > 0,
+      hasDigitalItems: digitalItems.length > 0,
+      physicalItems,
+      digitalItems
+    }
+  }, [cartItems])
+
+  const steps = useMemo(() => (
+    fulfillmentSummary.hasPhysicalItems
+      ? ['address', 'shipping', 'policies', 'payment', 'review']
+      : ['delivery', 'policies', 'payment', 'review']
+  ), [fulfillmentSummary.hasPhysicalItems])
+
+  useEffect(() => {
+    if (!fulfillmentSummary.hasPhysicalItems && (step === 'address' || step === 'shipping')) {
+      setStep('delivery')
+    }
+    if (fulfillmentSummary.hasPhysicalItems && step === 'delivery') {
+      setStep('address')
+    }
+  }, [fulfillmentSummary.hasPhysicalItems, step])
 
   // Payment
   const [selectedPaymentUri, setSelectedPaymentUri] = useState<ParsedPaymentUri | null>(null)
@@ -188,7 +216,14 @@ function CheckoutPage() {
 
   // Calculate shipping when address changes
   useEffect(() => {
-    if (!sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) return
+    if (!sdkReady || !storeId || !fulfillmentSummary.hasPhysicalItems) {
+      setMatchedZone(null)
+      setShippingCost(0)
+      setZonesLoadFailed(false)
+      setHasNoZones(false)
+      return
+    }
+    if (!shippingAddress.postalCode || !shippingAddress.country) return
 
     const calculateShipping = async () => {
       try {
@@ -206,13 +241,12 @@ function CheckoutPage() {
         }
 
         setHasNoZones(false)
-        const subtotal = cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
         const weight = await cartService.getTotalWeight(storeId)
 
         const { zone, cost } = await shippingZoneService.calculateShipping(
           storeId,
           shippingAddress,
-          { totalWeight: weight, subtotal }
+          { totalWeight: weight, subtotal: physicalSubtotal }
         )
 
         setMatchedZone(zone)
@@ -227,17 +261,23 @@ function CheckoutPage() {
     }
 
     calculateShipping().catch(console.error)
-  }, [sdkReady, storeId, shippingAddress, cartItems])
+  }, [sdkReady, storeId, shippingAddress, physicalSubtotal, fulfillmentSummary.hasPhysicalItems])
 
   const subtotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
   }, [cartItems])
+
+  const physicalSubtotal = useMemo(() => {
+    return fulfillmentSummary.physicalItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
+  }, [fulfillmentSummary.physicalItems])
 
   const total = useMemo(() => {
     return subtotal + shippingCost
   }, [subtotal, shippingCost])
 
   const currency = cartItems[0]?.currency || 'USD'
+  const activeStep = (steps.includes(step) ? step : steps[0]) as typeof step
+  const currentStepIndex = Math.max(steps.indexOf(activeStep), 0)
 
   const handleAddressSubmit = () => {
     // If using a saved address, go directly to shipping
@@ -252,6 +292,10 @@ function CheckoutPage() {
     } else {
       setStep('shipping')
     }
+  }
+
+  const handleDeliverySubmit = () => {
+    setStep('policies')
   }
 
   const handleSavedAddressSelect = (id: string | null) => {
@@ -441,6 +485,10 @@ function CheckoutPage() {
 
   const handlePlaceOrder = async () => {
     if (!user?.identityId || !store || !selectedPaymentUri) return
+    if (!fulfillmentSummary.hasPhysicalItems && !buyerContact.email) {
+      setError('Email is required for digital delivery.')
+      return
+    }
 
     setIsSubmitting(true)
     setError(null)
@@ -448,7 +496,7 @@ function CheckoutPage() {
     try {
       const payload = storeOrderService.buildOrderPayload(
         cartItems,
-        shippingAddress,
+        fulfillmentSummary.hasPhysicalItems ? shippingAddress : undefined,
         buyerContact,
         shippingCost,
         selectedPaymentUri.uri,
@@ -568,11 +616,16 @@ function CheckoutPage() {
           <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
-                onClick={() => step === 'address' ? router.back() : setStep(
-                  step === 'shipping' ? 'address' :
-                  step === 'policies' ? 'shipping' :
-                  step === 'payment' ? 'policies' : 'payment'
-                )}
+                onClick={() => {
+                  if (currentStepIndex <= 0) {
+                    router.back()
+                    return
+                  }
+                  const previous = steps[currentStepIndex - 1]
+                  if (previous) {
+                    setStep(previous as typeof step)
+                  }
+                }}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
@@ -582,11 +635,9 @@ function CheckoutPage() {
 
             {/* Progress Steps */}
             <div className="flex items-center px-4 pb-4">
-              {['address', 'shipping', 'policies', 'payment', 'review'].map((s, i) => {
-                const steps = ['address', 'shipping', 'policies', 'payment', 'review']
-                const currentIndex = steps.indexOf(step)
-                const isComplete = currentIndex > i
-                const isCurrent = step === s
+              {steps.map((s, i) => {
+                const isComplete = currentStepIndex > i
+                const isCurrent = activeStep === s
 
                 return (
                   <div key={s} className="flex items-center flex-1 last:flex-none">
@@ -601,7 +652,7 @@ function CheckoutPage() {
                     >
                       {i + 1}
                     </div>
-                    {i < 4 && (
+                    {i < steps.length - 1 && (
                       <div
                         className={`flex-1 h-0.5 mx-2 ${
                           isComplete ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800'
@@ -628,6 +679,7 @@ function CheckoutPage() {
               onAddressChange={setShippingAddress}
               onContactChange={setBuyerContact}
               onSubmit={handleAddressSubmit}
+              requireEmail={fulfillmentSummary.hasDigitalItems}
               savedAddresses={savedAddresses}
               selectedSavedAddressId={selectedSavedAddressId}
               onSavedAddressSelect={handleSavedAddressSelect}
@@ -657,8 +709,17 @@ function CheckoutPage() {
             </div>
           )}
 
+          {/* Delivery Details Step (digital-only) */}
+          {step === 'delivery' && (
+            <DeliveryDetailsForm
+              contact={buyerContact}
+              onContactChange={setBuyerContact}
+              onSubmit={handleDeliverySubmit}
+            />
+          )}
+
           {/* Shipping Step */}
-          {step === 'shipping' && (
+          {step === 'shipping' && fulfillmentSummary.hasPhysicalItems && (
             <ShippingSelector
               matchedZone={matchedZone}
               shippingCost={shippingCost}
@@ -700,7 +761,8 @@ function CheckoutPage() {
             <OrderReview
               store={store}
               items={cartItems}
-              shippingAddress={shippingAddress}
+              shippingAddress={fulfillmentSummary.hasPhysicalItems ? shippingAddress : undefined}
+              buyerContact={buyerContact}
               shippingCost={shippingCost}
               subtotal={subtotal}
               total={total}

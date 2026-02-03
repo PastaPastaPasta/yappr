@@ -299,18 +299,34 @@ function SellerOrdersPage() {
                               subtotal={payload.subtotal}
                               shippingCost={payload.shippingCost}
                               total={payload.total}
+                              showShipping={!!payload.shippingAddress}
                             />
 
                             {/* Shipping Address */}
-                            <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
-                              <p className="text-sm font-medium mb-2">Shipping Address</p>
-                              <p className="text-sm">{payload.shippingAddress.name}</p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.street}</p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">
-                                {payload.shippingAddress.city}{payload.shippingAddress.state ? `, ${payload.shippingAddress.state}` : ''} {payload.shippingAddress.postalCode}
-                              </p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.country}</p>
-                            </div>
+                            {payload.shippingAddress ? (
+                              <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+                                <p className="text-sm font-medium mb-2">Shipping Address</p>
+                                <p className="text-sm">{payload.shippingAddress.name}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.street}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                  {payload.shippingAddress.city}{payload.shippingAddress.state ? `, ${payload.shippingAddress.state}` : ''} {payload.shippingAddress.postalCode}
+                                </p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.country}</p>
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+                                <p className="text-sm font-medium mb-2">Digital Delivery</p>
+                                {payload.buyerContact.email && (
+                                  <p className="text-sm text-gray-600 dark:text-gray-400">{payload.buyerContact.email}</p>
+                                )}
+                                {payload.buyerContact.phone && (
+                                  <p className="text-sm text-gray-600 dark:text-gray-400">{payload.buyerContact.phone}</p>
+                                )}
+                                {!payload.buyerContact.email && !payload.buyerContact.phone && (
+                                  <p className="text-sm text-gray-600 dark:text-gray-400">No delivery contact provided</p>
+                                )}
+                              </div>
+                            )}
 
                             {/* Contact Info */}
                             {(payload.buyerContact.email || payload.buyerContact.phone) && (

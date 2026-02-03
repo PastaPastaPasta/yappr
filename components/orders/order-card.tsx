@@ -109,15 +109,25 @@ export function OrderCard({
             subtotal={payload.subtotal}
             shippingCost={payload.shippingCost}
             total={payload.total}
+            showShipping={!!payload.shippingAddress}
           />
 
           {/* Shipping Address */}
-          <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
-            <p className="text-sm font-medium mb-1">Ships to</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              {payload.shippingAddress.name}, {payload.shippingAddress.city}, {payload.shippingAddress.country}
-            </p>
-          </div>
+          {payload.shippingAddress ? (
+            <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+              <p className="text-sm font-medium mb-1">Ships to</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {payload.shippingAddress.name}, {payload.shippingAddress.city}, {payload.shippingAddress.country}
+              </p>
+            </div>
+          ) : (
+            <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+              <p className="text-sm font-medium mb-1">Digital Delivery</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {payload.buyerContact.email || 'No email provided'}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

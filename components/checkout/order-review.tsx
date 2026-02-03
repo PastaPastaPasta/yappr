@@ -4,12 +4,13 @@ import { LockClosedIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outl
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService } from '@/lib/services/cart-service'
-import type { CartItem, ShippingAddress, Store } from '@/lib/types'
+import type { CartItem, ShippingAddress, Store, BuyerContact } from '@/lib/types'
 
 interface OrderReviewProps {
   store: Store | null
   items: CartItem[]
-  shippingAddress: ShippingAddress
+  shippingAddress?: ShippingAddress
+  buyerContact: BuyerContact
   shippingCost: number
   subtotal: number
   total: number
@@ -27,6 +28,7 @@ export function OrderReview({
   store,
   items,
   shippingAddress,
+  buyerContact,
   shippingCost,
   subtotal,
   total,
@@ -85,14 +87,25 @@ export function OrderReview({
         ))}
       </div>
 
-      {/* Shipping Address */}
-      <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
-        <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
-        <p>{shippingAddress.name}</p>
-        <p>{shippingAddress.street}</p>
-        <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}</p>
-        <p>{shippingAddress.country}</p>
-      </div>
+      {/* Shipping Address / Digital Delivery */}
+      {shippingAddress ? (
+        <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
+          <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
+          <p>{shippingAddress.name}</p>
+          <p>{shippingAddress.street}</p>
+          <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}</p>
+          <p>{shippingAddress.country}</p>
+        </div>
+      ) : (
+        <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
+          <p className="text-sm font-medium text-gray-500 mb-1">Digital Delivery</p>
+          {buyerContact.email ? (
+            <p>{buyerContact.email}</p>
+          ) : (
+            <p className="text-sm text-gray-500">No email provided</p>
+          )}
+        </div>
+      )}
 
       {/* Totals */}
       <div className="space-y-2 pt-4">
@@ -100,10 +113,12 @@ export function OrderReview({
           <span className="text-gray-500">Subtotal</span>
           <span>{formatPrice(subtotal, currency)}</span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Shipping</span>
-          <span>{formatPrice(shippingCost, currency)}</span>
-        </div>
+        {shippingAddress && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Shipping</span>
+            <span>{formatPrice(shippingCost, currency)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-200 dark:border-gray-800">
           <span>Total</span>
           <span>{formatPrice(total, currency)}</span>

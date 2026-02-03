@@ -237,6 +237,13 @@
         "position": 14,
         "maxLength": 10000,
         "description": "JSON object with axes and combinations for product variants"
+      },
+      "fulfillmentType": {
+        "type": "string",
+        "enum": ["physical", "digital"],
+        "position": 15,
+        "maxLength": 20,
+        "description": "Fulfillment type (physical or digital)"
       }
     },
     "description": "A product listing with optional embedded variants",

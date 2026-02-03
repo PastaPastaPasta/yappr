@@ -7,7 +7,7 @@
  * - Standard CSV parsing with proper escaping handling
  */
 
-import type { StoreItem, ItemVariants, VariantAxis, VariantCombination } from '../types'
+import type { StoreItem, ItemVariants, VariantAxis, VariantCombination, FulfillmentType } from '../types'
 
 // CSV column mapping to internal field names
 export interface InventoryCSVColumns {
@@ -21,6 +21,7 @@ export interface InventoryCSVColumns {
   tags?: string            // Tags (comma-separated)
   variant?: string         // Primary variant (e.g., "Blue")
   subVariant?: string      // Secondary variant (e.g., "Large")
+  fulfillmentType?: string // Fulfillment type (digital/physical)
   price: string            // Price (required)
   quantity?: string        // Stock quantity (can be formula)
   shippingCost?: string    // Per-item shipping cost
@@ -44,6 +45,7 @@ export interface ParsedInventoryRow {
   tags: string[]
   variant?: string
   subVariant?: string
+  fulfillmentType?: FulfillmentType
   price: number           // Price in cents
   quantity?: number | string  // Number or formula string
   quantityFormula?: string    // Original formula if quantity was a formula
@@ -71,6 +73,7 @@ export interface GroupedInventoryItem {
   stockQuantity?: number  // Stock for non-variant items
   weight?: number
   variants?: ItemVariants // Populated if item has variants
+  fulfillmentType?: FulfillmentType
   rows: ParsedInventoryRow[]  // Original rows that make up this item
 }
 
@@ -100,6 +103,7 @@ const COLUMN_ALIASES: Record<keyof InventoryCSVColumns, string[]> = {
   tags: ['tags', 'keywords'],
   variant: ['variant', 'option', 'option1', 'color', 'type'],
   subVariant: ['sub variant', 'sub_variant', 'subvariant', 'option2', 'size'],
+  fulfillmentType: ['fulfillment type', 'fulfillment', 'delivery_type', 'delivery type'],
   price: ['price', 'cost', 'amount'],
   quantity: ['quantity', 'qty', 'stock', 'inventory'],
   shippingCost: ['shipping cost', 'shipping_cost', 'shippingcost', 'shipping'],
@@ -228,6 +232,14 @@ function parseQuantity(value: string): { value: number | null; formula: string |
 
   const num = parseInt(trimmed, 10)
   return { value: isNaN(num) ? null : num, formula: null }
+}
+
+function parseFulfillmentType(value: string): FulfillmentType | undefined {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'digital') return 'digital'
+  if (normalized === 'physical') return 'physical'
+  return undefined
 }
 
 /**
@@ -555,6 +567,7 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
         sku: firstRow.sku,
         weight: firstRow.weight,
         variants: { axes, combinations },
+        fulfillmentType: firstRow.fulfillmentType,
         rows: groupRowsArr
       })
     } else {
@@ -573,6 +586,7 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
         sku: firstRow.sku,
         stockQuantity: typeof firstRow.quantity === 'number' ? firstRow.quantity : undefined,
         weight: firstRow.weight,
+        fulfillmentType: firstRow.fulfillmentType,
         rows: groupRowsArr
       })
     }
@@ -636,6 +650,15 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
 
     const quantityResult = parseQuantity(getValue('quantity'))
     const combineResult = parseCombineShipping(getValue('combine'))
+    const fulfillmentTypeValue = getValue('fulfillmentType')
+    const fulfillmentType = parseFulfillmentType(fulfillmentTypeValue)
+    if (fulfillmentTypeValue && !fulfillmentType) {
+      warnings.push({
+        row: rowNumber,
+        column: 'fulfillmentType',
+        message: `Invalid fulfillment type: "${fulfillmentTypeValue}" (use "digital" or "physical")`
+      })
+    }
 
     const tagsStr = getValue('tags')
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : []
@@ -665,6 +688,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
       tags,
       variant: getValue('variant') || undefined,
       subVariant: getValue('subVariant') || undefined,
+      fulfillmentType,
       price,
       quantity: quantityResult.value ?? quantityResult.formula ?? undefined,
       quantityFormula: quantityResult.formula ?? undefined,
@@ -709,6 +733,7 @@ export function toStoreItemData(item: GroupedInventoryItem): {
   stockQuantity?: number
   sku?: string
   variants?: ItemVariants
+  fulfillmentType?: FulfillmentType
 } {
   return {
     title: item.title,
@@ -724,7 +749,8 @@ export function toStoreItemData(item: GroupedInventoryItem): {
     weight: item.weight,
     stockQuantity: item.stockQuantity,
     sku: item.sku,
-    variants: item.variants
+    variants: item.variants,
+    fulfillmentType: item.fulfillmentType
   }
 }
 
@@ -743,6 +769,7 @@ export function generateCSVTemplate(): string {
     'Tags',
     'Variant',
     'Sub Variant',
+    'Fulfillment Type',
     'Price',
     'Quantity',
     'Weight',
@@ -753,12 +780,12 @@ export function generateCSVTemplate(): string {
   ]
 
   const sampleRows = [
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-BLUE-1', 'catan,roads,blue', 'Blue', 'Single', '0.69', '100', '5', 'https://example.com/road-blue.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-BLUE-10', 'catan,roads,blue', 'Blue', '10-Pack', '5.99', '50', '50', 'https://example.com/road-blue-10.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-1', 'catan,roads,green', 'Green', 'Single', '0.69', '100', '5', 'https://example.com/road-green.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-10', 'catan,roads,green', 'Green', '10-Pack', '5.99', '50', '50', 'https://example.com/road-green-10.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-50', 'catan,roads,green', 'Green', '50-Pack', '24.99', '(C-ROAD-GREEN-10)*5', '250', 'https://example.com/road-green-50.jpg', '', '', ''],
-    ['', 'Games', 'Board Games', 'Catan', 'Catan Base Set - Red', 'Complete red player set', 'C-BASE-RED', 'catan,set,red', '', '', '6.50', '25', '100', 'https://example.com/base-red.jpg', '', '', ''],
+    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-BLUE-1', 'catan,roads,blue', 'Blue', 'Single', 'physical', '0.69', '100', '5', 'https://example.com/road-blue.jpg', '', '', ''],
+    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-BLUE-10', 'catan,roads,blue', 'Blue', '10-Pack', 'physical', '5.99', '50', '50', 'https://example.com/road-blue-10.jpg', '', '', ''],
+    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-1', 'catan,roads,green', 'Green', 'Single', 'physical', '0.69', '100', '5', 'https://example.com/road-green.jpg', '', '', ''],
+    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-10', 'catan,roads,green', 'Green', '10-Pack', 'physical', '5.99', '50', '50', 'https://example.com/road-green-10.jpg', '', '', ''],
+    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-50', 'catan,roads,green', 'Green', '50-Pack', 'physical', '24.99', '(C-ROAD-GREEN-10)*5', '250', 'https://example.com/road-green-50.jpg', '', '', ''],
+    ['', 'Games', 'Board Games', 'Catan', 'Catan Base Set - Red', 'Complete red player set', 'C-BASE-RED', 'catan,set,red', '', '', 'physical', '6.50', '25', '100', 'https://example.com/base-red.jpg', '', '', ''],
   ]
 
   return [headers.join(','), ...sampleRows.map(row => row.map(cell =>

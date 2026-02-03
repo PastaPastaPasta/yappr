@@ -12,6 +12,7 @@ import type {
   StoreItem,
   StoreItemDocument,
   StoreItemStatus,
+  FulfillmentType,
   ItemVariants,
   VariantAxis,
   VariantCombination
@@ -87,7 +88,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       weight: data.weight,
       stockQuantity: data.stockQuantity,
       sku: data.sku,
-      variants
+      variants,
+      fulfillmentType: (data.fulfillmentType as FulfillmentType | undefined) || 'physical'
     };
   }
 
@@ -195,6 +197,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity?: number;
       sku?: string;
       variants?: ItemVariants;
+      fulfillmentType?: FulfillmentType;
     }
   ): Promise<StoreItem> {
     const documentData: Record<string, unknown> = {
@@ -215,6 +218,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.stockQuantity !== undefined) documentData.stockQuantity = data.stockQuantity;
     if (data.sku) documentData.sku = data.sku;
     if (data.variants) documentData.variants = JSON.stringify(data.variants);
+    if (data.fulfillmentType) documentData.fulfillmentType = data.fulfillmentType;
 
     return this.create(ownerId, documentData);
   }
@@ -241,6 +245,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity: number;
       sku: string;
       variants: ItemVariants;
+      fulfillmentType: FulfillmentType;
     }>
   ): Promise<StoreItem> {
     // Fetch existing item to preserve required fields
@@ -267,6 +272,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.stockQuantity !== undefined) documentData.stockQuantity = data.stockQuantity;
     if (data.sku !== undefined) documentData.sku = data.sku;
     if (data.variants !== undefined) documentData.variants = JSON.stringify(data.variants);
+    if (data.fulfillmentType !== undefined) documentData.fulfillmentType = data.fulfillmentType;
 
     return this.update(itemId, ownerId, documentData);
   }

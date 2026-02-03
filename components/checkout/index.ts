@@ -1,4 +1,5 @@
 export { AddressForm } from './address-form'
+export { DeliveryDetailsForm } from './delivery-details-form'
 export { ShippingSelector } from './shipping-selector'
 export { PaymentSelector } from './payment-selector'
 export { PolicyAgreement } from './policy-agreement'

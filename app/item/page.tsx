@@ -300,7 +300,14 @@ function ItemDetailContent() {
               </button>
             )}
 
-            <h1 className="text-2xl font-bold">{item.title}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold">{item.title}</h1>
+              {item.fulfillmentType === 'digital' && (
+                <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 rounded-full">
+                  Digital
+                </span>
+              )}
+            </div>
 
             <p className="text-2xl font-bold text-yappr-600">
               {formatPrice(currentPrice, item.currency)}

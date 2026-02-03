@@ -235,6 +235,7 @@ export function InventoryUploadModal({
                   <li><strong>Price</strong> (required) - Price in dollars (e.g., 9.99)</li>
                   <li><strong>Group</strong> - Group ID to link variants together</li>
                   <li><strong>Variant / Sub Variant</strong> - Variant options (e.g., Color, Size)</li>
+                  <li><strong>Fulfillment Type</strong> - digital or physical (optional, defaults to physical)</li>
                   <li><strong>Quantity</strong> - Stock count or formula (e.g., &quot;(SKU-NAME)*5&quot;)</li>
                   <li><strong>SKU, Category, Tags, Images</strong> - Optional fields</li>
                 </ul>

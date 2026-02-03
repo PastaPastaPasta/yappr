@@ -9,9 +9,10 @@ interface OrderItemsListProps {
   subtotal: number
   shippingCost: number
   total: number
+  showShipping?: boolean
 }
 
-export function OrderItemsList({ items, currency, subtotal, shippingCost, total }: OrderItemsListProps) {
+export function OrderItemsList({ items, currency, subtotal, shippingCost, total, showShipping = true }: OrderItemsListProps) {
   return (
     <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
       <p className="text-sm font-medium mb-2">Items</p>
@@ -32,10 +33,12 @@ export function OrderItemsList({ items, currency, subtotal, shippingCost, total 
           <span>Subtotal</span>
           <span>{formatPrice(subtotal, currency)}</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span>Shipping</span>
-          <span>{formatPrice(shippingCost, currency)}</span>
-        </div>
+        {showShipping && (
+          <div className="flex justify-between text-sm">
+            <span>Shipping</span>
+            <span>{formatPrice(shippingCost, currency)}</span>
+          </div>
+        )}
         <div className="flex justify-between font-medium mt-1">
           <span>Total</span>
           <span>{formatPrice(total, currency)}</span>

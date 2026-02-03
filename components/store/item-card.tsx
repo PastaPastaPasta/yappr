@@ -71,6 +71,11 @@ export function ItemCard({ item, onClick, showStore }: ItemCardProps) {
         <h3 className="font-medium text-sm truncate group-hover:text-yappr-600 transition-colors">
           {item.title}
         </h3>
+        {item.fulfillmentType === 'digital' && (
+          <span className="inline-flex items-center mt-1 px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 rounded-full">
+            Digital
+          </span>
+        )}
 
         {showStore && item.storeName && (
           <p className="text-xs text-gray-500 truncate">
