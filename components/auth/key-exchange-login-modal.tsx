@@ -4,10 +4,11 @@ import { useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
-import { useKeyExchangeLogin, type KeyExchangeState } from '@/hooks/use-key-exchange-login'
+import { useKeyExchangeLogin } from '@/hooks/use-key-exchange-login'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { KeyExchangeQR } from './key-exchange-qr'
+import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
 
 /**
@@ -31,7 +32,6 @@ export function KeyExchangeLoginModal() {
     uri,
     remainingTime,
     keyIndex,
-    needsKeyRegistration,
     error,
     result,
     start,
@@ -116,38 +116,36 @@ export function KeyExchangeLoginModal() {
         )
 
       case 'registering':
+        // Show key registration flow with QR code for wallet signing
+        if (!result || !identityId) {
+          return (
+            <div className="flex flex-col items-center gap-4 py-8">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+              <p className="text-gray-600 dark:text-gray-400">
+                Preparing key registration...
+              </p>
+            </div>
+          )
+        }
         return (
-          <div className="flex flex-col items-center gap-4 py-4">
-            <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-full">
-              <AlertCircle className="w-8 h-8 text-yellow-600 dark:text-yellow-400" />
-            </div>
-            <div className="text-center">
-              <h3 className="font-semibold text-lg">First Time Login</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                Your login keys need to be added to your identity.
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
-                Please use Dash Evo Tool to add these keys to your identity before proceeding.
-              </p>
-            </div>
-            <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-4 w-full mt-2">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Keys to add:</p>
-              <ul className="text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                <li>• Authentication key (purpose: 0, security: HIGH)</li>
-                <li>• Encryption key (purpose: 1, security: MEDIUM)</li>
-              </ul>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => {
-                // For MVP, just close and let user handle key registration externally
-                handleClose()
-              }}
-              className="mt-2"
-            >
-              Close
-            </Button>
-          </div>
+          <KeyRegistrationFlow
+            identityId={identityId}
+            authKey={result.authKey}
+            encryptionKey={result.encryptionKey}
+            onComplete={() => {
+              // Keys registered - complete the login
+              loginWithKeyExchange(identityId, result.loginKey, result.keyIndex)
+                .then(() => {
+                  setTimeout(() => {
+                    close()
+                  }, 1500)
+                })
+                .catch((err) => {
+                  console.error('Key exchange login failed after registration:', err)
+                })
+            }}
+            onCancel={handleClose}
+          />
         )
 
       case 'complete':
