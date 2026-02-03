@@ -54,6 +54,10 @@ export interface UnsignedTransitionResult {
 /**
  * Sign data with a private key using secp256k1 (compact signature format).
  * Returns a 65-byte signature: recovery (1) + r (32) + s (32)
+ *
+ * Recovery byte format for Dash (compressed public keys):
+ * - recid is 0-3 from the signature
+ * - For compressed keys: recovery = 31 + recid (valid range: 31-34)
  */
 async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   // Sign with recovery byte format (65 bytes)
@@ -64,7 +68,9 @@ async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Ui
   // But Dash expects: recovery (1) + r (32) + s (32)
   // Rearrange the bytes
   const result = new Uint8Array(65)
-  result[0] = signature[64] + 27 // Recovery byte at end, move to front (add 27 for uncompressed)
+  // For compressed keys: 31 + recid (where recid is 0-3)
+  // 31 = 27 + 4, where 4 indicates compressed public key
+  result[0] = signature[64] + 31
   result.set(signature.slice(0, 64), 1) // r + s after recovery byte
 
   return result
