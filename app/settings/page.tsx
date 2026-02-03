@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useTheme } from 'next-themes'
 import * as RadioGroup from '@radix-ui/react-radio-group'
+import * as Slider from '@radix-ui/react-slider'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -85,6 +86,10 @@ function SettingsPage() {
   const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
   const feedLanguage = useSettingsStore((s) => s.feedLanguage)
   const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
+  const nsfwFilterEnabled = useSettingsStore((s) => s.nsfwFilterEnabled)
+  const setNsfwFilterEnabled = useSettingsStore((s) => s.setNsfwFilterEnabled)
+  const nsfwSensitivity = useSettingsStore((s) => s.nsfwSensitivity)
+  const setNsfwSensitivity = useSettingsStore((s) => s.setNsfwSensitivity)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -433,6 +438,56 @@ function SettingsPage() {
             checked={sendReadReceipts}
             onCheckedChange={setSendReadReceipts}
           />
+        </div>
+      </div>
+
+      {/* Content Filtering */}
+      <div>
+        <h3 className="font-semibold mb-4">Content Filtering</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">NSFW Detection</p>
+              <p className="text-sm text-gray-500">Blur images detected as sensitive content</p>
+            </div>
+            <SettingsSwitch
+              checked={nsfwFilterEnabled}
+              onCheckedChange={setNsfwFilterEnabled}
+            />
+          </div>
+
+          {nsfwFilterEnabled && (
+            <div className="ml-4 space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium">Sensitivity</p>
+                  <span className="text-xs text-gray-500">
+                    {nsfwSensitivity <= 0.3 ? 'High' : nsfwSensitivity <= 0.6 ? 'Medium' : 'Low'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-500 shrink-0">More strict</span>
+                  <Slider.Root
+                    value={[nsfwSensitivity]}
+                    onValueChange={([value]) => setNsfwSensitivity(value)}
+                    min={0.1}
+                    max={0.9}
+                    step={0.1}
+                    className="relative flex items-center w-full h-5 select-none touch-none"
+                  >
+                    <Slider.Track className="relative grow h-1.5 rounded-full bg-gray-200 dark:bg-gray-800">
+                      <Slider.Range className="absolute h-full rounded-full bg-yappr-500" />
+                    </Slider.Track>
+                    <Slider.Thumb className="block w-4 h-4 rounded-full bg-white border-2 border-yappr-500 shadow focus:outline-none focus:ring-2 focus:ring-yappr-500/40" />
+                  </Slider.Root>
+                  <span className="text-xs text-gray-500 shrink-0">Less strict</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">
+                Detection runs entirely on your device. Images are never sent to any server.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

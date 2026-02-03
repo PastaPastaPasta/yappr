@@ -200,6 +200,12 @@ interface SettingsState {
   /** Preferred language for the For You feed */
   feedLanguage: string
   setFeedLanguage: (language: string) => void
+  /** NSFW content filter enabled */
+  nsfwFilterEnabled: boolean
+  setNsfwFilterEnabled: (enabled: boolean) => void
+  /** NSFW detection sensitivity threshold (0.1 = strict, 0.9 = lenient) */
+  nsfwSensitivity: number
+  setNsfwSensitivity: (threshold: number) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -225,6 +231,10 @@ export const useSettingsStore = create<SettingsState>()(
       setPotatoMode: (enabled) => set({ potatoMode: enabled }),
       feedLanguage: 'en', // Default to English
       setFeedLanguage: (language) => set({ feedLanguage: language }),
+      nsfwFilterEnabled: true, // Enabled by default
+      setNsfwFilterEnabled: (enabled) => set({ nsfwFilterEnabled: enabled }),
+      nsfwSensitivity: 0.5, // Medium sensitivity
+      setNsfwSensitivity: (threshold) => set({ nsfwSensitivity: threshold }),
     }),
     {
       name: 'yappr-settings',

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
+import { NsfwImageGuard } from '@/components/post/nsfw-image-guard'
 import { motion } from 'framer-motion'
 import {
   ChatBubbleOvalLeftIcon,
@@ -774,7 +774,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     post.media && post.media.length === 3 && index === 0 && 'row-span-2'
                   )}
                 >
-                  <Image
+                  <NsfwImageGuard
                     src={media.url}
                     alt={media.alt || ''}
                     fill

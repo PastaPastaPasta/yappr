@@ -49,9 +49,25 @@ const nextConfig = {
               priority: 10,
               reuseExistingChunk: true,
             },
+            tensorflow: {
+              test: /[\\/]node_modules[\\/](@tensorflow|nsfwjs)[\\/]/,
+              name: 'tensorflow',
+              priority: 10,
+              reuseExistingChunk: true,
+            },
           },
         },
       }
+    }
+
+    // TF.js conditionally references Node modules — provide browser fallbacks
+    config.resolve = {
+      ...config.resolve,
+      fallback: {
+        ...config.resolve?.fallback,
+        fs: false,
+        path: false,
+      },
     }
 
     // Handle WASM files (required for @dashevo/evo-sdk)
