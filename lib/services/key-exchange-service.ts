@@ -135,10 +135,13 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
     identityId: string,
     contractIdBytes: Uint8Array
   ): Promise<LoginKeyResponse | null> {
+    // Encode contractId as base64 for SDK query (byte array fields require base64)
+    const contractIdBase64 = Buffer.from(contractIdBytes).toString('base64')
+
     const options: QueryOptions = {
       where: [
         ['$ownerId', '==', identityId],
-        ['contractId', '==', Array.from(contractIdBytes)]
+        ['contractId', '==', contractIdBase64]
       ],
       limit: 1
     }
@@ -182,7 +185,7 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
     } = options
 
     const startTime = Date.now()
-    let lastResponseId: string | null = null
+    let lastRevision: number | null = null
 
     while (Date.now() - startTime < timeoutMs) {
       // Check for cancellation
@@ -196,9 +199,26 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
       try {
         const response = await this.getResponseForIdentity(identityId, contractIdBytes)
 
-        if (response && response.$id !== lastResponseId) {
-          // New response found - attempt decryption
-          lastResponseId = response.$id
+        // Check if this is a new or updated response by comparing $revision
+        // The document $id is stable (unique index), but $revision increments on updates
+        const isNewOrUpdated = response && response.$revision !== lastRevision
+
+        console.log('Key exchange: Poll result', {
+          hasResponse: !!response,
+          revision: response?.$revision,
+          lastRevision,
+          isNewOrUpdated
+        })
+
+        if (isNewOrUpdated) {
+          // New or updated response found - attempt decryption
+          lastRevision = response.$revision
+
+          console.log('Key exchange: Attempting decryption', {
+            walletEphemeralPubKeyLength: response.walletEphemeralPubKey?.length,
+            encryptedPayloadLength: response.encryptedPayload?.length,
+            keyIndex: response.keyIndex
+          })
 
           try {
             const sharedSecret = deriveSharedSecret(
@@ -210,6 +230,11 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
               response.encryptedPayload,
               sharedSecret
             )
+
+            console.log('Key exchange: Decryption successful!', {
+              loginKeyLength: loginKey?.length,
+              keyIndex: response.keyIndex
+            })
 
             // Clear shared secret immediately after use
             clearKeyMaterial(sharedSecret)

@@ -12,6 +12,7 @@ import { getEvoSdk } from './evo-sdk-service'
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
 import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
+import { hash160 } from '../crypto/hash'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -60,35 +61,31 @@ function doubleSha256(data: Uint8Array): Uint8Array {
 }
 
 /**
- * Sign data with a private key using secp256k1 (compact signature format).
- * Returns a 65-byte signature: recovery (1) + r (32) + s (32)
+ * Sign data with a private key using secp256k1 (recoverable signature format).
+ * Returns a 65-byte signature: header (1) + r (32) + s (32)
  *
  * Dash signing process:
  * 1. Double SHA256 hash the data
- * 2. Sign the hash with ECDSA recoverable
- * 3. Format: [recid + 31] + [r] + [s] (for compressed keys)
+ * 2. Sign the hash with ECDSA (recoverable)
  */
 async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   // Step 1: Double SHA256 hash the data (Dash standard)
   const dataHash = doubleSha256(data)
 
   // Step 2: Sign the hash (prehash: false since we already hashed)
+  // noble/secp256k1 'recovered' format: recovery (1) + r (32) + s (32)
   const signature = await secp256k1.signAsync(dataHash, privateKey, {
     format: 'recovered',
     prehash: false  // Don't hash again - we already did double SHA256
   })
 
-  // noble/secp256k1 'recovered' format: recovery (1) + r (32) + s (32)
-  // The recovery byte at position 0 is the raw recid (0-3)
-  const recid = signature[0]
-  console.log('signWithKey: raw recid from noble:', recid)
-
-  // Step 3: Format for Dash - recovery = recid + 27 + 4 for compressed keys
+  // Encode as "compact" header for recoverable signatures:
+  // header = 27 + recoveryId (0..3) + 4 for compressed keys
+  // This matches Dash/Bitcoin compact signature format.
+  const recoveryId = signature[0]
   const result = new Uint8Array(65)
-  result[0] = recid + 31  // 31 = 27 + 4 (compressed key indicator)
-  result.set(signature.slice(1), 1) // r + s after recovery byte
-
-  console.log('signWithKey: final recovery byte:', result[0])
+  result[0] = recoveryId + 31 // 27 + 4 (compressed)
+  result.set(signature.slice(1), 1)
   return result
 }
 
@@ -153,15 +150,20 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   const newRevision = currentRevision + BigInt(1)
 
+  // Compute hash160 of public keys for ECDSA_HASH160 key type
+  // TODO: Switch back to ECDSA_SECP256K1 with full public keys when SDK bug is fixed
+  const authKeyData = hash160(authPublicKey)
+  const encryptionKeyData = hash160(encryptionPublicKey)
+
   // Step 1: Create keys with empty signatures initially
-  console.log('IdentityUpdateBuilder: Creating keys with empty signatures')
+  console.log('IdentityUpdateBuilder: Creating keys with empty signatures (ECDSA_HASH160)')
   const authKey = new wasm.IdentityPublicKeyInCreation(
     authKeyId,
     'AUTHENTICATION',
     'HIGH',
-    'ECDSA_SECP256K1',
+    'ECDSA_HASH160',
     false,
-    authPublicKey,
+    authKeyData,
     new Uint8Array(0),  // Empty signature initially
     null
   )
@@ -170,9 +172,9 @@ export async function buildUnsignedKeyRegistrationTransition(
     encryptionKeyId,
     'ENCRYPTION',
     'MEDIUM',
-    'ECDSA_SECP256K1',
+    'ECDSA_HASH160',
     false,
-    encryptionPublicKey,
+    encryptionKeyData,
     new Uint8Array(0),  // Empty signature initially
     null
   )
@@ -207,14 +209,15 @@ export async function buildUnsignedKeyRegistrationTransition(
   transition.free()
 
   // Step 5: Recreate keys with signatures
-  console.log('IdentityUpdateBuilder: Recreating keys with signatures')
+  // TODO: Switch back to ECDSA_SECP256K1 with full public keys when SDK bug is fixed
+  console.log('IdentityUpdateBuilder: Recreating keys with signatures (ECDSA_HASH160)')
   const authKeyWithSig = new wasm.IdentityPublicKeyInCreation(
     authKeyId,
     'AUTHENTICATION',
     'HIGH',
-    'ECDSA_SECP256K1',
+    'ECDSA_HASH160',
     false,
-    authPublicKey,
+    authKeyData,
     authSignature,
     null
   )
@@ -223,9 +226,9 @@ export async function buildUnsignedKeyRegistrationTransition(
     encryptionKeyId,
     'ENCRYPTION',
     'MEDIUM',
-    'ECDSA_SECP256K1',
+    'ECDSA_HASH160',
     false,
-    encryptionPublicKey,
+    encryptionKeyData,
     encryptionSignature,
     null
   )
@@ -241,7 +244,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     null
   )
 
-  // Get the final transition bytes
+  // Get the final transition bytes (IdentityUpdateTransition)
   const transitionBytes = finalTransition.toBytes()
   console.log('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
 
@@ -305,28 +308,33 @@ export async function checkKeysRegistered(
     return bytes
   }
 
+  // Compute hash160 of expected public keys for ECDSA_HASH160 comparison
+  // TODO: Switch back to ECDSA_SECP256K1 with full public key comparison when SDK bug is fixed
+  const authHash = hash160(authPublicKey)
+  const encHash = hash160(encryptionPublicKey)
+
   // Check for auth key (purpose='AUTHENTICATION')
   const authKeyExists = publicKeys.some(key => {
-    if (key.purpose !== 'AUTHENTICATION' || key.keyType !== 'ECDSA_SECP256K1') {
+    if (key.purpose !== 'AUTHENTICATION' || key.keyType !== 'ECDSA_HASH160') {
       return false
     }
     const keyData = getKeyData(key)
-    if (keyData.length !== authPublicKey.length) {
+    if (keyData.length !== authHash.length) {
       return false
     }
-    return keyData.every((b: number, i: number) => b === authPublicKey[i])
+    return keyData.every((b: number, i: number) => b === authHash[i])
   })
 
   // Check for encryption key (purpose='ENCRYPTION')
   const encKeyExists = publicKeys.some(key => {
-    if (key.purpose !== 'ENCRYPTION' || key.keyType !== 'ECDSA_SECP256K1') {
+    if (key.purpose !== 'ENCRYPTION' || key.keyType !== 'ECDSA_HASH160') {
       return false
     }
     const keyData = getKeyData(key)
-    if (keyData.length !== encryptionPublicKey.length) {
+    if (keyData.length !== encHash.length) {
       return false
     }
-    return keyData.every((b: number, i: number) => b === encryptionPublicKey[i])
+    return keyData.every((b: number, i: number) => b === encHash[i])
   })
 
   return authKeyExists && encKeyExists

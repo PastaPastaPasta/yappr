@@ -9,6 +9,7 @@ import {
   clearKeyMaterial,
   getPublicKey
 } from '@/lib/crypto/key-exchange'
+import { hash160 } from '@/lib/crypto/hash'
 import {
   buildKeyExchangeUri,
   decodeIdentityId,
@@ -261,11 +262,16 @@ export function useKeyExchangeLogin(
         throw new Error('Identity not found')
       }
 
-      // Check if auth key exists (purpose=0, type=0)
-      const authKeyExists = identity.publicKeys.some(key => {
-        if (key.purpose !== 0 || key.type !== 0 || key.disabledAt) return false
+      // Compute hash160 of public keys for ECDSA_HASH160 comparison
+      // TODO: Switch back to ECDSA_SECP256K1 (type=0) with full public key comparison when SDK bug is fixed
+      const authHash = hash160(authPublicKey)
+      const encHash = hash160(encPublicKey)
 
-        // Compare public keys
+      // Check if auth key exists (purpose=0, type=2/ECDSA_HASH160)
+      const authKeyExists = identity.publicKeys.some(key => {
+        if (key.purpose !== 0 || key.type !== 2 || key.disabledAt) return false
+
+        // Compare hash160 of public key
         let keyData: Uint8Array
         if (key.data instanceof Uint8Array) {
           keyData = key.data
@@ -287,13 +293,13 @@ export function useKeyExchangeLogin(
           return false
         }
 
-        return keyData.length === authPublicKey.length &&
-          keyData.every((b, i) => b === authPublicKey[i])
+        return keyData.length === authHash.length &&
+          keyData.every((b, i) => b === authHash[i])
       })
 
-      // Check if encryption key exists (purpose=1, type=0)
+      // Check if encryption key exists (purpose=1, type=2/ECDSA_HASH160)
       const encKeyExists = identity.publicKeys.some(key => {
-        if (key.purpose !== 1 || key.type !== 0 || key.disabledAt) return false
+        if (key.purpose !== 1 || key.type !== 2 || key.disabledAt) return false
 
         let keyData: Uint8Array
         if (key.data instanceof Uint8Array) {
@@ -315,8 +321,8 @@ export function useKeyExchangeLogin(
           return false
         }
 
-        return keyData.length === encPublicKey.length &&
-          keyData.every((b, i) => b === encPublicKey[i])
+        return keyData.length === encHash.length &&
+          keyData.every((b, i) => b === encHash[i])
       })
 
       // Build result
