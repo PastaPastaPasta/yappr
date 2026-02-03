@@ -64,15 +64,19 @@ async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Ui
   // Using prehash: true (default) means it will sha256 the data for us
   const signature = await secp256k1.signAsync(data, privateKey, { format: 'recovered' })
 
-  // The 'recovered' format returns 65 bytes: r (32) + s (32) + recovery (1)
-  // But Dash expects: recovery (1) + r (32) + s (32)
-  // Rearrange the bytes
+  // noble/secp256k1 'recovered' format: recovery (1) + r (32) + s (32)
+  // The recovery byte at position 0 is the raw recid (0-3)
+  // Dash expects: recovery (1) + r (32) + s (32) with recovery = 31 + recid for compressed keys
+  const recid = signature[0]
+  console.log('signWithKey: raw recid from noble:', recid)
+
   const result = new Uint8Array(65)
   // For compressed keys: 31 + recid (where recid is 0-3)
   // 31 = 27 + 4, where 4 indicates compressed public key
-  result[0] = signature[64] + 31
-  result.set(signature.slice(0, 64), 1) // r + s after recovery byte
+  result[0] = recid + 31
+  result.set(signature.slice(1), 1) // r + s after recovery byte
 
+  console.log('signWithKey: final recovery byte:', result[0])
   return result
 }
 
