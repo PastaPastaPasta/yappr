@@ -192,7 +192,15 @@ export async function checkKeysRegistered(
     if (data instanceof Uint8Array) {
       return data
     }
-    // Assume base64 encoded string
+    // Check if it's hex encoded (only hex characters)
+    if (/^[0-9a-fA-F]+$/.test(data)) {
+      const bytes = new Uint8Array(data.length / 2)
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(data.substr(i * 2, 2), 16)
+      }
+      return bytes
+    }
+    // Otherwise assume base64 encoded string
     const binary = atob(data)
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) {
