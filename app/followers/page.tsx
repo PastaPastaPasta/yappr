@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
+import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
@@ -351,29 +352,47 @@ function FollowersPage() {
                     className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
                   >
                     <div className="flex items-start gap-3">
-                      <button
-                        onClick={() => router.push(`/user?id=${follower.id}`)}
-                        className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                      <ProfileHoverCard
+                        userId={follower.id}
+                        username={follower.hasDpnsName ? follower.username : null}
+                        displayName={follower.displayName}
                       >
-                        <UserAvatar userId={follower.id} size="lg" alt={follower.displayName} />
-                      </button>
+                        <button
+                          onClick={() => router.push(`/user?id=${follower.id}`)}
+                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                        >
+                          <UserAvatar userId={follower.id} size="lg" alt={follower.displayName} />
+                        </button>
+                      </ProfileHoverCard>
 
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
                           <div>
-                            <h3
-                              onClick={() => router.push(`/user?id=${follower.id}`)}
-                              className="font-semibold hover:underline cursor-pointer"
+                            <ProfileHoverCard
+                              userId={follower.id}
+                              username={follower.hasDpnsName ? follower.username : null}
+                              displayName={follower.displayName}
                             >
-                              {follower.displayName}
-                            </h3>
-                            {follower.hasDpnsName ? (
-                              <p
+                              <h3
                                 onClick={() => router.push(`/user?id=${follower.id}`)}
-                                className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                className="font-semibold hover:underline cursor-pointer"
                               >
-                                @{follower.username}
-                              </p>
+                                {follower.displayName}
+                              </h3>
+                            </ProfileHoverCard>
+                            {follower.hasDpnsName ? (
+                              <ProfileHoverCard
+                                userId={follower.id}
+                                username={follower.username}
+                                displayName={follower.displayName}
+                              >
+                                <p
+                                  onClick={() => router.push(`/user?id=${follower.id}`)}
+                                  className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                >
+                                  @{follower.username}
+                                </p>
+                              </ProfileHoverCard>
                             ) : (
                               <Tooltip.Provider>
                                 <Tooltip.Root>

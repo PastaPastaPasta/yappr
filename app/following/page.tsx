@@ -38,6 +38,7 @@ const dpns_convert_to_homograph_safe = (input: string): string => {
   }
 }
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
+import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useSettingsStore } from '@/lib/store'
 
 interface FollowingUser {
@@ -544,28 +545,46 @@ function FollowingPage() {
                         className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
                       >
                         <div className="flex items-start gap-3">
-                          <button
-                            onClick={() => router.push(`/user?id=${searchUser.id}`)}
-                            className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                          <ProfileHoverCard
+                            userId={searchUser.id}
+                            username={searchUser.username}
+                            displayName={searchUser.displayName}
                           >
-                            <UserAvatar userId={searchUser.id} size="lg" alt={searchUser.displayName} />
-                          </button>
+                            <button
+                              onClick={() => router.push(`/user?id=${searchUser.id}`)}
+                              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                            >
+                              <UserAvatar userId={searchUser.id} size="lg" alt={searchUser.displayName} />
+                            </button>
+                          </ProfileHoverCard>
 
                           <div className="flex-1">
                             <div className="flex items-start justify-between">
                               <div>
-                                <h3
-                                  onClick={() => router.push(`/user?id=${searchUser.id}`)}
-                                  className="font-semibold hover:underline cursor-pointer"
+                                <ProfileHoverCard
+                                  userId={searchUser.id}
+                                  username={searchUser.username}
+                                  displayName={searchUser.displayName}
                                 >
-                                  {searchUser.displayName}
-                                </h3>
-                                <p
-                                  onClick={() => router.push(`/user?id=${searchUser.id}`)}
-                                  className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                  <h3
+                                    onClick={() => router.push(`/user?id=${searchUser.id}`)}
+                                    className="font-semibold hover:underline cursor-pointer"
+                                  >
+                                    {searchUser.displayName}
+                                  </h3>
+                                </ProfileHoverCard>
+                                <ProfileHoverCard
+                                  userId={searchUser.id}
+                                  username={searchUser.username}
+                                  displayName={searchUser.displayName}
                                 >
-                                  @{searchUser.username}
-                                </p>
+                                  <p
+                                    onClick={() => router.push(`/user?id=${searchUser.id}`)}
+                                    className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                  >
+                                    @{searchUser.username}
+                                  </p>
+                                </ProfileHoverCard>
                                 {searchUser.allUsernames && searchUser.allUsernames.length > 1 && (
                                   <AlsoKnownAs
                                     primaryUsername={searchUser.username}
@@ -651,29 +670,47 @@ function FollowingPage() {
                     className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
                   >
                     <div className="flex items-start gap-3">
-                      <button
-                        onClick={() => router.push(`/user?id=${followingUser.id}`)}
-                        className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                      <ProfileHoverCard
+                        userId={followingUser.id}
+                        username={followingUser.hasDpnsName ? followingUser.username : null}
+                        displayName={followingUser.displayName}
                       >
-                        <UserAvatar userId={followingUser.id} size="lg" alt={followingUser.displayName} />
-                      </button>
+                        <button
+                          onClick={() => router.push(`/user?id=${followingUser.id}`)}
+                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                        >
+                          <UserAvatar userId={followingUser.id} size="lg" alt={followingUser.displayName} />
+                        </button>
+                      </ProfileHoverCard>
 
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
                           <div>
-                            <h3
-                              onClick={() => router.push(`/user?id=${followingUser.id}`)}
-                              className="font-semibold hover:underline cursor-pointer"
+                            <ProfileHoverCard
+                              userId={followingUser.id}
+                              username={followingUser.hasDpnsName ? followingUser.username : null}
+                              displayName={followingUser.displayName}
                             >
-                              {followingUser.displayName}
-                            </h3>
-                            {followingUser.hasDpnsName ? (
-                              <p
+                              <h3
                                 onClick={() => router.push(`/user?id=${followingUser.id}`)}
-                                className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                className="font-semibold hover:underline cursor-pointer"
                               >
-                                @{followingUser.username}
-                              </p>
+                                {followingUser.displayName}
+                              </h3>
+                            </ProfileHoverCard>
+                            {followingUser.hasDpnsName ? (
+                              <ProfileHoverCard
+                                userId={followingUser.id}
+                                username={followingUser.username}
+                                displayName={followingUser.displayName}
+                              >
+                                <p
+                                  onClick={() => router.push(`/user?id=${followingUser.id}`)}
+                                  className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                >
+                                  @{followingUser.username}
+                                </p>
+                              </ProfileHoverCard>
                             ) : (
                               <RadixTooltip.Provider>
                                 <RadixTooltip.Root>
