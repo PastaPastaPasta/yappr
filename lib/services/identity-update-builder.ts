@@ -150,18 +150,22 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   const newRevision = currentRevision + BigInt(1)
 
-  // Compute hash160 of public keys for ECDSA_HASH160 key type
-  // TODO: Switch back to ECDSA_SECP256K1 with full public keys when SDK bug is fixed
-  const authKeyData = hash160(authPublicKey)
-  const encryptionKeyData = hash160(encryptionPublicKey)
+  // Key type for new keys.
+  // TODO: Switch back to 'ECDSA_SECP256K1' when SDK bug is fixed
+  const keyType = 'ECDSA_HASH160' as const
+  const useHash160 = keyType === 'ECDSA_HASH160'
+
+  // ECDSA_HASH160 stores hash160(pubkey) (20 bytes); ECDSA_SECP256K1 stores full pubkey (33 bytes)
+  const authKeyData = useHash160 ? hash160(authPublicKey) : authPublicKey
+  const encryptionKeyData = useHash160 ? hash160(encryptionPublicKey) : encryptionPublicKey
 
   // Step 1: Create keys with empty signatures initially
-  console.log('IdentityUpdateBuilder: Creating keys with empty signatures (ECDSA_HASH160)')
+  console.log(`IdentityUpdateBuilder: Creating keys (${keyType})`)
   const authKey = new wasm.IdentityPublicKeyInCreation(
     authKeyId,
     'AUTHENTICATION',
     'HIGH',
-    'ECDSA_HASH160',
+    keyType,
     false,
     authKeyData,
     new Uint8Array(0),  // Empty signature initially
@@ -172,7 +176,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     encryptionKeyId,
     'ENCRYPTION',
     'MEDIUM',
-    'ECDSA_HASH160',
+    keyType,
     false,
     encryptionKeyData,
     new Uint8Array(0),  // Empty signature initially
@@ -190,32 +194,38 @@ export async function buildUnsignedKeyRegistrationTransition(
     null
   )
 
-  // Step 3: Get signable bytes
-  const signableBytes = transition.getSignableBytes()
-  console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
+  // ECDSA_HASH160 keys must NOT have ownership signatures (would reveal the public key).
+  // Only sign when using ECDSA_SECP256K1.
+  let authSignature: Uint8Array = new Uint8Array(0)
+  let encryptionSignature: Uint8Array = new Uint8Array(0)
 
-  // Step 4: Sign with each new key's private key
-  console.log('IdentityUpdateBuilder: Signing with auth key')
-  const authSignature = await signWithKey(authPrivateKey, signableBytes)
-  console.log('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
+  if (!useHash160) {
+    // Step 3: Get signable bytes
+    const signableBytes = transition.getSignableBytes()
+    console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
 
-  console.log('IdentityUpdateBuilder: Signing with encryption key')
-  const encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
-  console.log('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
+    // Step 4: Sign with each new key's private key
+    console.log('IdentityUpdateBuilder: Signing with auth key')
+    authSignature = await signWithKey(authPrivateKey, signableBytes)
+    console.log('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
+
+    console.log('IdentityUpdateBuilder: Signing with encryption key')
+    encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
+    console.log('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
+  }
 
   // Clean up initial objects
   authKey.free()
   encryptionKey.free()
   transition.free()
 
-  // Step 5: Recreate keys with signatures
-  // TODO: Switch back to ECDSA_SECP256K1 with full public keys when SDK bug is fixed
-  console.log('IdentityUpdateBuilder: Recreating keys with signatures (ECDSA_HASH160)')
+  // Step 5: Recreate keys with signatures (empty for ECDSA_HASH160)
+  console.log(`IdentityUpdateBuilder: Recreating keys with ${useHash160 ? 'empty' : ''} signatures (${keyType})`)
   const authKeyWithSig = new wasm.IdentityPublicKeyInCreation(
     authKeyId,
     'AUTHENTICATION',
     'HIGH',
-    'ECDSA_HASH160',
+    keyType,
     false,
     authKeyData,
     authSignature,
@@ -226,15 +236,15 @@ export async function buildUnsignedKeyRegistrationTransition(
     encryptionKeyId,
     'ENCRYPTION',
     'MEDIUM',
-    'ECDSA_HASH160',
+    keyType,
     false,
     encryptionKeyData,
     encryptionSignature,
     null
   )
 
-  // Step 6: Create final transition with signed keys
-  console.log('IdentityUpdateBuilder: Creating final transition with signed keys')
+  // Step 6: Create final transition with keys
+  console.log('IdentityUpdateBuilder: Creating final transition')
   const finalTransition = new wasm.IdentityUpdateTransition(
     identityId,
     newRevision,
