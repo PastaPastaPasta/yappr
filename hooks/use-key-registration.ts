@@ -148,12 +148,14 @@ export function useKeyRegistration(
       const authPublicKey = getPublicKey(authKey)
       const encryptionPublicKey = getPublicKey(encryptionKey)
 
-      console.log('KeyRegistration: Building unsigned transition for', identityId)
+      console.log('KeyRegistration: Building transition for', identityId)
 
-      // Build the unsigned state transition
+      // Build the state transition (new keys sign the signable bytes)
       const transition = await buildUnsignedKeyRegistrationTransition({
         identityId,
+        authPrivateKey: authKey,
         authPublicKey,
+        encryptionPrivateKey: encryptionKey,
         encryptionPublicKey
       })
 

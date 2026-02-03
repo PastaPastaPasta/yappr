@@ -10,6 +10,7 @@
 
 import { getEvoSdk } from './evo-sdk-service'
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
+import * as secp256k1 from '@noble/secp256k1'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -21,13 +22,17 @@ async function ensureWasmInitialized() {
 }
 
 /**
- * Key registration request containing the public keys to add
+ * Key registration request containing the keys to add
  */
 export interface KeyRegistrationRequest {
   /** Identity ID (Base58) */
   identityId: string
+  /** Auth key private key bytes (32 bytes) */
+  authPrivateKey: Uint8Array
   /** Auth key public key bytes (33 bytes compressed) */
   authPublicKey: Uint8Array
+  /** Encryption key private key bytes (32 bytes) */
+  encryptionPrivateKey: Uint8Array
   /** Encryption key public key bytes (33 bytes compressed) */
   encryptionPublicKey: Uint8Array
 }
@@ -47,23 +52,48 @@ export interface UnsignedTransitionResult {
 }
 
 /**
+ * Sign data with a private key using secp256k1 (compact signature format).
+ * Returns a 65-byte signature: recovery (1) + r (32) + s (32)
+ */
+async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  // Sign with recovery byte format (65 bytes)
+  // Using prehash: true (default) means it will sha256 the data for us
+  const signature = await secp256k1.signAsync(data, privateKey, { format: 'recovered' })
+
+  // The 'recovered' format returns 65 bytes: r (32) + s (32) + recovery (1)
+  // But Dash expects: recovery (1) + r (32) + s (32)
+  // Rearrange the bytes
+  const result = new Uint8Array(65)
+  result[0] = signature[64] + 27 // Recovery byte at end, move to front (add 27 for uncompressed)
+  result.set(signature.slice(0, 64), 1) // r + s after recovery byte
+
+  return result
+}
+
+/**
  * Build an unsigned IdentityUpdateTransition for key registration.
  *
  * This creates a state transition that adds auth and encryption keys to an identity.
- * The transition is NOT signed - it's returned as bytes to be encoded in a dash-st: URI
- * for the wallet to sign.
+ * Each new key signs the transition's signable bytes to prove ownership.
+ * The overall transition is NOT signed by a master key - that's for the wallet to do.
  *
  * @param request - The key registration request
- * @returns The unsigned transition bytes and key IDs
+ * @returns The transition bytes (with key signatures) and key IDs
  */
 export async function buildUnsignedKeyRegistrationTransition(
   request: KeyRegistrationRequest
 ): Promise<UnsignedTransitionResult> {
-  const { identityId, authPublicKey, encryptionPublicKey } = request
+  const { identityId, authPrivateKey, authPublicKey, encryptionPrivateKey, encryptionPublicKey } = request
 
   // Validate inputs
+  if (authPrivateKey.length !== 32) {
+    throw new Error(`Invalid auth private key length: expected 32, got ${authPrivateKey.length}`)
+  }
   if (authPublicKey.length !== 33) {
     throw new Error(`Invalid auth public key length: expected 33, got ${authPublicKey.length}`)
+  }
+  if (encryptionPrivateKey.length !== 32) {
+    throw new Error(`Invalid encryption private key length: expected 32, got ${encryptionPrivateKey.length}`)
   }
   if (encryptionPublicKey.length !== 33) {
     throw new Error(`Invalid encryption public key length: expected 33, got ${encryptionPublicKey.length}`)
@@ -99,61 +129,104 @@ export async function buildUnsignedKeyRegistrationTransition(
   const nextNonce = currentNonce + BigInt(1)
   console.log('IdentityUpdateBuilder: Current nonce:', currentNonce, ', next nonce:', nextNonce)
 
-  // Create IdentityPublicKeyInCreation for auth key
-  // Constructor: (id, purpose, securityLevel, keyType, readOnly, data, signature, contractBounds)
-  // - purpose: 'AUTHENTICATION' (0)
-  // - securityLevel: 'HIGH' (2) - auth keys should be HIGH
-  // - keyType: 'ECDSA_SECP256K1' (0)
-  console.log('IdentityUpdateBuilder: Creating auth key')
+  const newRevision = currentRevision + BigInt(1)
+
+  // Step 1: Create keys with empty signatures initially
+  console.log('IdentityUpdateBuilder: Creating keys with empty signatures')
   const authKey = new wasm.IdentityPublicKeyInCreation(
     authKeyId,
-    'AUTHENTICATION',  // purpose
-    'HIGH',            // securityLevel
-    'ECDSA_SECP256K1', // keyType
-    false,             // readOnly
-    authPublicKey,     // data
-    null,              // signature (will be set by wallet)
-    null               // contractBounds
+    'AUTHENTICATION',
+    'HIGH',
+    'ECDSA_SECP256K1',
+    false,
+    authPublicKey,
+    new Uint8Array(0),  // Empty signature initially
+    null
   )
 
-  // Create IdentityPublicKeyInCreation for encryption key
-  // - purpose: 'ENCRYPTION' (1)
-  // - securityLevel: 'MEDIUM' (3) - encryption keys use MEDIUM
-  console.log('IdentityUpdateBuilder: Creating encryption key')
   const encryptionKey = new wasm.IdentityPublicKeyInCreation(
     encryptionKeyId,
-    'ENCRYPTION',      // purpose
-    'MEDIUM',          // securityLevel
-    'ECDSA_SECP256K1', // keyType
-    false,             // readOnly
-    encryptionPublicKey, // data
-    null,              // signature (will be set by wallet)
-    null               // contractBounds
+    'ENCRYPTION',
+    'MEDIUM',
+    'ECDSA_SECP256K1',
+    false,
+    encryptionPublicKey,
+    new Uint8Array(0),  // Empty signature initially
+    null
   )
 
-  // Create IdentityUpdateTransition
-  // Constructor: (identityId, revision, nonce, addPublicKeys, disablePublicKeys, userFeeIncrease)
-  const newRevision = currentRevision + BigInt(1)
-  console.log('IdentityUpdateBuilder: Creating IdentityUpdateTransition with revision:', newRevision)
-
+  // Step 2: Create the transition to get signable bytes
+  console.log('IdentityUpdateBuilder: Creating transition for signable bytes')
   const transition = new wasm.IdentityUpdateTransition(
-    identityId,               // identity ID (can be string)
-    newRevision,              // revision (current + 1)
-    nextNonce,                // nonce (current + 1)
-    [authKey, encryptionKey], // keys to add
-    new Uint32Array([]),      // keys to disable (empty)
-    null                      // user fee increase
+    identityId,
+    newRevision,
+    nextNonce,
+    [authKey, encryptionKey],
+    new Uint32Array([]),
+    null
   )
 
-  // Get the signable bytes - this is what the wallet needs to sign
-  // Note: toBytes() gives us the full transition bytes
-  const transitionBytes = transition.toBytes()
-  console.log('IdentityUpdateBuilder: Transition bytes length:', transitionBytes.length)
+  // Step 3: Get signable bytes
+  const signableBytes = transition.getSignableBytes()
+  console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
 
-  // Clean up WASM objects
+  // Step 4: Sign with each new key's private key
+  console.log('IdentityUpdateBuilder: Signing with auth key')
+  const authSignature = await signWithKey(authPrivateKey, signableBytes)
+  console.log('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
+
+  console.log('IdentityUpdateBuilder: Signing with encryption key')
+  const encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
+  console.log('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
+
+  // Clean up initial objects
   authKey.free()
   encryptionKey.free()
   transition.free()
+
+  // Step 5: Recreate keys with signatures
+  console.log('IdentityUpdateBuilder: Recreating keys with signatures')
+  const authKeyWithSig = new wasm.IdentityPublicKeyInCreation(
+    authKeyId,
+    'AUTHENTICATION',
+    'HIGH',
+    'ECDSA_SECP256K1',
+    false,
+    authPublicKey,
+    authSignature,
+    null
+  )
+
+  const encryptionKeyWithSig = new wasm.IdentityPublicKeyInCreation(
+    encryptionKeyId,
+    'ENCRYPTION',
+    'MEDIUM',
+    'ECDSA_SECP256K1',
+    false,
+    encryptionPublicKey,
+    encryptionSignature,
+    null
+  )
+
+  // Step 6: Create final transition with signed keys
+  console.log('IdentityUpdateBuilder: Creating final transition with signed keys')
+  const finalTransition = new wasm.IdentityUpdateTransition(
+    identityId,
+    newRevision,
+    nextNonce,
+    [authKeyWithSig, encryptionKeyWithSig],
+    new Uint32Array([]),
+    null
+  )
+
+  // Get the final transition bytes
+  const transitionBytes = finalTransition.toBytes()
+  console.log('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
+
+  // Clean up WASM objects
+  authKeyWithSig.free()
+  encryptionKeyWithSig.free()
+  finalTransition.free()
 
   return {
     transitionBytes,
