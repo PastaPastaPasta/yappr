@@ -90,13 +90,14 @@ export async function buildUnsignedKeyRegistrationTransition(
   const encryptionKeyId = maxKeyId + 2
   console.log('IdentityUpdateBuilder: Key IDs - auth:', authKeyId, ', encryption:', encryptionKeyId)
 
-  // Fetch identity nonce
+  // Fetch identity nonce - returns the last used nonce, so we need +1 for the next one
   console.log('IdentityUpdateBuilder: Fetching identity nonce')
-  const nonce = await sdk.identities.nonce(identityId)
-  if (nonce === null) {
+  const currentNonce = await sdk.identities.nonce(identityId)
+  if (currentNonce === null) {
     throw new Error('Failed to fetch identity nonce')
   }
-  console.log('IdentityUpdateBuilder: Nonce:', nonce)
+  const nextNonce = currentNonce + BigInt(1)
+  console.log('IdentityUpdateBuilder: Current nonce:', currentNonce, ', next nonce:', nextNonce)
 
   // Create IdentityPublicKeyInCreation for auth key
   // Constructor: (id, purpose, securityLevel, keyType, readOnly, data, signature, contractBounds)
@@ -138,7 +139,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   const transition = new wasm.IdentityUpdateTransition(
     identityId,               // identity ID (can be string)
     newRevision,              // revision (current + 1)
-    nonce,                    // nonce from sdk.identities.nonce()
+    nextNonce,                // nonce (current + 1)
     [authKey, encryptionKey], // keys to add
     new Uint32Array([]),      // keys to disable (empty)
     null                      // user fee increase
