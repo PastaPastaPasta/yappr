@@ -13,18 +13,18 @@ import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
 
 /**
- * Modal for key exchange login flow.
+ * Modal for key exchange login flow (v2 - identity-less).
  *
  * UI states:
  * - idle/generating: spinner
  * - waiting: QR code + countdown timer + "Scan with Dash wallet"
  * - decrypting/checking: brief spinner
- * - registering: first-login prompt (MVP: show instructions)
+ * - registering: first-login prompt
  * - complete: success checkmark, auto-close
  * - timeout/error: retry button
  */
 export function KeyExchangeLoginModal() {
-  const { isOpen, identityId, dpnsUsername, close } = useKeyExchangeModal()
+  const { isOpen, close } = useKeyExchangeModal()
   const closeLoginModal = useLoginModal((s) => s.close)
   const { loginWithKeyExchange } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
@@ -41,18 +41,18 @@ export function KeyExchangeLoginModal() {
     retry
   } = useKeyExchangeLogin('testnet')
 
-  // Start the login flow when modal opens with an identity
+  // Start the login flow when modal opens (no identity needed)
   useEffect(() => {
-    if (isOpen && identityId && state === 'idle') {
-      start(identityId)
+    if (isOpen && state === 'idle') {
+      start()
     }
-  }, [isOpen, identityId, state, start])
+  }, [isOpen, state, start])
 
   // Handle successful login (when state becomes 'complete')
   useEffect(() => {
-    if (state === 'complete' && result && identityId) {
-      // Complete the login
-      loginWithKeyExchange(identityId, result.loginKey, result.keyIndex)
+    if (state === 'complete' && result) {
+      // Complete the login using discovered identity
+      loginWithKeyExchange(result.identityId, result.loginKey, result.keyIndex)
         .then(() => {
           // Auto-close after short delay
           setTimeout(() => {
@@ -64,7 +64,7 @@ export function KeyExchangeLoginModal() {
           console.error('Key exchange login failed:', err)
         })
     }
-  }, [state, result, identityId, loginWithKeyExchange, close, closeLoginModal])
+  }, [state, result, loginWithKeyExchange, close, closeLoginModal])
 
   // Handle close
   const handleClose = useCallback(() => {
@@ -101,7 +101,7 @@ export function KeyExchangeLoginModal() {
                 Open Dash Evo Tool and scan this QR code to log in
               </p>
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                Key index: {keyIndex}
+                Key index: auto (managed by wallet)
               </p>
             </div>
           </div>
@@ -120,7 +120,7 @@ export function KeyExchangeLoginModal() {
 
       case 'registering':
         // Show key registration flow with QR code for wallet signing
-        if (!result || !identityId) {
+        if (!result) {
           return (
             <div className="flex flex-col items-center gap-4 py-8">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
@@ -132,12 +132,12 @@ export function KeyExchangeLoginModal() {
         }
         return (
           <KeyRegistrationFlow
-            identityId={identityId}
+            identityId={result.identityId}
             authKey={result.authKey}
             encryptionKey={result.encryptionKey}
             onComplete={() => {
               // Keys registered - complete the login
-              loginWithKeyExchange(identityId, result.loginKey, result.keyIndex)
+              loginWithKeyExchange(result.identityId, result.loginKey, result.keyIndex)
                 .then(() => {
                   setTimeout(() => {
                     closeLoginModal()
@@ -244,11 +244,6 @@ export function KeyExchangeLoginModal() {
                 </button>
                 <div className="text-center">
                   <h2 className="text-xl font-bold">Login with Wallet</h2>
-                  {dpnsUsername && (
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                      {dpnsUsername}
-                    </p>
-                  )}
                 </div>
               </div>
 

@@ -21,8 +21,7 @@ import { keyExchangeService } from '@/lib/services/key-exchange-service'
 /**
  * Login flow state machine states.
  *
- * Spec section 11.1 - Login Flow State Machine:
- *   idle → generating → waiting → decrypting → checking → registering → complete | error | timeout
+ * idle -> generating -> waiting -> decrypting -> checking -> registering -> complete | error | timeout
  */
 export type KeyExchangeState =
   | 'idle'
@@ -49,6 +48,8 @@ export interface KeyExchangeLoginResult {
   keyIndex: number
   /** Whether keys need to be registered on identity */
   needsKeyRegistration: boolean
+  /** The identity ID discovered from the response document's $ownerId */
+  identityId: string
 }
 
 /**
@@ -69,8 +70,8 @@ export interface UseKeyExchangeLoginReturn {
   error: string | null
   /** The login result (only when state === 'complete' or 'registering') */
   result: KeyExchangeLoginResult | null
-  /** Start the login flow */
-  start: (identityId: string, options?: StartOptions) => void
+  /** Start the login flow (no identity required for v2) */
+  start: (options?: StartOptions) => void
   /** Cancel the current login attempt */
   cancel: () => void
   /** Retry after timeout or error */
@@ -81,8 +82,6 @@ export interface UseKeyExchangeLoginReturn {
  * Options for starting the login flow
  */
 export interface StartOptions {
-  /** Force a specific key index (for rotation) */
-  forceKeyIndex?: number
   /** Display label for the wallet UI */
   label?: string
 }
@@ -92,12 +91,14 @@ const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_TIMEOUT_MS = 120000
 
 /**
- * React hook for the key exchange login flow.
+ * React hook for the key exchange login flow (v2 - identity-less).
  *
  * Implements the full login flow state machine including:
- * - Generating ephemeral keypair and QR code URI
- * - Polling for wallet response
+ * - Generating ephemeral keypair and QR code URI (v2 format, no keyIndex)
+ * - Computing hash160(ephemeralPubKey) for polling
+ * - Polling for wallet response by ephemeral key hash
  * - Decrypting login key via ECDH
+ * - Discovering identity from response $ownerId
  * - Deriving auth/encryption keys
  * - Checking if keys exist on identity
  *
@@ -119,9 +120,9 @@ export function useKeyExchangeLogin(
   // Refs for cleanup
   const abortControllerRef = useRef<AbortController | null>(null)
   const ephemeralKeyRef = useRef<Uint8Array | null>(null)
-  const identityIdRef = useRef<string | null>(null)
   const startTimeRef = useRef<number | null>(null)
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const lastOptionsRef = useRef<StartOptions>({})
 
   // Cleanup function
   const cleanup = useCallback(() => {
@@ -150,17 +151,17 @@ export function useKeyExchangeLogin(
   }, [cleanup])
 
   /**
-   * Start the login flow for an identity.
+   * Start the login flow (v2 - no identity required).
    */
-  const start = useCallback(async (identityId: string, options: StartOptions = {}) => {
-    const { forceKeyIndex, label = 'Login to Yappr' } = options
+  const start = useCallback(async (options: StartOptions = {}) => {
+    const { label = 'Login to Yappr' } = options
+    lastOptionsRef.current = options
 
     // Clean up any previous attempt
     cleanup()
 
     // Set up new abort controller
     abortControllerRef.current = new AbortController()
-    identityIdRef.current = identityId
 
     try {
       // Phase 1: Generate ephemeral keypair and URI
@@ -172,27 +173,17 @@ export function useKeyExchangeLogin(
       // Decode contract ID
       const contractIdBytes = decodeContractId(YAPPR_CONTRACT_ID)
 
-      // Check for existing response to get current key index
-      let currentKeyIndex = 0
-      try {
-        currentKeyIndex = await keyExchangeService.getCurrentKeyIndex(identityId, contractIdBytes)
-      } catch {
-        // No existing response - use 0
-      }
-
-      // Determine key index to use
-      const targetKeyIndex = forceKeyIndex ?? currentKeyIndex
-      setKeyIndex(targetKeyIndex)
-
       // Generate ephemeral keypair
       const ephemeral = generateEphemeralKeyPair()
       ephemeralKeyRef.current = ephemeral.privateKey
 
-      // Build URI
+      // Compute hash160 of ephemeral public key for v2 polling
+      const ephemeralPubKeyHash = hash160(ephemeral.publicKey)
+
+      // Build v2 URI (no keyIndex - wallet manages it)
       const keyExchangeUri = buildKeyExchangeUri({
         appEphemeralPubKey: ephemeral.publicKey,
         contractId: contractIdBytes,
-        keyIndex: targetKeyIndex,
         label
       }, network)
 
@@ -216,10 +207,10 @@ export function useKeyExchangeLogin(
         }
       }, 1000)
 
-      // Poll for response
-      const decrypted = await keyExchangeService.pollForResponse(
-        identityId,
+      // Poll for response using v2 (by ephemeral key hash)
+      const decrypted = await keyExchangeService.pollForResponseByEphemeralKeyHash(
         contractIdBytes,
+        ephemeralPubKeyHash,
         ephemeral.privateKey,
         {
           pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
@@ -240,6 +231,10 @@ export function useKeyExchangeLogin(
 
       // Phase 3: Decrypt (already done in polling)
       setState('decrypting')
+
+      // Identity discovered from response $ownerId
+      const identityId = decrypted.identityId
+      setKeyIndex(decrypted.keyIndex)
 
       // Decode identity ID for key derivation
       const identityIdBytes = decodeIdentityId(identityId)
@@ -263,7 +258,6 @@ export function useKeyExchangeLogin(
       }
 
       // Compute hash160 of public keys for ECDSA_HASH160 comparison
-      // TODO: Switch back to ECDSA_SECP256K1 (type=0) with full public key comparison when SDK bug is fixed
       const authHash = hash160(authPublicKey)
       const encHash = hash160(encPublicKey)
 
@@ -271,12 +265,10 @@ export function useKeyExchangeLogin(
       const authKeyExists = identity.publicKeys.some(key => {
         if (key.purpose !== 0 || key.type !== 2 || key.disabledAt) return false
 
-        // Compare hash160 of public key
         let keyData: Uint8Array
         if (key.data instanceof Uint8Array) {
           keyData = key.data
         } else if (typeof key.data === 'string') {
-          // Base64 or hex
           if (/^[0-9a-fA-F]+$/.test(key.data)) {
             keyData = new Uint8Array(key.data.length / 2)
             for (let i = 0; i < keyData.length; i++) {
@@ -331,7 +323,8 @@ export function useKeyExchangeLogin(
         authKey,
         encryptionKey,
         keyIndex: decrypted.keyIndex,
-        needsKeyRegistration: !authKeyExists || !encKeyExists
+        needsKeyRegistration: !authKeyExists || !encKeyExists,
+        identityId
       }
 
       setResult(loginResult)
@@ -393,11 +386,8 @@ export function useKeyExchangeLogin(
    * Retry after timeout or error.
    */
   const retry = useCallback(() => {
-    const identityId = identityIdRef.current
-    if (identityId) {
-      start(identityId, { forceKeyIndex: keyIndex })
-    }
-  }, [start, keyIndex])
+    start(lastOptionsRef.current)
+  }, [start])
 
   return {
     state,

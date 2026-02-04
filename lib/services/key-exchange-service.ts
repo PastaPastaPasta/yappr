@@ -4,9 +4,12 @@
  * Service for querying the Dash Platform key exchange contract.
  * This contract stores encrypted login key responses from wallets.
  *
+ * Supports both v1 (query by $ownerId) and v2 (query by appEphemeralPubKeyHash) flows.
+ *
  * Spec: YAPPR_DET_SIGNER_SPEC.md
  */
 
+import bs58 from 'bs58'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { KEY_EXCHANGE_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
 import {
@@ -29,6 +32,8 @@ export interface LoginKeyResponse {
   $revision: number
   /** Target application's contract ID (32 bytes) */
   contractId: Uint8Array
+  /** Hash160 of app's ephemeral public key (20 bytes) - v2 contract field */
+  appEphemeralPubKeyHash: Uint8Array
   /** Wallet's ephemeral public key for ECDH (33 bytes compressed) */
   walletEphemeralPubKey: Uint8Array
   /** AES-GCM encrypted payload: nonce (12) || ciphertext (32) || tag (16) = 60 bytes */
@@ -47,6 +52,8 @@ export interface DecryptedKeyExchangeResult {
   keyIndex: number
   /** The wallet's ephemeral public key (for verification) */
   walletEphemeralPubKey: Uint8Array
+  /** The identity ID discovered from the response document's $ownerId */
+  identityId: string
 }
 
 /**
@@ -83,6 +90,7 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
       $ownerId: doc.$ownerId as string,
       $revision: doc.$revision as number,
       contractId: this.toUint8Array(doc.contractId),
+      appEphemeralPubKeyHash: this.toUint8Array(doc.appEphemeralPubKeyHash),
       walletEphemeralPubKey: this.toUint8Array(doc.walletEphemeralPubKey),
       encryptedPayload: this.toUint8Array(doc.encryptedPayload),
       keyIndex: doc.keyIndex as number
@@ -121,11 +129,7 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
   /**
    * Get the most recent response for an identity and contract.
    *
-   * Spec section 7.4 - Query by ($ownerId, contractId):
-   *   where: [
-   *     ['$ownerId', '==', identityId],
-   *     ['contractId', '==', applicationContractId]
-   *   ]
+   * Used by v1 flow and for wallet-side key index lookups.
    *
    * @param identityId - The user's identity ID (Base58)
    * @param contractIdBytes - The application's contract ID (32 bytes)
@@ -135,13 +139,13 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
     identityId: string,
     contractIdBytes: Uint8Array
   ): Promise<LoginKeyResponse | null> {
-    // Encode contractId as base64 for SDK query (byte array fields require base64)
-    const contractIdBase64 = Buffer.from(contractIdBytes).toString('base64')
+    // Encode contractId as base58 for SDK query (identifier fields use base58)
+    const contractIdBase58 = bs58.encode(contractIdBytes)
 
     const options: QueryOptions = {
       where: [
         ['$ownerId', '==', identityId],
-        ['contractId', '==', contractIdBase64]
+        ['contractId', '==', contractIdBase58]
       ],
       limit: 1
     }
@@ -151,18 +155,38 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
   }
 
   /**
-   * Poll for a response and attempt to decrypt it.
+   * Get a response by contract ID and appEphemeralPubKeyHash.
    *
-   * This method polls the contract for a response, and when one is found,
-   * attempts ECDH decryption. If decryption fails (wrong ephemeral key),
-   * it continues polling until the timeout.
+   * Used by v2 flow where the app doesn't know the identity upfront.
+   * Queries using the (contractId, appEphemeralPubKeyHash) index.
    *
-   * Spec section 9.3 - Response Matching:
-   *   1. Query by $ownerId and contractId
-   *   2. Compute ECDH shared secret using walletEphemeralPubKey
-   *   3. Attempt AES-GCM decryption
-   *   4. If decryption succeeds (tag validates): response is valid
-   *   5. If decryption fails: response was for a different request, keep polling
+   * @param contractIdBytes - The application's contract ID (32 bytes)
+   * @param appEphemeralPubKeyHash - Hash160 of app's ephemeral public key (20 bytes)
+   * @returns The response document or null if not found
+   */
+  async getResponseByEphemeralKeyHash(
+    contractIdBytes: Uint8Array,
+    appEphemeralPubKeyHash: Uint8Array
+  ): Promise<LoginKeyResponse | null> {
+    // contractId is an identifier field (contentMediaType) -> use base58
+    const contractIdBase58 = bs58.encode(contractIdBytes)
+    // appEphemeralPubKeyHash is a regular byte array -> use base64
+    const hashBase64 = Buffer.from(appEphemeralPubKeyHash).toString('base64')
+
+    const options: QueryOptions = {
+      where: [
+        ['contractId', '==', contractIdBase58],
+        ['appEphemeralPubKeyHash', '==', hashBase64]
+      ],
+      limit: 1
+    }
+
+    const result = await this.query(options)
+    return result.documents[0] || null
+  }
+
+  /**
+   * Poll for a response using the v1 flow (by identity).
    *
    * @param identityId - The user's identity ID (Base58)
    * @param contractIdBytes - The application's contract ID (32 bytes)
@@ -200,7 +224,6 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
         const response = await this.getResponseForIdentity(identityId, contractIdBytes)
 
         // Check if this is a new or updated response by comparing $revision
-        // The document $id is stable (unique index), but $revision increments on updates
         const isNewOrUpdated = response && response.$revision !== lastRevision
 
         console.log('Key exchange: Poll result', {
@@ -211,7 +234,6 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
         })
 
         if (isNewOrUpdated) {
-          // New or updated response found - attempt decryption
           lastRevision = response.$revision
 
           console.log('Key exchange: Attempting decryption', {
@@ -239,24 +261,115 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
             // Clear shared secret immediately after use
             clearKeyMaterial(sharedSecret)
 
-            // Success! Return the decrypted result
             return {
               loginKey,
               keyIndex: response.keyIndex,
-              walletEphemeralPubKey: response.walletEphemeralPubKey
+              walletEphemeralPubKey: response.walletEphemeralPubKey,
+              identityId: response.$ownerId
             }
           } catch (decryptError) {
-            // Decryption failed - this response was for a different request
-            // Continue polling for a new response
             console.log('Key exchange: Decryption failed, waiting for new response...', decryptError)
           }
         }
       } catch (queryError) {
-        // Query error - log and continue polling
         console.warn('Key exchange: Poll query error:', queryError)
       }
 
       // Wait before next poll
+      await this.sleep(pollIntervalMs, signal)
+    }
+
+    throw new Error('Timeout waiting for key exchange response')
+  }
+
+  /**
+   * Poll for a response using the v2 flow (by ephemeral key hash).
+   *
+   * This method polls using the (contractId, appEphemeralPubKeyHash) index,
+   * which doesn't require knowing the identity upfront. The identity is
+   * discovered from the response document's $ownerId field.
+   *
+   * @param contractIdBytes - The application's contract ID (32 bytes)
+   * @param appEphemeralPubKeyHash - Hash160 of app's ephemeral public key (20 bytes)
+   * @param appEphemeralPrivateKey - The application's ephemeral private key (32 bytes)
+   * @param options - Polling options
+   * @returns The decrypted login key, metadata, and discovered identity ID
+   * @throws If timeout or cancelled
+   */
+  async pollForResponseByEphemeralKeyHash(
+    contractIdBytes: Uint8Array,
+    appEphemeralPubKeyHash: Uint8Array,
+    appEphemeralPrivateKey: Uint8Array,
+    options: PollOptions = {}
+  ): Promise<DecryptedKeyExchangeResult> {
+    const {
+      pollIntervalMs = 3000,
+      timeoutMs = 120000,
+      signal,
+      onPoll
+    } = options
+
+    const startTime = Date.now()
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (signal?.aborted) {
+        throw new Error('Cancelled')
+      }
+
+      onPoll?.()
+
+      try {
+        const response = await this.getResponseByEphemeralKeyHash(
+          contractIdBytes,
+          appEphemeralPubKeyHash
+        )
+
+        console.log('Key exchange v2: Poll result', {
+          hasResponse: !!response,
+          ownerId: response?.$ownerId
+        })
+
+        if (response) {
+          console.log('Key exchange v2: Found response, attempting decryption', {
+            walletEphemeralPubKeyLength: response.walletEphemeralPubKey?.length,
+            encryptedPayloadLength: response.encryptedPayload?.length,
+            keyIndex: response.keyIndex,
+            ownerId: response.$ownerId
+          })
+
+          try {
+            const sharedSecret = deriveSharedSecret(
+              appEphemeralPrivateKey,
+              response.walletEphemeralPubKey
+            )
+
+            const loginKey = await decryptLoginKey(
+              response.encryptedPayload,
+              sharedSecret
+            )
+
+            console.log('Key exchange v2: Decryption successful!', {
+              loginKeyLength: loginKey?.length,
+              keyIndex: response.keyIndex,
+              identityId: response.$ownerId
+            })
+
+            clearKeyMaterial(sharedSecret)
+
+            return {
+              loginKey,
+              keyIndex: response.keyIndex,
+              walletEphemeralPubKey: response.walletEphemeralPubKey,
+              identityId: response.$ownerId
+            }
+          } catch (decryptError) {
+            console.log('Key exchange v2: Decryption failed, waiting for new response...', decryptError)
+          }
+        }
+      } catch (queryError) {
+        console.warn('Key exchange v2: Poll query error:', queryError)
+      }
+
       await this.sleep(pollIntervalMs, signal)
     }
 
@@ -291,11 +404,6 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
   /**
    * Get the current key index for an identity/contract combination.
    * Returns 0 if no existing response is found.
-   *
-   * Used to determine the key index for a new login request:
-   * - No existing response: use 0
-   * - Existing response, normal login: use existing keyIndex
-   * - Rotation requested: use existing keyIndex + 1
    *
    * @param identityId - The user's identity ID (Base58)
    * @param contractIdBytes - The application's contract ID (32 bytes)

@@ -469,20 +469,18 @@ export function LoginModal() {
                   )}
                 </Button>
 
-                {/* Wallet Login Option */}
-                {resolvedIdentity && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      close()
-                      openKeyExchangeModal(resolvedIdentity.id, resolvedIdentity.dpnsUsername)
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800"
-                  >
-                    <QrCode className="w-4 h-4" />
-                    Login with Wallet (QR)
-                  </button>
-                )}
+                {/* Wallet Login Option - available immediately without identity */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    close()
+                    openKeyExchangeModal()
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Login with Wallet (QR)
+                </button>
 
                 {/* Onboarding Gateway */}
                 <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
