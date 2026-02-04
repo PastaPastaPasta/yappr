@@ -74,7 +74,9 @@ export function isPostCreationAmbiguousError(error: unknown): boolean {
     'temporarily unavailable',
     'service unavailable',
     'consensus error',
-    'quorum not available'
+    'quorum not available',
+    'tenderdash is not available',
+    'tenderdash not available'
   ]
 
   return dashErrors.some(dashError => errorMessage.includes(dashError))
