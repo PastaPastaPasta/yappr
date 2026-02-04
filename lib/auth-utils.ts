@@ -1,4 +1,4 @@
-import { useAuthKeyModal } from '@/hooks/use-auth-key-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 /**
  * Prompt user to re-enter their private key.
@@ -7,10 +7,10 @@ import { useAuthKeyModal } from '@/hooks/use-auth-key-modal'
  * This handles the case where a user appears logged in but their
  * private key has been deleted from storage (manually, by another tab, etc.)
  *
- * Opens a modal to let the user re-enter their key without losing context
+ * Opens the login modal to let the user re-enter their key without losing context
  * (DM conversations, scroll position, etc.)
  */
-export function promptForAuthKey(onSuccess?: () => void, onCancel?: () => void): void {
-  const { open } = useAuthKeyModal.getState()
-  open(onSuccess, onCancel)
+export function promptForAuthKey(): void {
+  const { open } = useLoginModal.getState()
+  open()
 }

@@ -6,7 +6,6 @@ import ErrorBoundary from '@/components/error-boundary'
 import { DevelopmentBanner } from '@/components/ui/development-banner'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { LoginModal } from '@/components/auth/login-modal'
-import { AuthKeyModal } from '@/components/auth/auth-key-modal'
 import { LinkPreviewModalProvider } from '@/components/post/link-preview'
 
 const basePath = process.env.BASE_PATH || ''
@@ -39,7 +38,6 @@ export default function RootLayout({
               <div className="h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
               <MobileBottomNav />
               <LoginModal />
-              <AuthKeyModal />
             </LinkPreviewModalProvider>
           </Providers>
         </ErrorBoundary>
