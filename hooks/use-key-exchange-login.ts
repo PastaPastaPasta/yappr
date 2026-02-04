@@ -70,7 +70,7 @@ export interface UseKeyExchangeLoginReturn {
   error: string | null
   /** The login result (only when state === 'complete' or 'registering') */
   result: KeyExchangeLoginResult | null
-  /** Start the login flow (no identity required for v2) */
+  /** Start the login flow */
   start: (options?: StartOptions) => void
   /** Cancel the current login attempt */
   cancel: () => void
@@ -91,10 +91,10 @@ const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_TIMEOUT_MS = 120000
 
 /**
- * React hook for the key exchange login flow (v2 - identity-less).
+ * React hook for the key exchange login flow.
  *
  * Implements the full login flow state machine including:
- * - Generating ephemeral keypair and QR code URI (v2 format, no keyIndex)
+ * - Generating ephemeral keypair and QR code URI
  * - Computing hash160(ephemeralPubKey) for polling
  * - Polling for wallet response by ephemeral key hash
  * - Decrypting login key via ECDH
@@ -151,7 +151,7 @@ export function useKeyExchangeLogin(
   }, [cleanup])
 
   /**
-   * Start the login flow (v2 - no identity required).
+   * Start the login flow.
    */
   const start = useCallback(async (options: StartOptions = {}) => {
     const { label = 'Login to Yappr' } = options
@@ -177,10 +177,10 @@ export function useKeyExchangeLogin(
       const ephemeral = generateEphemeralKeyPair()
       ephemeralKeyRef.current = ephemeral.privateKey
 
-      // Compute hash160 of ephemeral public key for v2 polling
+      // Compute hash160 of ephemeral public key for polling
       const ephemeralPubKeyHash = hash160(ephemeral.publicKey)
 
-      // Build v2 URI (no keyIndex - wallet manages it)
+      // Build URI for QR code
       const keyExchangeUri = buildKeyExchangeUri({
         appEphemeralPubKey: ephemeral.publicKey,
         contractId: contractIdBytes,
@@ -207,8 +207,8 @@ export function useKeyExchangeLogin(
         }
       }, 1000)
 
-      // Poll for response using v2 (by ephemeral key hash)
-      const decrypted = await keyExchangeService.pollForResponseByEphemeralKeyHash(
+      // Poll for response by ephemeral key hash
+      const decrypted = await keyExchangeService.pollForResponse(
         contractIdBytes,
         ephemeralPubKeyHash,
         ephemeral.privateKey,

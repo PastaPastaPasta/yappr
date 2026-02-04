@@ -13,7 +13,7 @@ import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
 
 /**
- * Modal for key exchange login flow (v2 - identity-less).
+ * Modal for key exchange login flow.
  *
  * UI states:
  * - idle/generating: spinner
