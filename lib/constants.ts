@@ -32,6 +32,9 @@ export const POST_RECOVERY_LOOKBACK_MS = 2 * 60 * 1000
 export const POST_RECOVERY_POLL_ATTEMPTS = 3
 export const POST_RECOVERY_POLL_DELAY_MS = 2000
 
+// Pre-flight duplicate detection
+export const POST_DUPLICATE_LOOKBACK_MS = 2 * 60 * 1000
+
 // Document types
 // Note: AVATAR, REPOST, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
 // - avatar: now in unified profile contract
