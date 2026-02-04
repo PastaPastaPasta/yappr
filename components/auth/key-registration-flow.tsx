@@ -48,7 +48,7 @@ export function KeyRegistrationFlow({
     start,
     cancel,
     retry
-  } = useKeyRegistration('testnet', onComplete)
+  } = useKeyRegistration((process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet', onComplete)
 
   // Start the registration flow when component mounts
   useEffect(() => {

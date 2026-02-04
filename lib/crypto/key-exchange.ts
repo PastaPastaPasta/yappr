@@ -86,8 +86,8 @@ export async function decryptLoginKey(
   encryptedPayload: Uint8Array,
   sharedSecret: Uint8Array
 ): Promise<Uint8Array> {
-  if (encryptedPayload.length < 44) {
-    throw new Error('Encrypted payload too short')
+  if (encryptedPayload.length < 60) {
+    throw new Error('Encrypted payload too short; must be at least 60 bytes')
   }
 
   // Extract nonce and ciphertext+tag

@@ -71,6 +71,33 @@ export interface PollOptions {
 }
 
 /**
+ * Runtime-safe base64 encoding/decoding helpers.
+ * Uses Node's Buffer when available, falls back to browser globals.
+ */
+function base64ToBytes(base64: string): Uint8Array {
+  if (typeof globalThis.Buffer !== 'undefined') {
+    return new Uint8Array(globalThis.Buffer.from(base64, 'base64'))
+  }
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof globalThis.Buffer !== 'undefined') {
+    return globalThis.Buffer.from(bytes).toString('base64')
+  }
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+/**
  * Service for querying the key exchange contract.
  *
  * Extends BaseDocumentService to query loginKeyResponse documents
@@ -108,13 +135,7 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
       return new Uint8Array(data)
     }
     if (typeof data === 'string') {
-      // Assume base64
-      const binary = atob(data)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
-      return bytes
+      return base64ToBytes(data)
     }
     // Handle Buffer-like objects
     if (data && typeof data === 'object' && 'type' in data && 'data' in data) {
@@ -142,7 +163,7 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
     // contractId is an identifier field (contentMediaType) -> use base58
     const contractIdBase58 = bs58.encode(contractIdBytes)
     // appEphemeralPubKeyHash is a regular byte array -> use base64
-    const hashBase64 = Buffer.from(appEphemeralPubKeyHash).toString('base64')
+    const hashBase64 = bytesToBase64(appEphemeralPubKeyHash)
 
     const options: QueryOptions = {
       where: [
@@ -254,21 +275,29 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
    */
   private sleep(ms: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(resolve, ms)
+      if (signal?.aborted) {
+        reject(new Error('Cancelled'))
+        return
+      }
+
+      const cleanup = () => {
+        if (signal) {
+          signal.removeEventListener('abort', onAbort)
+        }
+      }
+
+      const onAbort = () => {
+        clearTimeout(timeout)
+        cleanup()
+        reject(new Error('Cancelled'))
+      }
+
+      const timeout = setTimeout(() => {
+        cleanup()
+        resolve()
+      }, ms)
 
       if (signal) {
-        if (signal.aborted) {
-          clearTimeout(timeout)
-          reject(new Error('Cancelled'))
-          return
-        }
-
-        const onAbort = () => {
-          clearTimeout(timeout)
-          signal.removeEventListener('abort', onAbort)
-          reject(new Error('Cancelled'))
-        }
-
         signal.addEventListener('abort', onAbort)
       }
     })

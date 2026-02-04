@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { getPublicKey } from '@/lib/crypto/key-exchange'
 import { buildStateTransitionUri } from '@/lib/crypto/state-transition-uri'
-import { decodeIdentityId, type NetworkType } from '@/lib/crypto/key-exchange-uri'
+import { type NetworkType } from '@/lib/crypto/key-exchange-uri'
 import {
   buildUnsignedKeyRegistrationTransition,
   checkKeysRegistered
@@ -106,6 +106,17 @@ export function useKeyRegistration(
       clearInterval(pollIntervalRef.current)
       pollIntervalRef.current = null
     }
+
+    // Clear sensitive key material from refs
+    if (authKeyRef.current) {
+      authKeyRef.current.fill(0)
+      authKeyRef.current = null
+    }
+    if (encryptionKeyRef.current) {
+      encryptionKeyRef.current.fill(0)
+      encryptionKeyRef.current = null
+    }
+    identityIdRef.current = null
 
     startTimeRef.current = null
   }, [])
@@ -210,6 +221,11 @@ export function useKeyRegistration(
             encryptionPublicKey
           )
 
+          // Post-await abort check
+          if (abortControllerRef.current?.signal.aborted) {
+            return
+          }
+
           if (keysFound) {
             console.log('KeyRegistration: Keys found!')
             cleanup()
@@ -237,8 +253,12 @@ export function useKeyRegistration(
       // Initial check
       await checkKeys()
 
-      // Set up polling interval
-      pollIntervalRef.current = setInterval(checkKeys, DEFAULT_POLL_INTERVAL_MS)
+      // Set up polling interval (wrap async call to handle floating promise)
+      pollIntervalRef.current = setInterval(() => {
+        checkKeys().catch(err => {
+          console.warn('KeyRegistration: Poll error:', err)
+        })
+      }, DEFAULT_POLL_INTERVAL_MS)
 
     } catch (err) {
       cleanup()

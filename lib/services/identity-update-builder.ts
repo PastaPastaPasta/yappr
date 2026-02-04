@@ -159,7 +159,10 @@ export async function buildUnsignedKeyRegistrationTransition(
   const authKeyData = useHash160 ? hash160(authPublicKey) : authPublicKey
   const encryptionKeyData = useHash160 ? hash160(encryptionPublicKey) : encryptionPublicKey
 
-  // Step 1: Create keys with empty signatures initially
+  // Step 1: Create keys with empty signatures initially and get signable bytes
+  let authSignature: Uint8Array = new Uint8Array(0)
+  let encryptionSignature: Uint8Array = new Uint8Array(0)
+
   console.log(`IdentityUpdateBuilder: Creating keys (${keyType})`)
   const authKey = new wasm.IdentityPublicKeyInCreation(
     authKeyId,
@@ -183,41 +186,42 @@ export async function buildUnsignedKeyRegistrationTransition(
     null
   )
 
-  // Step 2: Create the transition to get signable bytes
-  console.log('IdentityUpdateBuilder: Creating transition for signable bytes')
-  const transition = new wasm.IdentityUpdateTransition(
-    identityId,
-    newRevision,
-    nextNonce,
-    [authKey, encryptionKey],
-    new Uint32Array([]),
-    null
-  )
+  try {
+    // Step 2: Create the transition to get signable bytes
+    console.log('IdentityUpdateBuilder: Creating transition for signable bytes')
+    const transition = new wasm.IdentityUpdateTransition(
+      identityId,
+      newRevision,
+      nextNonce,
+      [authKey, encryptionKey],
+      new Uint32Array([]),
+      null
+    )
 
-  // ECDSA_HASH160 keys must NOT have ownership signatures (would reveal the public key).
-  // Only sign when using ECDSA_SECP256K1.
-  let authSignature: Uint8Array = new Uint8Array(0)
-  let encryptionSignature: Uint8Array = new Uint8Array(0)
+    try {
+      // ECDSA_HASH160 keys must NOT have ownership signatures (would reveal the public key).
+      // Only sign when using ECDSA_SECP256K1.
+      if (!useHash160) {
+        // Step 3: Get signable bytes
+        const signableBytes = transition.getSignableBytes()
+        console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
 
-  if (!useHash160) {
-    // Step 3: Get signable bytes
-    const signableBytes = transition.getSignableBytes()
-    console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
+        // Step 4: Sign with each new key's private key
+        console.log('IdentityUpdateBuilder: Signing with auth key')
+        authSignature = await signWithKey(authPrivateKey, signableBytes)
+        console.log('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
 
-    // Step 4: Sign with each new key's private key
-    console.log('IdentityUpdateBuilder: Signing with auth key')
-    authSignature = await signWithKey(authPrivateKey, signableBytes)
-    console.log('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
-
-    console.log('IdentityUpdateBuilder: Signing with encryption key')
-    encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
-    console.log('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
+        console.log('IdentityUpdateBuilder: Signing with encryption key')
+        encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
+        console.log('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
+      }
+    } finally {
+      transition.free()
+    }
+  } finally {
+    authKey.free()
+    encryptionKey.free()
   }
-
-  // Clean up initial objects
-  authKey.free()
-  encryptionKey.free()
-  transition.free()
 
   // Step 5: Recreate keys with signatures (empty for ECDSA_HASH160)
   console.log(`IdentityUpdateBuilder: Recreating keys with ${useHash160 ? 'empty' : ''} signatures (${keyType})`)
@@ -243,25 +247,30 @@ export async function buildUnsignedKeyRegistrationTransition(
     null
   )
 
-  // Step 6: Create final transition with keys
-  console.log('IdentityUpdateBuilder: Creating final transition')
-  const finalTransition = new wasm.IdentityUpdateTransition(
-    identityId,
-    newRevision,
-    nextNonce,
-    [authKeyWithSig, encryptionKeyWithSig],
-    new Uint32Array([]),
-    null
-  )
+  let transitionBytes: Uint8Array
+  try {
+    // Step 6: Create final transition with keys
+    console.log('IdentityUpdateBuilder: Creating final transition')
+    const finalTransition = new wasm.IdentityUpdateTransition(
+      identityId,
+      newRevision,
+      nextNonce,
+      [authKeyWithSig, encryptionKeyWithSig],
+      new Uint32Array([]),
+      null
+    )
 
-  // Get the final transition bytes (IdentityUpdateTransition)
-  const transitionBytes = finalTransition.toBytes()
-  console.log('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
-
-  // Clean up WASM objects
-  authKeyWithSig.free()
-  encryptionKeyWithSig.free()
-  finalTransition.free()
+    try {
+      // Get the final transition bytes (IdentityUpdateTransition)
+      transitionBytes = finalTransition.toBytes()
+      console.log('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
+    } finally {
+      finalTransition.free()
+    }
+  } finally {
+    authKeyWithSig.free()
+    encryptionKeyWithSig.free()
+  }
 
   return {
     transitionBytes,

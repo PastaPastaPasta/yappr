@@ -193,6 +193,11 @@ export function parseKeyExchangeUri(uri: string): {
     // Label length (1 byte)
     const labelLength = requestBytes[offset++]
 
+    // Validate label length
+    if (labelLength > 64 || offset + labelLength > requestBytes.length) {
+      return null
+    }
+
     // Label
     let label: string | undefined
     if (labelLength > 0) {

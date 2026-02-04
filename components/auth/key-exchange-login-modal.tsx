@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
@@ -39,7 +39,28 @@ export function KeyExchangeLoginModal() {
     start,
     cancel,
     retry
-  } = useKeyExchangeLogin('testnet')
+  } = useKeyExchangeLogin((process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet')
+
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const [isCompleting, setIsCompleting] = useState(false)
+
+  // Attempt login and handle success/failure
+  const attemptLogin = useCallback((identityId: string, loginKey: Uint8Array, keyIndex: number) => {
+    setLoginError(null)
+    setIsCompleting(true)
+    loginWithKeyExchange(identityId, loginKey, keyIndex)
+      .then(() => {
+        setTimeout(() => {
+          closeLoginModal()
+          close()
+        }, 1500)
+      })
+      .catch((err) => {
+        console.error('Key exchange login failed:', err)
+        setLoginError(err instanceof Error ? err.message : 'Login failed')
+        setIsCompleting(false)
+      })
+  }, [loginWithKeyExchange, closeLoginModal, close])
 
   // Start the login flow when modal opens (no identity needed)
   useEffect(() => {
@@ -50,21 +71,10 @@ export function KeyExchangeLoginModal() {
 
   // Handle successful login (when state becomes 'complete')
   useEffect(() => {
-    if (state === 'complete' && result) {
-      // Complete the login using discovered identity
-      loginWithKeyExchange(result.identityId, result.loginKey, result.keyIndex)
-        .then(() => {
-          // Auto-close after short delay
-          setTimeout(() => {
-            closeLoginModal()
-            close()
-          }, 1500)
-        })
-        .catch((err) => {
-          console.error('Key exchange login failed:', err)
-        })
+    if (state === 'complete' && result && !isCompleting && !loginError) {
+      attemptLogin(result.identityId, result.loginKey, result.keyIndex)
     }
-  }, [state, result, loginWithKeyExchange, close, closeLoginModal])
+  }, [state, result, isCompleting, loginError, attemptLogin])
 
   // Handle close
   const handleClose = useCallback(() => {
@@ -136,36 +146,61 @@ export function KeyExchangeLoginModal() {
             authKey={result.authKey}
             encryptionKey={result.encryptionKey}
             onComplete={() => {
-              // Keys registered - complete the login
-              loginWithKeyExchange(result.identityId, result.loginKey, result.keyIndex)
-                .then(() => {
-                  setTimeout(() => {
-                    closeLoginModal()
-                    close()
-                  }, 1500)
-                })
-                .catch((err) => {
-                  console.error('Key exchange login failed after registration:', err)
-                })
+              attemptLogin(result.identityId, result.loginKey, result.keyIndex)
             }}
             onCancel={handleClose}
           />
         )
 
       case 'complete':
+        if (loginError) {
+          return (
+            <div className="flex flex-col items-center gap-4 py-4">
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-full">
+                <AlertCircle className="w-8 h-8 text-red-500" />
+              </div>
+              <div className="text-center">
+                <h3 className="font-semibold text-lg text-red-600 dark:text-red-400">
+                  Login Failed
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                  {loginError}
+                </p>
+              </div>
+              <Button onClick={() => {
+                if (result) {
+                  attemptLogin(result.identityId, result.loginKey, result.keyIndex)
+                }
+              }} className="mt-2">
+                Try Again
+              </Button>
+            </div>
+          )
+        }
         return (
           <div className="flex flex-col items-center gap-4 py-8">
-            <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-full">
-              <CheckCircle className="w-12 h-12 text-green-500" />
-            </div>
-            <div className="text-center">
-              <h3 className="font-semibold text-lg text-green-600 dark:text-green-400">
-                Login Successful!
-              </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Redirecting...
-              </p>
-            </div>
+            {isCompleting ? (
+              <>
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+                <p className="text-gray-600 dark:text-gray-400">
+                  Completing login...
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-full">
+                  <CheckCircle className="w-12 h-12 text-green-500" />
+                </div>
+                <div className="text-center">
+                  <h3 className="font-semibold text-lg text-green-600 dark:text-green-400">
+                    Login Successful!
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    Redirecting...
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         )
 

@@ -469,7 +469,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
       const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
       const { privateKeyToWif } = await import('@/lib/crypto/wif')
-      const { storePrivateKey, storeEncryptionKey, setRememberMe } = await import('@/lib/secure-storage')
+      const { storeEncryptionKey, setRememberMe } = await import('@/lib/secure-storage')
 
       // Decode identity ID to bytes
       const identityIdBytes = decodeIdentityId(identityId)
@@ -488,15 +488,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Set storage mode
       setRememberMe(rememberMe)
 
-      // Store keys
-      storePrivateKey(identityId, authKeyWif)
-      storeEncryptionKey(identityId, encryptionKeyWif)
-
       console.log(`Auth: Key exchange login - keyIndex=${keyIndex}`)
 
-      // Continue with normal login flow
+      // Continue with normal login flow (login() stores authKeyWif internally)
       await login(identityId, authKeyWif, { skipUsernameCheck: false, rememberMe })
+
+      // Only persist encryption key after successful login
+      storeEncryptionKey(identityId, encryptionKeyWif)
     } catch (err) {
+      // Clear any partially persisted encryption key on failure
+      const { clearEncryptionKey } = await import('@/lib/secure-storage')
+      clearEncryptionKey(identityId)
+
       console.error('Key exchange login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with key exchange')
       throw err
