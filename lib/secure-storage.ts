@@ -174,6 +174,10 @@ export const clearPrivateKey = (identityId: string): boolean => {
   return secureStorage.delete(`pk_${identityId}`)
 }
 
+export const hasPrivateKey = (identityId: string): boolean => {
+  return secureStorage.has(`pk_${identityId}`)
+}
+
 export const clearAllPrivateKeys = (): void => {
   const keys = secureStorage.keys()
   keys.filter(key => key.startsWith('pk_')).forEach(key => {
@@ -187,6 +191,11 @@ export const setRememberMe = (remember: boolean): void => {
 
 export const isRememberMe = (): boolean => {
   return secureStorage.isRememberMe()
+}
+
+export const clearRememberMe = (): void => {
+  if (typeof window === 'undefined') return
+  localStorage.removeItem('yappr_remember_me')
 }
 
 // Encryption key storage for private feed operations

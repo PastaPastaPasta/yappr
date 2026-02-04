@@ -204,7 +204,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const sessionData = JSON.parse(savedSession)
         const savedUser = sessionData.user
 
-        // Set user immediately with cached data
+        // Validate private key exists before restoring session
+        const { hasPrivateKey, clearRememberMe } = await import('@/lib/secure-storage')
+        if (!hasPrivateKey(savedUser.identityId)) {
+          console.warn('Auth: Session found but private key missing - clearing invalid session')
+          localStorage.removeItem('yappr_session')
+          clearRememberMe()
+          return
+        }
+
+        // Set user only after validating key exists
         setUser(savedUser)
 
         // Set identity in DashPlatformClient for document operations
@@ -397,11 +406,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clearEncryptionKey,
         clearEncryptionKeyType,
         clearTransferKey,
+        clearRememberMe,
       } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
       clearEncryptionKey(user.identityId)
       clearEncryptionKeyType(user.identityId)
       clearTransferKey(user.identityId)
+      clearRememberMe()
 
       const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
       invalidateBlockCache(user.identityId)
