@@ -660,7 +660,7 @@ export function ComposeModal() {
         // Determine if this is a reply (to existing post/reply) or a top-level post
         // - If replyingTo is set: all posts in thread are replies
         // - If replyingTo is not set: first post is a top-level post, subsequent are replies
-        const isReply = (i === 0 && replyingTo) || (i > 0 && previousPostId)
+        const isReply = Boolean((i === 0 && replyingTo) || (i > 0 && previousPostId))
         const parentId = i === 0 && replyingTo ? replyingTo.id : previousPostId
         const parentOwnerId = i === 0 && replyingTo
           ? replyingTo.author.id
