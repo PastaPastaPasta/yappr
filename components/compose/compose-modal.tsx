@@ -273,14 +273,29 @@ export function ComposeModal() {
 
   // Calculate totals (only for unposted posts)
   const unpostedPosts = threadPosts.filter((p) => !p.postedPostId)
+  const unpostedPostsWithContent = unpostedPosts.filter((p) => p.content.trim().length > 0)
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
-  const totalCharacters = threadPosts.reduce((sum, p) => sum + p.content.length, 0)
-  const hasValidContent = unpostedPosts.some((p) => p.content.trim().length > 0)
+  const imageUrl = attachedImage?.uploadResult?.url
+  const imageUrlExtraLength = imageUrl ? imageUrl.length + 2 : 0 // include \n\n separator
+  const firstUnpostedPostId = unpostedPostsWithContent[0]?.id
+  const totalCharacters = threadPosts.reduce((sum, p) => sum + p.content.length, 0) +
+    (unpostedPostsWithContent.length > 0 ? imageUrlExtraLength : 0)
+  const hasValidContent = unpostedPostsWithContent.length > 0
 
   // For private-with-teaser, also check teaser limit
   const hasTeaserOverLimit = visibility === 'private-with-teaser' &&
     firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
-  const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT) || hasTeaserOverLimit
+  const hasOverLimit = unpostedPostsWithContent.some((p, index) =>
+    p.content.length + (index === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT
+  ) || hasTeaserOverLimit
+  const firstUnpostedPost = unpostedPostsWithContent[0]
+  const isOverLimitDueToImage = !!firstUnpostedPost &&
+    imageUrlExtraLength > 0 &&
+    firstUnpostedPost.content.length <= CHARACTER_LIMIT &&
+    firstUnpostedPost.content.length + imageUrlExtraLength > CHARACTER_LIMIT
+  const imageOverage = isOverLimitDueToImage && firstUnpostedPost
+    ? firstUnpostedPost.content.length + imageUrlExtraLength - CHARACTER_LIMIT
+    : 0
 
   // Encrypted posts must be single posts (no threads)
   const isValidEncryptedPost = !willBeEncrypted || (unpostedPosts.length <= 1 && threadPosts.length <= 1)
@@ -396,7 +411,15 @@ export function ComposeModal() {
     // Create preview URL
     const preview = URL.createObjectURL(file)
     setAttachedImage({ file, preview })
-  }, [])
+    upload(file)
+      .then((result) => {
+        setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
+      })
+      .catch((err) => {
+        console.error('Failed to upload image:', err)
+        toast.error('Failed to upload image')
+      })
+  }, [upload])
 
   // Handle removing the attached image
   const handleRemoveImage = useCallback(() => {
@@ -459,7 +482,15 @@ export function ComposeModal() {
     // Create preview URL and set attached image
     const preview = URL.createObjectURL(file)
     setAttachedImage({ file, preview })
-  }, [willBeEncrypted, attachedImage, isProviderConnected])
+    upload(file)
+      .then((result) => {
+        setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
+      })
+      .catch((err) => {
+        console.error('Failed to upload image:', err)
+        toast.error('Failed to upload image')
+      })
+  }, [willBeEncrypted, attachedImage, isProviderConnected, upload])
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -518,6 +549,15 @@ export function ComposeModal() {
           teaser: p.teaser?.trim(),
           visibility: p.visibility,
         }))
+
+      // Guard against image URL pushing content over the limit
+      if (postsToCreate.length > 0 && postsToCreate[0].content.length > CHARACTER_LIMIT) {
+        const overBy = postsToCreate[0].content.length - CHARACTER_LIMIT
+        toast.error(`Post is ${overBy} characters over the limit once the image URL is included. Trim your text.`)
+        setIsPosting(false)
+        setPostingProgress(null)
+        return
+      }
 
       // Enforce single-post for encrypted posts
       if ((isPrivate || hasInheritedEncryption) && postsToCreate.length > 1) {
@@ -1152,19 +1192,34 @@ export function ComposeModal() {
                                 onRemove={() => removeThreadPost(post.id)}
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
+                                extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
                               />
                             ))}
                           </AnimatePresence>
 
                           {/* Image attachment preview */}
                           {attachedImage && (
-                            <ImageAttachment
-                              previewUrl={attachedImage.preview}
-                              isUploading={isUploading}
-                              isUploaded={!!attachedImage.uploadResult}
-                              progress={progress}
-                              onRemove={handleRemoveImage}
-                            />
+                            <>
+                              <ImageAttachment
+                                previewUrl={attachedImage.preview}
+                                isUploading={isUploading}
+                                isUploaded={!!attachedImage.uploadResult}
+                                progress={progress}
+                                onRemove={handleRemoveImage}
+                              />
+                              {imageUrlExtraLength > 0 && (
+                                <div className={`mt-2 text-xs ${
+                                  isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'
+                                }`}>
+                                  Image URL adds {imageUrlExtraLength} characters to your post.
+                                  {isOverLimitDueToImage && (
+                                    <span className="ml-1">
+                                      Over limit by {imageOverage}. Trim your text.
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
                           )}
 
                           {/* Add thread post button */}

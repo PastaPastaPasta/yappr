@@ -21,6 +21,7 @@ interface ThreadPostEditorProps {
   onRemove: () => void
   onContentChange: (content: string) => void
   textareaRef?: React.RefObject<HTMLTextAreaElement>
+  extraCharacters?: number
 }
 
 export function ThreadPostEditor({
@@ -33,6 +34,7 @@ export function ThreadPostEditor({
   onRemove,
   onContentChange,
   textareaRef,
+  extraCharacters = 0,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -155,6 +157,7 @@ export function ThreadPostEditor({
   }
 
   const isPosted = !!post.postedPostId
+  const effectiveLength = post.content.length + extraCharacters
 
   return (
     <motion.div
@@ -327,7 +330,14 @@ export function ThreadPostEditor({
                 <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
                 <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
               </div>
-              <CharacterCounter current={post.content.length} limit={CHARACTER_LIMIT} />
+              <div className="flex items-center gap-2">
+                {extraCharacters > 0 && (
+                  <span className="text-xs text-gray-400 tabular-nums">
+                    Image URL +{extraCharacters} chars
+                  </span>
+                )}
+                <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT} />
+              </div>
             </div>
           )}
         </div>
