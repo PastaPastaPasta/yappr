@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
 import { useKeyExchangeLogin } from '@/hooks/use-key-exchange-login'
+import { useLoginModal } from '@/hooks/use-login-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { KeyExchangeQR } from './key-exchange-qr'
@@ -24,6 +25,7 @@ import { Button } from '@/components/ui/button'
  */
 export function KeyExchangeLoginModal() {
   const { isOpen, identityId, dpnsUsername, close } = useKeyExchangeModal()
+  const closeLoginModal = useLoginModal((s) => s.close)
   const { loginWithKeyExchange } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
@@ -54,6 +56,7 @@ export function KeyExchangeLoginModal() {
         .then(() => {
           // Auto-close after short delay
           setTimeout(() => {
+            closeLoginModal()
             close()
           }, 1500)
         })
@@ -61,7 +64,7 @@ export function KeyExchangeLoginModal() {
           console.error('Key exchange login failed:', err)
         })
     }
-  }, [state, result, identityId, loginWithKeyExchange, close])
+  }, [state, result, identityId, loginWithKeyExchange, close, closeLoginModal])
 
   // Handle close
   const handleClose = useCallback(() => {
@@ -137,6 +140,7 @@ export function KeyExchangeLoginModal() {
               loginWithKeyExchange(identityId, result.loginKey, result.keyIndex)
                 .then(() => {
                   setTimeout(() => {
+                    closeLoginModal()
                     close()
                   }, 1500)
                 })
