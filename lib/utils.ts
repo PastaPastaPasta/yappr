@@ -82,3 +82,24 @@ export function truncateId(id: string, startChars = 8, endChars = 6): string {
   if (id.length <= startChars + endChars) return id
   return `${id.slice(0, startChars)}...${id.slice(-endChars)}`
 }
+
+/**
+ * Checks if content consists only of emoji characters (and optional whitespace).
+ * Used to display emoji-only content with larger text.
+ */
+export function isEmojiOnly(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+
+  // Match complete emoji sequences only (excludes digits/symbols that \p{Emoji} includes):
+  // - Base: \p{Extended_Pictographic} (actual pictorial emojis)
+  // - Optional: skin tone modifier or variation selector
+  // - Optional: ZWJ-linked sequences (family, profession emojis)
+  // - Only whitespace allowed between emoji sequences
+  // Using RegExp constructor to avoid TS1501 error with es5 target
+  const emojiRegex = new RegExp(
+    '^(?:\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?(?:\\u200D\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?)*\\s*)+$',
+    'u'
+  )
+  return emojiRegex.test(trimmed)
+}

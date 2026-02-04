@@ -24,6 +24,7 @@ import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { EmojiPicker } from '@/components/compose/emoji-picker'
+import { isEmojiOnly } from '@/lib/utils'
 
 interface UserSearchResult {
   id: string
@@ -708,15 +709,22 @@ function MessagesPage() {
                       className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                     >
                       <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${isOwn ? 'order-2' : 'order-1'}`}>
-                        <div
-                          className={`px-4 py-2 rounded-2xl ${
-                            isOwn
-                              ? 'bg-yappr-500 text-white'
-                              : 'bg-gray-100 dark:bg-gray-900'
-                          }`}
-                        >
-                          <p className="text-sm">{message.content}</p>
-                        </div>
+                        {(() => {
+                          const emojiOnly = isEmojiOnly(message.content)
+                          return emojiOnly ? (
+                            <p className={`text-4xl leading-tight ${isOwn ? 'text-right' : 'text-left'}`}>{message.content}</p>
+                          ) : (
+                            <div
+                              className={`px-4 py-2 rounded-2xl ${
+                                isOwn
+                                  ? 'bg-yappr-500 text-white'
+                                  : 'bg-gray-100 dark:bg-gray-900'
+                              }`}
+                            >
+                              <p className="text-sm">{message.content}</p>
+                            </div>
+                          )
+                        })()}
                         <div className={`flex items-center gap-1 mt-1 px-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
                           <p className="text-xs text-gray-500">
                             {formatDistanceToNow(message.createdAt, { addSuffix: true })}
