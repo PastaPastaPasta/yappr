@@ -1,0 +1,74 @@
+{
+  "loginKeyResponse": {
+    "type": "object",
+    "description": "Encrypted login key response from wallet for key exchange protocol",
+    "indices": [
+      {
+        "name": "byOwnerAndContract",
+        "unique": true,
+        "properties": [
+          { "$ownerId": "asc" },
+          { "contractId": "asc" }
+        ]
+      },
+      {
+        "name": "byContractAndEphemeralKey",
+        "unique": true,
+        "properties": [
+          { "contractId": "asc" },
+          { "appEphemeralPubKeyHash": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "contractId",
+      "appEphemeralPubKeyHash",
+      "walletEphemeralPubKey",
+      "encryptedPayload",
+      "keyIndex"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "contractId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "Target application's contract ID"
+      },
+      "appEphemeralPubKeyHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 20,
+        "maxItems": 20,
+        "position": 1,
+        "description": "RIPEMD160(SHA256(appEphemeralPubKey)) - hash160 of app's ephemeral public key"
+      },
+      "walletEphemeralPubKey": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 33,
+        "maxItems": 33,
+        "position": 2,
+        "description": "Wallet's ephemeral public key for ECDH (compressed secp256k1)"
+      },
+      "encryptedPayload": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 4096,
+        "position": 3,
+        "description": "AES-GCM encrypted payload: nonce(12) || ciphertext(32) || tag(16)"
+      },
+      "keyIndex": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4294967295,
+        "position": 4,
+        "description": "The derivation index used for this login key"
+      }
+    }
+  }
+}
