@@ -49,6 +49,37 @@ function defaultRetryCondition(error: unknown): boolean {
   )
 }
 
+function getErrorMessage(error: unknown): string {
+  if (!error) return ''
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (typeof error === 'object') {
+    const errObj = error as { message?: string }
+    if (typeof errObj.message === 'string') return errObj.message
+  }
+  return String(error)
+}
+
+/**
+ * Check if a post creation error is ambiguous and might have actually succeeded.
+ * Includes network/timeouts and Dash Platform specific retryable errors.
+ */
+export function isPostCreationAmbiguousError(error: unknown): boolean {
+  if (defaultRetryCondition(error)) return true
+
+  const errorMessage = getErrorMessage(error).toLowerCase()
+
+  const dashErrors = [
+    'internal error',
+    'temporarily unavailable',
+    'service unavailable',
+    'consensus error',
+    'quorum not available'
+  ]
+
+  return dashErrors.some(dashError => errorMessage.includes(dashError))
+}
+
 /**
  * Exponential backoff with jitter
  */
@@ -130,23 +161,7 @@ export async function retryPostCreation<T>(
     initialDelayMs: 2000,
     maxDelayMs: 8000,
     backoffMultiplier: 2,
-    retryCondition: (error) => {
-      // Use default retry condition plus Dash Platform specific errors
-      if (defaultRetryCondition(error)) return true
-
-      const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
-
-      // Dash Platform specific retryable errors
-      const dashErrors = [
-        'internal error',
-        'temporarily unavailable',
-        'service unavailable',
-        'consensus error',
-        'quorum not available'
-      ]
-
-      return dashErrors.some(dashError => errorMessage.includes(dashError))
-    },
+    retryCondition: isPostCreationAmbiguousError,
     ...options
   })
 }

@@ -7,7 +7,8 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentWhereClause } from './sdk-helpers';
 import type { DocumentsQuery } from '@dashevo/wasm-sdk';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
-import { retryAsync } from '../retry-utils';
+import { retryAsync, isPostCreationAmbiguousError } from '../retry-utils';
+import { POST_RECOVERY_LOOKBACK_MS, POST_RECOVERY_POLL_ATTEMPTS, POST_RECOVERY_POLL_DELAY_MS } from '../constants';
 import { paginateCount } from './pagination-utils';
 
 export interface PostDocument {
@@ -50,6 +51,15 @@ export interface PostStats {
   replies: number;
   views: number;
 }
+
+type ExpectedPostMatch = {
+  content: string;
+  quotedPostId?: string;
+  quotedPostOwnerId?: string;
+  encryptedContent?: Uint8Array;
+  nonce?: Uint8Array;
+  epoch?: number;
+};
 
 class PostService extends BaseDocumentService<Post> {
   private statsCache: Map<string, { data: PostStats; timestamp: number }> = new Map();
@@ -374,7 +384,101 @@ class PostService extends BaseDocumentService<Post> {
     if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
-    return this.create(ownerId, data);
+    const attemptStartedAt = Date.now();
+    const expected: ExpectedPostMatch = {
+      content: data.content as string,
+      quotedPostId: options.quotedPostId,
+      quotedPostOwnerId: options.quotedPostOwnerId,
+      encryptedContent: data.encryptedContent as Uint8Array | undefined,
+      nonce: data.nonce as Uint8Array | undefined,
+      epoch: data.epoch as number | undefined,
+    };
+
+    try {
+      return await this.create(ownerId, data);
+    } catch (error) {
+      if (isPostCreationAmbiguousError(error)) {
+        const recovered = await this.recoverRecentPostMatch(ownerId, expected, attemptStartedAt);
+        if (recovered) {
+          console.warn('Post recovery succeeded after ambiguous error:', recovered.id);
+          this.clearCache();
+          return recovered;
+        }
+        console.warn('Post recovery failed after ambiguous error; rethrowing original error');
+      }
+      throw error;
+    }
+  }
+
+  private async recoverRecentPostMatch(
+    ownerId: string,
+    expected: ExpectedPostMatch,
+    attemptStartedAt: number
+  ): Promise<Post | null> {
+    const minCreatedAt = attemptStartedAt - POST_RECOVERY_LOOKBACK_MS;
+    const isPrivateExpected = !!expected.encryptedContent && !!expected.nonce && typeof expected.epoch === 'number';
+
+    for (let attempt = 1; attempt <= POST_RECOVERY_POLL_ATTEMPTS; attempt++) {
+      try {
+        const result = await this.query({
+          where: [
+            ['$ownerId', '==', ownerId],
+            ['$createdAt', '>', minCreatedAt]
+          ],
+          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+          limit: 20
+        });
+
+        const match = result.documents.find((post) =>
+          this.matchesExpectedPost(post, expected, isPrivateExpected)
+        );
+
+        if (match) {
+          return match;
+        }
+      } catch (error) {
+        console.warn(`Post recovery query failed (attempt ${attempt}/${POST_RECOVERY_POLL_ATTEMPTS}):`, error);
+      }
+
+      if (attempt < POST_RECOVERY_POLL_ATTEMPTS) {
+        await this.sleep(POST_RECOVERY_POLL_DELAY_MS);
+      }
+    }
+
+    return null;
+  }
+
+  private matchesExpectedPost(post: Post, expected: ExpectedPostMatch, isPrivateExpected: boolean): boolean {
+    if (isPrivateExpected) {
+      return !!post.encryptedContent &&
+        !!post.nonce &&
+        typeof post.epoch === 'number' &&
+        this.bytesEqual(expected.encryptedContent, post.encryptedContent) &&
+        this.bytesEqual(expected.nonce, post.nonce) &&
+        expected.epoch === post.epoch;
+    }
+
+    const expectedQuotedId = expected.quotedPostId ?? null;
+    const expectedQuotedOwnerId = expected.quotedPostOwnerId ?? null;
+    const actualQuotedId = post.quotedPostId ?? null;
+    const actualQuotedOwnerId = post.quotedPostOwnerId ?? null;
+
+    return post.content === expected.content &&
+      expectedQuotedId === actualQuotedId &&
+      expectedQuotedOwnerId === actualQuotedOwnerId;
+  }
+
+  private bytesEqual(a?: Uint8Array, b?: Uint8Array): boolean {
+    if (!a || !b) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

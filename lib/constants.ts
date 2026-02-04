@@ -27,6 +27,11 @@ export const INSIGHT_API_CONFIG = {
   timeoutMs: 120000
 } as const
 
+// Post creation recovery (ambiguous errors)
+export const POST_RECOVERY_LOOKBACK_MS = 2 * 60 * 1000
+export const POST_RECOVERY_POLL_ATTEMPTS = 3
+export const POST_RECOVERY_POLL_DELAY_MS = 2000
+
 // Document types
 // Note: AVATAR, REPOST, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
 // - avatar: now in unified profile contract
