@@ -306,8 +306,7 @@ export function ComposeModal() {
   // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted
   // Check if image attachment is allowed (not including provider connection status)
-  // Private posts can't have images (mediaUrl is stored publicly on chain)
-  const canAttachImage = !willBeEncrypted && !attachedImage
+  const canAttachImage = !attachedImage
 
   // Get the last posted post ID for chaining retries
   const lastPostedId = postedPosts.length > 0
@@ -447,11 +446,7 @@ export function ComposeModal() {
     const imageItem = Array.from(items).find(item => item.type.startsWith('image/'))
     if (!imageItem) return
 
-    // Check if we can attach an image (not encrypted, no existing attachment)
-    if (willBeEncrypted) {
-      toast.error('Images not supported for private posts')
-      return
-    }
+    // Check if we can attach an image
     if (attachedImage) {
       toast.error('Only one image can be attached per post')
       return
@@ -490,7 +485,7 @@ export function ComposeModal() {
         console.error('Failed to upload image:', err)
         toast.error('Failed to upload image')
       })
-  }, [willBeEncrypted, attachedImage, isProviderConnected, upload])
+  }, [attachedImage, isProviderConnected, upload])
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -1256,13 +1251,7 @@ export function ComposeModal() {
                                 ? 'text-gray-500 hover:text-yappr-500 hover:bg-gray-100 dark:hover:bg-gray-800'
                                 : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
                             }`}
-                            title={
-                              willBeEncrypted
-                                ? 'Images not supported for private posts'
-                                : attachedImage
-                                ? 'Only one image per post'
-                                : 'Attach image'
-                            }
+                            title={attachedImage ? 'Only one image per post' : 'Attach image'}
                           >
                             <PhotoIcon className="w-5 h-5" />
                           </button>
