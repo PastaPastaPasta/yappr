@@ -230,11 +230,8 @@ function FollowingPage() {
   }, [setLoading, setError, setData, user?.identityId, targetUserId])
 
   useEffect(() => {
-    // Load when we have a user (for own profile) or a targetUserId (for viewing others)
-    if (user || targetUserId) {
-      loadFollowing().catch(err => console.error('Failed to load following:', err))
-    }
-  }, [loadFollowing, user, targetUserId])
+    loadFollowing().catch(err => console.error('Failed to load following:', err))
+  }, [loadFollowing])
 
   const handleUnfollow = async (userId: string) => {
     const authedUser = requireAuth('follow')

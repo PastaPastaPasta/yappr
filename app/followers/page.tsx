@@ -216,11 +216,8 @@ function FollowersPage() {
   }, [setLoading, setError, setData, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
-    // Load when we have a user (for own profile) or a targetUserId (for viewing others)
-    if (user || targetUserId) {
-      loadFollowers().catch(err => console.error('Failed to load followers:', err))
-    }
-  }, [loadFollowers, user, targetUserId])
+    loadFollowers().catch(err => console.error('Failed to load followers:', err))
+  }, [loadFollowers])
 
   const handleFollow = async (userId: string) => {
     const authedUser = requireAuth('follow')
