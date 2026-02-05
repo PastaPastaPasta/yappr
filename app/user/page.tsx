@@ -12,7 +12,6 @@ import {
   NoSymbolIcon,
   Cog6ToothIcon,
   PencilIcon,
-  ArrowPathIcon,
   CurrencyDollarIcon,
   QrCodeIcon,
   EnvelopeIcon,
@@ -39,7 +38,6 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
-import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
@@ -63,7 +61,6 @@ interface ProfileData {
   paymentUris?: ParsedPaymentUri[]
   socialLinks?: SocialLink[]
   nsfw?: boolean
-  hasUnifiedProfile?: boolean
   bannerUri?: string
   joinedAt?: Date
 }
@@ -139,7 +136,6 @@ function UserProfileContent() {
   const [isFollowing, setIsFollowing] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
-  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
 
   // Pagination state
   const [hasMore, setHasMore] = useState(true)
@@ -223,13 +219,6 @@ function UserProfileContent() {
         setIsLoading(true)
 
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
-        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
-
-        // Check migration status for own profile
-        if (isOwnProfile) {
-          const status = await profileMigrationService.getMigrationStatus(userId)
-          setMigrationStatus(status)
-        }
 
         // Fetch profile from unified service, posts, and post count in parallel
         const [profileResult, postsResult, totalPostCount] = await Promise.all([
@@ -262,7 +251,6 @@ function UserProfileContent() {
             paymentUris: profileResult.paymentUris,
             socialLinks: profileResult.socialLinks,
             nsfw: profileResult.nsfw,
-            hasUnifiedProfile: profileResult.hasUnifiedProfile,
             bannerUri: profileResult.bannerUri,
             joinedAt: profileResult.joinedAt,
           })
@@ -1478,30 +1466,6 @@ function UserProfileContent() {
                 </>
               )}
             </div>
-
-            {/* Migration Prompt Banner */}
-            {isOwnProfile && migrationStatus === 'needs_migration' && (
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-y border-blue-200 dark:border-blue-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                      <ArrowPathIcon className="h-6 w-6 text-blue-500" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-blue-800 dark:text-blue-200">Migrate Your Profile</p>
-                      <p className="text-sm text-blue-700 dark:text-blue-300">Your profile is not visible to others until you migrate.</p>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => router.push('/profile/create')}
-                    className="bg-blue-500 hover:bg-blue-600"
-                  >
-                    Migrate Now
-                  </Button>
-                </div>
-              </div>
-            )}
 
             {/* Blocked User Notice */}
             {isBlockedByMe && !isOwnProfile && (

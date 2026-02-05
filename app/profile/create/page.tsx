@@ -10,13 +10,12 @@ import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
-import { ArrowPathIcon, SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
 import { Spinner } from '@/components/ui/spinner'
 import Image from 'next/image'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
-import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
 import {
   unifiedProfileService,
@@ -35,7 +34,6 @@ function CreateProfilePage() {
   const [showPrivateKeyInput, setShowPrivateKeyInput] = useState(false)
   const [privateKey, setPrivateKey] = useState('')
   const [isCheckingProfile, setIsCheckingProfile] = useState(true)
-  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
 
   // Avatar state
   const [avatarSource, setAvatarSource] = useState<AvatarSource>('generated')
@@ -61,48 +59,23 @@ function CreateProfilePage() {
   // Social links (array of {platform, handle})
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>([])
 
-  // Check for existing profile and migration status on mount
+  // Check for existing profile on mount
   useEffect(() => {
     const checkExistingProfile = async () => {
       if (!user) return
 
       try {
-        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
-        const status = await profileMigrationService.getMigrationStatus(user.identityId)
-        setMigrationStatus(status)
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+        const existingProfile = await unifiedProfileService.getProfile(user.identityId)
 
-        if (status === 'migrated') {
+        if (existingProfile) {
           toast.success('You already have a profile!')
           router.push(`/user?id=${user.identityId}`)
           return
         }
 
-        if (status === 'needs_migration') {
-          // Pre-fill form with old profile data
-          const { profile, avatar } = await profileMigrationService.getOldDataForMigration(user.identityId)
-
-          if (profile) {
-            setFormData({
-              displayName: profile.displayName || '',
-              bio: profile.bio || '',
-              location: profile.location || '',
-              website: profile.website || '',
-              pronouns: '',
-              nsfw: false,
-            })
-          }
-
-          if (avatar) {
-            setAvatarStyle(avatar.style as DiceBearStyle)
-            setAvatarSeed(avatar.seed)
-          } else {
-            // Default seed to user ID if no avatar
-            setAvatarSeed(user.identityId)
-          }
-        } else {
-          // New profile - default seed to user ID
-          setAvatarSeed(user.identityId)
-        }
+        // New profile - default seed to user ID
+        setAvatarSeed(user.identityId)
       } catch (error) {
         console.error('Error checking profile status:', error)
       } finally {
@@ -169,11 +142,7 @@ function CreateProfilePage() {
         socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
       })
 
-      if (migrationStatus === 'needs_migration') {
-        toast.success('Profile migrated successfully!')
-      } else {
-        toast.success('Profile created successfully!')
-      }
+      toast.success('Profile created successfully!')
 
       // Redirect to home
       router.push('/')
@@ -211,11 +180,7 @@ function CreateProfilePage() {
           if (profile) {
             // Profile was actually created despite the timeout
             toast.dismiss()
-            if (migrationStatus === 'needs_migration') {
-              toast.success('Profile migrated successfully!')
-            } else {
-              toast.success('Profile created successfully!')
-            }
+            toast.success('Profile created successfully!')
             router.push('/')
             return
           }
@@ -252,9 +217,7 @@ function CreateProfilePage() {
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold">
-              {migrationStatus === 'needs_migration' ? 'Migrate Your Profile' : 'Create Your Profile'}
-            </h1>
+            <h1 className="text-3xl font-bold">Create Your Profile</h1>
             <button
               onClick={logout}
               className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
@@ -263,26 +226,8 @@ function CreateProfilePage() {
             </button>
           </div>
 
-          {migrationStatus === 'needs_migration' && (
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
-              <div className="flex items-start gap-3">
-                <ArrowPathIcon className="h-5 w-5 text-blue-500 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                    Profile Migration
-                  </p>
-                  <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                    We found your existing profile! Review and update your info, then save to migrate to the new profile system.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
           <p className="text-gray-600 dark:text-gray-400 text-center mb-8">
-            {migrationStatus === 'needs_migration'
-              ? 'Your existing data has been pre-filled below'
-              : 'Set up your Yappr profile to start connecting'}
+            Set up your Yappr profile to start connecting
           </p>
 
           {/* Display username if available */}
@@ -571,10 +516,7 @@ function CreateProfilePage() {
               className="w-full"
               disabled={isSubmitting || !formData.displayName.trim()}
             >
-              {isSubmitting
-                ? (migrationStatus === 'needs_migration' ? 'Migrating Profile...' : 'Creating Profile...')
-                : (migrationStatus === 'needs_migration' ? 'Migrate Profile' : 'Create Profile')
-              }
+              {isSubmitting ? 'Creating Profile...' : 'Create Profile'}
             </Button>
           </form>
 
