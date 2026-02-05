@@ -51,4 +51,13 @@
   .safe-area-inset-top {
     padding-top: env(safe-area-inset-top, 0);
   }
+
+  /* Disable all backdrop blur effects inside emoji picker when potato mode is enabled */
+  .potato-mode,
+  .potato-mode *,
+  .potato-mode *::before,
+  .potato-mode *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }
