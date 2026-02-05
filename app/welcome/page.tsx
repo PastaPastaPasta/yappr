@@ -1,28 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAuth } from '@/contexts/auth-context'
 import { WelcomePageContent } from '@/components/home'
 
-export default function PublicHomePage() {
-  const router = useRouter()
-  const { user } = useAuth()
+export default function WelcomePage() {
   const [isHydrated, setIsHydrated] = useState(false)
 
-  // Prevent hydration mismatches
   useEffect(() => {
     setIsHydrated(true)
   }, [])
 
-  // Redirect authenticated users to feed
-  useEffect(() => {
-    if (user) {
-      router.push('/feed')
-    }
-  }, [user, router])
-
-  // Show loading skeleton during hydration
   if (!isHydrated) {
     return (
       <div className="min-h-[calc(100vh-40px)] flex">

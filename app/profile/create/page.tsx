@@ -144,8 +144,8 @@ function CreateProfilePage() {
 
       toast.success('Profile created successfully!')
 
-      // Redirect to home
-      router.push('/')
+      // Redirect to feed
+      router.push('/feed')
     } catch (error: unknown) {
       console.error('Failed to create profile:', error)
 
@@ -181,7 +181,7 @@ function CreateProfilePage() {
             // Profile was actually created despite the timeout
             toast.dismiss()
             toast.success('Profile created successfully!')
-            router.push('/')
+            router.push('/feed')
             return
           }
         } catch (checkError) {

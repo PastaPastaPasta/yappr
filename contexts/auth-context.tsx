@@ -375,8 +375,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       if (profile) {
-        console.log('Profile found, redirecting to home...')
-        router.push('/')
+        console.log('Profile found, redirecting to feed...')
+        router.push('/feed')
 
         // Initialize background tasks (block data + DashPay contacts)
         initializePostLoginTasks(authUser.identityId, 2000)
