@@ -16,6 +16,7 @@ import {
 } from '../message-encryption'
 import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID } from '../constants'
+import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 
 /**
@@ -51,7 +52,8 @@ class DirectMessageService {
       // 2. Get sender's private key
       const privateKey = getPrivateKey(senderId)
       if (!privateKey) {
-        return { success: false, error: 'Please log in again to send messages' }
+        promptForAuthKey()
+        throw new Error('Private key not found. Please re-enter your key.')
       }
 
       // 3. Get recipient's public key (from identity or their invite)
@@ -465,8 +467,8 @@ class DirectMessageService {
   ): Promise<DirectMessage | null> {
     const privateKey = getPrivateKey(currentUserId)
     if (!privateKey) {
-      console.warn('No private key available for decryption')
-      return null
+      promptForAuthKey()
+      throw new Error('Private key not found. Please re-enter your key.')
     }
 
     const senderId = doc.$ownerId as string

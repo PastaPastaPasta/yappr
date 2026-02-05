@@ -3,6 +3,7 @@ import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { promptForAuthKey } from '../auth-utils';
 
 export interface StateTransitionResult {
   success: boolean;
@@ -69,7 +70,8 @@ class StateTransitionService {
     const privateKey = getPrivateKey(identityId);
 
     if (!privateKey) {
-      throw new Error('No private key found. Please log in again.');
+      promptForAuthKey();
+      throw new Error('Private key not found. Please re-enter your key.');
     }
 
     return privateKey;
