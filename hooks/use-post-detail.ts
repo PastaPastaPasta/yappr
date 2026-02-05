@@ -225,6 +225,24 @@ export function usePostDetail({
       currentParentId = parent.parentId
     }
 
+    // Fetch quoted posts for any chain items that reference them (e.g. reposts/quote posts)
+    const chainQuotedPostIds = chain
+      .filter(p => p.quotedPostId && !p.quotedPost)
+      .map(p => p.quotedPostId!)
+    if (chainQuotedPostIds.length > 0) {
+      try {
+        const quotedPosts = await postService.getPostsByIds(chainQuotedPostIds)
+        const quotedPostMap = new Map(quotedPosts.map(qp => [qp.id, qp]))
+        for (const post of chain) {
+          if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
+            post.quotedPost = quotedPostMap.get(post.quotedPostId)
+          }
+        }
+      } catch (err) {
+        console.error('usePostDetail: Failed to fetch quoted posts for reply chain:', err)
+      }
+    }
+
     // Enrich all posts in the chain
     if (chain.length > 0) {
       try {
@@ -382,7 +400,7 @@ export function usePostDetail({
       // All replies for backwards compat
       const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
-      // Fetch quoted posts for main post only (replies don't have quotes)
+      // Fetch quoted post for the main post (reply chain quoted posts are handled in fetchReplyChain)
       let quotedPost: Post | undefined
       if (loadedPost.quotedPostId) {
         try {
