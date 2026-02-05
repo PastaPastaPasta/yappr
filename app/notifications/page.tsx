@@ -186,7 +186,17 @@ function NotificationsPage() {
         <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={markAllAsRead}
+                  className="text-yappr-500 hover:text-yappr-600 text-sm"
+                >
+                  Mark all as read
+                </Button>
+              )}
               {/* Mobile filter dropdown */}
               <div className="md:hidden">
                 <DropdownMenu.Root>
@@ -279,19 +289,6 @@ function NotificationsPage() {
             })}
           </div>
         </header>
-
-        {unreadCount > 0 && (
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={markAllAsRead}
-              className="text-yappr-500 hover:text-yappr-600"
-            >
-              Mark all as read
-            </Button>
-          </div>
-        )}
 
         {isLoading || !hasFetchedOnce ? (
           <div className="p-8 text-center">
