@@ -175,21 +175,21 @@ export function Sidebar() {
       if (timeoutId) clearTimeout(timeoutId)
     }
   }, [user?.identityId])
-  
+
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
-  
+
   // Format identity ID for display (show first 6 and last 4 chars)
   const formatIdentityId = (id: string) => truncateId(id, 6, 4)
 
   return (
-    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
+    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-3 sticky top-[40px]">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
-        <Link href="/" className="flex items-center px-3 py-4 mb-2 group">
-          <div className="text-2xl font-bold text-gradient">Yappr</div>
+        <Link href="/" className="flex items-center px-3 py-4 mb-4 group">
+          <span className="font-display text-3xl text-gradient tracking-tight">Yappr</span>
         </Link>
 
-        <nav className="space-y-1">
+        <nav className="space-y-0.5">
           {navigation.map((item) => {
             const isActive = pathname === item.href
             const Icon = isActive ? item.activeIcon : item.icon
@@ -200,15 +200,17 @@ export function Sidebar() {
                 key={item.name}
                 href={item.href}
                 className={cn(
-                  'flex items-center gap-4 px-3 py-3 text-xl rounded-full transition-all duration-200',
-                  'hover:bg-gray-100 dark:hover:bg-gray-900',
-                  isActive && 'font-bold'
+                  'flex items-center gap-4 px-3 py-3 text-[15px] rounded-xl transition-all duration-200',
+                  'hover:bg-surface-100 dark:hover:bg-surface-800',
+                  isActive
+                    ? 'font-bold text-gray-900 dark:text-white bg-surface-100 dark:bg-surface-800'
+                    : 'text-gray-600 dark:text-gray-400'
                 )}
               >
                 <div className="relative">
-                  <Icon className="h-7 w-7" />
+                  <Icon className="h-6 w-6" />
                   {showBadge && (
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
+                    <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-surface-950">
                       {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
                     </span>
                   )}
@@ -217,13 +219,19 @@ export function Sidebar() {
               </Link>
             )
           })}
-          
+
           {user && isHydrated && (
             <Link
               href="/settings"
-              className="flex items-center gap-4 px-3 py-3 text-xl rounded-full transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-900"
+              className={cn(
+                "flex items-center gap-4 px-3 py-3 text-[15px] rounded-xl transition-all duration-200",
+                "hover:bg-surface-100 dark:hover:bg-surface-800",
+                pathname === '/settings'
+                  ? 'font-bold text-gray-900 dark:text-white bg-surface-100 dark:bg-surface-800'
+                  : 'text-gray-600 dark:text-gray-400'
+              )}
             >
-              <Cog6ToothIcon className="h-7 w-7" />
+              <Cog6ToothIcon className="h-6 w-6" />
               <span>Settings</span>
             </Link>
           )}
@@ -232,29 +240,29 @@ export function Sidebar() {
         {isHydrated && user ? (
           <Button
             onClick={() => setComposeOpen(true)}
-            className="w-full mt-8 h-12 text-base shadow-yappr-lg"
+            className="w-full mt-8 h-12 text-base shadow-yappr-lg rounded-xl"
             size="lg"
           >
-            <PencilSquareIcon className="h-6 w-6" />
+            <PencilSquareIcon className="h-5 w-5 mr-2" />
             <span>Post</span>
           </Button>
         ) : isHydrated ? (
           <div className="mt-8 space-y-3">
             <Button
-              className="w-full h-12 text-base xl:text-lg shadow-yappr-lg"
+              className="w-full h-12 text-base shadow-yappr-lg rounded-xl"
               size="lg"
               onClick={openLoginModal}
             >
               Sign In
             </Button>
-            <p className="text-xs text-center text-gray-500 px-4">
+            <p className="text-xs text-center text-gray-500 dark:text-gray-400 px-4 leading-relaxed">
               Join Yappr to share your voice on the decentralized web
             </p>
           </div>
         ) : (
           // Show loading state during SSR/hydration
           <div className="mt-8">
-            <div className="w-full h-12 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+            <div className="w-full h-12 bg-surface-100 dark:bg-surface-800 rounded-xl animate-pulse" />
           </div>
         )}
       </div>
@@ -263,23 +271,23 @@ export function Sidebar() {
         {user && isHydrated && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button className="flex items-center gap-3 p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors w-full">
+              <button className="flex items-center gap-3 p-3 rounded-xl hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors w-full">
                 <UserAvatar userId={user.identityId} size="md" alt="Your avatar" />
                 <div className="flex flex-1 text-left">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">
+                    <p className="text-sm font-semibold truncate text-gray-900 dark:text-gray-100">
                       {user.dpnsUsername ? `@${user.dpnsUsername}` : (displayName || 'Identity')}
                     </p>
-                    <p className="text-sm text-gray-500 truncate">{formatIdentityId(user.identityId)}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate font-mono">{formatIdentityId(user.identityId)}</p>
                   </div>
-                  <EllipsisHorizontalIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
+                  <EllipsisHorizontalIcon className="h-5 w-5 text-gray-400 flex-shrink-0" />
                 </div>
               </button>
             </DropdownMenu.Trigger>
-            
+
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                className="min-w-[200px] bg-white dark:bg-surface-900 rounded-xl shadow-elevated-lg border border-surface-200 dark:border-neutral-750 py-2 z-50"
                 sideOffset={5}
               >
                 <DropdownMenu.Item
@@ -289,8 +297,8 @@ export function Sidebar() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-xs text-gray-500">Balance</div>
-                      <div className="font-mono">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Balance</div>
+                      <div className="font-mono text-gray-900 dark:text-gray-100">
                         {(() => {
                           const balance = user.balance || 0;
                           // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
@@ -307,16 +315,16 @@ export function Sidebar() {
                         setIsRefreshingBalance(false)
                       }}
                       disabled={isRefreshingBalance}
-                      className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                       title="Refresh balance"
                     >
                       <ArrowPathIcon className={`h-4 w-4 text-gray-500 ${isRefreshingBalance ? 'animate-spin' : ''}`} />
                     </button>
                   </div>
                 </DropdownMenu.Item>
-                <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />
-                <DropdownMenu.Item 
-                  className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
+                <DropdownMenu.Separator className="h-px bg-surface-200 dark:bg-neutral-750 my-1" />
+                <DropdownMenu.Item
+                  className="px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none flex items-center gap-2 text-gray-700 dark:text-gray-300"
                   onClick={logout}
                 >
                   <ArrowRightOnRectangleIcon className="h-4 w-4" />

@@ -214,7 +214,7 @@ export function SearchInput() {
 
   return (
     <div className="relative">
-      <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500 z-10" />
+      <MagnifyingGlassIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-gray-500 z-10" />
       <input
         ref={inputRef}
         type="text"
@@ -223,12 +223,12 @@ export function SearchInput() {
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         placeholder="Search users & hashtags"
-        className="w-full h-10 pl-10 pr-10 bg-gray-100 dark:bg-gray-900 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
+        className="w-full h-10 pl-10 pr-10 bg-surface-100 dark:bg-surface-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500/50 focus:bg-white dark:focus:bg-surface-900 border border-transparent focus:border-surface-300 dark:focus:border-neutral-750 transition-all duration-200"
       />
       {query && (
         <button
           onClick={handleClear}
-          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full z-10"
+          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-surface-200 dark:hover:bg-neutral-750 rounded-lg z-10 transition-colors"
         >
           <XMarkIcon className="h-4 w-4 text-gray-500" />
         </button>
@@ -243,7 +243,7 @@ export function SearchInput() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.15 }}
-            className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-50"
+            className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-surface-900 rounded-xl shadow-elevated-lg border border-surface-200 dark:border-neutral-750 overflow-hidden z-50"
           >
             {isSearching ? (
               <div className="p-3 flex items-center justify-center gap-2 text-gray-500">
@@ -261,7 +261,7 @@ export function SearchInput() {
                     className={`w-full flex items-center gap-3 p-3 text-left transition-colors ${
                       index === selectedIndex
                         ? 'bg-yappr-50 dark:bg-yappr-900/30'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                        : 'hover:bg-surface-100 dark:hover:bg-surface-800'
                     }`}
                   >
                     {result.type === 'user' ? (
@@ -274,24 +274,24 @@ export function SearchInput() {
                           />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">
+                          <p className="font-medium text-sm truncate text-gray-900 dark:text-gray-100">
                             {result.displayName}
                           </p>
-                          <p className="text-xs text-gray-500 truncate">
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                             @{result.username}
                           </p>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div className="h-10 w-10 rounded-full bg-yappr-100 dark:bg-yappr-900/50 flex items-center justify-center flex-shrink-0">
+                        <div className="h-10 w-10 rounded-xl bg-yappr-100 dark:bg-yappr-900/50 flex items-center justify-center flex-shrink-0">
                           <span className="text-yappr-600 dark:text-yappr-400 font-bold">#</span>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">
+                          <p className="font-medium text-sm truncate text-gray-900 dark:text-gray-100">
                             #{result.hashtag}
                           </p>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
                             View hashtag
                           </p>
                         </div>
@@ -306,13 +306,13 @@ export function SearchInput() {
                     router.push(`/search?q=${encodeURIComponent(query.trim())}`)
                     setShowDropdown(false)
                   }}
-                  className="w-full p-3 text-sm text-yappr-500 hover:bg-gray-50 dark:hover:bg-gray-800 text-center border-t border-gray-100 dark:border-gray-800"
+                  className="w-full p-3 text-sm text-yappr-500 hover:bg-surface-100 dark:hover:bg-surface-800 text-center border-t border-surface-200 dark:border-neutral-750 transition-colors"
                 >
                   View all results for &quot;{query.trim()}&quot;
                 </button>
               </div>
             ) : (
-              <div className="p-3 text-center text-sm text-gray-500">
+              <div className="p-3 text-center text-sm text-gray-500 dark:text-gray-400">
                 No results found for &quot;{query.trim()}&quot;
               </div>
             )}

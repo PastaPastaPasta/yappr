@@ -183,16 +183,16 @@ export function PrivateFeedFollowers() {
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
-                className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-950 rounded-lg"
+                className="flex items-center justify-between p-3 bg-surface-100 dark:bg-surface-800 rounded-lg"
               >
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
+                  <div className="h-10 w-10 rounded-full bg-surface-200 dark:bg-surface-800 animate-pulse" />
                   <div>
-                    <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
-                    <div className="h-3 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+                    <div className="h-4 w-24 bg-surface-200 dark:bg-surface-800 rounded animate-pulse mb-1" />
+                    <div className="h-3 w-32 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
                   </div>
                 </div>
-                <div className="h-8 w-20 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+                <div className="h-8 w-20 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
               </div>
             ))}
           </div>
@@ -267,7 +267,7 @@ export function PrivateFeedFollowers() {
               <div
                 key={follower.id}
                 data-testid={`follower-card-${follower.id}`}
-                className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-950 rounded-lg"
+                className="flex items-center justify-between p-3 bg-surface-100 dark:bg-surface-800 rounded-lg"
               >
                 <Link
                   href={`/user?id=${follower.id}`}

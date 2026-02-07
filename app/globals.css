@@ -4,13 +4,32 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 40 20% 99%;
+    --foreground: 222 47% 11%;
+    --surface-primary: 40 14% 97%;
+    --surface-secondary: 40 10% 94%;
+    --border-subtle: 40 8% 88%;
   }
 
   .dark {
-    --background: 0 0% 7%;
+    --background: 222 47% 7%;
     --foreground: 210 40% 98%;
+    --surface-primary: 222 33% 12%;
+    --surface-secondary: 222 33% 9%;
+    --border-subtle: 222 20% 18%;
+  }
+
+  /* Warmer base styles */
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Selection color */
+  ::selection {
+    background-color: rgba(236, 97, 71, 0.2);
+    color: inherit;
   }
 }
 
@@ -28,20 +47,77 @@
     display: none;
   }
 
+  /* Updated glass effect with warm tones */
   .glass-effect {
-    @apply backdrop-blur-xl bg-white/80 dark:bg-neutral-900/80;
+    @apply backdrop-blur-xl;
+    background: rgba(253, 252, 250, 0.85);
+  }
+
+  .dark .glass-effect {
+    background: rgba(15, 22, 37, 0.85);
   }
 
   .glass-border {
-    @apply border border-gray-200/50 dark:border-gray-800/50;
+    @apply border;
+    border-color: rgba(223, 221, 214, 0.5);
+  }
+
+  .dark .glass-border {
+    border-color: rgba(45, 53, 72, 0.5);
   }
 
   .interactive-scale {
     @apply transition-transform duration-150 active:scale-[0.98];
   }
 
+  /* Updated text gradient with warm ember colors */
   .text-gradient {
-    @apply bg-gradient-to-r from-yappr-500 to-yappr-600 bg-clip-text text-transparent;
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #EC6147 0%, #D94B30 50%, #B63C23 100%);
+  }
+
+  .text-gradient-warm {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #F58872 0%, #EC6147 50%, #D94B30 100%);
+  }
+
+  /* Atmospheric gradient mesh background */
+  .bg-mesh {
+    background-image:
+      radial-gradient(ellipse at 20% 50%, rgba(236, 97, 71, 0.08) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(20, 184, 166, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 40% 80%, rgba(236, 97, 71, 0.04) 0%, transparent 50%);
+  }
+
+  .dark .bg-mesh {
+    background-image:
+      radial-gradient(ellipse at 20% 50%, rgba(236, 97, 71, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(20, 184, 166, 0.04) 0%, transparent 50%),
+      radial-gradient(ellipse at 40% 80%, rgba(236, 97, 71, 0.03) 0%, transparent 50%);
+  }
+
+  /* Subtle noise texture overlay */
+  .bg-noise::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.015;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .dark .bg-noise::after {
+    opacity: 0.03;
+  }
+
+  /* Warm divider */
+  .divider-warm {
+    @apply border-surface-200;
+  }
+
+  .dark .divider-warm {
+    @apply border-neutral-750;
   }
 
   .safe-area-inset-bottom {
@@ -50,5 +126,18 @@
 
   .safe-area-inset-top {
     padding-top: env(safe-area-inset-top, 0);
+  }
+
+  /* Ember glow effect for hover states */
+  .ember-glow {
+    transition: box-shadow 0.3s ease;
+  }
+
+  .ember-glow:hover {
+    box-shadow: 0 0 20px rgba(236, 97, 71, 0.15);
+  }
+
+  .dark .ember-glow:hover {
+    box-shadow: 0 0 24px rgba(236, 97, 71, 0.2);
   }
 }

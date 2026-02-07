@@ -34,7 +34,7 @@ export default function ContractPage() {
   )
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-100 dark:bg-surface-800">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="mb-8">
           <Link 
@@ -49,7 +49,7 @@ export default function ContractPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
@@ -77,7 +77,7 @@ export default function ContractPage() {
               <h2 className="text-xl font-semibold">Contract Definition</h2>
               <button
                 onClick={handleCopy}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-neutral-750 rounded-lg transition-colors"
               >
                 {copied ? (
                   <>
@@ -100,7 +100,7 @@ export default function ContractPage() {
             </div>
 
             <div className="mt-8 grid md:grid-cols-2 gap-6">
-              <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-6">
+              <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-6">
                 <h3 className="font-semibold mb-4">Document Types</h3>
                 <ul className="space-y-2 text-sm">
                   {Object.keys(dataContract.documents).map((docType) => (
@@ -112,7 +112,7 @@ export default function ContractPage() {
                 </ul>
               </div>
 
-              <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-6">
+              <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-6">
                 <h3 className="font-semibold mb-4">Key Features</h3>
                 <ul className="space-y-2 text-sm">
                   <li className="flex items-center gap-2">
@@ -142,7 +142,7 @@ export default function ContractPage() {
             <div className="mt-8 p-6 bg-yappr-50 dark:bg-yappr-950 rounded-lg">
               <h3 className="font-semibold mb-2">Deployment Instructions</h3>
               <ol className="space-y-2 text-sm list-decimal list-inside">
-                <li>Update the <code className="bg-white dark:bg-neutral-900 px-2 py-1 rounded">ownerId</code> field with your Dash identity ID</li>
+                <li>Update the <code className="bg-white dark:bg-surface-900 px-2 py-1 rounded">ownerId</code> field with your Dash identity ID</li>
                 <li>Use the Dash SDK to register the contract on Platform</li>
                 <li>Fund the contract with credits for storage operations</li>
                 <li>Start building your decentralized social network!</li>

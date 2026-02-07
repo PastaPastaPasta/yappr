@@ -115,16 +115,16 @@ export function DashPayContactsModal() {
     <Dialog.Root open={isOpen} onOpenChange={handleClose}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 rounded-2xl p-0 w-[500px] max-w-[90vw] max-h-[600px] shadow-xl z-50 flex flex-col">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-surface-900 rounded-2xl p-0 w-[500px] max-w-[90vw] max-h-[600px] shadow-xl z-50 flex flex-col">
           {/* Header */}
-          <div className="sticky top-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between rounded-t-2xl">
+          <div className="sticky top-0 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-neutral-750 px-4 py-3 flex items-center justify-between rounded-t-2xl">
             <Dialog.Title className="text-xl font-bold flex items-center gap-2">
               <UserGroupIcon className="h-6 w-6 text-blue-500" />
               Dash Pay Contacts
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full transition-colors disabled:opacity-50"
+                className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors disabled:opacity-50"
                 disabled={state === 'following'}
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -149,7 +149,7 @@ export function DashPayContactsModal() {
             >
               {/* Stats bar */}
               {contacts.length > 0 && (
-                <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-gray-700">
+                <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-800 border-b border-surface-200 dark:border-neutral-750">
                   <p className="text-sm text-gray-600 dark:text-gray-400">
                     Found <span className="font-semibold">{contacts.length}</span> Dash Pay
                     contact{contacts.length > 1 ? 's' : ''} you&apos;re not following
@@ -176,7 +176,7 @@ export function DashPayContactsModal() {
 
           {/* Footer with Follow All button */}
           {(state === 'ready' || state === 'following') && contacts.length > 1 && (
-            <div className="sticky bottom-0 bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 px-4 py-3 rounded-b-2xl">
+            <div className="sticky bottom-0 bg-white dark:bg-surface-900 border-t border-surface-200 dark:border-neutral-750 px-4 py-3 rounded-b-2xl">
               <Button
                 onClick={handleFollowAll}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"

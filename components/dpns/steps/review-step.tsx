@@ -77,7 +77,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
       </div>
 
       {/* Results table */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+      <div className="border border-surface-200 dark:border-neutral-750 rounded-lg overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50 dark:bg-gray-800">
             <tr>

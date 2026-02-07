@@ -200,7 +200,7 @@ function SettingsPage() {
           onClick={() => setActiveSection(section.id as SettingsSection)}
           className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors flex items-center gap-4"
         >
-          <div className="p-2 bg-gray-100 dark:bg-gray-900 rounded-lg">
+          <div className="p-2 bg-surface-100 dark:bg-surface-800 rounded-lg">
             <section.icon className="h-5 w-5" />
           </div>
           <div className="flex-1 text-left">
@@ -217,7 +217,7 @@ function SettingsPage() {
     <div className="p-6 space-y-6">
       <div>
         <h3 className="font-semibold mb-4">Account Information</h3>
-        <div className="space-y-4 bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+        <div className="space-y-4 bg-surface-100 dark:bg-surface-800 rounded-lg p-4">
           <div>
             <p className="text-sm text-gray-500">Identity ID</p>
             <p className="font-mono text-sm">{user?.identityId}</p>
@@ -249,7 +249,7 @@ function SettingsPage() {
         <h3 className="font-semibold mb-4">DPNS Usernames</h3>
         <div className="space-y-4">
           {dpnsUsernames.length > 0 ? (
-            <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+            <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-4">
               <p className="text-sm text-gray-500 mb-2">Registered Usernames</p>
               <div className="flex flex-wrap gap-2">
                 {dpnsUsernames.map((username, index) => (
@@ -268,7 +268,7 @@ function SettingsPage() {
               </div>
             </div>
           ) : (
-            <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+            <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-4">
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 No usernames registered yet. Register a username to make it easier for others to find you.
               </p>
@@ -437,17 +437,17 @@ function SettingsPage() {
       </div>
 
       {/* Block Lists Section */}
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+      <div className="border-t border-surface-200 dark:border-neutral-750 pt-6">
         <BlockListSettings />
       </div>
 
       {/* Blocked Users Section */}
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+      <div className="border-t border-surface-200 dark:border-neutral-750 pt-6">
         <BlockedUsersSettings />
       </div>
 
       {/* Saved Addresses Section */}
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+      <div className="border-t border-surface-200 dark:border-neutral-750 pt-6">
         <SavedAddressesSettings />
       </div>
     </div>
@@ -470,7 +470,7 @@ function SettingsPage() {
             />
             <label
               htmlFor="theme-light"
-              className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
+              className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-surface-200 dark:border-neutral-750 hover:bg-gray-50 dark:hover:bg-gray-950"
             >
               <SunIcon className="h-8 w-8" />
               <span className="text-sm font-medium">Light</span>
@@ -485,7 +485,7 @@ function SettingsPage() {
             />
             <label
               htmlFor="theme-dark"
-              className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
+              className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-surface-200 dark:border-neutral-750 hover:bg-gray-50 dark:hover:bg-gray-950"
             >
               <MoonIcon className="h-8 w-8" />
               <span className="text-sm font-medium">Dark</span>
@@ -500,7 +500,7 @@ function SettingsPage() {
             />
             <label
               htmlFor="theme-system"
-              className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
+              className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-surface-200 dark:border-neutral-750 hover:bg-gray-50 dark:hover:bg-gray-950"
             >
               <ComputerDesktopIcon className="h-8 w-8" />
               <span className="text-sm font-medium">System</span>
@@ -509,7 +509,7 @@ function SettingsPage() {
         </RadioGroup.Root>
       </div>
 
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+      <div className="border-t border-surface-200 dark:border-neutral-750 pt-6">
         <h3 className="font-semibold mb-4">Performance</h3>
         <div className="flex items-center justify-between">
           <div>
@@ -525,7 +525,7 @@ function SettingsPage() {
         </div>
       </div>
 
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+      <div className="border-t border-surface-200 dark:border-neutral-750 pt-6">
         <h3 className="font-semibold mb-4">Feed Language</h3>
         <div>
           <p className="text-sm text-gray-500 mb-4">
@@ -534,7 +534,7 @@ function SettingsPage() {
           <select
             value={feedLanguage}
             onChange={(e) => setFeedLanguage(e.target.value)}
-            className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            className="w-full p-3 rounded-lg border border-surface-200 dark:border-neutral-750 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-yappr-500"
           >
             <option value="en">English</option>
             <option value="es">Spanish</option>
@@ -601,7 +601,7 @@ function SettingsPage() {
             disabled={pinataConnected}
             onConnectionChange={setStorachaConnected}
           />
-          <div className="border-t border-gray-200 dark:border-gray-800" />
+          <div className="border-t border-surface-200 dark:border-neutral-750" />
           <PinataSettings
             disabled={storachaConnected}
             onConnectionChange={setPinataConnected}
@@ -694,7 +694,7 @@ function SettingsPage() {
         </Button>
       </div>
 
-      <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+      <div className="pt-6 border-t border-surface-200 dark:border-neutral-750">
         <p className="text-xs text-gray-500 text-center">
           © {new Date().getFullYear()} Yappr. All rights reserved.
         </p>
@@ -738,12 +738,12 @@ function SettingsPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-surface-200 dark:border-neutral-750 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}
-              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+              className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>

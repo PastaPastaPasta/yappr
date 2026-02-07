@@ -64,7 +64,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             className="fixed inset-0 flex items-center justify-center z-50 px-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
               {/* Close button */}
               <button
                 onClick={onClose}

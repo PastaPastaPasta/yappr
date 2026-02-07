@@ -28,7 +28,7 @@ function LoadingFallback() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750 flex items-center justify-center">
           <Spinner size="md" />
         </main>
       </div>
@@ -225,7 +225,7 @@ function ItemDetailContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750 flex items-center justify-center">
             <Spinner size="md" />
           </main>
         </div>
@@ -239,7 +239,7 @@ function ItemDetailContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-8">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750 flex flex-col items-center justify-center p-8">
             <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mb-4" />
             <p className="text-gray-500 font-medium">Item not found</p>
             <Button className="mt-4" onClick={() => router.push('/store')}>
@@ -259,21 +259,21 @@ function ItemDetailContent() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750">
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-surface-200 dark:border-neutral-750 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center justify-between p-4">
               <button
                 onClick={() => router.back()}
                 aria-label="Go back"
-                className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
               >
                 <ArrowLeftIcon className="h-5 w-5" aria-hidden="true" />
               </button>
               <button
                 onClick={() => router.push('/cart')}
                 aria-label="View cart"
-                className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                className="relative p-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
               >
                 <ShoppingCartIcon className="h-6 w-6" aria-hidden="true" />
                 {cartItemCount > 0 && (
@@ -336,8 +336,8 @@ function ItemDetailContent() {
                               isSelected
                                 ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20 text-yappr-600'
                                 : isAvailable
-                                  ? 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                                  : 'border-gray-200 dark:border-gray-700 opacity-40 cursor-not-allowed line-through'
+                                  ? 'border-surface-200 dark:border-neutral-750 hover:border-gray-300'
+                                  : 'border-surface-200 dark:border-neutral-750 opacity-40 cursor-not-allowed line-through'
                             }`}
                           >
                             {option}
@@ -398,7 +398,7 @@ function ItemDetailContent() {
 
             {/* Description */}
             {item.description && (
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
+              <div className="pt-4 border-t border-surface-200 dark:border-neutral-750">
                 <h3 className="font-medium mb-2">Description</h3>
                 <p className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
                   {item.description}

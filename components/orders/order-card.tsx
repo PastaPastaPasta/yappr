@@ -112,7 +112,7 @@ export function OrderCard({
           />
 
           {/* Shipping Address */}
-          <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+          <div className="p-3 bg-surface-100 dark:bg-surface-800 rounded-lg">
             <p className="text-sm font-medium mb-1">Ships to</p>
             <p className="text-sm text-gray-600 dark:text-gray-400">
               {payload.shippingAddress.name}, {payload.shippingAddress.city}, {payload.shippingAddress.country}
@@ -122,7 +122,7 @@ export function OrderCard({
       )}
 
       {status?.trackingNumber && (
-        <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+        <div className="mt-3 p-3 bg-surface-100 dark:bg-surface-800 rounded-lg">
           <p className="text-sm text-gray-500">Tracking:</p>
           <p className="font-mono text-sm">
             {status.trackingCarrier && `${status.trackingCarrier}: `}

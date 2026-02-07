@@ -317,7 +317,7 @@ export function AddEncryptionKeyModal({
               <div className="space-y-2">
                 <label className="text-sm font-medium">Encryption Key (WIF)</label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">Used only for private feeds. Does not control funds.</p>
-                <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-surface-200 dark:border-neutral-750">
                   <div className="flex-1 p-3 font-mono text-sm overflow-hidden min-h-[44px] flex items-center">
                     {showPrivateKey ? (
                       <span>
@@ -329,7 +329,7 @@ export function AddEncryptionKeyModal({
                       <span className="truncate">••••••••••••••••••••••••••••••••</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1 px-2 border-l border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-1 px-2 border-l border-surface-200 dark:border-neutral-750">
                     <button
                       type="button"
                       onClick={() => setShowPrivateKey(!showPrivateKey)}
@@ -437,7 +437,7 @@ export function AddEncryptionKeyModal({
                     setKeyValidationError(null)
                   }}
                   placeholder="Enter your Master key..."
-                  className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-surface-200 dark:border-neutral-750 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
                 {keyValidationError && (
                   <p className="text-sm text-red-600 dark:text-red-400">{keyValidationError}</p>
@@ -588,7 +588,7 @@ export function AddEncryptionKeyModal({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {step !== 'adding' && (

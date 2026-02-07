@@ -50,25 +50,25 @@ export function ConfirmDialog({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4 backdrop-blur-sm"
               >
                 <Dialog.Content asChild>
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-elevated-lg border border-surface-200 dark:border-neutral-750"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="flex items-start gap-4">
-                      <div className={`p-2 rounded-full bg-gray-100 dark:bg-gray-800 ${iconColors[variant]}`}>
+                      <div className={`p-2 rounded-xl bg-surface-100 dark:bg-surface-800 ${iconColors[variant]}`}>
                         <ExclamationTriangleIcon className="h-6 w-6" />
                       </div>
                       <div className="flex-1">
-                        <Dialog.Title className="text-lg font-semibold">
+                        <Dialog.Title className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                           {title}
                         </Dialog.Title>
-                        <Dialog.Description className="text-sm text-gray-500 mt-1">
+                        <Dialog.Description className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                           {message}
                         </Dialog.Description>
                       </div>

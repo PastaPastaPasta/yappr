@@ -30,7 +30,7 @@ function getRowStyles(state: RegistrationState): string {
     case 'failed':
       return 'border-red-500 bg-red-50 dark:bg-red-900/20'
     case 'pending':
-      return 'border-gray-200 dark:border-gray-700 opacity-50'
+      return 'border-surface-200 dark:border-neutral-750 opacity-50'
   }
 }
 

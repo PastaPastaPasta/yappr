@@ -39,7 +39,7 @@ export function DeleteConfirmationModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
@@ -62,7 +62,7 @@ export function DeleteConfirmationModal() {
 
                     {/* Preview of post being deleted */}
                     {post && (
-                      <div className="mb-6 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <div className="mb-6 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-surface-200 dark:border-neutral-750">
                         <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
                           {post.content}
                         </p>

@@ -209,11 +209,11 @@ export function PrivateFeedDashboard() {
         <CardContent>
           <div className="animate-pulse space-y-4">
             <div className="grid grid-cols-3 gap-4">
-              <div className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
-              <div className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
-              <div className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
+              <div className="h-20 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
+              <div className="h-20 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
+              <div className="h-20 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
             </div>
-            <div className="h-16 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
+            <div className="h-16 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
           </div>
         </CardContent>
       </Card>

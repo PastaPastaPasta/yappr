@@ -53,7 +53,7 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
     loading: {
       headerBg: 'bg-gray-100 dark:bg-gray-800',
       headerText: 'text-gray-600 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700',
+      border: 'border-surface-200 dark:border-neutral-750',
       icon: <LockOpenIcon className="h-4 w-4 animate-pulse" />,
       defaultText: 'Decrypting...',
     },
@@ -67,14 +67,14 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
     decrypted: {
       headerBg: 'bg-gray-50 dark:bg-gray-800/50',
       headerText: 'text-gray-500 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700/50',
+      border: 'border-surface-200 dark:border-neutral-750/50',
       icon: <LockOpenIcon className="h-4 w-4 text-green-500 dark:text-green-400" />,
       defaultText: 'Private Content',
     },
     locked: {
       headerBg: 'bg-gray-100 dark:bg-gray-800',
       headerText: 'text-gray-600 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700',
+      border: 'border-surface-200 dark:border-neutral-750',
       icon: <LockClosedIconSolid className="h-4 w-4" />,
       defaultText: 'Private Content',
     },
@@ -670,7 +670,7 @@ export function PrivatePostContent({
             'rounded-lg border flex items-center justify-between px-3 py-2',
             isApprovedNoKeys
               ? 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20'
-              : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'
+              : 'border-surface-200 dark:border-neutral-750 bg-gray-50 dark:bg-gray-800/50'
           )}>
             <div className="flex items-center gap-2">
               {isApprovedNoKeys

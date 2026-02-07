@@ -916,7 +916,7 @@ function UserProfileContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750">
             <div className="p-8 text-center text-gray-500">
               <p>User not found</p>
             </div>
@@ -932,18 +932,18 @@ function UserProfileContent() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750">
           <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
-              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+              className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
             <div className="flex-1">
               {isDisplayNameLoading ? (
-                <div className="h-6 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
+                <div className="h-6 w-32 bg-surface-200 dark:bg-surface-800 rounded animate-pulse mb-1" />
               ) : (
                 <h1 className="text-xl font-bold">{displayName}</h1>
               )}
@@ -963,7 +963,7 @@ function UserProfileContent() {
             </div>
             <div className="px-4 pb-4">
               <div className="relative -mt-16 mb-4">
-                <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+                <div className="h-32 w-32 rounded-full bg-white dark:bg-surface-900 p-1">
                   <div className="h-full w-full rounded-full overflow-hidden blur-sm opacity-60">
                     <UserAvatar
                       userId={userId || 'default'}
@@ -973,8 +973,8 @@ function UserProfileContent() {
                   </div>
                 </div>
               </div>
-              <div className="h-6 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-2" />
-              <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+              <div className="h-6 w-48 bg-surface-200 dark:bg-surface-800 rounded animate-pulse mb-2" />
+              <div className="h-4 w-32 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
             </div>
           </div>
         ) : (
@@ -1002,7 +1002,7 @@ function UserProfileContent() {
             <div className="px-4 pb-4">
               <div className="relative flex justify-between items-start -mt-16 mb-4">
                 <div className="relative">
-                  <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+                  <div className="h-32 w-32 rounded-full bg-white dark:bg-surface-900 p-1">
                     <UserAvatar
                       key={avatarKey}
                       userId={userId || 'default'}
@@ -1031,7 +1031,7 @@ function UserProfileContent() {
                             navigator.clipboard.writeText(profileUrl).catch(console.error)
                             toast.success('Profile link copied!')
                           }}
-                          className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                          className="p-2 rounded-full border border-surface-200 dark:border-neutral-750 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                         >
                           <ShareIcon className="h-4 w-4" />
                         </button>
@@ -1052,7 +1052,7 @@ function UserProfileContent() {
                         <Tooltip.Trigger asChild>
                           <button
                             onClick={() => router.push('/settings')}
-                            className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                            className="p-2 rounded-full border border-surface-200 dark:border-neutral-750 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                           >
                             <Cog6ToothIcon className="h-4 w-4" />
                           </button>
@@ -1095,7 +1095,7 @@ function UserProfileContent() {
                             <button
                               onClick={handleTipUser}
                               aria-label={`Tip ${profile?.displayName || username || 'user'}`}
-                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 transition-colors group"
+                              className="p-2 rounded-full border border-surface-200 dark:border-neutral-750 hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 transition-colors group"
                             >
                               <CurrencyDollarIcon className="h-4 w-4 group-hover:text-amber-500" />
                             </button>
@@ -1116,7 +1116,7 @@ function UserProfileContent() {
                             <button
                               onClick={() => router.push(`/messages?startConversation=${userId}`)}
                               aria-label={`Message ${profile?.displayName || username || 'user'}`}
-                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                              className="p-2 rounded-full border border-surface-200 dark:border-neutral-750 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                             >
                               <EnvelopeIcon className="h-4 w-4" />
                             </button>
@@ -1213,7 +1213,7 @@ function UserProfileContent() {
                   </div>
 
                   {/* Payment Addresses */}
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <div className="pt-4 border-t border-surface-200 dark:border-neutral-750">
                     <PaymentUriInput
                       uris={editPaymentUris}
                       onChange={setEditPaymentUris}
@@ -1222,7 +1222,7 @@ function UserProfileContent() {
                   </div>
 
                   {/* Social Links */}
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <div className="pt-4 border-t border-surface-200 dark:border-neutral-750">
                     <SocialLinksInput
                       links={editSocialLinks}
                       onChange={setEditSocialLinks}
@@ -1231,7 +1231,7 @@ function UserProfileContent() {
                   </div>
 
                   {/* Content Settings */}
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <div className="pt-4 border-t border-surface-200 dark:border-neutral-750">
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input
                         type="checkbox"
@@ -1250,7 +1250,7 @@ function UserProfileContent() {
                 <>
                   <div className="mb-3">
                     {isDisplayNameLoading ? (
-                      <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
+                      <div className="h-7 w-48 bg-surface-200 dark:bg-surface-800 rounded animate-pulse mb-1" />
                     ) : (
                       <h2 className="text-xl font-bold">{displayName}</h2>
                     )}
@@ -1414,7 +1414,7 @@ function UserProfileContent() {
 
                   {/* Social Links */}
                   {profile?.socialLinks && profile.socialLinks.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
+                    <div className="mt-4 pt-4 border-t border-surface-200 dark:border-neutral-750">
                       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Social</h4>
                       <div className="flex flex-wrap gap-2">
                         {profile.socialLinks.map((link, index) => (
@@ -1432,7 +1432,7 @@ function UserProfileContent() {
 
                   {/* Payment Addresses */}
                   {profile?.paymentUris && profile.paymentUris.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
+                    <div className="mt-4 pt-4 border-t border-surface-200 dark:border-neutral-750">
                       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                         <CurrencyDollarIcon className="h-3 w-3 inline mr-1" />
                         Tip Addresses
@@ -1469,7 +1469,7 @@ function UserProfileContent() {
 
             {/* Blocked User Notice */}
             {isBlockedByMe && !isOwnProfile && (
-              <div className="p-4 bg-gray-50 dark:bg-gray-950 border-y border-gray-200 dark:border-gray-800">
+              <div className="p-4 bg-surface-100 dark:bg-surface-800 border-y border-surface-200 dark:border-neutral-750">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full">
@@ -1492,9 +1492,9 @@ function UserProfileContent() {
               </div>
             )}
 
-            <div className="border-t border-gray-200 dark:border-gray-800">
+            <div className="border-t border-surface-200 dark:border-neutral-750">
               {/* Tab Navigation */}
-              <div className="flex border-b border-gray-200 dark:border-gray-800">
+              <div className="flex border-b border-surface-200 dark:border-neutral-750">
                 <button
                   onClick={() => setActiveTab('posts')}
                   className={cn(
@@ -1533,7 +1533,7 @@ function UserProfileContent() {
                 // Posts Tab
                 <>
                   {/* Post Filter Pills */}
-                  <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                  <div className="flex gap-2 px-4 py-3 border-b border-surface-200 dark:border-neutral-750">
                     <button
                       onClick={() => setPostFilter('posts')}
                       className={cn(
@@ -1580,7 +1580,7 @@ function UserProfileContent() {
 
                     {/* Load More button */}
                     {(hasMore || hasMoreReposts) && (
-                      <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
+                      <div className="p-4 flex justify-center border-t border-surface-200 dark:border-neutral-750">
                         <Button
                           variant="outline"
                           onClick={loadMorePosts}
@@ -1634,7 +1634,7 @@ function UserProfileContent() {
             className="absolute inset-0 bg-black/50"
             onClick={() => setIsEditingAvatar(false)}
           />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="relative bg-white dark:bg-surface-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">Customize Avatar</h2>
               <button
@@ -1667,7 +1667,7 @@ function UserProfileContent() {
             className="absolute inset-0 bg-black/50"
             onClick={() => setIsEditingBanner(false)}
           />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="relative bg-white dark:bg-surface-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">Customize Banner</h2>
               <button
@@ -1734,17 +1734,17 @@ function LoadingFallback() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750">
           <div>
             <div className="h-48 bg-gradient-yappr opacity-50" />
             <div className="px-4 pb-4">
               <div className="relative -mt-16 mb-4">
-                <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+                <div className="h-32 w-32 rounded-full bg-white dark:bg-surface-900 p-1">
                   <div className="h-full w-full rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
                 </div>
               </div>
-              <div className="h-6 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-2" />
-              <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+              <div className="h-6 w-48 bg-surface-200 dark:bg-surface-800 rounded animate-pulse mb-2" />
+              <div className="h-4 w-32 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
             </div>
           </div>
         </main>

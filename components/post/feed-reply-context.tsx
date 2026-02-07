@@ -42,7 +42,7 @@ export function FeedReplyContext({
     : replyEnrichment?.displayName || replier.displayName || `User ${replier.id.slice(-6)}`
 
   return (
-    <div className="border-b border-gray-200 dark:border-gray-800">
+    <div className="border-b border-surface-200 dark:border-neutral-750">
       {/* Header: Who replied */}
       <Link
         href={`/user?id=${replier.id}`}
@@ -56,7 +56,7 @@ export function FeedReplyContext({
       </Link>
 
       {/* Original post with muted background */}
-      <div className="bg-gray-50 dark:bg-gray-950/50 border-l-2 border-gray-300 dark:border-gray-700 ml-4 mr-4 rounded-lg overflow-hidden">
+      <div className="bg-surface-100 dark:bg-surface-800/50 border-l-2 border-gray-300 dark:border-gray-700 ml-4 mr-4 rounded-lg overflow-hidden">
         <PostCard
           post={originalPost}
           enrichment={originalPostEnrichment}

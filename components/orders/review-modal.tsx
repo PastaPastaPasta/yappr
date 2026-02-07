@@ -90,11 +90,11 @@ export function ReviewModal({
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                    className="w-full max-w-md bg-white dark:bg-surface-900 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-surface-200 dark:border-neutral-750">
                       <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
                         Leave a Review
                       </Dialog.Title>
@@ -106,7 +106,7 @@ export function ReviewModal({
                     {/* Content */}
                     <div className="p-4 space-y-4">
                       {/* Store Info */}
-                      <div className="flex items-center gap-3 pb-4 border-b border-gray-100 dark:border-gray-800">
+                      <div className="flex items-center gap-3 pb-4 border-b border-surface-200 dark:border-neutral-750">
                         <div className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
                           {store.logoUrl ? (
                             <img
@@ -153,7 +153,7 @@ export function ReviewModal({
                           onChange={(e) => setTitle(e.target.value.slice(0, TITLE_LIMIT))}
                           placeholder="Summarize your experience"
                           disabled={isSubmitting}
-                          className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
+                          className="w-full px-3 py-2 rounded-lg border border-surface-200 dark:border-neutral-750 bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
                         />
                         <p className="text-xs text-gray-400 mt-1 text-right">
                           {title.length}/{TITLE_LIMIT}
@@ -171,7 +171,7 @@ export function ReviewModal({
                           placeholder="Share details of your experience..."
                           rows={4}
                           disabled={isSubmitting}
-                          className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
+                          className="w-full px-3 py-2 rounded-lg border border-surface-200 dark:border-neutral-750 bg-transparent resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
                         />
                         <p className="text-xs text-gray-400 mt-1 text-right">
                           {content.length}/{CONTENT_LIMIT}
@@ -180,7 +180,7 @@ export function ReviewModal({
                     </div>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-surface-200 dark:border-neutral-750 bg-gray-50 dark:bg-surface-950">
                       <Button
                         variant="ghost"
                         onClick={handleClose}

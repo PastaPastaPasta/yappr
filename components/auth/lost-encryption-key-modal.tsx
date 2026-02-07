@@ -89,7 +89,7 @@ export function LostEncryptionKeyModal({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
@@ -122,7 +122,7 @@ export function LostEncryptionKeyModal({
                     ) : (
                       <div className="space-y-4">
                         {/* Option 1: Check secure storage */}
-                        <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                        <div className="p-4 border border-surface-200 dark:border-neutral-750 rounded-lg">
                           <div className="flex gap-3">
                             <div className="p-2 bg-blue-50 dark:bg-blue-950 rounded-lg h-fit">
                               <DocumentTextIcon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -214,7 +214,7 @@ export function LostEncryptionKeyModal({
 
                         {/* Help text for users with neither scenario */}
                         {!hasPrivateFeed && followedPrivateFeeds.length === 0 && (
-                          <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                          <div className="p-4 border border-surface-200 dark:border-neutral-750 rounded-lg">
                             <div className="flex gap-3">
                               <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg h-fit">
                                 <ShieldCheckIcon className="h-5 w-5 text-gray-600 dark:text-gray-400" />
@@ -235,7 +235,7 @@ export function LostEncryptionKeyModal({
                     )}
 
                     {/* Footer */}
-                    <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="mt-6 pt-4 border-t border-surface-200 dark:border-neutral-750">
                       <Button onClick={handleClose} variant="outline" className="w-full">
                         <LockClosedIcon className="h-4 w-4 mr-2" />
                         Close

@@ -71,7 +71,7 @@ export function PoliciesDisplay({ policies }: PoliciesDisplayProps) {
           return (
             <div
               key={index}
-              className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
+              className="border border-surface-200 dark:border-neutral-750 rounded-lg overflow-hidden"
             >
               <button
                 type="button"
@@ -87,7 +87,7 @@ export function PoliciesDisplay({ policies }: PoliciesDisplayProps) {
               </button>
 
               {isExpanded && (
-                <div className="px-4 py-3 bg-white dark:bg-gray-900">
+                <div className="px-4 py-3 bg-white dark:bg-surface-900">
                   <p className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
                     {policy.content || 'No content provided.'}
                   </p>

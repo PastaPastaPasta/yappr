@@ -19,20 +19,20 @@ interface FeaturedPostsProps {
 
 function PostSkeleton() {
   return (
-    <div className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
+    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-neutral-750 p-6">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+        <div className="w-10 h-10 bg-surface-200 dark:bg-surface-800 rounded-full animate-pulse" />
         <div className="flex-1 space-y-3">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+          <div className="h-4 w-24 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
           <div className="space-y-2">
-            <div className="h-4 w-full bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
-            <div className="h-4 w-3/4 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+            <div className="h-4 w-full bg-surface-100 dark:bg-surface-800 rounded animate-pulse" />
+            <div className="h-4 w-3/4 bg-surface-100 dark:bg-surface-800 rounded animate-pulse" />
           </div>
           <div className="flex gap-6 pt-2">
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-10 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+            <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
+            <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
+            <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
+            <div className="h-4 w-10 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
           </div>
         </div>
       </div>
@@ -50,7 +50,7 @@ export function FeaturedPosts({
 
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-gray-900 dark:text-gray-100">
         <SparklesIcon className="h-6 w-6 text-yappr-500" />
         Popular Posts
       </h2>
@@ -88,7 +88,7 @@ export function FeaturedPosts({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
-              className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden"
+              className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-neutral-750 overflow-hidden"
             >
               <PostCard post={post} />
             </motion.div>

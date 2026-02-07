@@ -76,7 +76,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }:
 
       {/* Nested replies (2nd level) - indented */}
       {nestedReplies.length > 0 && (
-        <div className="ml-12 border-l-2 border-gray-200 dark:border-gray-700">
+        <div className="ml-12 border-l-2 border-surface-200 dark:border-neutral-750">
           {nestedReplies.map((nested) => (
             <NestedReply
               key={nested.content.id}

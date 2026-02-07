@@ -67,8 +67,8 @@ export function VariantSelector({ item, selections, onChange, className }: Varia
                     isSelected
                       ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20 text-yappr-600'
                       : isAvailable
-                        ? 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                        : 'border-gray-200 dark:border-gray-700 opacity-40 cursor-not-allowed line-through text-gray-400'
+                        ? 'border-surface-200 dark:border-neutral-750 hover:border-gray-300 dark:hover:border-gray-600'
+                        : 'border-surface-200 dark:border-neutral-750 opacity-40 cursor-not-allowed line-through text-gray-400'
                   }`}
                 >
                   {option}

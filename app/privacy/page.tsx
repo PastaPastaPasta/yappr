@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-100 dark:bg-surface-800">
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-8">
           <Link
@@ -21,7 +21,7 @@ export default function PrivacyPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
@@ -109,7 +109,7 @@ export default function PrivacyPage() {
                 <p>
                   Some data is stored locally in your browser for the app to function:
                 </p>
-                <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4 space-y-3">
+                <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-4 space-y-3">
                   <div>
                     <p className="font-medium text-gray-700 dark:text-gray-300">Session Storage (cleared when you close the tab)</p>
                     <p className="text-sm mt-1">Your private key is stored here temporarily while you&apos;re logged in. It&apos;s automatically deleted when you close the browser tab, providing security against persistent access.</p>
@@ -154,7 +154,7 @@ export default function PrivacyPage() {
             </section>
 
             {/* Last Updated */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-surface-200 dark:border-neutral-750">
               <p className="text-sm text-gray-500">
                 Last updated: January 2025
               </p>

@@ -171,7 +171,7 @@ export function KeyBackupModal() {
             transition={{ duration: 0.2 }}
             className="fixed inset-0 flex items-center justify-center z-50 px-4 overflow-y-auto py-8"
           >
-            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-6 max-w-md w-full relative my-auto">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl p-6 max-w-md w-full relative my-auto">
               {/* Close button */}
               <button
                 onClick={handleClose}
@@ -194,7 +194,7 @@ export function KeyBackupModal() {
               </p>
 
               {/* Key to be protected */}
-              <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
+              <div className="bg-gray-50 dark:bg-gray-800/50 border border-surface-200 dark:border-neutral-750 rounded-lg p-4 mb-4">
                 <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
                   Key included in backup
                 </p>
@@ -240,7 +240,7 @@ export function KeyBackupModal() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter a strong passphrase (16+ characters)"
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-10 bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-neutral-750 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       autoComplete="new-password"
                     />
                     <button
@@ -269,7 +269,7 @@ export function KeyBackupModal() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm your passphrase"
-                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                    className="w-full px-3 py-2 bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-neutral-750 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                     autoComplete="new-password"
                   />
                   {confirmPassword.length > 0 && !passwordsMatch && (
