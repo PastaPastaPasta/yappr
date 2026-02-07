@@ -222,10 +222,10 @@ function SearchPageContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+          <main className="w-full max-w-[700px] md:border-x border-border">
             <div className="p-12 text-center">
               <MagnifyingGlassIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Search Yappr</h2>
+              <h2 className="text-xl font-display font-semibold mb-2">Search Yappr</h2>
               <p className="text-gray-500">
                 Enter a search term to find users and hashtags
               </p>
@@ -242,18 +242,18 @@ function SearchPageContent() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-border">
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-surface-0/80 dark:bg-surface-0/80 border-b border-border ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
-                className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="p-2 -ml-2 rounded-full hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
               <div>
-                <h1 className="text-xl font-bold">Search</h1>
+                <h1 className="text-xl font-display font-bold">Search</h1>
                 <p className="text-sm text-gray-500">
                   Results for &quot;{query}&quot;
                 </p>
@@ -271,14 +271,14 @@ function SearchPageContent() {
             <div>
               {/* Users Section */}
               <section>
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
-                  <h2 className="font-semibold flex items-center gap-2">
+                <div className="px-4 py-3 border-b border-border bg-surface-1 dark:bg-surface-2">
+                  <h2 className="font-display font-semibold flex items-center gap-2">
                     <UserIcon className="h-5 w-5" />
                     Users
                   </h2>
                 </div>
                 {users.length > 0 ? (
-                  <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                  <div className="divide-y divide-border">
                     {users.map((user, index) => (
                       <motion.div
                         key={user.id}
@@ -286,9 +286,9 @@ function SearchPageContent() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: index * 0.05 }}
                         onClick={() => handleUserClick(user.id)}
-                        className="flex items-center gap-3 p-4 hover:bg-gray-50 dark:hover:bg-gray-950 cursor-pointer transition-colors"
+                        className="flex items-center gap-3 p-4 hover:bg-surface-1 dark:hover:bg-surface-2 cursor-pointer transition-colors"
                       >
-                        <div className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900">
+                        <div className="h-12 w-12 rounded-full overflow-hidden bg-surface-0 dark:bg-surface-1">
                           <UserAvatar userId={user.id} size="lg" alt={user.displayName} />
                         </div>
                         <div className="flex-1 min-w-0">
@@ -310,14 +310,14 @@ function SearchPageContent() {
 
               {/* Hashtags Section */}
               <section>
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
-                  <h2 className="font-semibold flex items-center gap-2">
+                <div className="px-4 py-3 border-b border-border bg-surface-1 dark:bg-surface-2">
+                  <h2 className="font-display font-semibold flex items-center gap-2">
                     <HashtagIcon className="h-5 w-5" />
                     Hashtags
                   </h2>
                 </div>
                 {hashtags.length > 0 ? (
-                  <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                  <div className="divide-y divide-border">
                     {hashtags.map((tag, index) => (
                       <motion.div
                         key={tag.hashtag}
@@ -325,7 +325,7 @@ function SearchPageContent() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: index * 0.05 }}
                         onClick={() => handleHashtagClick(tag.hashtag)}
-                        className="p-4 hover:bg-gray-50 dark:hover:bg-gray-950 cursor-pointer transition-colors"
+                        className="p-4 hover:bg-surface-1 dark:hover:bg-surface-2 cursor-pointer transition-colors"
                       >
                         <p className="font-bold text-yappr-500">#{tag.hashtag}</p>
                         <p className="text-sm text-gray-500">
