@@ -130,8 +130,8 @@ export default function ExplorePage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button
@@ -139,7 +139,7 @@ export default function ExplorePage() {
                     setIsSearchFocused(false)
                     setSearchQuery('')
                   }}
-                  className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                  className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
@@ -153,7 +153,7 @@ export default function ExplorePage() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsSearchFocused(true)}
                   placeholder="Search posts"
-                  className="w-full h-12 pl-12 pr-4 bg-gray-100 dark:bg-gray-900 rounded-full focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
+                  className="w-full h-12 pl-12 pr-4 bg-surface-100 dark:bg-surface-800 rounded-full focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
                 />
               </div>
             </div>
@@ -189,7 +189,7 @@ export default function ExplorePage() {
                 exit={{ opacity: 0 }}
               >
                 {/* Trending Header */}
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-800">
                   <h2 className="text-lg font-semibold flex items-center gap-2">
                     <FireIcon className="h-5 w-5 text-orange-500" />
                     Trending Hashtags
@@ -225,7 +225,7 @@ export default function ExplorePage() {
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: index * 0.05 }}
                           onClick={() => handleHashtagClick(trend.hashtag)}
-                          className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
+                          className="w-full p-4 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors text-left cursor-pointer"
                         >
                           <div className="flex items-center gap-3">
                             <span className="text-sm text-gray-400 w-6">#{index + 1}</span>

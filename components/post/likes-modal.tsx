@@ -90,13 +90,13 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
     <Dialog.Root open={isOpen} onOpenChange={onClose}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 rounded-2xl p-0 w-[500px] max-h-[600px] shadow-xl z-50">
-          <div className="sticky top-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-surface-900 rounded-2xl p-0 w-[500px] max-h-[600px] shadow-xl z-50">
+          <div className="sticky top-0 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-4 py-3 flex items-center justify-between">
             <Dialog.Title className="text-xl font-bold">
               Liked by
             </Dialog.Title>
             <Dialog.Close asChild>
-              <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full transition-colors">
+              <button className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors">
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </Dialog.Close>
@@ -114,7 +114,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
             >
               <div className="divide-y divide-gray-200 dark:divide-gray-800">
                 {(likesState.data ?? []).map((like) => (
-                  <div key={like.$id} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors">
+                  <div key={like.$id} className="p-4 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <Avatar>
@@ -148,7 +148,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                                   </Tooltip.Trigger>
                                   <Tooltip.Portal>
                                     <Tooltip.Content
-                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                                      className="bg-gray-800 dark:bg-surface-700 text-white text-xs px-2 py-1 rounded"
                                       sideOffset={5}
                                     >
                                       Click to copy full identity ID

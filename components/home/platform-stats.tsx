@@ -35,15 +35,15 @@ export function PlatformStats({
       label: 'Active Users',
       value: totalUsers,
       icon: UserGroupIcon,
-      color: 'text-blue-500'
+      color: 'text-accent-500'
     },
   ]
 
   if (error) {
     return (
-      <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+      <section className="py-10 px-6 rounded-3xl bg-surface-50/50 dark:bg-surface-900/30">
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+          <p className="text-surface-500 dark:text-surface-400 mb-4">{error}</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <ArrowPathIcon className="h-4 w-4 mr-2" />
@@ -56,7 +56,7 @@ export function PlatformStats({
   }
 
   return (
-    <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+    <section className="py-10 px-6 rounded-3xl bg-surface-50/50 dark:bg-surface-900/30">
       <div className="grid grid-cols-2 gap-8">
         {stats.map((stat, index) => (
           <motion.div
@@ -64,15 +64,15 @@ export function PlatformStats({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.1 }}
-            className="text-center"
+            className="p-6 rounded-2xl bg-white dark:bg-surface-800/50 shadow-elevated text-center"
           >
             <stat.icon className={`h-8 w-8 ${stat.color} mx-auto mb-2`} />
             {loading ? (
-              <div className="h-9 w-20 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-1 animate-pulse" />
+              <div className="h-9 w-20 bg-surface-200 dark:bg-surface-800 rounded-lg mx-auto mb-1 shimmer" />
             ) : (
-              <div className="text-3xl font-bold">{formatNumber(stat.value)}</div>
+              <div className="font-display text-4xl font-bold">{formatNumber(stat.value)}</div>
             )}
-            <div className="text-sm text-gray-500">{stat.label}</div>
+            <div className="text-sm font-medium uppercase tracking-wider text-surface-500">{stat.label}</div>
           </motion.div>
         ))}
       </div>

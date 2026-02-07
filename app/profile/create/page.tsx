@@ -202,22 +202,22 @@ function CreateProfilePage() {
   // Show loading state while checking for existing profile
   if (isCheckingProfile) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
+      <div className="min-h-screen bg-surface-50 dark:bg-surface-900 flex items-center justify-center">
         <div className="text-center">
           <Spinner size="lg" className="mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Checking profile status...</p>
+          <p className="text-surface-500 dark:text-surface-400">Checking profile status...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen bg-surface-50 dark:bg-surface-900 flex items-center justify-center px-4 py-8">
       <div className="max-w-lg w-full">
-        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
+        <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold">Create Your Profile</h1>
+            <h1 className="text-3xl font-display font-bold">Create Your Profile</h1>
             <button
               onClick={logout}
               className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
@@ -226,7 +226,7 @@ function CreateProfilePage() {
             </button>
           </div>
 
-          <p className="text-gray-600 dark:text-gray-400 text-center mb-8">
+          <p className="text-surface-500 dark:text-surface-400 text-center mb-8">
             Set up your Yappr profile to start connecting
           </p>
 
@@ -261,10 +261,10 @@ function CreateProfilePage() {
 
             {/* Avatar Section */}
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avatar</h3>
+              <h3 className="text-sm font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">Avatar</h3>
 
               {/* Avatar Source Tabs */}
-              <div className="flex border-b border-gray-200 dark:border-gray-700">
+              <div className="flex border-b border-surface-200 dark:border-surface-700">
                 <button
                   type="button"
                   onClick={() => setAvatarSource('generated')}
@@ -305,7 +305,7 @@ function CreateProfilePage() {
                 <div className="flex items-start gap-6">
                   {/* Avatar Preview */}
                   <div className="flex-shrink-0">
-                    <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
+                    <div className="w-24 h-24 rounded-full overflow-hidden bg-surface-100 dark:bg-surface-800 border-2 border-surface-200 dark:border-surface-700">
                       {avatarSeed && (
                         <Image
                           src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
@@ -328,7 +328,7 @@ function CreateProfilePage() {
                       <select
                         value={avatarStyle}
                         onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        className="w-full px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       >
                         {DICEBEAR_STYLES.map((style) => (
                           <option key={style} value={style}>
@@ -367,12 +367,12 @@ function CreateProfilePage() {
             </div>
 
             {/* Banner Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Banner (Optional)</h3>
+            <div className="space-y-4 pt-4 border-t border-surface-200 dark:border-surface-700">
+              <h3 className="text-sm font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">Banner (Optional)</h3>
 
               {/* Banner Preview */}
               {bannerUrl && (
-                <div className="relative aspect-[3/1] rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
+                <div className="relative aspect-[3/1] rounded-lg overflow-hidden bg-surface-100 dark:bg-surface-800">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={isIpfsProtocol(bannerUrl) ? ipfsToGatewayUrl(bannerUrl) : bannerUrl}
@@ -397,8 +397,8 @@ function CreateProfilePage() {
             </div>
 
             {/* Basic Info Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Basic Info</h3>
+            <div className="space-y-4 pt-4 border-t border-surface-200 dark:border-surface-700">
+              <h3 className="text-sm font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">Basic Info</h3>
 
               <div>
                 <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -476,7 +476,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Payment Addresses Section */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="pt-4 border-t border-surface-200 dark:border-surface-700">
               <PaymentUriInput
                 uris={paymentUris}
                 onChange={setPaymentUris}
@@ -485,7 +485,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Social Links Section */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="pt-4 border-t border-surface-200 dark:border-surface-700">
               <SocialLinksInput
                 links={socialLinks}
                 onChange={setSocialLinks}
@@ -494,8 +494,8 @@ function CreateProfilePage() {
             </div>
 
             {/* Content Settings */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Content Settings</h3>
+            <div className="space-y-4 pt-4 border-t border-surface-200 dark:border-surface-700">
+              <h3 className="text-sm font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">Content Settings</h3>
 
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
@@ -521,7 +521,7 @@ function CreateProfilePage() {
           </form>
 
           <div className="mt-6 text-center space-y-2">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-surface-500 dark:text-surface-400">
               Identity: {user?.identityId.slice(0, 8)}...
             </p>
             {(!user || !getPrivateKey(user.identityId)) && (

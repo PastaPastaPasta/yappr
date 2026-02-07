@@ -286,7 +286,7 @@ export function TipModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                 <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -300,7 +300,7 @@ export function TipModal() {
 
                 <button
                   onClick={handleClose}
-                  className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                  className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                   disabled={state === 'processing'}
                 >
                   <XMarkIcon className="h-5 w-5" />
@@ -309,7 +309,7 @@ export function TipModal() {
                 {/* Input State */}
                 {state === 'input' && (
                   <div className="space-y-4">
-                    <p className="text-gray-600 dark:text-gray-400">
+                    <p className="text-surface-500 dark:text-surface-400">
                       Send a tip to <span className="font-semibold text-gray-900 dark:text-white">{recipientName}</span>
                     </p>
 
@@ -322,7 +322,7 @@ export function TipModal() {
                           className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                             activeTab === 'credits'
                               ? 'bg-white dark:bg-neutral-700 text-amber-600 dark:text-amber-400 shadow-sm'
-                              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                              : 'text-surface-500 dark:text-surface-400 hover:text-gray-900 dark:hover:text-gray-200'
                           }`}
                         >
                           <CurrencyDollarIcon className="w-4 h-4" />
@@ -334,7 +334,7 @@ export function TipModal() {
                           className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                             activeTab === 'crypto'
                               ? 'bg-white dark:bg-neutral-700 text-amber-600 dark:text-amber-400 shadow-sm'
-                              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                              : 'text-surface-500 dark:text-surface-400 hover:text-gray-900 dark:hover:text-gray-200'
                           }`}
                         >
                           <WalletIcon className="w-4 h-4" />
@@ -371,7 +371,7 @@ export function TipModal() {
                             value={amount}
                             onChange={(e) => handleAmountChange(e.target.value)}
                             placeholder="0.001"
-                            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-lg font-mono placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            className="w-full px-4 py-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-neutral-800 text-lg font-mono placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                           />
                         </div>
 
@@ -384,7 +384,7 @@ export function TipModal() {
                               className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
                                 amount === preset.toString()
                                   ? 'bg-amber-500 text-white'
-                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                  : 'bg-surface-100 dark:bg-surface-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-surface-700'
                               }`}
                             >
                               {preset} DASH
@@ -403,7 +403,7 @@ export function TipModal() {
                             placeholder="Add a note with your tip..."
                             maxLength={280}
                             rows={2}
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            className="w-full px-4 py-2 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                           />
                           <p className="mt-1 text-xs text-gray-500 text-right">
                             {tipMessage.length}/280
@@ -425,7 +425,7 @@ export function TipModal() {
                               autoCorrect="off"
                               autoCapitalize="off"
                               spellCheck={false}
-                              className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                              className="w-full px-4 py-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                             />
                             {keySource === 'prefilled' && (
                               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
@@ -472,7 +472,7 @@ export function TipModal() {
                                 key={idx}
                                 type="button"
                                 onClick={() => handleShowQr(paymentUri)}
-                                className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/10 text-left transition-all group"
+                                className="w-full p-3 rounded-lg border border-surface-200 dark:border-surface-700 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/10 text-left transition-all group"
                               >
                                 <div className="flex items-center gap-3">
                                   <PaymentSchemeIcon scheme={paymentUri.scheme} size="lg" />
@@ -502,18 +502,18 @@ export function TipModal() {
                 {/* Confirming State */}
                 {state === 'confirming' && (
                   <div className="space-y-4">
-                    <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-4 space-y-2">
+                    <div className="bg-surface-50 dark:bg-neutral-800 rounded-lg p-4 space-y-2">
                       <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">Amount</span>
+                        <span className="text-surface-500 dark:text-surface-400">Amount</span>
                         <span className="font-bold text-lg">{dashAmount} DASH</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">To</span>
+                        <span className="text-surface-500 dark:text-surface-400">To</span>
                         <span className="font-medium">{recipientName}</span>
                       </div>
                       {tipMessage.trim() && (
-                        <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Message:</span>
+                        <div className="pt-2 border-t border-surface-200 dark:border-surface-700">
+                          <span className="text-surface-500 dark:text-surface-400 text-sm">Message:</span>
                           <p className="text-sm mt-1">{tipMessage}</p>
                         </div>
                       )}
@@ -545,7 +545,7 @@ export function TipModal() {
                 {state === 'processing' && (
                   <div className="py-8 text-center space-y-4">
                     <Spinner size="lg" className="mx-auto border-amber-500" />
-                    <p className="text-gray-600 dark:text-gray-400">Sending tip...</p>
+                    <p className="text-surface-500 dark:text-surface-400">Sending tip...</p>
                     <p className="text-xs text-gray-500">Please wait, this may take a moment.</p>
                   </div>
                 )}
@@ -556,7 +556,7 @@ export function TipModal() {
                     <div className="text-center">
                       <CheckCircleIcon className="h-12 w-12 text-green-500 mx-auto mb-2" />
                       <p className="text-lg font-medium">Tip sent successfully!</p>
-                      <p className="text-gray-600 dark:text-gray-400">
+                      <p className="text-surface-500 dark:text-surface-400">
                         You sent {dashAmount} DASH to {recipientName}
                       </p>
                     </div>
@@ -599,7 +599,7 @@ export function TipModal() {
                     <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto" />
                     <div>
                       <p className="text-lg font-medium">Tip sent successfully!</p>
-                      <p className="text-gray-600 dark:text-gray-400">
+                      <p className="text-surface-500 dark:text-surface-400">
                         You sent {dashAmount} DASH to {recipientName}
                       </p>
                     </div>

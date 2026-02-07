@@ -209,11 +209,11 @@ export function PrivateFeedDashboard() {
         <CardContent>
           <div className="animate-pulse space-y-4">
             <div className="grid grid-cols-3 gap-4">
-              <div className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
-              <div className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
-              <div className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
+              <div className="h-20 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
+              <div className="h-20 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
+              <div className="h-20 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
             </div>
-            <div className="h-16 bg-gray-200 dark:bg-gray-800 rounded-lg"></div>
+            <div className="h-16 bg-surface-200 dark:bg-surface-800 rounded-lg"></div>
           </div>
         </CardContent>
       </Card>
@@ -252,10 +252,10 @@ export function PrivateFeedDashboard() {
 
           {/* Private Posts (recent sample) */}
           <div data-testid="private-posts-stat" className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 p-4 rounded-xl text-center">
-            <DocumentTextIcon className="h-6 w-6 mx-auto mb-2 text-purple-600 dark:text-purple-400" />
+            <DocumentTextIcon className="h-6 w-6 mx-auto mb-2 text-yappr-500 dark:text-yappr-400" />
             <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">{privatePostCount}</p>
-            <p className="text-xs text-purple-600/70 dark:text-purple-400/70">(recent)</p>
-            <p className="text-xs font-medium text-purple-600 dark:text-purple-400 mt-1">Private Posts</p>
+            <p className="text-xs text-yappr-500/70 dark:text-yappr-400/70">(recent)</p>
+            <p className="text-xs font-medium text-yappr-500 dark:text-yappr-400 mt-1">Private Posts</p>
           </div>
         </div>
 
@@ -267,7 +267,7 @@ export function PrivateFeedDashboard() {
               {currentEpoch - 1}/{MAX_EPOCH - 1} revocations
             </span>
           </div>
-          <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+          <div className="h-2.5 bg-surface-200 dark:bg-surface-700 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-500 ${getEpochProgressColor(isEpochWarning, epochUsagePercent)}`}
               style={{ width: `${Math.max(epochUsagePercent, 1)}%` }}
@@ -293,7 +293,7 @@ export function PrivateFeedDashboard() {
               {recentActivity.map((activity) => (
                 <div
                   key={activity.id}
-                  className="flex items-center gap-3 text-sm py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg"
+                  className="flex items-center gap-3 text-sm py-2 px-3 bg-surface-50 dark:bg-surface-900 rounded-lg"
                 >
                   {activity.type === 'approved' ? (
                     <CheckCircleIcon className="h-4 w-4 text-green-500 flex-shrink-0" />

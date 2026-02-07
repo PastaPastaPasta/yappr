@@ -31,7 +31,7 @@ export function PresenceIndicator({
 
   return (
     <div
-      className={`${sizeClass} rounded-full bg-gray-400 border-2 border-white dark:border-neutral-900 ${className}`}
+      className={`${sizeClass} rounded-full bg-gray-400 border-2 border-white dark:border-surface-800 ${className}`}
     />
   )
 }

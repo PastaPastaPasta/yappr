@@ -15,7 +15,7 @@ export function CartIcon({ className }: CartIconProps) {
   return (
     <button
       onClick={() => router.push('/cart')}
-      className={`relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors ${className || ''}`}
+      className={`relative p-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors ${className || ''}`}
       aria-label={`Shopping cart with ${itemCount} items`}
     >
       <ShoppingCartIcon className="h-6 w-6" />

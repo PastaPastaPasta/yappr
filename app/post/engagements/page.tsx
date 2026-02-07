@@ -322,22 +322,22 @@ function EngagementsPageContent() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3">
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => router.back()}
-                  className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                  className="p-1 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold">Post engagements</h1>
+                <h1 className="text-xl font-display font-bold">Post engagements</h1>
               </div>
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-gray-200 dark:border-gray-800">
+            <div className="flex border-b border-surface-200 dark:border-surface-800">
               {(['quotes', 'reposts', 'likes'] as const).map((tab) => (
                 <button
                   key={tab}
@@ -374,12 +374,12 @@ function EngagementsPageContent() {
                     key={`${activeTab}-${engagement.id}-${engagement.quotePostId || ''}`}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                    className="border-b border-surface-200 dark:border-surface-800 px-4 py-3 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors"
                   >
                     <div className="flex items-start gap-3">
                       <button
                         onClick={() => router.push(`/user?id=${engagement.id}`)}
-                        className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                        className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-surface-900 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                       >
                         <UserAvatar userId={engagement.id} size="lg" alt={engagement.displayName} />
                       </button>
@@ -419,7 +419,7 @@ function EngagementsPageContent() {
                                   </Tooltip.Trigger>
                                   <Tooltip.Portal>
                                     <Tooltip.Content
-                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                                      className="bg-gray-800 dark:bg-surface-700 text-white text-xs px-2 py-1 rounded"
                                       sideOffset={5}
                                     >
                                       Click to copy full identity ID
@@ -429,7 +429,7 @@ function EngagementsPageContent() {
                               </Tooltip.Provider>
                             ) : null /* Has profile but no DPNS: display name is sufficient */}
                             {engagement.bio && (
-                              <p className="text-sm mt-1 text-gray-600 dark:text-gray-400 line-clamp-2">
+                              <p className="text-sm mt-1 text-surface-500 dark:text-surface-400 line-clamp-2">
                                 {engagement.bio}
                               </p>
                             )}
@@ -438,9 +438,9 @@ function EngagementsPageContent() {
                             {activeTab === 'quotes' && engagement.quoteContent && (
                               <button
                                 onClick={() => router.push(`/post?id=${engagement.quotePostId}`)}
-                                className="mt-2 p-2 bg-gray-50 dark:bg-gray-900 rounded-lg text-sm text-left w-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                                className="mt-2 p-2 bg-surface-50 dark:bg-surface-900 rounded-lg text-sm text-left w-full hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                               >
-                                <p className="text-gray-600 dark:text-gray-400 line-clamp-2">
+                                <p className="text-surface-500 dark:text-surface-400 line-clamp-2">
                                   &ldquo;{engagement.quoteContent}&rdquo;
                                 </p>
                               </button>

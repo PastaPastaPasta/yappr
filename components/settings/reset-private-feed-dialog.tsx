@@ -152,14 +152,14 @@ export function ResetPrivateFeedDialog({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[90vw] shadow-xl relative max-h-[90vh] overflow-y-auto"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[500px] max-w-[90vw] shadow-xl relative max-h-[90vh] overflow-y-auto"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {/* Close button */}
                     <button
                       onClick={() => onOpenChange(false)}
                       aria-label="Close"
-                      className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                       disabled={isResetting}
                     >
                       <XMarkIcon className="h-5 w-5" />
@@ -171,7 +171,7 @@ export function ResetPrivateFeedDialog({
                       Reset Private Feed
                     </Dialog.Title>
 
-                    <Dialog.Description className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    <Dialog.Description className="text-sm text-surface-500 dark:text-surface-400 mb-4">
                       This action cannot be undone. Your private feed will be completely reset.
                     </Dialog.Description>
 

@@ -53,7 +53,7 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
             <h2 className="text-xl font-semibold mb-2">Registration Failed</h2>
           </>
         )}
-        <p className="text-gray-600 dark:text-gray-400">
+        <p className="text-surface-500 dark:text-surface-400">
           {registeredUsernames.length} succeeded, {failedUsernames.length} failed
           {contestedRegistered.length > 0 &&
             `, ${contestedRegistered.length} awaiting voting`}
@@ -61,9 +61,9 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
       </div>
 
       {/* Results table */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+      <div className="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden">
         <table className="w-full">
-          <thead className="bg-gray-50 dark:bg-gray-800">
+          <thead className="bg-surface-50 dark:bg-surface-800">
             <tr>
               <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">
                 Username
@@ -79,7 +79,7 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
               .map((entry) => (
                 <tr key={entry.id}>
                   <td className="px-4 py-3">
-                    <code className="text-sm bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                    <code className="text-sm bg-surface-100 dark:bg-surface-800 px-2 py-1 rounded">
                       {entry.label}.dash
                     </code>
                   </td>

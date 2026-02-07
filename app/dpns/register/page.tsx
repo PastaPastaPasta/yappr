@@ -29,12 +29,12 @@ export default function DPNSRegisterPage() {
   // If not authenticated, show login prompt
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
-        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
-          <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">
+      <div className="min-h-screen bg-surface-50 dark:bg-surface-900 flex items-center justify-center">
+        <div className="bg-white dark:bg-surface-900 rounded-lg shadow-lg p-8 max-w-md w-full">
+          <h2 className="text-2xl font-display font-bold mb-4 text-gray-900 dark:text-white">
             Authentication Required
           </h2>
-          <p className="text-gray-600 dark:text-gray-400 mb-6">
+          <p className="text-surface-500 dark:text-surface-400 mb-6">
             You need to log in to register a DPNS username.
           </p>
           <div className="space-y-4">
@@ -46,7 +46,7 @@ export default function DPNSRegisterPage() {
             </button>
             <Link
               href="/"
-              className="block w-full text-center text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+              className="block w-full text-center text-surface-500 dark:text-surface-400 hover:text-gray-900 dark:hover:text-white transition-colors"
             >
               Back to Home
             </Link>
@@ -60,9 +60,9 @@ export default function DPNSRegisterPage() {
   if (user.dpnsUsername) {
     router.push('/')
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
-        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
-          <p className="text-gray-600 dark:text-gray-400">
+      <div className="min-h-screen bg-surface-50 dark:bg-surface-900 flex items-center justify-center">
+        <div className="bg-white dark:bg-surface-900 rounded-lg shadow-lg p-8 max-w-md w-full">
+          <p className="text-surface-500 dark:text-surface-400">
             You already have a DPNS username: {user.dpnsUsername}
           </p>
         </div>
@@ -73,11 +73,11 @@ export default function DPNSRegisterPage() {
   return (
     <>
       {/* Background content */}
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
+      <div className="min-h-screen bg-surface-50 dark:bg-surface-900">
         <div className="flex items-center justify-center min-h-screen">
-          <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
+          <div className="bg-white dark:bg-surface-900 rounded-lg shadow-lg p-8 max-w-md w-full">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+              <h2 className="text-xl font-display font-bold text-gray-900 dark:text-white">
                 Register DPNS Username
               </h2>
               <button
@@ -87,7 +87,7 @@ export default function DPNSRegisterPage() {
                 Logout
               </button>
             </div>
-            <p className="text-gray-600 dark:text-gray-400">
+            <p className="text-surface-500 dark:text-surface-400">
               Setting up your username...
             </p>
           </div>

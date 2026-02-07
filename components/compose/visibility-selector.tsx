@@ -94,7 +94,7 @@ export function VisibilitySelector({
   if (privateFeedLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-gray-400">
-        <Spinner size="sm" className="h-4 w-4 border-gray-300" />
+        <Spinner size="sm" className="h-4 w-4 border-surface-200" />
         <span>Loading...</span>
       </div>
     )
@@ -114,7 +114,7 @@ export function VisibilitySelector({
         className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
           isPrivate
             ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50'
-            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+            : 'bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 hover:bg-gray-200 dark:hover:bg-surface-700'
         } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
       >
         <CurrentIcon className={`w-4 h-4 ${isPrivate ? 'text-amber-600 dark:text-amber-400' : ''}`} />
@@ -133,7 +133,7 @@ export function VisibilitySelector({
       {isExpanded && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden"
+          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 shadow-xl z-50 overflow-hidden"
         >
           {visibilityOptions.map((option) => {
             const Icon = option.icon
@@ -150,7 +150,7 @@ export function VisibilitySelector({
                 className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors ${
                   isSelected
                     ? 'bg-yappr-50 dark:bg-yappr-900/20'
-                    : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                    : 'hover:bg-surface-50 dark:hover:bg-surface-800'
                 } ${isDisabled && !onEnablePrivateFeedRequest ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
               >
                 <div
@@ -159,7 +159,7 @@ export function VisibilitySelector({
                       ? 'bg-yappr-100 dark:bg-yappr-900/40 text-yappr-600 dark:text-yappr-400'
                       : option.requiresPrivateFeed
                       ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                      : 'bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -183,7 +183,7 @@ export function VisibilitySelector({
                       </svg>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{option.description}</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">{option.description}</p>
                   {isDisabled && (
                     <p className="text-xs text-yappr-500 dark:text-yappr-400 mt-1">
                       {onEnablePrivateFeedRequest ? 'Click to enable private feed' : 'Enable private feed first'}
@@ -204,8 +204,8 @@ export function VisibilitySelector({
             </div>
           )}
           {isPrivate && privateFollowerCount > 0 && (
-            <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+            <div className="px-4 py-2 bg-surface-50 dark:bg-surface-800/50 border-t border-surface-100 dark:border-surface-800">
+              <p className="text-xs text-surface-500 dark:text-surface-400">
                 Visible to {privateFollowerCount} private follower{privateFollowerCount !== 1 ? 's' : ''}
               </p>
             </div>

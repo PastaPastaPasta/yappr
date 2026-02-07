@@ -139,11 +139,11 @@ export function SavedAddressesSettings() {
     return (
       <div>
         <h3 className="font-semibold mb-4">Saved Shipping Addresses</h3>
-        <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+        <div className="bg-surface-50 dark:bg-surface-900/50 rounded-lg p-4">
           <div className="flex items-start gap-3">
             <LockClosedIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <p className="text-sm text-surface-500 dark:text-surface-400">
                 To save shipping addresses securely, you need to set up an encryption key.
                 Your addresses will be encrypted so only you can access them.
               </p>
@@ -162,19 +162,19 @@ export function SavedAddressesSettings() {
       <h3 className="font-semibold mb-4">Saved Shipping Addresses</h3>
       <div className="space-y-3">
         {addresses.length === 0 ? (
-          <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+          <div className="bg-surface-50 dark:bg-surface-900/50 rounded-lg p-4">
             <div className="flex items-start gap-3">
               <MapPinIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
+                <p className="text-sm text-surface-500 dark:text-surface-400">
                   No saved addresses yet. Save an address during checkout for faster ordering.
                 </p>
               </div>
             </div>
           </div>
         ) : (
-          <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+          <div className="bg-surface-50 dark:bg-surface-900/50 rounded-lg p-4">
+            <p className="text-sm text-surface-500 dark:text-surface-400 mb-2">
               {addresses.length} saved {addresses.length === 1 ? 'address' : 'addresses'}
             </p>
             <ul className="space-y-2">

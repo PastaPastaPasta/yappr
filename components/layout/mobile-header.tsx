@@ -19,9 +19,9 @@ export function MobileHeader() {
   }, [])
 
   return (
-    <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-900">
+    <div className="md:hidden flex items-center justify-between px-4 py-2 glass-effect border-b border-surface-200/50 dark:border-surface-800/50">
       <Link href="/" className="flex items-center gap-2">
-        <span className="text-xl font-bold text-gradient">Yappr</span>
+        <span className="font-display text-xl font-bold text-gradient">Yappr</span>
         <Image
           src="/pbde-light.png"
           alt="Powered by Dash Evolution"
@@ -50,22 +50,22 @@ export function MobileHeader() {
 
           <DropdownMenu.Portal>
             <DropdownMenu.Content
-              className="min-w-[180px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+              className="min-w-[180px] bg-white dark:bg-surface-900 rounded-2xl shadow-elevated-lg border border-surface-200 dark:border-surface-800 py-2 z-50"
               sideOffset={8}
               align="end"
             >
               <DropdownMenu.Item asChild>
                 <Link
                   href="/settings"
-                  className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
+                  className="px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none flex items-center gap-2"
                 >
                   <Cog6ToothIcon className="h-4 w-4" />
                   Settings
                 </Link>
               </DropdownMenu.Item>
-              <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />
+              <DropdownMenu.Separator className="h-px bg-surface-200 dark:bg-surface-800 my-1" />
               <DropdownMenu.Item
-                className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
+                className="px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none flex items-center gap-2"
                 onClick={logout}
               >
                 <ArrowRightOnRectangleIcon className="h-4 w-4" />
@@ -77,12 +77,12 @@ export function MobileHeader() {
       ) : isHydrated ? (
         <button
           onClick={openLoginModal}
-          className="text-sm font-medium text-yappr-500 hover:text-yappr-600"
+          className="text-sm font-semibold text-yappr-500 hover:text-yappr-600"
         >
           Sign In
         </button>
       ) : (
-        <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
+        <div className="h-8 w-8 rounded-full bg-surface-200 dark:bg-surface-800 animate-pulse" />
       )}
     </div>
   )

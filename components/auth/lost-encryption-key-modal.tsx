@@ -89,7 +89,7 @@ export function LostEncryptionKeyModal({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
@@ -100,7 +100,7 @@ export function LostEncryptionKeyModal({
                     <button
                       onClick={handleClose}
                       aria-label="Close dialog"
-                      className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                     >
                       <XMarkIcon className="h-5 w-5" />
                     </button>
@@ -116,13 +116,13 @@ export function LostEncryptionKeyModal({
 
                     {isLoading ? (
                       <div className="space-y-4">
-                        <div className="h-20 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse" />
-                        <div className="h-20 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse" />
+                        <div className="h-20 bg-surface-100 dark:bg-surface-800 rounded-lg animate-pulse" />
+                        <div className="h-20 bg-surface-100 dark:bg-surface-800 rounded-lg animate-pulse" />
                       </div>
                     ) : (
                       <div className="space-y-4">
                         {/* Option 1: Check secure storage */}
-                        <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                        <div className="p-4 border border-surface-200 dark:border-surface-700 rounded-lg">
                           <div className="flex gap-3">
                             <div className="p-2 bg-blue-50 dark:bg-blue-950 rounded-lg h-fit">
                               <DocumentTextIcon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -131,7 +131,7 @@ export function LostEncryptionKeyModal({
                               <h3 className="font-semibold text-gray-900 dark:text-white">
                                 Check Your Secure Storage
                               </h3>
-                              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                              <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                                 Your encryption key was displayed when you first set it up.
                                 Check your password manager, secure notes, or any place you might have saved it.
                               </p>
@@ -159,7 +159,7 @@ export function LostEncryptionKeyModal({
                                 <h3 className="font-semibold text-gray-900 dark:text-white">
                                   Reset Your Private Feed
                                 </h3>
-                                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                                   As a feed owner, you can reset your private feed with a new encryption key.
                                   This is a destructive action:
                                 </p>
@@ -193,11 +193,11 @@ export function LostEncryptionKeyModal({
                                 <h3 className="font-semibold text-gray-900 dark:text-white">
                                   Request New Access
                                 </h3>
-                                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                                   You follow {followedPrivateFeeds.length} private feed{followedPrivateFeeds.length !== 1 ? 's' : ''}.
                                   Without your key, you cannot decrypt their content.
                                 </p>
-                                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                                <p className="text-sm text-surface-500 dark:text-surface-400 mt-2">
                                   To regain access, you&apos;ll need to:
                                 </p>
                                 <ol className="text-sm text-amber-700 dark:text-amber-300 mt-1 space-y-1 list-decimal list-inside">
@@ -214,16 +214,16 @@ export function LostEncryptionKeyModal({
 
                         {/* Help text for users with neither scenario */}
                         {!hasPrivateFeed && followedPrivateFeeds.length === 0 && (
-                          <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                          <div className="p-4 border border-surface-200 dark:border-surface-700 rounded-lg">
                             <div className="flex gap-3">
-                              <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg h-fit">
-                                <ShieldCheckIcon className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                              <div className="p-2 bg-surface-100 dark:bg-surface-800 rounded-lg h-fit">
+                                <ShieldCheckIcon className="h-5 w-5 text-surface-500 dark:text-surface-400" />
                               </div>
                               <div className="flex-1">
                                 <h3 className="font-semibold text-gray-900 dark:text-white">
                                   No Recovery Needed
                                 </h3>
-                                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                                   You don&apos;t have a private feed enabled and aren&apos;t following any private feeds locally.
                                   You can add a new encryption key to your identity to start using private feed features.
                                 </p>
@@ -235,7 +235,7 @@ export function LostEncryptionKeyModal({
                     )}
 
                     {/* Footer */}
-                    <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="mt-6 pt-4 border-t border-surface-200 dark:border-surface-700">
                       <Button onClick={handleClose} variant="outline" className="w-full">
                         <LockClosedIcon className="h-4 w-4 mr-2" />
                         Close

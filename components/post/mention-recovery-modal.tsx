@@ -117,7 +117,7 @@ export function MentionRecoveryModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -131,7 +131,7 @@ export function MentionRecoveryModal() {
 
                     <button
                       onClick={handleClose}
-                      className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                       disabled={isRegistering}
                     >
                       <XMarkIcon className="h-5 w-5" />
@@ -141,7 +141,7 @@ export function MentionRecoveryModal() {
                     {!isRegistering && !error && (
                       <div className="space-y-4">
                         {/* Mention display */}
-                        <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-neutral-800 rounded-lg">
+                        <div className="flex items-center gap-2 p-3 bg-surface-50 dark:bg-neutral-800 rounded-lg">
                           <AtSymbolIcon className="h-5 w-5 text-yappr-500" />
                           {resolvedIdentityId ? (
                             <Link
@@ -159,7 +159,7 @@ export function MentionRecoveryModal() {
                         </div>
 
                         {/* Explanation */}
-                        <div className="text-gray-600 dark:text-gray-400 space-y-2">
+                        <div className="text-surface-500 dark:text-surface-400 space-y-2">
                           <p>
                             This mention wasn&apos;t properly registered when the post was
                             created. This can happen due to network issues.
@@ -214,7 +214,7 @@ export function MentionRecoveryModal() {
                         {/* Non-owner - can't register */}
                         {!isOwner && (
                           <div className="pt-2">
-                            <p className="text-sm text-gray-500 bg-gray-50 dark:bg-neutral-800 p-3 rounded-lg">
+                            <p className="text-sm text-gray-500 bg-surface-50 dark:bg-neutral-800 p-3 rounded-lg">
                               Only the post author can register this mention. They can
                               click the warning icon on their post to fix it.
                             </p>
@@ -230,7 +230,7 @@ export function MentionRecoveryModal() {
                     {isRegistering && (
                       <div className="py-8 text-center space-y-4">
                         <Spinner size="lg" className="mx-auto" />
-                        <p className="text-gray-600 dark:text-gray-400">
+                        <p className="text-surface-500 dark:text-surface-400">
                           Registering mention...
                         </p>
                         <p className="text-xs text-gray-500">

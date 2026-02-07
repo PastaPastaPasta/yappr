@@ -7,12 +7,12 @@ import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-50 dark:bg-surface-950">
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-8">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+            className="inline-flex items-center gap-2 text-surface-500 dark:text-surface-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
           >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to Yappr
@@ -22,12 +22,12 @@ export default function AboutPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <InformationCircleIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">About Yappr</h1>
+              <h1 className="text-3xl font-display font-bold">About Yappr</h1>
             </div>
             <p className="text-lg opacity-90">
               Decentralized social media on Dash Platform
@@ -38,7 +38,7 @@ export default function AboutPage() {
             {/* What is Yappr */}
             <section>
               <h2 className="text-xl font-semibold mb-3">What is Yappr?</h2>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed">
                 Yappr is a decentralized social media platform built on Dash Platform. Unlike traditional social
                 networks where a company owns and controls your data, Yappr stores everything on a blockchain.
                 You truly own your identity, your content, and your social connections. No company can ban you,
@@ -52,7 +52,7 @@ export default function AboutPage() {
                 <GlobeAltIcon className="h-5 w-5 text-gray-500" />
                 <h2 className="text-xl font-semibold">How It Works</h2>
               </div>
-              <div className="text-gray-600 dark:text-gray-400 leading-relaxed space-y-3">
+              <div className="text-surface-500 dark:text-surface-400 leading-relaxed space-y-3">
                 <p>
                   When you use Yappr, you&apos;re interacting directly with the Dash Platform blockchain:
                 </p>
@@ -96,12 +96,12 @@ export default function AboutPage() {
                   { title: 'Block & Mute', desc: 'Control what you see in your feed' },
                 ].map((feature, i) => {
                   const content = (
-                    <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                    <div className="bg-surface-50 dark:bg-surface-950 rounded-lg p-4">
                       <div className="flex items-center gap-2">
                         {feature.icon && <feature.icon className="h-4 w-4 text-yappr-500" />}
                         <h3 className="font-medium text-gray-900 dark:text-gray-100">{feature.title}</h3>
                       </div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{feature.desc}</p>
+                      <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{feature.desc}</p>
                     </div>
                   )
                   return feature.href ? (
@@ -121,7 +121,7 @@ export default function AboutPage() {
                 <ServerStackIcon className="h-5 w-5 text-gray-500" />
                 <h2 className="text-xl font-semibold">No Central Server</h2>
               </div>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed">
                 Yappr has no backend servers. This website is just a client application that runs entirely in your
                 browser. It connects directly to Dash Platform&apos;s decentralized network of nodes. If this website
                 went offline, your data would still exist on the blockchain, and other applications could access it.
@@ -134,7 +134,7 @@ export default function AboutPage() {
                 <CodeBracketIcon className="h-5 w-5 text-gray-500" />
                 <h2 className="text-xl font-semibold">Open Source</h2>
               </div>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed mb-4">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed mb-4">
                 Yappr is open source software. Anyone can view the code, verify what it does, suggest improvements,
                 or create their own version. Transparency builds trust.
               </p>
@@ -157,7 +157,7 @@ export default function AboutPage() {
                 <UserGroupIcon className="h-5 w-5 text-gray-500" />
                 <h2 className="text-xl font-semibold">Community Driven</h2>
               </div>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed">
                 Yappr is a community project. There&apos;s no company behind it, no investors to please, no ads to
                 sell. It exists because people believe in the idea of social media that users actually own.
                 Contributions, feedback, and ideas are always welcome.
@@ -170,7 +170,7 @@ export default function AboutPage() {
                 <CpuChipIcon className="h-5 w-5 text-gray-500" />
                 <h2 className="text-xl font-semibold">Technical Details</h2>
               </div>
-              <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4 space-y-3">
+              <div className="bg-surface-50 dark:bg-surface-950 rounded-lg p-4 space-y-3">
                 <div>
                   <p className="text-sm text-gray-500">Contract ID</p>
                   <p className="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{YAPPR_CONTRACT_ID}</p>
@@ -186,7 +186,7 @@ export default function AboutPage() {
                 <div className="pt-2">
                   <Link
                     href="/contract"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-surface-100 dark:bg-surface-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-surface-700 transition-colors text-sm font-medium"
                   >
                     <CodeBracketIcon className="h-4 w-4" />
                     View Full Data Contract
@@ -203,25 +203,25 @@ export default function AboutPage() {
                   href="https://dashplatform.readme.io"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-50 dark:bg-surface-950 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Dash Platform Docs</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Learn about the underlying technology</p>
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Learn about the underlying technology</p>
                 </a>
                 <a
                   href="https://www.dash.org"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-50 dark:bg-surface-950 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Dash.org</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">The Dash cryptocurrency project</p>
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">The Dash cryptocurrency project</p>
                 </a>
               </div>
             </section>
 
             {/* Last Updated */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-surface-200 dark:border-surface-800">
               <p className="text-sm text-gray-500">
                 Last updated: January 2025
               </p>

@@ -183,10 +183,10 @@ function NotificationsPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-      <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+      <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
-            <h1 className="text-xl font-bold">Notifications</h1>
+            <h1 className="text-xl font-display font-bold">Notifications</h1>
             <div className="flex items-center gap-2">
               {unreadCount > 0 && (
                 <Button
@@ -203,7 +203,7 @@ function NotificationsPage() {
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
-                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-full bg-surface-100 dark:bg-surface-800 hover:bg-gray-200 dark:hover:bg-surface-700 transition-colors"
                       data-testid="notification-filter-dropdown"
                     >
                       <FunnelIcon className="h-4 w-4" />
@@ -216,7 +216,7 @@ function NotificationsPage() {
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content
-                      className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
+                      className="min-w-[200px] bg-white dark:bg-surface-900 rounded-xl shadow-lg border border-surface-200 dark:border-surface-700 py-2 z-50"
                       sideOffset={8}
                       align="end"
                     >
@@ -230,7 +230,7 @@ function NotificationsPage() {
                             className={`flex items-center justify-between px-4 py-3 text-sm cursor-pointer outline-none transition-colors ${
                               filter === tab.key
                                 ? 'bg-yappr-50 dark:bg-yappr-950/30 text-yappr-600 dark:text-yappr-400'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                                : 'hover:bg-surface-100 dark:hover:bg-surface-800'
                             }`}
                           >
                             <span className="flex items-center gap-3">
@@ -251,7 +251,7 @@ function NotificationsPage() {
               </div>
               <Link
                 href="/settings?section=notifications"
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full"
               >
                 <Cog6ToothIcon className="h-5 w-5" />
               </Link>
@@ -259,7 +259,7 @@ function NotificationsPage() {
           </div>
 
           {/* Desktop tabs - hidden on mobile */}
-          <div className="hidden md:flex border-b border-gray-200 dark:border-gray-800">
+          <div className="hidden md:flex border-b border-surface-200 dark:border-surface-800">
             {FILTER_TABS.map((tab) => {
               const tabUnreadCount = getUnreadCountForTab(tab.key)
               return (
@@ -316,7 +316,7 @@ function NotificationsPage() {
                     markAsRead(notification.id)
                   }
                 }}
-                className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
+                className={`p-4 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors cursor-pointer ${
                   !notification.read ? 'bg-yappr-50/20 dark:bg-yappr-950/10' : ''
                 }`}
               >
@@ -330,7 +330,7 @@ function NotificationsPage() {
                       <Link
                         href={`/user?id=${notification.from?.id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0"
+                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-surface-900 flex-shrink-0"
                       >
                         <UserAvatar userId={notification.from?.id || ''} size="md" alt="User avatar" />
                       </Link>
@@ -380,7 +380,7 @@ function NotificationsPage() {
                             <Link
                               href={postUrl}
                               onClick={(e) => e.stopPropagation()}
-                              className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
+                              className="mt-2 p-3 bg-surface-100 dark:bg-surface-800 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-surface-800 transition-colors line-clamp-3"
                             >
                               {post.content}
                             </Link>

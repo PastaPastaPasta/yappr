@@ -182,8 +182,8 @@ export function ThreadPostEditor({
           isPosted
             ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 cursor-default'
             : isActive
-            ? 'border-yappr-500 bg-white dark:bg-neutral-900 shadow-sm cursor-pointer'
-            : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950 hover:border-gray-300 dark:hover:border-gray-700 cursor-pointer'
+            ? 'border-yappr-500 bg-white dark:bg-surface-900 shadow-sm cursor-pointer'
+            : 'border-surface-200 dark:border-surface-800 bg-surface-50 dark:bg-surface-950 hover:border-surface-200 dark:hover:border-gray-700 cursor-pointer'
         }`}
       >
         {/* Post number/status indicator - only show for threads (multiple posts) or posted status */}
@@ -211,7 +211,7 @@ export function ThreadPostEditor({
 
           {/* Formatting toolbar - only show when active and not posted */}
           {isActive && !showPreview && !isPosted && (
-            <div className="flex items-center gap-1 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex items-center gap-1 mb-3 pb-2 border-b border-surface-100 dark:border-surface-800">
               <FormatButton
                 onClick={() => handleInsertFormat('**')}
                 title="Bold (Ctrl+B)"
@@ -230,7 +230,7 @@ export function ThreadPostEditor({
               >
                 <span className="font-mono text-xs">&lt;/&gt;</span>
               </FormatButton>
-              <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
+              <div className="w-px h-4 bg-surface-200 dark:bg-surface-700 mx-1" />
               <FormatButton
                 onClick={() => handleInsertFormat('@', '')}
                 title="Mention someone"
@@ -261,13 +261,13 @@ export function ThreadPostEditor({
           {showPreview || isPosted ? (
             <div className={`min-h-[60px] whitespace-pre-wrap break-words ${
               isPosted
-                ? 'text-gray-600 dark:text-gray-400'
+                ? 'text-surface-500 dark:text-surface-400'
                 : 'text-gray-900 dark:text-gray-100'
             }`}>
               {post.content ? (
                 <MarkdownContent content={post.content} />
               ) : (
-                <span className="text-gray-400 dark:text-gray-600 italic">
+                <span className="text-surface-400 dark:text-surface-500 italic">
                   Nothing to preview
                 </span>
               )}
@@ -294,7 +294,7 @@ export function ThreadPostEditor({
                     ? "What's on your mind?"
                     : 'Continue your thread...'
                 }
-                className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-surface-400 dark:placeholder:text-surface-500"
                 style={{ height: 'auto' }}
               />
               <MentionAutocomplete
@@ -324,11 +324,11 @@ export function ThreadPostEditor({
 
           {/* Footer with formatting hints and character count - hide for posted */}
           {!isPosted && (
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+            <div className="flex items-center justify-between mt-3 pt-2 border-t border-surface-100 dark:border-surface-800">
               <div className="flex items-center gap-2 text-xs text-gray-400">
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
+                <code className="px-1 py-0.5 bg-surface-100 dark:bg-surface-800 rounded">**bold**</code>
+                <code className="px-1 py-0.5 bg-surface-100 dark:bg-surface-800 rounded">*italic*</code>
+                <code className="px-1 py-0.5 bg-surface-100 dark:bg-surface-800 rounded">`code`</code>
               </div>
               <div className="flex items-center gap-2">
                 {extraCharacters > 0 && (

@@ -37,15 +37,15 @@ function FlowBox({
   note?: string
 }) {
   return (
-    <div className="my-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 font-semibold text-gray-900 dark:text-gray-100">
+    <div className="my-4 border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden">
+      <div className="bg-surface-100 dark:bg-surface-800 px-4 py-2 font-semibold text-gray-900 dark:text-gray-100">
         {title}
       </div>
       <div className="p-4">
         <ol className="space-y-2">
           {steps.map((step, i) => (
             <li key={i} className="flex gap-3">
-              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-sm flex items-center justify-center">
+              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 text-sm flex items-center justify-center">
                 {i + 1}
               </span>
               <div className="flex-1">
@@ -71,7 +71,7 @@ function FlowBox({
           ))}
         </ol>
         {note && (
-          <p className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-500">
+          <p className="mt-4 pt-3 border-t border-surface-200 dark:border-surface-700 text-sm text-gray-500 dark:text-gray-500">
             {note}
           </p>
         )}
@@ -98,7 +98,7 @@ function Section({
         {Icon && <Icon className="h-5 w-5 text-gray-500" />}
         <h2 className="text-xl font-semibold">{title}</h2>
       </div>
-      <div className="text-gray-600 dark:text-gray-400 leading-relaxed space-y-4">
+      <div className="text-surface-500 dark:text-surface-400 leading-relaxed space-y-4">
         {children}
       </div>
     </section>
@@ -116,13 +116,13 @@ function SubSection({ title, children }: { title: string; children: React.ReactN
 
 export default function PrivateFeedsPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-50 dark:bg-surface-950">
       <div className="max-w-4xl mx-auto px-4 py-8">
         {/* Back link */}
         <div className="mb-8">
           <Link
             href="/about"
-            className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+            className="inline-flex items-center gap-2 text-surface-500 dark:text-surface-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
           >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to About
@@ -132,13 +132,13 @@ export default function PrivateFeedsPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-lg overflow-hidden"
         >
           {/* Header */}
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <LockClosedIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">How Private Feeds Work</h1>
+              <h1 className="text-3xl font-display font-bold">How Private Feeds Work</h1>
             </div>
             <p className="text-lg opacity-90">
               End-to-end encrypted content sharing with efficient revocation on a public blockchain
@@ -237,32 +237,32 @@ export default function PrivateFeedsPage() {
               <div className="my-6 overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="bg-gray-100 dark:bg-gray-800">
-                      <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Approach</th>
-                      <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Post Cost</th>
-                      <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Revoke Cost</th>
+                    <tr className="bg-surface-100 dark:bg-surface-800">
+                      <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Approach</th>
+                      <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Post Cost</th>
+                      <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Revoke Cost</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700">Encrypt per-follower</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-red-600 dark:text-red-400">O(N)</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">O(1)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700">Encrypt per-follower</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono text-red-600 dark:text-red-400">O(N)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">O(1)</td>
                     </tr>
-                    <tr className="bg-gray-50 dark:bg-gray-900">
-                      <td className="p-3 border border-gray-200 dark:border-gray-700">Share one key</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">O(1)</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-red-600 dark:text-red-400">O(N) or impossible</td>
+                    <tr className="bg-surface-50 dark:bg-surface-900">
+                      <td className="p-3 border border-surface-200 dark:border-surface-700">Share one key</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">O(1)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono text-red-600 dark:text-red-400">O(N) or impossible</td>
                     </tr>
                     <tr>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700">Re-encrypt on revoke</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">O(1)</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-red-600 dark:text-red-400">O(posts × N)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700">Re-encrypt on revoke</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">O(1)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono text-red-600 dark:text-red-400">O(posts × N)</td>
                     </tr>
                     <tr className="bg-green-50 dark:bg-green-950/30">
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-semibold text-green-700 dark:text-green-300">What we need</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono font-semibold text-green-700 dark:text-green-300">O(1)</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono font-semibold text-green-700 dark:text-green-300">O(log N)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-semibold text-green-700 dark:text-green-300">What we need</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono font-semibold text-green-700 dark:text-green-300">O(1)</td>
+                      <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono font-semibold text-green-700 dark:text-green-300">O(log N)</td>
                     </tr>
                   </tbody>
                 </table>
@@ -321,7 +321,7 @@ export default function PrivateFeedsPage() {
               </p>
 
               {/* Tree Diagram - SVG-based for proper rendering */}
-              <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+              <div className="my-6 p-6 bg-surface-50 dark:bg-surface-950 rounded-xl border border-surface-200 dark:border-surface-800">
                 <svg viewBox="0 0 600 320" className="w-full max-w-2xl mx-auto" style={{ minHeight: '280px' }}>
                   {/* Connection lines */}
                   <g stroke="currentColor" strokeWidth="2" fill="none" className="text-gray-300 dark:text-gray-600">
@@ -409,7 +409,7 @@ export default function PrivateFeedsPage() {
                   </g>
                   <text x="540" y="315" textAnchor="middle" className="fill-orange-600 dark:fill-orange-400 text-xs font-medium">Bob</text>
                 </svg>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 text-center">Binary key tree structure with 1,024 leaf slots</p>
+                <p className="text-sm text-surface-500 dark:text-surface-400 mt-2 text-center">Binary key tree structure with 1,024 leaf slots</p>
               </div>
 
               <p>
@@ -418,7 +418,7 @@ export default function PrivateFeedsPage() {
               </p>
 
               {/* Path Diagram */}
-              <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+              <div className="my-6 p-6 bg-surface-50 dark:bg-surface-950 rounded-xl border border-surface-200 dark:border-surface-800">
                 <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-5">Alice knows these keys (slot 1):</p>
                 <div className="relative ml-4">
                   {/* Vertical connecting line */}
@@ -430,7 +430,7 @@ export default function PrivateFeedsPage() {
                       <div className="relative z-10 px-4 py-2 bg-yappr-500 text-white rounded-lg text-sm font-semibold shadow-sm min-w-[105px] text-center">
                         Root
                       </div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                      <span className="text-sm text-surface-500 dark:text-surface-400 flex items-center gap-2">
                         <span className="text-gray-400">&larr;</span>
                         The master key that unlocks content
                       </span>
@@ -441,7 +441,7 @@ export default function PrivateFeedsPage() {
                       <div className="relative z-10 px-4 py-2 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-lg text-sm font-medium min-w-[85px] text-center">
                         Node A
                       </div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                      <span className="text-sm text-surface-500 dark:text-surface-400 flex items-center gap-2">
                         <span className="text-gray-400">&larr;</span>
                         Intermediate key on Alice&apos;s path
                       </span>
@@ -449,14 +449,14 @@ export default function PrivateFeedsPage() {
 
                     {/* Node C */}
                     <div className="flex items-center gap-4 relative pl-8">
-                      <div className="relative z-10 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-medium min-w-[85px] text-center">
+                      <div className="relative z-10 px-4 py-2 bg-surface-200 dark:bg-surface-700 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-medium min-w-[85px] text-center">
                         Node C
                       </div>
                     </div>
 
                     {/* Ellipsis */}
                     <div className="flex items-center gap-4 relative pl-12">
-                      <div className="relative z-10 px-4 py-1 text-gray-400 dark:text-gray-500 text-lg font-bold">
+                      <div className="relative z-10 px-4 py-1 text-surface-400 dark:text-surface-500 text-lg font-bold">
                         ...
                       </div>
                     </div>
@@ -466,16 +466,16 @@ export default function PrivateFeedsPage() {
                       <div className="relative z-10 px-4 py-2 bg-green-500 dark:bg-green-600 text-white rounded-lg text-sm font-semibold min-w-[85px] text-center shadow-sm">
                         Slot 1
                       </div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                      <span className="text-sm text-surface-500 dark:text-surface-400 flex items-center gap-2">
                         <span className="text-gray-400">&larr;</span>
                         Alice&apos;s unique leaf key
                       </span>
                     </div>
                   </div>
                 </div>
-                <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="mt-6 pt-4 border-t border-surface-200 dark:border-surface-700">
                   <p className="text-sm text-red-600 dark:text-red-400">
-                    <strong>Alice does NOT know:</strong> <span className="text-gray-600 dark:text-gray-400">Node B, Node D, Node E, etc. (these are on other followers&apos; paths)</span>
+                    <strong>Alice does NOT know:</strong> <span className="text-surface-500 dark:text-surface-400">Node B, Node D, Node E, etc. (these are on other followers&apos; paths)</span>
                   </p>
                 </div>
               </div>
@@ -499,45 +499,45 @@ export default function PrivateFeedsPage() {
               </p>
 
               {/* Hash Chain Diagram */}
-              <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-center text-gray-500 dark:text-gray-400 mb-6">Hash Chain</h4>
+              <div className="my-6 p-6 bg-surface-50 dark:bg-surface-950 rounded-xl border border-surface-200 dark:border-surface-800">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-center text-surface-500 dark:text-surface-400 mb-6">Hash Chain</h4>
                 <div className="flex flex-col items-center">
                   {/* CEK[2000] */}
                   <div className="flex items-center gap-4">
-                    <div className="px-4 py-2 bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg font-mono text-sm">
+                    <div className="px-4 py-2 bg-surface-200 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded-lg font-mono text-sm">
                       CEK[2000]
                     </div>
-                    <span className="text-xs text-gray-400 dark:text-gray-500">Pre-generated at setup</span>
+                    <span className="text-xs text-surface-400 dark:text-surface-500">Pre-generated at setup</span>
                   </div>
 
                   {/* Arrow with SHA256 */}
                   <div className="flex flex-col items-center my-2">
                     <div className="w-0.5 h-3 bg-gray-300 dark:bg-gray-600" />
-                    <div className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs text-gray-500 dark:text-gray-400 font-mono">SHA256</div>
-                    <div className="text-gray-400 dark:text-gray-500 text-lg leading-none">↓</div>
+                    <div className="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs text-surface-500 dark:text-surface-400 font-mono">SHA256</div>
+                    <div className="text-surface-400 dark:text-surface-500 text-lg leading-none">↓</div>
                   </div>
 
                   {/* CEK[1999] */}
                   <div className="flex items-center gap-4">
-                    <div className="px-4 py-2 bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg font-mono text-sm">
+                    <div className="px-4 py-2 bg-surface-200 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded-lg font-mono text-sm">
                       CEK[1999]
                     </div>
-                    <span className="text-xs text-gray-400 dark:text-gray-500">= SHA256(CEK[2000])</span>
+                    <span className="text-xs text-surface-400 dark:text-surface-500">= SHA256(CEK[2000])</span>
                   </div>
 
                   {/* Arrow with SHA256 */}
                   <div className="flex flex-col items-center my-2">
                     <div className="w-0.5 h-3 bg-gray-300 dark:bg-gray-600" />
-                    <div className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs text-gray-500 dark:text-gray-400 font-mono">SHA256</div>
-                    <div className="text-gray-400 dark:text-gray-500 text-lg leading-none">↓</div>
+                    <div className="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs text-surface-500 dark:text-surface-400 font-mono">SHA256</div>
+                    <div className="text-surface-400 dark:text-surface-500 text-lg leading-none">↓</div>
                   </div>
 
                   {/* Dots */}
-                  <div className="text-gray-400 dark:text-gray-500 text-2xl tracking-widest my-1">⋮</div>
+                  <div className="text-surface-400 dark:text-surface-500 text-2xl tracking-widest my-1">⋮</div>
 
                   {/* Arrow */}
                   <div className="flex flex-col items-center my-2">
-                    <div className="text-gray-400 dark:text-gray-500 text-lg leading-none">↓</div>
+                    <div className="text-surface-400 dark:text-surface-500 text-lg leading-none">↓</div>
                   </div>
 
                   {/* CEK[2] */}
@@ -545,14 +545,14 @@ export default function PrivateFeedsPage() {
                     <div className="px-4 py-2 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded-lg font-mono text-sm font-medium">
                       CEK[2]
                     </div>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">After first revocation</span>
+                    <span className="text-xs text-surface-500 dark:text-surface-400">After first revocation</span>
                   </div>
 
                   {/* Arrow with SHA256 */}
                   <div className="flex flex-col items-center my-2">
                     <div className="w-0.5 h-3 bg-gray-300 dark:bg-gray-600" />
-                    <div className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs text-gray-500 dark:text-gray-400 font-mono">SHA256</div>
-                    <div className="text-gray-400 dark:text-gray-500 text-lg leading-none">↓</div>
+                    <div className="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs text-surface-500 dark:text-surface-400 font-mono">SHA256</div>
+                    <div className="text-surface-400 dark:text-surface-500 text-lg leading-none">↓</div>
                   </div>
 
                   {/* CEK[1] - highlighted */}
@@ -564,8 +564,8 @@ export default function PrivateFeedsPage() {
                   </div>
                 </div>
 
-                <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                <div className="mt-6 pt-4 border-t border-surface-200 dark:border-surface-700 space-y-3">
+                  <p className="text-sm text-surface-500 dark:text-surface-400">
                     <strong className="text-gray-700 dark:text-gray-300">Epoch numbers increase over time:</strong> 1 → 2 → 3 → ... (higher = newer content)
                   </p>
                   <div className="flex flex-col sm:flex-row gap-3 text-sm">
@@ -630,10 +630,10 @@ export default function PrivateFeedsPage() {
               {/* Revocation Before/After Diagram */}
               <div className="my-6 grid md:grid-cols-2 gap-4">
                 {/* Before */}
-                <div className="p-5 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+                <div className="p-5 bg-surface-50 dark:bg-surface-950 rounded-xl border border-surface-200 dark:border-surface-800">
                   <div className="text-center mb-4">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Before Revocation</h4>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">(Epoch 1)</p>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Before Revocation</h4>
+                    <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">(Epoch 1)</p>
                   </div>
                   <svg viewBox="0 0 280 180" className="w-full" style={{ maxHeight: '180px' }}>
                     {/* Lines */}
@@ -770,8 +770,8 @@ export default function PrivateFeedsPage() {
               </SubSection>
 
               {/* Rekey Packets */}
-              <div className="my-6 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 font-semibold text-sm">
+              <div className="my-6 border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden">
+                <div className="bg-surface-100 dark:bg-surface-800 px-4 py-2 font-semibold text-sm">
                   Rekey packets posted to blockchain:
                 </div>
                 <div className="p-4 space-y-3">
@@ -790,7 +790,7 @@ export default function PrivateFeedsPage() {
                     },
                     {
                       packet: 3,
-                      content: <><code className="text-xs bg-green-100 dark:bg-green-900 px-1 rounded">new_Root_v2</code> encrypted under <code className="text-xs bg-gray-200 dark:bg-gray-700 px-1 rounded">old_Node3_v1</code></>,
+                      content: <><code className="text-xs bg-green-100 dark:bg-green-900 px-1 rounded">new_Root_v2</code> encrypted under <code className="text-xs bg-surface-200 dark:bg-surface-700 px-1 rounded">old_Node3_v1</code></>,
                       who: 'Carol',
                       why: 'She knows Node3, Alice doesn\'t',
                     },
@@ -801,8 +801,8 @@ export default function PrivateFeedsPage() {
                       why: null,
                     },
                   ].map((item) => (
-                    <div key={item.packet} className="flex gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-sm font-medium">
+                    <div key={item.packet} className="flex gap-3 p-3 bg-surface-50 dark:bg-surface-900 rounded-lg">
+                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-surface-200 dark:bg-surface-700 flex items-center justify-center text-sm font-medium">
                         {item.packet}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -815,7 +815,7 @@ export default function PrivateFeedsPage() {
                     </div>
                   ))}
                 </div>
-                <div className="px-4 py-3 bg-red-50 dark:bg-red-950/30 border-t border-gray-200 dark:border-gray-700">
+                <div className="px-4 py-3 bg-red-50 dark:bg-red-950/30 border-t border-surface-200 dark:border-surface-700">
                   <p className="text-sm text-red-700 dark:text-red-300">
                     <strong>Alice can read these packets, but can&apos;t decrypt ANY of them.</strong>
                     <span className="text-red-600 dark:text-red-400"> She doesn&apos;t have Bob&apos;s leaf key, Node3, or the new versions.</span>
@@ -941,12 +941,12 @@ export default function PrivateFeedsPage() {
                   </ul>
                 </div>
 
-                <div className="bg-gray-100 dark:bg-gray-800/50 rounded-lg p-4">
+                <div className="bg-surface-100 dark:bg-surface-800/50 rounded-lg p-4">
                   <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                     <XCircleIcon className="h-5 w-5" />
                     Not Protected
                   </h4>
-                  <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                  <ul className="space-y-2 text-sm text-surface-500 dark:text-surface-400">
                     <li className="flex items-start gap-2">
                       <span className="text-gray-500 mt-0.5">✗</span>
                       Approved followers sharing content (screenshots, copy-paste)
@@ -986,35 +986,35 @@ export default function PrivateFeedsPage() {
                   Four document types power the private feed system:
                 </p>
                 <ul className="space-y-3 mt-4">
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-50 dark:bg-surface-950 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedState</strong>
                     <p className="text-sm mt-1">
                       Created once when enabling private feed. Contains the encrypted seed (for owner recovery),
                       tree capacity, and initial state. ~300 bytes.
                     </p>
                   </li>
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-50 dark:bg-surface-950 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedGrant</strong>
                     <p className="text-sm mt-1">
                       Created for each approved follower. Contains their leaf slot assignment and an encrypted
                       bundle of path keys + current CEK. ~500 bytes per follower.
                     </p>
                   </li>
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-50 dark:bg-surface-950 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedRekey</strong>
                     <p className="text-sm mt-1">
                       Created on each revocation. Contains rekey packets (new keys encrypted for sibling subtrees),
                       the new epoch number, and a state snapshot for recovery. ~1-2 KB.
                     </p>
                   </li>
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-50 dark:bg-surface-950 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">Post</strong>
                     <span className="text-xs ml-2 text-gray-500">(extended)</span>
                     <p className="text-sm mt-1">
-                      Private posts add fields to the standard post document: <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">encryptedContent</code>,{' '}
-                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">epoch</code>,{' '}
-                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">nonce</code>, and optional public{' '}
-                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">teaser</code>.
+                      Private posts add fields to the standard post document: <code className="text-xs bg-surface-200 dark:bg-surface-800 px-1 rounded">encryptedContent</code>,{' '}
+                      <code className="text-xs bg-surface-200 dark:bg-surface-800 px-1 rounded">epoch</code>,{' '}
+                      <code className="text-xs bg-surface-200 dark:bg-surface-800 px-1 rounded">nonce</code>, and optional public{' '}
+                      <code className="text-xs bg-surface-200 dark:bg-surface-800 px-1 rounded">teaser</code>.
                     </p>
                   </li>
                 </ul>
@@ -1024,36 +1024,36 @@ export default function PrivateFeedsPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
                     <thead>
-                      <tr className="bg-gray-100 dark:bg-gray-800">
-                        <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Purpose</th>
-                        <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Algorithm</th>
+                      <tr className="bg-surface-100 dark:bg-surface-800">
+                        <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Purpose</th>
+                        <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Algorithm</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">Content encryption</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 align-top">Content encryption</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">
                           <div className="font-mono text-sm">XChaCha20-Poly1305</div>
                           <div className="text-xs text-gray-500 mt-1">256-bit key, 192-bit nonce</div>
                         </td>
                       </tr>
-                      <tr className="bg-gray-50 dark:bg-gray-900">
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">Key derivation</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">
+                      <tr className="bg-surface-50 dark:bg-surface-900">
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 align-top">Key derivation</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">
                           <div className="font-mono text-sm">HKDF-SHA256</div>
                           <div className="text-xs text-gray-500 mt-1">Context strings prevent misuse</div>
                         </td>
                       </tr>
                       <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">Epoch chain</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 align-top">Epoch chain</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">
                           <div className="font-mono text-sm">SHA256 hash chain</div>
                           <div className="text-xs text-gray-500 mt-1">2000 epochs pre-generated</div>
                         </td>
                       </tr>
-                      <tr className="bg-gray-50 dark:bg-gray-900">
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">Key exchange</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">
+                      <tr className="bg-surface-50 dark:bg-surface-900">
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 align-top">Key exchange</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">
                           <div className="font-mono text-sm">ECIES (ECDH + XChaCha20-Poly1305)</div>
                           <div className="text-xs text-gray-500 mt-1">secp256k1 curve (same as Dash)</div>
                         </td>
@@ -1067,31 +1067,31 @@ export default function PrivateFeedsPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
                     <thead>
-                      <tr className="bg-gray-100 dark:bg-gray-800">
-                        <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Limit</th>
-                        <th className="text-left p-3 font-semibold border border-gray-200 dark:border-gray-700">Value</th>
+                      <tr className="bg-surface-100 dark:bg-surface-800">
+                        <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Limit</th>
+                        <th className="text-left p-3 font-semibold border border-surface-200 dark:border-surface-700">Value</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Maximum private followers</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">1,024</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">Maximum private followers</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">1,024</td>
                       </tr>
-                      <tr className="bg-gray-50 dark:bg-gray-900">
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Maximum epochs (revocations)</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">2,000</td>
-                      </tr>
-                      <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Rekey packets per revocation</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~20</td>
-                      </tr>
-                      <tr className="bg-gray-50 dark:bg-gray-900">
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Grant document size</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~500 bytes</td>
+                      <tr className="bg-surface-50 dark:bg-surface-900">
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">Maximum epochs (revocations)</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">2,000</td>
                       </tr>
                       <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Rekey document size</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~1-2 KB</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">Rekey packets per revocation</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">~20</td>
+                      </tr>
+                      <tr className="bg-surface-50 dark:bg-surface-900">
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">Grant document size</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">~500 bytes</td>
+                      </tr>
+                      <tr>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700">Rekey document size</td>
+                        <td className="p-3 border border-surface-200 dark:border-surface-700 font-mono">~1-2 KB</td>
                       </tr>
                     </tbody>
                   </table>
@@ -1100,17 +1100,17 @@ export default function PrivateFeedsPage() {
             </Section>
 
             {/* Footer / Resources */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-surface-200 dark:border-surface-800">
               <h2 className="text-xl font-semibold mb-4">Resources</h2>
               <div className="grid md:grid-cols-2 gap-4">
                 <a
                   href="https://github.com/pastapastapasta/yappr/blob/master/docs/YAPPR_PRIVATE_FEED_SPEC_v1.md"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-50 dark:bg-surface-950 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Full Technical Specification</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                     Complete protocol details, data structures, and algorithms
                   </p>
                 </a>
@@ -1118,10 +1118,10 @@ export default function PrivateFeedsPage() {
                   href="https://github.com/pastapastapasta/yappr"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-50 dark:bg-surface-950 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Yappr on GitHub</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                     Source code, issues, and contributions
                   </p>
                 </a>
@@ -1129,10 +1129,10 @@ export default function PrivateFeedsPage() {
                   href="https://dashplatform.readme.io"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-50 dark:bg-surface-950 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Dash Platform Documentation</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                     Learn about the underlying blockchain technology
                   </p>
                 </a>

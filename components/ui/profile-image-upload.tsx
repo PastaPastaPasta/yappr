@@ -137,11 +137,11 @@ export function ProfileImageUpload({
           </label>
         )}
         <div
-          className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center cursor-default`}
+          className={`relative ${aspectClass} bg-surface-100 dark:bg-surface-800 border-2 border-dashed border-surface-200 dark:border-surface-600 flex items-center justify-center cursor-default`}
         >
           <div className="text-center p-4">
             <Cog6ToothIcon className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            <p className="text-sm text-surface-500 dark:text-surface-400 mb-2">
               Connect a storage provider to upload images
             </p>
             <Link href="/settings">
@@ -183,7 +183,7 @@ export function ProfileImageUpload({
             handleClick()
           }
         }}
-        className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-yappr-500 dark:hover:border-yappr-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
+        className={`relative ${aspectClass} bg-surface-100 dark:bg-surface-800 border-2 border-dashed border-surface-200 dark:border-surface-600 hover:border-yappr-500 dark:hover:border-yappr-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
           isUploading ? 'cursor-wait' : 'cursor-pointer'
         }`}
       >
@@ -205,7 +205,7 @@ export function ProfileImageUpload({
               // IPFS URL - use IpfsImage for gateway fallback
               <>
                 {imageLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+                  <div className="absolute inset-0 flex items-center justify-center bg-surface-100 dark:bg-surface-800">
                     <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
                   </div>
                 )}
@@ -258,7 +258,7 @@ export function ProfileImageUpload({
         {!previewUrl && !currentUrl && !isUploading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <PhotoIcon className="h-10 w-10 text-gray-400 mb-2" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">
+            <span className="text-sm text-surface-500 dark:text-surface-400">
               {placeholder}
             </span>
             <span className="text-xs text-gray-400 mt-1">

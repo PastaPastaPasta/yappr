@@ -525,7 +525,7 @@ function CheckoutPage() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800 flex items-center justify-center">
             <Spinner size="md" />
           </main>
         </div>
@@ -539,9 +539,9 @@ function CheckoutPage() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-8">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800 flex flex-col items-center justify-center p-8">
             <CheckCircleIcon className="h-20 w-20 text-green-500 mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Order Placed!</h1>
+            <h1 className="text-2xl font-display font-bold mb-2">Order Placed!</h1>
             <p className="text-gray-500 text-center max-w-sm mb-6">
               Your order has been sent to the seller. They will process it and provide updates.
             </p>
@@ -565,8 +565,8 @@ function CheckoutPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => step === 'address' ? router.back() : setStep(
@@ -574,11 +574,11 @@ function CheckoutPage() {
                   step === 'policies' ? 'shipping' :
                   step === 'payment' ? 'policies' : 'payment'
                 )}
-                className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold">Checkout</h1>
+              <h1 className="text-xl font-display font-bold">Checkout</h1>
             </div>
 
             {/* Progress Steps */}
@@ -597,7 +597,7 @@ function CheckoutPage() {
                           ? 'bg-yappr-500 text-white'
                           : isComplete
                             ? 'bg-green-500 text-white'
-                            : 'bg-gray-200 dark:bg-gray-800 text-gray-500'
+                            : 'bg-surface-200 dark:bg-surface-800 text-gray-500'
                       }`}
                     >
                       {i + 1}
@@ -605,7 +605,7 @@ function CheckoutPage() {
                     {i < 4 && (
                       <div
                         className={`flex-1 h-0.5 mx-2 ${
-                          isComplete ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800'
+                          isComplete ? 'bg-green-500' : 'bg-surface-200 dark:bg-surface-800'
                         }`}
                       />
                     )}
@@ -641,7 +641,7 @@ function CheckoutPage() {
             <div className="p-4">
               <div className="mb-4">
                 <h2 className="text-lg font-medium">Shipping to:</h2>
-                <p className="text-gray-600 dark:text-gray-400 mt-1">
+                <p className="text-surface-500 dark:text-surface-400 mt-1">
                   {shippingAddress.name}<br />
                   {shippingAddress.street}<br />
                   {shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}<br />

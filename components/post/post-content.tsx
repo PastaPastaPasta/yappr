@@ -378,7 +378,7 @@ export function PostContent({
             return (
               <code
                 key={index}
-                className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-sm font-mono text-pink-600 dark:text-pink-400"
+                className="px-1.5 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-sm font-mono text-pink-600 dark:text-pink-400"
               >
                 {part.value}
               </code>

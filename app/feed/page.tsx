@@ -966,24 +966,24 @@ function FeedPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200/60 dark:border-surface-800/40">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 glass-effect ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="px-4 py-3 flex items-center justify-between">
-            <h1 className="text-xl font-bold">Home</h1>
+            <h1 className="text-xl font-bold font-display">Home</h1>
             <button
               onClick={() => {
                 resetEnrichment()
                 loadPosts(true).catch(err => console.error('Failed to load posts:', err))
               }}
               disabled={postsState.loading}
-              className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+              className="p-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
             >
-              <ArrowPathIcon className={`h-5 w-5 text-gray-500 ${postsState.loading ? 'animate-spin' : ''}`} />
+              <ArrowPathIcon className={`h-5 w-5 text-surface-500 ${postsState.loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
 
           {/* Feed Tabs */}
-          <div className="flex border-b border-gray-200 dark:border-gray-800">
+          <div className="flex border-b border-surface-200/60 dark:border-surface-800/40">
             <button
               onClick={() => {
                 setActiveTab('forYou')
@@ -993,12 +993,12 @@ function FeedPage() {
                 'flex-1 py-4 text-center font-medium transition-colors relative',
                 activeTab === 'forYou'
                   ? 'text-gray-900 dark:text-white'
-                  : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  : 'text-surface-400 hover:text-surface-600 dark:hover:text-surface-300'
               )}
             >
               For You
               {activeTab === 'forYou' && (
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-[3px] bg-gradient-yappr rounded-full" />
               )}
             </button>
             <button
@@ -1010,30 +1010,30 @@ function FeedPage() {
                 'flex-1 py-4 text-center font-medium transition-colors relative',
                 activeTab === 'following'
                   ? 'text-gray-900 dark:text-white'
-                  : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  : 'text-surface-400 hover:text-surface-600 dark:hover:text-surface-300'
               )}
             >
               Following
               {activeTab === 'following' && (
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-[3px] bg-gradient-yappr rounded-full" />
               )}
             </button>
           </div>
         </header>
 
-        <div className="border-b border-gray-200 dark:border-gray-800 px-4 py-2 md:p-4">
+        <div className="border-b border-surface-200/60 dark:border-surface-800/40 px-4 py-2 md:p-4">
           {user ? (
             <div className="flex gap-3">
-              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-white dark:bg-surface-950 flex-shrink-0">
                 {isHydrated ? (
                   <UserAvatar userId={user.identityId} size="lg" alt="Your avatar" />
                 ) : (
-                  <div className="w-full h-full bg-gray-300 dark:bg-gray-700 animate-pulse rounded-full" />
+                  <div className="w-full h-full bg-surface-300 dark:bg-surface-700 animate-pulse rounded-full" />
                 )}
               </div>
               <button
                 onClick={() => setComposeOpen(true)}
-                className="flex-1 text-left px-4 py-3 bg-gray-50 dark:bg-gray-950 rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="flex-1 text-left px-4 py-3 bg-surface-100 dark:bg-surface-800/50 rounded-2xl text-surface-500 hover:bg-surface-200 dark:hover:bg-surface-700/50 transition-colors"
               >
                 What&apos;s happening?
               </button>
@@ -1053,15 +1053,15 @@ function FeedPage() {
         {/* Login prompt for non-authenticated users on Following tab */}
         {activeTab === 'following' && !user ? (
           <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-4">
-              <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-16 h-16 bg-surface-100 dark:bg-surface-800/80 rounded-full flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
             </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+            <h3 className="text-xl font-bold font-display text-surface-900 dark:text-white mb-2">
               See posts from people you follow
             </h3>
-            <p className="text-gray-500 dark:text-gray-400 text-center max-w-sm mb-6">
+            <p className="text-surface-500 dark:text-surface-400 text-center max-w-sm mb-6">
               Log in to view your personalized following feed and see updates from accounts you care about.
             </p>
             <Button
@@ -1077,7 +1077,7 @@ function FeedPage() {
           {pendingNewPosts.length > 0 && (
             <button
               onClick={showNewPosts}
-              className="w-full py-3 text-center text-yappr-500 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 font-medium transition-colors border-b border-gray-200 dark:border-gray-800"
+              className="w-full py-3 text-center bg-yappr-50/80 dark:bg-yappr-950/30 text-yappr-600 dark:text-yappr-400 font-semibold transition-colors border-b border-surface-200/60 dark:border-surface-800/40"
             >
               Show {pendingNewPosts.length} new {pendingNewPosts.length === 1 ? 'post' : 'posts'}
             </button>
@@ -1103,11 +1103,11 @@ function FeedPage() {
                 </ErrorBoundary>
               ))}
               {hasMore && filteredPosts && filteredPosts.length > 0 && (
-                <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
+                <div className="p-4 flex justify-center border-t border-surface-200/60 dark:border-surface-800/40">
                   <button
                     onClick={loadMore}
                     disabled={isLoadingMore}
-                    className="px-6 py-2 rounded-full bg-yappr-500 text-white hover:bg-yappr-600 disabled:opacity-50 transition-colors"
+                    className="px-6 py-2 bg-gradient-yappr text-white rounded-full shadow-yappr transition-all hover:shadow-yappr-lg disabled:opacity-50"
                   >
                     {isLoadingMore ? 'Loading...' : 'Load More'}
                   </button>

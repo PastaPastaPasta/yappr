@@ -99,7 +99,7 @@ export function MobileBottomNav() {
 
       {/* More Menu Sheet */}
       <div className={cn(
-        "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
+        "fixed bottom-14 left-0 right-0 z-40 md:hidden glass-effect border-t border-surface-200/50 dark:border-surface-800/50 rounded-t-3xl shadow-elevated-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
         moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">
@@ -107,7 +107,7 @@ export function MobileBottomNav() {
             <h3 className="text-lg font-semibold">Menu</h3>
             <button
               onClick={() => setMoreMenuOpen(false)}
-              className="p-2 -mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+              className="p-2 -mr-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
             >
               <XMarkIcon className="h-5 w-5" />
             </button>
@@ -122,10 +122,10 @@ export function MobileBottomNav() {
                   href={item.href}
                   onClick={() => setMoreMenuOpen(false)}
                   className={cn(
-                    "flex flex-col items-center justify-center p-3 rounded-xl transition-colors",
+                    "flex flex-col items-center justify-center p-3 rounded-2xl transition-colors",
                     isActive
                       ? "bg-yappr-500/10 text-yappr-500"
-                      : "hover:bg-gray-100 dark:hover:bg-gray-800"
+                      : "hover:bg-surface-100 dark:hover:bg-surface-800"
                   )}
                 >
                   <div className="relative">
@@ -144,7 +144,7 @@ export function MobileBottomNav() {
 
           {user && (
             <>
-              <div className="border-t border-gray-200 dark:border-gray-800 mt-4 pt-4">
+              <div className="border-t border-surface-200 dark:border-surface-800 mt-4 pt-4">
                 <button
                   onClick={() => {
                     setMoreMenuOpen(false)
@@ -160,7 +160,7 @@ export function MobileBottomNav() {
           )}
 
           {!user && (
-            <div className="border-t border-gray-200 dark:border-gray-800 mt-4 pt-4">
+            <div className="border-t border-surface-200 dark:border-surface-800 mt-4 pt-4">
               <button
                 onClick={() => {
                   setMoreMenuOpen(false)
@@ -176,7 +176,7 @@ export function MobileBottomNav() {
       </div>
 
       {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden glass-effect border-t border-surface-200/50 dark:border-surface-800/50 safe-area-inset-bottom">
         <div className="flex items-center justify-around h-14">
           {/* First two nav items */}
           {navItems.slice(0, 2).map((item) => {
@@ -190,7 +190,7 @@ export function MobileBottomNav() {
               >
                 <Icon className={cn(
                   "h-7 w-7",
-                  isActive ? "text-black dark:text-white" : "text-gray-500"
+                  isActive ? "text-yappr-600 dark:text-yappr-400" : "text-surface-500"
                 )} />
               </Link>
             )
@@ -200,14 +200,14 @@ export function MobileBottomNav() {
           {user ? (
             <button
               onClick={() => setComposeOpen(true)}
-              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
+              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-gradient-yappr text-white shadow-yappr-lg ring-4 ring-yappr-500/20 active:scale-95 transition-transform"
             >
               <PlusIcon className="h-7 w-7" />
             </button>
           ) : (
             <button
               onClick={openLoginModal}
-              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
+              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-gradient-yappr text-white shadow-yappr-lg ring-4 ring-yappr-500/20 active:scale-95 transition-transform"
             >
               <PlusIcon className="h-7 w-7" />
             </button>
@@ -225,7 +225,7 @@ export function MobileBottomNav() {
               >
                 <Icon className={cn(
                   "h-7 w-7",
-                  isActive ? "text-black dark:text-white" : "text-gray-500"
+                  isActive ? "text-yappr-600 dark:text-yappr-400" : "text-surface-500"
                 )} />
               </Link>
             )
@@ -238,10 +238,10 @@ export function MobileBottomNav() {
           >
             <Bars3Icon className={cn(
               "h-7 w-7",
-              (moreMenuOpen || isMoreActive) ? "text-black dark:text-white" : "text-gray-500"
+              (moreMenuOpen || isMoreActive) ? "text-yappr-600 dark:text-yappr-400" : "text-surface-500"
             )} />
             {isHydrated && unreadNotificationCount > 0 && !moreMenuOpen && (
-              <span className="absolute top-2 right-1/4 w-2 h-2 bg-yappr-500 rounded-full" />
+              <span className="absolute top-2 right-1/4 w-2 h-2 bg-yappr-500 rounded-full ring-2 ring-white dark:ring-surface-950" />
             )}
           </button>
         </div>

@@ -20,14 +20,14 @@ interface TopUsersSectionProps {
 
 function UserSkeleton() {
   return (
-    <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-xl">
+    <div className="p-4 bg-surface-50 dark:bg-surface-800/30 rounded-2xl border border-surface-200/60 dark:border-surface-800/40">
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+        <div className="w-12 h-12 bg-surface-200 dark:bg-surface-800 rounded-full shimmer" />
         <div className="flex-1 space-y-2">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="h-3 w-16 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+          <div className="h-4 w-24 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
+          <div className="h-3 w-16 bg-surface-100 dark:bg-surface-900 rounded shimmer" />
         </div>
-        <div className="h-6 w-14 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        <div className="h-6 w-14 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
       </div>
     </div>
   )
@@ -41,14 +41,14 @@ export function TopUsersSection({
 }: TopUsersSectionProps) {
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <h2 className="font-display text-2xl font-bold mb-6 flex items-center gap-2">
         <UserCircleIcon className="h-6 w-6 text-yappr-500" />
         Top Contributors
       </h2>
 
       {error ? (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+          <p className="text-surface-500 dark:text-surface-400 mb-4">{error}</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <ArrowPathIcon className="h-4 w-4 mr-2" />
@@ -64,7 +64,7 @@ export function TopUsersSection({
         </div>
       ) : users.length === 0 ? (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400">
+          <p className="text-surface-500 dark:text-surface-400">
             No users yet. Be the first to join!
           </p>
         </div>
@@ -79,23 +79,23 @@ export function TopUsersSection({
             >
               <Link
                 href={`/user?id=${user.id}`}
-                className="block p-4 bg-gray-50 dark:bg-gray-950 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="block p-4 bg-white dark:bg-surface-800/50 rounded-2xl border border-surface-200/60 dark:border-surface-800/40 shadow-elevated hover:shadow-elevated-lg transition-all duration-200 hover:-translate-y-0.5"
               >
                 <div className="flex items-center gap-3">
                   <UserAvatar userId={user.id} size="lg" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900 dark:text-gray-100 truncate">
+                    <p className="font-semibold text-surface-900 dark:text-surface-100 truncate">
                       {user.displayName}
                     </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                    <p className="text-sm text-surface-500 truncate">
                       @{user.username}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-yappr-500">
+                    <p className="text-lg font-display font-bold text-yappr-500">
                       {formatNumber(user.postCount)}
                     </p>
-                    <p className="text-xs text-gray-500">posts</p>
+                    <p className="text-xs text-surface-500">posts</p>
                   </div>
                 </div>
               </Link>

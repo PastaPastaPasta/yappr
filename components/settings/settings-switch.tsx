@@ -26,7 +26,7 @@ export function SettingsSwitch({
       disabled={disabled}
       className={cn(
         'w-11 h-6 rounded-full relative transition-colors',
-        checked ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800',
+        checked ? 'bg-yappr-500' : 'bg-surface-200 dark:bg-surface-800',
         disabled && 'opacity-50 cursor-not-allowed',
         className
       )}

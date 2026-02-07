@@ -146,7 +146,7 @@ export function PrivateFeedAccessButton({
   const renderButton = () => {
     // Loading state
     if (status === 'loading') {
-      return <div className="h-9 w-28 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse" />
+      return <div className="h-9 w-28 bg-surface-100 dark:bg-surface-800 rounded-lg animate-pulse" />
     }
 
     // Don't show button if user doesn't have a private feed or isn't following
@@ -173,7 +173,7 @@ export function PrivateFeedAccessButton({
             </Tooltip.Trigger>
             <Tooltip.Portal>
               <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                className="bg-gray-800 dark:bg-surface-700 text-white text-xs px-2 py-1 rounded max-w-xs"
                 sideOffset={5}
               >
                 {needsRecovery
@@ -192,14 +192,14 @@ export function PrivateFeedAccessButton({
         <Tooltip.Provider>
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
-              <div data-testid="access-revoked" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <div data-testid="access-revoked" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-surface-500 dark:text-surface-400 bg-surface-100 dark:bg-surface-800 rounded-lg">
                 <LockClosedIcon className="h-4 w-4" />
                 <span>Revoked</span>
               </div>
             </Tooltip.Trigger>
             <Tooltip.Portal>
               <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                className="bg-gray-800 dark:bg-surface-700 text-white text-xs px-2 py-1 rounded max-w-xs"
                 sideOffset={5}
               >
                 Your access to this private feed has been revoked
@@ -262,7 +262,7 @@ export function PrivateFeedAccessButton({
             </Tooltip.Trigger>
             <Tooltip.Portal>
               <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                className="bg-gray-800 dark:bg-surface-700 text-white text-xs px-2 py-1 rounded max-w-xs"
                 sideOffset={5}
               >
                 Your request is pending approval. Click to cancel.

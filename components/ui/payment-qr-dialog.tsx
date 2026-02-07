@@ -48,7 +48,7 @@ export function PaymentQRCodeDialog({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -63,7 +63,7 @@ export function PaymentQRCodeDialog({
                     <button
                       onClick={onClose}
                       aria-label="Close"
-                      className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                     >
                       <XMarkIcon className="h-5 w-5" />
                     </button>

@@ -10,27 +10,27 @@ export function RightSidebar() {
   const { user } = useAuth()
 
   return (
-    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-[calc(100vh-40px)] sticky top-[40px] overflow-y-auto scrollbar-hide">
+    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-[calc(100vh-40px)] sticky top-[40px] overflow-y-auto scrollbar-hide bg-gradient-to-b from-transparent to-surface-50/30 dark:to-surface-950/30">
       <SearchInput />
-      <div className="bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-hidden">
-        <h2 className="text-xl font-bold px-4 py-3">Getting Started</h2>
+      <div className="gradient-border bg-surface-50 dark:bg-surface-900 rounded-2xl overflow-hidden">
+        <h2 className="font-display text-xl font-bold px-4 py-3">Getting Started</h2>
         <div className="px-4 py-3 space-y-3 text-sm">
-          <p className="text-gray-600 dark:text-gray-400">
+          <p className="text-surface-600 dark:text-surface-400">
             Welcome to Yappr! Here&apos;s what you can do:
           </p>
           <ul className="space-y-2">
             <li>
-              <Link href={user?.identityId ? `/user?id=${user.identityId}&edit=true` : '/settings?section=account'} className="text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-400 hover:underline">
+              <Link href={user?.identityId ? `/user?id=${user.identityId}&edit=true` : '/settings?section=account'} className="text-yappr-500 hover:text-yappr-600 hover:underline">
                 • Create your profile
               </Link>
             </li>
             <li>
-              <Link href="/feed" className="text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-400 hover:underline">
+              <Link href="/feed" className="text-yappr-500 hover:text-yappr-600 hover:underline">
                 • Share your first post
               </Link>
             </li>
             <li>
-              <Link href="/explore" className="text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-400 hover:underline">
+              <Link href="/explore" className="text-yappr-500 hover:text-yappr-600 hover:underline">
                 • Explore and follow users
               </Link>
             </li>
@@ -65,11 +65,11 @@ export function RightSidebar() {
         </a>
       </div>
 
-      <div className="px-4 py-2 text-xs text-gray-500 space-x-2 text-center">
-        <Link href="/terms" className="hover:underline">Terms</Link>
-        <Link href="/privacy" className="hover:underline">Privacy</Link>
-        <Link href="/cookies" className="hover:underline">Cookies</Link>
-        <Link href="/about" className="hover:underline">About</Link>
+      <div className="px-4 py-2 text-xs text-surface-400 space-x-2 text-center">
+        <Link href="/terms" className="hover:text-surface-600 dark:hover:text-surface-300 hover:underline">Terms</Link>
+        <Link href="/privacy" className="hover:text-surface-600 dark:hover:text-surface-300 hover:underline">Privacy</Link>
+        <Link href="/cookies" className="hover:text-surface-600 dark:hover:text-surface-300 hover:underline">Cookies</Link>
+        <Link href="/about" className="hover:text-surface-600 dark:hover:text-surface-300 hover:underline">About</Link>
       </div>
     </div>
   )

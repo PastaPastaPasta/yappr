@@ -38,7 +38,7 @@ export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProp
           title="Add emoji"
           aria-label="Add emoji"
           aria-expanded={open}
-          className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span className="text-base leading-none">😀</span>
         </button>

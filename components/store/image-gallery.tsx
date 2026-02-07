@@ -25,7 +25,7 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
 
   if (images.length === 0) {
     return (
-      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800">
+      <div className="relative aspect-square bg-surface-100 dark:bg-surface-800">
         <div className="w-full h-full flex items-center justify-center">
           <BuildingStorefrontIcon className="h-24 w-24 text-gray-300" />
         </div>
@@ -36,7 +36,7 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
   return (
     <div>
       {/* Main Image */}
-      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800">
+      <div className="relative aspect-square bg-surface-100 dark:bg-surface-800">
         <img
           src={images[currentIndex]}
           alt={alt}
@@ -71,7 +71,7 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
               className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${
                 i === currentIndex
                   ? 'border-yappr-500'
-                  : 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'
+                  : 'border-transparent hover:border-surface-200 dark:hover:border-gray-600'
               }`}
             >
               <img

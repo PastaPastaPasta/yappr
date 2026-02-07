@@ -38,7 +38,7 @@ export function UsernameDropdown({ username, allUsernames }: UsernameDropdownPro
         <ChevronDownIcon
           className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
         />
-        <span className="text-xs bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
+        <span className="text-xs bg-surface-200 dark:bg-surface-700 px-1.5 py-0.5 rounded-full">
           +{allUsernames.length - 1}
         </span>
       </button>
@@ -49,12 +49,12 @@ export function UsernameDropdown({ username, allUsernames }: UsernameDropdownPro
             className="fixed inset-0 z-10"
             onClick={() => setIsOpen(false)}
           />
-          <div className="absolute top-full left-0 mt-1 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[160px]">
+          <div className="absolute top-full left-0 mt-1 z-20 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg shadow-lg py-1 min-w-[160px]">
             {allUsernames.map((name, index) => (
               <button
                 key={name}
                 onClick={() => handleCopyUsername(name)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-surface-700 flex items-center gap-2"
               >
                 <span className="text-gray-500">@{name}</span>
                 {index === 0 && (

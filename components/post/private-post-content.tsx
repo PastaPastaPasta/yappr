@@ -51,9 +51,9 @@ interface PrivateContentCardProps {
 function PrivateContentCard({ children, status, statusText, footer }: PrivateContentCardProps) {
   const config = {
     loading: {
-      headerBg: 'bg-gray-100 dark:bg-gray-800',
-      headerText: 'text-gray-600 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700',
+      headerBg: 'bg-surface-100 dark:bg-surface-800',
+      headerText: 'text-surface-500 dark:text-surface-400',
+      border: 'border-surface-200 dark:border-surface-700',
       icon: <LockOpenIcon className="h-4 w-4 animate-pulse" />,
       defaultText: 'Decrypting...',
     },
@@ -65,16 +65,16 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
       defaultText: 'Recovering keys...',
     },
     decrypted: {
-      headerBg: 'bg-gray-50 dark:bg-gray-800/50',
-      headerText: 'text-gray-500 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700/50',
+      headerBg: 'bg-surface-50 dark:bg-surface-800/50',
+      headerText: 'text-surface-500 dark:text-surface-400',
+      border: 'border-surface-200 dark:border-surface-700/50',
       icon: <LockOpenIcon className="h-4 w-4 text-green-500 dark:text-green-400" />,
       defaultText: 'Private Content',
     },
     locked: {
-      headerBg: 'bg-gray-100 dark:bg-gray-800',
-      headerText: 'text-gray-600 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700',
+      headerBg: 'bg-surface-100 dark:bg-surface-800',
+      headerText: 'text-surface-500 dark:text-surface-400',
+      border: 'border-surface-200 dark:border-surface-700',
       icon: <LockClosedIconSolid className="h-4 w-4" />,
       defaultText: 'Private Content',
     },
@@ -97,12 +97,12 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
         <span className="text-sm font-medium">{statusText || defaultText}</span>
       </div>
       {/* Content area */}
-      <div className="bg-white dark:bg-gray-950 p-3">
+      <div className="bg-white dark:bg-surface-950 p-3">
         {children}
       </div>
       {/* Optional footer */}
       {footer && (
-        <div className={cn('px-3 py-2 border-t', border, 'bg-gray-50 dark:bg-gray-900/50')}>
+        <div className={cn('px-3 py-2 border-t', border, 'bg-surface-50 dark:bg-surface-900/50')}>
           {footer}
         </div>
       )}
@@ -128,7 +128,7 @@ interface TeaserProps {
 function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
   if (muted) {
     return (
-      <div className="text-gray-500 dark:text-gray-400 text-sm">
+      <div className="text-surface-500 dark:text-surface-400 text-sm">
         <PostContent
           content={content}
           hashtagValidations={hashtagValidations}
@@ -515,8 +515,8 @@ export function PrivatePostContent({
         {hasTeaser && <Teaser {...teaserProps} />}
         <PrivateContentCard status="loading">
           <div className="space-y-2">
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-full" />
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4" />
+            <div className="h-4 bg-surface-200 dark:bg-surface-700 rounded animate-pulse w-full" />
+            <div className="h-4 bg-surface-200 dark:bg-surface-700 rounded animate-pulse w-3/4" />
           </div>
         </PrivateContentCard>
       </div>
@@ -541,7 +541,7 @@ export function PrivatePostContent({
   // Decrypted state - show full content
   if (state.status === 'decrypted') {
     const followerFooter = isOwner && state.followerCount !== undefined ? (
-      <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+      <div className="flex items-center gap-1.5 text-xs text-surface-500 dark:text-surface-400">
         <LockClosedIcon className="h-3 w-3" />
         <span>
           Visible to {state.followerCount} private follower{state.followerCount !== 1 ? 's' : ''}
@@ -670,18 +670,18 @@ export function PrivatePostContent({
             'rounded-lg border flex items-center justify-between px-3 py-2',
             isApprovedNoKeys
               ? 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20'
-              : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'
+              : 'border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800/50'
           )}>
             <div className="flex items-center gap-2">
               {isApprovedNoKeys
                 ? <KeyIcon className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                : <LockClosedIconSolid className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+                : <LockClosedIconSolid className="h-4 w-4 text-surface-500 dark:text-surface-400" />
               }
               <span className={cn(
                 'text-sm',
                 isApprovedNoKeys
                   ? 'text-blue-600 dark:text-blue-400'
-                  : 'text-gray-500 dark:text-gray-400'
+                  : 'text-surface-500 dark:text-surface-400'
               )}>
                 {statusText}
               </span>
@@ -759,7 +759,7 @@ export function PrivatePostBadge({ className }: { className?: string }) {
     <span
       data-testid="private-post-badge"
       className={cn(
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs',
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 text-xs',
         className
       )}
     >

@@ -39,7 +39,7 @@ export function DeleteConfirmationModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
@@ -47,14 +47,14 @@ export function DeleteConfirmationModal() {
                       Delete post?
                     </Dialog.Title>
 
-                    <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-6">
+                    <Dialog.Description className="text-surface-500 dark:text-surface-400 mb-6">
                       This action cannot be undone. The post will be permanently removed from the platform.
                     </Dialog.Description>
 
                     {!isDeleting && (
                       <button
                         onClick={close}
-                        className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                        className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                       >
                         <XMarkIcon className="h-5 w-5" />
                       </button>
@@ -62,8 +62,8 @@ export function DeleteConfirmationModal() {
 
                     {/* Preview of post being deleted */}
                     {post && (
-                      <div className="mb-6 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
+                      <div className="mb-6 p-3 bg-surface-50 dark:bg-surface-800 rounded-lg border border-surface-200 dark:border-surface-700">
+                        <p className="text-sm text-surface-500 dark:text-surface-400 line-clamp-3">
                           {post.content}
                         </p>
                       </div>

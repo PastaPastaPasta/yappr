@@ -24,8 +24,8 @@ function StatsPlaceholder({ rows = 2 }: { rows?: number }) {
     <div className="space-y-2">
       {[...Array(rows)].map((_, i) => (
         <div key={i} className="flex justify-between">
-          <div className="h-4 w-20 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+          <div className="h-4 w-20 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
+          <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
         </div>
       ))}
     </div>
@@ -179,8 +179,8 @@ export function FeedStats() {
   }, [shouldLoad])
 
   return (
-    <div ref={containerRef} className="bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-hidden">
-      <h2 className="text-xl font-bold px-4 py-3 flex items-center gap-2">
+    <div ref={containerRef} className="bg-surface-50 dark:bg-surface-900 rounded-2xl overflow-hidden border border-surface-200/50 dark:border-surface-800/50">
+      <h2 className="font-display text-xl font-bold px-4 py-3 flex items-center gap-2">
         <ChartBarIcon className="h-5 w-5" />
         Stats
       </h2>
@@ -191,12 +191,12 @@ export function FeedStats() {
         ) : (
           <>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
-              <span className="font-medium">{formatNumber(globalStats.totalPosts)}</span>
+              <span className="text-surface-500 dark:text-surface-400">Total Posts</span>
+              <span className="font-semibold text-gray-900 dark:text-gray-100">{formatNumber(globalStats.totalPosts)}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Active Users</span>
-              <span className="font-medium">{formatNumber(globalStats.activeUsers)}</span>
+              <span className="text-surface-500 dark:text-surface-400">Active Users</span>
+              <span className="font-semibold text-gray-900 dark:text-gray-100">{formatNumber(globalStats.activeUsers)}</span>
             </div>
           </>
         )}
@@ -208,16 +208,16 @@ export function FeedStats() {
             ) : (
               <>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">Your Posts</span>
-                  <span className="font-medium">{formatNumber(stats.posts)}</span>
+                  <span className="text-surface-500 dark:text-surface-400">Your Posts</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">{formatNumber(stats.posts)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">Followers</span>
-                  <span className="font-medium">{formatNumber(stats.followers)}</span>
+                  <span className="text-surface-500 dark:text-surface-400">Followers</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">{formatNumber(stats.followers)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">Following</span>
-                  <span className="font-medium">{formatNumber(stats.following)}</span>
+                  <span className="text-surface-500 dark:text-surface-400">Following</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">{formatNumber(stats.following)}</span>
                 </div>
               </>
             )}

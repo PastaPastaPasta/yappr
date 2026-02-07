@@ -98,7 +98,7 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
       <button
         type="button"
         onClick={addUsername}
-        className="w-full border-2 border-dashed border-gray-300 dark:border-gray-600
+        className="w-full border-2 border-dashed border-surface-200 dark:border-surface-600
           hover:border-green-500 dark:hover:border-green-500
           text-gray-500 hover:text-green-500
           rounded-lg p-3 transition-colors flex items-center justify-center gap-2"

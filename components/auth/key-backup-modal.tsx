@@ -171,7 +171,7 @@ export function KeyBackupModal() {
             transition={{ duration: 0.2 }}
             className="fixed inset-0 flex items-center justify-center z-50 px-4 overflow-y-auto py-8"
           >
-            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-6 max-w-md w-full relative my-auto">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl p-6 max-w-md w-full relative my-auto">
               {/* Close button */}
               <button
                 onClick={handleClose}
@@ -188,14 +188,14 @@ export function KeyBackupModal() {
               </div>
 
               <h1 className="text-2xl font-bold text-center mb-2">Backup Your Key</h1>
-              <p className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
+              <p className="text-surface-500 dark:text-surface-400 text-center mb-4 text-sm">
                 Save an encrypted copy of your key to Dash Platform.
                 This lets you sign in with just your username and password.
               </p>
 
               {/* Key to be protected */}
-              <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+              <div className="bg-surface-50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-lg p-4 mb-4">
+                <p className="text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wide mb-3">
                   Key included in backup
                 </p>
                 <div className="flex items-center gap-3 text-sm">
@@ -204,7 +204,7 @@ export function KeyBackupModal() {
                   </div>
                   <div className="flex-1">
                     <span className="font-medium text-gray-900 dark:text-white">Login Key</span>
-                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-xs">Required for signing in</span>
+                    <span className="text-surface-500 dark:text-surface-400 ml-2 text-xs">Required for signing in</span>
                   </div>
                   <Check className="w-4 h-4 text-green-500" />
                 </div>
@@ -240,7 +240,7 @@ export function KeyBackupModal() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter a strong passphrase (16+ characters)"
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-10 bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       autoComplete="new-password"
                     />
                     <button
@@ -269,7 +269,7 @@ export function KeyBackupModal() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm your passphrase"
-                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                    className="w-full px-3 py-2 bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                     autoComplete="new-password"
                   />
                   {confirmPassword.length > 0 && !passwordsMatch && (
@@ -291,16 +291,16 @@ export function KeyBackupModal() {
                       max="30"
                       value={targetTime}
                       onChange={(e) => handleTimeChange(parseInt(e.target.value))}
-                      className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yappr-600"
+                      className="w-full h-2 bg-surface-200 dark:bg-surface-700 rounded-lg appearance-none cursor-pointer accent-yappr-600"
                       disabled={isBenchmarking}
                     />
-                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <div className="flex justify-between text-xs text-surface-500 dark:text-surface-400">
                       <span>1s (faster)</span>
                       <span>30s (stronger)</span>
                     </div>
                     <div className="text-center text-sm">
                       {isBenchmarking ? (
-                        <span className="text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
+                        <span className="text-surface-500 dark:text-surface-400 flex items-center justify-center gap-2">
                           <Spinner size="xs" />
                           Calibrating...
                         </span>
@@ -319,7 +319,7 @@ export function KeyBackupModal() {
                     type="checkbox"
                     checked={consentChecked}
                     onChange={(e) => setConsentChecked(e.target.checked)}
-                    className="mt-1 h-4 w-4 text-yappr-600 focus:ring-yappr-500 border-gray-300 rounded"
+                    className="mt-1 h-4 w-4 text-yappr-600 focus:ring-yappr-500 border-surface-200 rounded"
                   />
                   <span className="text-sm text-gray-700 dark:text-gray-300">
                     I understand that anyone with my password can access my private key from the public backup
@@ -357,7 +357,7 @@ export function KeyBackupModal() {
                   </Button>
                 </div>
 
-                <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+                <p className="text-xs text-center text-surface-500 dark:text-surface-400">
                   Backing up for <span className="font-medium">@{username}</span>
                 </p>
               </form>

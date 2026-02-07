@@ -39,7 +39,7 @@ export function ItemCard({ item, onClick, showStore }: ItemCardProps) {
       tabIndex={0}
       className="cursor-pointer group focus:outline-none focus:ring-2 focus:ring-yappr-500 rounded-lg"
     >
-      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
+      <div className="relative aspect-square bg-surface-100 dark:bg-surface-800 rounded-lg overflow-hidden">
         {item.imageUrls?.[0] ? (
           <img
             src={item.imageUrls[0]}

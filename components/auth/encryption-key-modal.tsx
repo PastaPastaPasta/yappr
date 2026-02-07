@@ -239,13 +239,13 @@ export function EncryptionKeyModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[450px] max-w-[95vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[450px] max-w-[95vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
                       onClick={handleClose}
                       aria-label="Close"
-                      className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                     >
                       <XMarkIcon className="h-5 w-5" />
                     </button>
@@ -262,7 +262,7 @@ export function EncryptionKeyModal() {
                           {autoRecoveryStatus === 'found' ? 'Key Recovered!' : 'Recovering Key...'}
                         </Dialog.Title>
 
-                        <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-6">
+                        <Dialog.Description className="text-surface-500 dark:text-surface-400 mb-6">
                           {autoRecoveryStatus === 'found'
                             ? 'Your encryption key was automatically recovered.'
                             : 'Attempting to automatically recover your encryption key...'}
@@ -292,7 +292,7 @@ export function EncryptionKeyModal() {
                           Enter Encryption Key
                         </Dialog.Title>
 
-                        <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+                        <Dialog.Description className="text-surface-500 dark:text-surface-400 mb-4">
                           Enter your encryption private key to {actionDescription}.
                         </Dialog.Description>
 
