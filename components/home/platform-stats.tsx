@@ -29,19 +29,23 @@ export function PlatformStats({
       label: 'Total Posts',
       value: totalPosts,
       icon: DocumentTextIcon,
-      color: 'text-yappr-500'
+      gradient: 'from-yappr-500 to-yappr-600',
+      bgLight: 'bg-yappr-50',
+      bgDark: 'dark:bg-yappr-950/30',
     },
     {
       label: 'Active Users',
       value: totalUsers,
       icon: UserGroupIcon,
-      color: 'text-blue-500'
+      gradient: 'from-accent-500 to-accent-600',
+      bgLight: 'bg-accent-50',
+      bgDark: 'dark:bg-accent-950/30',
     },
   ]
 
   if (error) {
     return (
-      <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+      <section className="py-8 border-y border-border">
         <div className="text-center py-8">
           <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
           {onRetry && (
@@ -56,23 +60,25 @@ export function PlatformStats({
   }
 
   return (
-    <section className="py-8 border-y border-gray-200 dark:border-gray-800">
-      <div className="grid grid-cols-2 gap-8">
+    <section className="py-10 border-y border-border">
+      <div className="grid grid-cols-2 gap-6 max-w-lg mx-auto">
         {stats.map((stat, index) => (
           <motion.div
             key={stat.label}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.1 }}
+            transition={{ delay: index * 0.1, duration: 0.5 }}
             className="text-center"
           >
-            <stat.icon className={`h-8 w-8 ${stat.color} mx-auto mb-2`} />
+            <div className={`w-12 h-12 rounded-2xl ${stat.bgLight} ${stat.bgDark} flex items-center justify-center mx-auto mb-3`}>
+              <stat.icon className={`h-6 w-6 bg-gradient-to-br ${stat.gradient} bg-clip-text text-yappr-500`} />
+            </div>
             {loading ? (
-              <div className="h-9 w-20 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-1 animate-pulse" />
+              <div className="h-9 w-20 skeleton mx-auto mb-1.5 rounded-lg" />
             ) : (
-              <div className="text-3xl font-bold">{formatNumber(stat.value)}</div>
+              <div className="text-3xl font-display font-bold tracking-tight">{formatNumber(stat.value)}</div>
             )}
-            <div className="text-sm text-gray-500">{stat.label}</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">{stat.label}</div>
           </motion.div>
         ))}
       </div>

@@ -179,7 +179,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
         animate={{ opacity: 1, scale: 1 }}
         className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto"
       >
-        <div className="sticky top-0 flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="sticky top-0 flex items-center justify-between p-4 border-b border-border bg-white dark:bg-gray-900">
           <h2 className="text-lg font-bold">{isEditing ? 'Edit Shipping Zone' : 'Add Shipping Zone'}</h2>
           <button
             onClick={onClose}
@@ -399,7 +399,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
           </div>
         </div>
 
-        <div className="sticky bottom-0 flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="sticky bottom-0 flex gap-3 p-4 border-t border-border bg-white dark:bg-gray-900">
           <Button
             variant="outline"
             className="flex-1"

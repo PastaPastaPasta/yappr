@@ -47,7 +47,7 @@ export function OrderReview({
       </div>
 
       {/* Store */}
-      <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg flex items-center gap-3">
+      <div className="p-4 bg-surface-1 dark:bg-surface-2 rounded-lg flex items-center gap-3">
         {store?.logoUrl ? (
           <img src={store.logoUrl} alt={store.name} className="w-10 h-10 rounded-lg object-cover" />
         ) : (
@@ -59,7 +59,7 @@ export function OrderReview({
       </div>
 
       {/* Items */}
-      <div className="border border-gray-200 dark:border-gray-800 rounded-lg divide-y divide-gray-200 dark:divide-gray-800">
+      <div className="border border-border rounded-lg divide-y divide-border">
         {items.map((item) => (
           <div key={`${item.itemId}-${item.variantKey}`} className="p-3 flex items-center gap-3">
             <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
@@ -86,7 +86,7 @@ export function OrderReview({
       </div>
 
       {/* Shipping Address */}
-      <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
+      <div className="p-4 border border-border rounded-lg">
         <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
         <p>{shippingAddress.name}</p>
         <p>{shippingAddress.street}</p>
@@ -104,7 +104,7 @@ export function OrderReview({
           <span className="text-gray-500">Shipping</span>
           <span>{formatPrice(shippingCost, currency)}</span>
         </div>
-        <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex justify-between text-lg font-bold pt-2 border-t border-border">
           <span>Total</span>
           <span>{formatPrice(total, currency)}</span>
         </div>

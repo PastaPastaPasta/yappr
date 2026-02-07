@@ -45,7 +45,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
       className="pb-4"
     >
       {/* Store Header */}
-      <div className="p-4 bg-gray-50 dark:bg-gray-950 flex items-center justify-between">
+      <div className="p-4 bg-surface-1 dark:bg-surface-2 flex items-center justify-between">
         <button
           onClick={() => router.push(`/store/view?id=${storeId}`)}
           className="flex items-center gap-2 hover:text-yappr-500"
@@ -86,7 +86,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
       </div>
 
       {/* Store Subtotal & Checkout */}
-      <div className="px-4 pt-4 border-t border-gray-200 dark:border-gray-800">
+      <div className="px-4 pt-4 border-t border-border">
         <div className="flex items-center justify-between mb-4">
           <span className="font-medium">Subtotal</span>
           <span className="font-bold text-lg">

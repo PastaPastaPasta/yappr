@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 
 export default function TermsPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-1 dark:bg-surface-2">
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-8">
           <Link
@@ -21,7 +21,7 @@ export default function TermsPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-surface-0 dark:bg-surface-1 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
@@ -119,7 +119,7 @@ export default function TermsPage() {
             </section>
 
             {/* Last Updated */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-border">
               <p className="text-sm text-gray-500">
                 Last updated: January 2025
               </p>

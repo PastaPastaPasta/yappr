@@ -237,8 +237,8 @@ function AddItemPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-border">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-surface-0/80 dark:bg-surface-0/80 border-b border-border ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -351,7 +351,7 @@ function AddItemPage() {
             </div>
 
             {/* Variants Toggle */}
-            <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+            <div className="border-t border-border pt-6">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
@@ -430,7 +430,7 @@ function AddItemPage() {
                     <label className="block text-sm font-medium mb-2">
                       Variant Pricing & Stock
                     </label>
-                    <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
+                    <div className="border border-border rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-900">
                           <tr>
@@ -439,7 +439,7 @@ function AddItemPage() {
                             <th className="px-3 py-2 text-left font-medium">Stock</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                        <tbody className="divide-y divide-border">
                           {combinations.map((key) => (
                             <tr key={key}>
                               <td className="px-3 py-2 font-medium">{key.replace(/\|/g, ' / ')}</td>

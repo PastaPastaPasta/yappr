@@ -27,7 +27,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
-      <body className="font-sans h-full bg-white dark:bg-neutral-900">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="font-sans h-full">
         <ErrorBoundary level="app">
           <Providers>
             <LinkPreviewModalProvider>
@@ -48,11 +56,13 @@ export default function RootLayout({
           toastOptions={{
             duration: 3000,
             style: {
-              background: '#1f2937',
-              color: '#fff',
-              borderRadius: '8px',
+              background: 'hsl(240, 22%, 7%)',
+              color: '#e8e8f0',
+              borderRadius: '12px',
               padding: '12px 16px',
               fontSize: '14px',
+              border: '1px solid hsl(240, 15%, 16%)',
+              boxShadow: '0 4px 30px -4px rgba(6, 182, 212, 0.15)',
             },
           }}
         />

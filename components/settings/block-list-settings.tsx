@@ -171,7 +171,7 @@ export function BlockListSettings() {
         </p>
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
-            <div key={i} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+            <div key={i} className="flex items-center justify-between p-3 bg-surface-1 dark:bg-surface-2 rounded-lg">
               <div className="flex items-center gap-3">
                 <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
                 <div>
@@ -198,17 +198,17 @@ export function BlockListSettings() {
       </p>
 
       {followedUsers.length === 0 ? (
-        <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg text-center">
+        <div className="p-4 bg-surface-1 dark:bg-surface-2 rounded-lg text-center">
           <p className="text-gray-500 text-sm">You&apos;re not following anyone yet</p>
           <p className="text-gray-400 text-xs mt-1">Follow users to see them here</p>
         </div>
       ) : (
         <>
-          <div className="space-y-1 divide-y divide-gray-200 dark:divide-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
+          <div className="space-y-1 divide-y divide-border border border-border rounded-lg overflow-hidden">
             {followedUsers.map(followedUser => (
               <div
                 key={followedUser.id}
-                className="flex items-center justify-between p-3 bg-white dark:bg-neutral-900 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                className="flex items-center justify-between p-3 bg-surface-0 dark:bg-surface-1 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors"
               >
                 <Link
                   href={`/user?id=${followedUser.id}`}

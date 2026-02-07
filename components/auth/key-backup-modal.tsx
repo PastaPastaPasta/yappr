@@ -240,7 +240,7 @@ export function KeyBackupModal() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter a strong passphrase (16+ characters)"
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-10 bg-surface-1 dark:bg-surface-2 border border-border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       autoComplete="new-password"
                     />
                     <button
@@ -269,7 +269,7 @@ export function KeyBackupModal() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm your passphrase"
-                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                    className="w-full px-3 py-2 bg-surface-1 dark:bg-surface-2 border border-border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                     autoComplete="new-password"
                   />
                   {confirmPassword.length > 0 && !passwordsMatch && (

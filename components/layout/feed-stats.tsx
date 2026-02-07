@@ -24,8 +24,8 @@ function StatsPlaceholder({ rows = 2 }: { rows?: number }) {
     <div className="space-y-2">
       {[...Array(rows)].map((_, i) => (
         <div key={i} className="flex justify-between">
-          <div className="h-4 w-20 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+          <div className="h-4 w-20 skeleton" />
+          <div className="h-4 w-8 skeleton" />
         </div>
       ))}
     </div>
@@ -179,8 +179,8 @@ export function FeedStats() {
   }, [shouldLoad])
 
   return (
-    <div ref={containerRef} className="bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-hidden">
-      <h2 className="text-xl font-bold px-4 py-3 flex items-center gap-2">
+    <div ref={containerRef} className="bg-surface-1 dark:bg-surface-2 rounded-2xl overflow-hidden border border-border">
+      <h2 className="text-lg font-display font-bold px-4 py-3 flex items-center gap-2">
         <ChartBarIcon className="h-5 w-5" />
         Stats
       </h2>

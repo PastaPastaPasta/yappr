@@ -139,7 +139,7 @@ export const UserAvatar = memo(function UserAvatar({
 
   // Don't render until we have the correct URL
   if (!avatarUrl) {
-    return <div className={`rounded-full bg-gray-200 dark:bg-gray-700 ${sizeClass} ${className}`} />
+    return <div className={`rounded-full bg-surface-1 dark:bg-surface-2 ${sizeClass} ${className}`} />
   }
 
   // Use IpfsImage for IPFS URLs (handles gateway fallback)

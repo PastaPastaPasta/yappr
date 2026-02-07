@@ -243,7 +243,7 @@ export function SavedAddressModal({
         )}
       </div>
 
-      <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+      <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-gray-50 dark:bg-neutral-950">
         <Button variant="ghost" onClick={handleClose}>
           Close
         </Button>
@@ -269,7 +269,7 @@ export function SavedAddressModal({
           />
         </div>
 
-        <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
+        <div className="border-t border-border pt-4">
           <h4 className="font-medium mb-3">Shipping Address</h4>
 
           <div className="space-y-3">
@@ -343,7 +343,7 @@ export function SavedAddressModal({
           </div>
         </div>
 
-        <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
+        <div className="border-t border-border pt-4">
           <h4 className="font-medium mb-3">Contact Information</h4>
 
           <div className="grid grid-cols-2 gap-3">
@@ -369,7 +369,7 @@ export function SavedAddressModal({
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+      <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-border bg-gray-50 dark:bg-neutral-950">
         <Button variant="ghost" onClick={handleBack} disabled={isSubmitting}>
           Cancel
         </Button>
@@ -411,11 +411,11 @@ export function SavedAddressModal({
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95, y: 20 }}
                       transition={{ duration: 0.2, ease: 'easeOut' }}
-                      className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                      className="w-full max-w-md bg-surface-0 dark:bg-surface-1 rounded-2xl shadow-2xl overflow-hidden"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Header */}
-                      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                         <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
                           {mode === 'list' && 'Saved Addresses'}
                           {mode === 'add' && 'Add New Address'}
