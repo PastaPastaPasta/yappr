@@ -26,9 +26,9 @@ export default function LoginPage() {
 
   // This page just renders the background - the modal is global
   return (
-    <div className="min-h-[calc(100vh-104px)] md:min-h-[calc(100vh-40px)] bg-white dark:bg-gray-900 flex flex-col items-center justify-center px-4">
+    <div className="min-h-[calc(100vh-104px)] md:min-h-[calc(100vh-40px)] bg-gray-50 dark:bg-gray-950 flex flex-col items-center justify-center px-4">
       <div className="text-center max-w-2xl">
-        <h1 className="text-6xl md:text-8xl font-display font-bold text-gradient mb-6">Yappr</h1>
+        <h1 className="text-6xl md:text-8xl font-display font-bold text-gradient mb-6 tracking-tight">yappr</h1>
         <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-400 mb-8">
           Decentralized social media on Dash Platform
         </p>

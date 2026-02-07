@@ -456,7 +456,7 @@ function SettingsPage() {
   const renderAppearanceSettings = () => (
     <div className="p-6 space-y-6">
       <div>
-        <h3 className="font-semibold mb-4">Theme</h3>
+        <h3 className="font-display font-semibold mb-4">Theme</h3>
         <RadioGroup.Root
           value={theme}
           onValueChange={setTheme}
@@ -510,7 +510,7 @@ function SettingsPage() {
       </div>
 
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-        <h3 className="font-semibold mb-4">Performance</h3>
+        <h3 className="font-display font-semibold mb-4">Performance</h3>
         <div className="flex items-center justify-between">
           <div>
             <p className="font-medium">Potato Mode</p>
@@ -651,7 +651,7 @@ function SettingsPage() {
     return (
     <div className="p-6 space-y-6">
       <div className="text-center py-8">
-        <h1 className="text-4xl font-display font-bold text-gradient mb-4">Yappr</h1>
+        <h1 className="text-4xl font-display font-bold text-gradient mb-4 tracking-tight">yappr</h1>
         <p className="text-gray-500 mb-4">Decentralized social media on Dash Platform</p>
 
         <Button variant="outline" asChild>

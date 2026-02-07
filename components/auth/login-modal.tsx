@@ -296,7 +296,7 @@ export function LoginModal() {
                   <X className="w-5 h-5" />
                 </button>
                 <div className="text-center">
-                  <h1 className="text-2xl font-bold text-gradient">Yappr</h1>
+                  <h1 className="text-2xl font-display font-bold text-gradient tracking-tight">yappr</h1>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
                 </div>
               </div>

@@ -674,13 +674,13 @@ export function PrivatePostContent({
           )}>
             <div className="flex items-center gap-2">
               {isApprovedNoKeys
-                ? <KeyIcon className="h-4 w-4 text-blue-500 dark:text-blue-400" />
+                ? <KeyIcon className="h-4 w-4 text-yappr-500 dark:text-yappr-400" />
                 : <LockClosedIconSolid className="h-4 w-4 text-gray-500 dark:text-gray-400" />
               }
               <span className={cn(
                 'text-sm',
                 isApprovedNoKeys
-                  ? 'text-blue-600 dark:text-blue-400'
+                  ? 'text-yappr-600 dark:text-yappr-400'
                   : 'text-gray-500 dark:text-gray-400'
               )}>
                 {statusText}
@@ -693,7 +693,7 @@ export function PrivatePostContent({
                   e.stopPropagation()
                   handleRecoverAccess()
                 }}
-                className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-full text-xs font-medium transition-colors"
+                className="px-3 py-1 bg-yappr-500 hover:bg-yappr-600 text-white rounded-lg text-xs font-display font-medium transition-colors"
               >
                 Recover
               </button>

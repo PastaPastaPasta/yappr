@@ -119,7 +119,7 @@ export function DashPayContactsModal() {
           {/* Header */}
           <div className="sticky top-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between rounded-t-2xl">
             <Dialog.Title className="text-xl font-bold flex items-center gap-2">
-              <UserGroupIcon className="h-6 w-6 text-blue-500" />
+              <UserGroupIcon className="h-6 w-6 text-yappr-500" />
               Dash Pay Contacts
             </Dialog.Title>
             <Dialog.Close asChild>
@@ -179,7 +179,7 @@ export function DashPayContactsModal() {
             <div className="sticky bottom-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 px-4 py-3 rounded-b-2xl">
               <Button
                 onClick={handleFollowAll}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                className="w-full bg-yappr-500 hover:bg-yappr-600 text-white"
                 disabled={state === 'following'}
               >
                 {state === 'following' ? (
@@ -232,7 +232,7 @@ function ContactRow({
           size="sm"
           onClick={onFollow}
           disabled={isFollowing}
-          className={isFollowing ? '' : 'bg-blue-500 hover:bg-blue-600 text-white'}
+          className={isFollowing ? '' : 'bg-yappr-500 hover:bg-yappr-600 text-white'}
         >
           {isFollowing ? (
             <span className="flex items-center gap-1">

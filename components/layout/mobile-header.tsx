@@ -21,7 +21,7 @@ export function MobileHeader() {
   return (
     <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
       <Link href="/" className="flex items-center gap-2">
-        <span className="text-xl font-bold text-gradient">Yappr</span>
+        <span className="text-xl font-display font-bold text-gradient tracking-tight">yappr</span>
         <Image
           src="/pbde-light.png"
           alt="Powered by Dash Evolution"
@@ -77,7 +77,7 @@ export function MobileHeader() {
       ) : isHydrated ? (
         <button
           onClick={openLoginModal}
-          className="text-sm font-medium text-yappr-500 hover:text-yappr-600"
+          className="text-sm font-display font-medium text-yappr-500 hover:text-yappr-600"
         >
           Sign In
         </button>
