@@ -545,15 +545,15 @@ function MessagesPage() {
     <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
       <Sidebar />
 
-      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
+      <main className="flex-1 md:max-w-[1200px] md:border-x border-border flex overflow-hidden">
         {/* Conversations List */}
-        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
-          <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
+        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-border flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
+          <header className="flex-shrink-0 bg-white dark:bg-surface-0 border-b border-border">
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
-              <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
+              <h1 className="text-lg sm:text-xl font-bold font-display">Messages</h1>
               <button
                 onClick={() => setShowNewConversation(true)}
-                className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                className="p-1.5 sm:p-2 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full"
               >
                 <PlusIcon className="h-5 w-5" />
               </button>
@@ -586,7 +586,7 @@ function MessagesPage() {
           ) : filteredConversations.length === 0 ? (
             <div className="p-8 text-center flex-1 flex flex-col items-center justify-center">
               <MagnifyingGlassIcon className="h-12 w-12 text-gray-300 mb-4" />
-              <h2 className="text-xl font-semibold mb-2">No results</h2>
+              <h2 className="text-xl font-semibold font-display mb-2">No results</h2>
               <p className="text-gray-500 text-sm">No conversations match your search</p>
             </div>
           ) : (
@@ -595,11 +595,11 @@ function MessagesPage() {
                 <button
                   key={conversation.id}
                   onClick={() => setSelectedConversation(conversation)}
-                  className={`w-full p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors flex gap-3 ${
-                    selectedConversation?.id === conversation.id ? 'bg-gray-50 dark:bg-gray-950' : ''
+                  className={`w-full p-3 sm:p-4 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors flex gap-3 ${
+                    selectedConversation?.id === conversation.id ? 'bg-surface-1 dark:bg-surface-2' : ''
                   }`}
                 >
-                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-white dark:bg-surface-0 flex-shrink-0">
                     <UserAvatar userId={conversation.participantId} size="lg" alt="User avatar" />
                   </div>
 
@@ -641,13 +641,13 @@ function MessagesPage() {
         {/* Message Thread */}
         {selectedConversation ? (
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
+            <header className="flex-shrink-0 bg-white dark:bg-surface-0 border-b border-border px-2 sm:px-4 py-2 sm:py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                   {/* Back button - mobile only */}
                   <button
                     onClick={() => setSelectedConversation(null)}
-                    className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
+                    className="md:hidden p-1.5 -ml-1 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full flex-shrink-0"
                   >
                     <ArrowLeftIcon className="h-5 w-5" />
                   </button>
@@ -655,7 +655,7 @@ function MessagesPage() {
                     href={`/user?id=${selectedConversation.participantId}`}
                     className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity min-w-0 flex-1"
                   >
-                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-white dark:bg-surface-0 flex-shrink-0">
                       <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -670,10 +670,10 @@ function MessagesPage() {
                 </div>
 
                 <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-                  <button className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+                  <button className="p-1.5 sm:p-2 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full">
                     <InformationCircleIcon className="h-5 w-5" />
                   </button>
-                  <button className="hidden sm:block p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+                  <button className="hidden sm:block p-2 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full">
                     <EllipsisHorizontalIcon className="h-5 w-5" />
                   </button>
                 </div>
@@ -718,7 +718,7 @@ function MessagesPage() {
                               className={`px-4 py-2 rounded-2xl ${
                                 isOwn
                                   ? 'bg-yappr-500 text-white'
-                                  : 'bg-gray-100 dark:bg-gray-900'
+                                  : 'bg-surface-1 dark:bg-surface-2'
                               }`}
                             >
                               <p className="text-sm">{message.content}</p>
@@ -740,7 +740,7 @@ function MessagesPage() {
               )}
             </div>
 
-            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom">
+            <div className="flex-shrink-0 border-t border-border p-2 sm:p-4 safe-area-inset-bottom">
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -782,7 +782,7 @@ function MessagesPage() {
           <div className="flex flex-1 items-center justify-center p-8">
             <div className="text-center max-w-sm">
               <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-2xl font-semibold mb-2">Welcome to Messages</h2>
+              <h2 className="text-2xl font-semibold font-display mb-2">Welcome to Messages</h2>
               <p className="text-gray-500 mb-2">
                 Have private 1-on-1 conversations with other users.
               </p>
@@ -803,7 +803,7 @@ function MessagesPage() {
           <div className="hidden md:flex flex-1 items-center justify-center p-8">
             <div className="text-center">
               <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-2xl font-semibold mb-2">Select a conversation</h2>
+              <h2 className="text-2xl font-semibold font-display mb-2">Select a conversation</h2>
               <p className="text-gray-500 mb-6">Choose from your existing conversations or start a new one</p>
               <Button
                 onClick={() => setShowNewConversation(true)}
@@ -828,16 +828,16 @@ function MessagesPage() {
               setUserSearchResults([])
             }}
           />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto">
+          <div className="relative bg-white dark:bg-surface-0 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">New Message</h2>
+              <h2 className="text-xl font-bold font-display">New Message</h2>
               <button
                 onClick={() => {
                   setShowNewConversation(false)
                   setNewConversationInput('')
                   setUserSearchResults([])
                 }}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
+                className="p-2 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full"
               >
                 <XMarkIcon className="h-5 w-5" />
               </button>
@@ -872,7 +872,7 @@ function MessagesPage() {
 
               {/* Search Results */}
               {(isSearchingUsers || userSearchResults.length > 0) && (
-                <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                <div className="mb-4 border border-border rounded-2xl overflow-hidden">
                   {isSearchingUsers ? (
                     <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
                       <Spinner size="sm" className="border-gray-500" />
@@ -886,9 +886,9 @@ function MessagesPage() {
                           type="button"
                           onClick={() => selectUserFromSearch(result)}
                           disabled={isResolvingUser}
-                          className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left border-b border-gray-100 dark:border-gray-800 last:border-b-0"
+                          className="w-full flex items-center gap-3 p-3 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors text-left border-b border-gray-100 dark:border-gray-800 last:border-b-0"
                         >
-                          <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 flex-shrink-0">
+                          <div className="h-10 w-10 rounded-full overflow-hidden bg-surface-1 dark:bg-surface-2 flex-shrink-0">
                             <UserAvatar userId={result.id} size="md" alt={result.displayName} />
                           </div>
                           <div className="flex-1 min-w-0">
@@ -907,7 +907,7 @@ function MessagesPage() {
 
               {/* Show no results message */}
               {!isSearchingUsers && userSearchResults.length === 0 && newConversationInput.trim().length >= 3 && newConversationInput.trim().length <= 30 && (
-                <div className="mb-4 p-3 text-center text-sm text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl">
+                <div className="mb-4 p-3 text-center text-sm text-gray-500 border border-border rounded-2xl">
                   No users found matching &quot;{newConversationInput.trim()}&quot;
                 </div>
               )}

@@ -174,28 +174,28 @@ function BookmarksPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-border">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-0/80 border-b border-border ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <div>
-              <h1 className="text-xl font-bold">Bookmarks</h1>
+              <h1 className="text-xl font-bold font-display">Bookmarks</h1>
               <p className="text-sm text-gray-500">{bookmarks.length} saved posts</p>
             </div>
             
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+                <button className="p-2 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full">
                   <EllipsisHorizontalIcon className="h-5 w-5" />
                 </button>
               </DropdownMenu.Trigger>
               
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                  className="min-w-[200px] bg-white dark:bg-surface-0 rounded-2xl shadow-lg border border-border py-2 z-50"
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
+                    className="px-4 py-2 text-sm hover:bg-surface-1 dark:hover:bg-surface-2 cursor-pointer outline-none flex items-center gap-2"
                     onClick={() => setSortBy(sortBy === 'recent' ? 'oldest' : 'recent')}
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -205,7 +205,7 @@ function BookmarksPage() {
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />
                   <DropdownMenu.Item
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2 text-red-600"
+                    className="px-4 py-2 text-sm hover:bg-surface-1 dark:hover:bg-surface-2 cursor-pointer outline-none flex items-center gap-2 text-red-600"
                     onClick={clearAllBookmarks}
                   >
                     <TrashIcon className="h-4 w-4" />
@@ -240,7 +240,7 @@ function BookmarksPage() {
         ) : bookmarks.length === 0 ? (
           <div className="p-8 text-center">
             <BookmarkIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Save posts for later</h2>
+            <h2 className="text-xl font-semibold font-display mb-2">Save posts for later</h2>
             <p className="text-gray-500 text-sm">
               Don&apos;t let the good ones fly away! Bookmark posts to easily find them again.
             </p>
@@ -251,7 +251,7 @@ function BookmarksPage() {
             <p className="text-gray-500">No bookmarks found matching &quot;{searchQuery}&quot;</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-200 dark:divide-gray-800">
+          <div className="divide-y divide-border">
             {filteredBookmarks.map((post) => (
               <motion.div
                 key={post.id}
@@ -265,18 +265,18 @@ function BookmarksPage() {
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
-                      <button className={`p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 ${potatoMode ? '' : 'backdrop-blur-sm'}`}>
+                      <button className={`p-2 bg-white/90 dark:bg-surface-0/90 rounded-full shadow-lg hover:bg-surface-1 dark:hover:bg-surface-2 ${potatoMode ? '' : 'backdrop-blur-sm'}`}>
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
                     </DropdownMenu.Trigger>
                     
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content
-                        className="min-w-[180px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                        className="min-w-[180px] bg-white dark:bg-surface-0 rounded-2xl shadow-lg border border-border py-2 z-50"
                         sideOffset={5}
                       >
                         <DropdownMenu.Item
-                          className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
+                          className="px-4 py-2 text-sm hover:bg-surface-1 dark:hover:bg-surface-2 cursor-pointer outline-none flex items-center gap-2"
                           onClick={() => {
                             navigator.clipboard.writeText(`${window.location.origin}/post?id=${post.id}`)
                               .then(() => toast.success('Link copied to clipboard'))
@@ -288,7 +288,7 @@ function BookmarksPage() {
                         </DropdownMenu.Item>
                         <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />
                         <DropdownMenu.Item
-                          className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2 text-red-600"
+                          className="px-4 py-2 text-sm hover:bg-surface-1 dark:hover:bg-surface-2 cursor-pointer outline-none flex items-center gap-2 text-red-600"
                           onClick={() => removeBookmark(post.id)}
                         >
                           <BookmarkIcon className="h-4 w-4" />

@@ -191,17 +191,17 @@ function OrdersPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-border">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-surface-0/80 dark:bg-surface-0/80 border-b border-border ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => router.back()}
-                  className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                  className="p-2 -ml-2 rounded-full hover:bg-surface-1 dark:hover:bg-surface-2"
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold flex items-center gap-2">
+                <h1 className="text-xl font-bold font-display flex items-center gap-2">
                   <ShoppingBagIcon className="h-6 w-6" />
                   My Orders
                 </h1>
@@ -231,7 +231,7 @@ function OrdersPage() {
               </Button>
             </div>
           ) : (
-            <div className="divide-y divide-gray-200 dark:divide-gray-800">
+            <div className="divide-y divide-border">
               {orders.map((order, index) => {
                 const status = orderStatuses.get(order.id)
                 const store = stores.get(order.storeId)
