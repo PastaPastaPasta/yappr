@@ -100,7 +100,7 @@ function ActionTooltip({ label, children }: ActionTooltipProps): React.ReactElem
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+          className="bg-zinc-800 dark:bg-zinc-700 text-white text-xs px-2.5 py-1.5 rounded-lg"
           sideOffset={5}
         >
           {label}
@@ -200,7 +200,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           <Link
             href={`/user?id=${post.author.id}`}
             onClick={(e) => e.stopPropagation()}
-            className="text-gray-500 hover:underline truncate"
+            className="text-zinc-500 dark:text-zinc-400 hover:underline truncate"
           >
             @{usernameState}
           </Link>
@@ -210,7 +210,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
     // Still loading
     if (usernameState === undefined) {
-      return <span className="inline-block w-20 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+      return <span className="inline-block w-20 h-4 bg-zinc-200 dark:bg-zinc-700 rounded animate-pulse" />
     }
 
     // No DPNS and no profile - show identity ID with copy tooltip
@@ -232,14 +232,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       navigator.clipboard.writeText(post.author.id).catch(console.error)
                       toast.success('Identity ID copied')
                     }}
-                    className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
+                    className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 truncate font-mono text-xs"
                   >
                     {post.author.id.slice(0, 8)}...{post.author.id.slice(-6)}
                   </button>
                 </Tooltip.Trigger>
                 <Tooltip.Portal>
                   <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                    className="bg-zinc-800 dark:bg-zinc-700 text-white text-xs px-2.5 py-1.5 rounded-lg max-w-xs"
                     sideOffset={5}
                   >
                     Click to copy full identity ID
@@ -539,14 +539,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={handleCardClick}
-      className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
+      className="border-b border-zinc-200/60 dark:border-zinc-800/40 px-4 py-3.5 hover:bg-zinc-50 dark:hover:bg-zinc-900/30 transition-colors cursor-pointer"
     >
       {/* Reposted by header */}
       {post.repostedBy && (
         <Link
           href={`/user?id=${post.repostedBy.id}`}
           onClick={(e) => e.stopPropagation()}
-          className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-8 hover:underline"
+          className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 mb-2 ml-8 hover:underline"
         >
           <ArrowPathIcon className="h-4 w-4" />
           <span>
@@ -567,7 +567,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <Link
               href={`/user?id=${post.author.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+              className="h-11 w-11 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 block flex-shrink-0 ring-1 ring-zinc-200/50 dark:ring-zinc-700/30"
             >
               <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
             </Link>
@@ -581,7 +581,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <>
                   {usernameState === undefined || (displayName === 'Unknown User' || displayName?.startsWith('User ')) ? (
                     // Still loading - show skeleton for display name
-                    <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                    <span className="inline-block w-24 h-4 bg-zinc-200 dark:bg-zinc-700 rounded animate-pulse" />
                   ) : (
                     <ProfileHoverCard
                       userId={post.author.id}
@@ -610,11 +610,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
             <div className="flex items-center gap-1 flex-shrink-0">
               {isPrivatePost(post) && (
-                <span className="flex items-center gap-0.5 text-gray-500 mr-1">
+                <span className="flex items-center gap-0.5 text-zinc-500 mr-1">
                   <LockClosedIcon className="h-3.5 w-3.5" />
                 </span>
               )}
-              <span className="text-gray-500 text-sm">{formatTime(post.createdAt)}</span>
+              <span className="text-zinc-500 dark:text-zinc-400 text-sm">{formatTime(post.createdAt)}</span>
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton onClick={(e: React.MouseEvent) => e.stopPropagation()}>
@@ -624,13 +624,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                  className="min-w-[200px] bg-white dark:bg-zinc-900 rounded-xl shadow-surface-lg border border-zinc-200 dark:border-zinc-800/50 py-1.5 z-50"
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleFollow().catch(console.error); }}
                     disabled={followLoading}
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
+                    className="px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer outline-none rounded-lg mx-1 disabled:opacity-50"
                   >
                     {isFollowing ? 'Unfollow' : 'Follow'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
@@ -639,14 +639,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       e.stopPropagation();
                       router.push(`/post/engagements?id=${post.id}`);
                     }}
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none"
+                    className="px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer outline-none rounded-lg mx-1"
                   >
                     View post engagements
                   </DropdownMenu.Item>
                   {isOwnPost && (
                     <DropdownMenu.Item
                       onClick={(e) => { e.stopPropagation(); handleDelete(); }}
-                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500"
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer outline-none rounded-lg mx-1 text-red-500"
                     >
                       <TrashIcon className="h-4 w-4" />
                       Delete post
@@ -655,7 +655,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
                     disabled={blockLoading}
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
+                    className="px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer outline-none rounded-lg mx-1 text-red-500 disabled:opacity-50"
                   >
                     {isBlocked ? 'Unblock' : 'Block'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
@@ -681,7 +681,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   </Tooltip.Trigger>
                   <Tooltip.Portal>
                     <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                      className="bg-zinc-800 dark:bg-zinc-700 text-white text-xs px-2.5 py-1.5 rounded-lg max-w-xs"
                       sideOffset={5}
                     >
                       Unverified - awaiting SDK support
@@ -715,7 +715,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Quoted post - show skeleton while loading, then actual content */}
           {post.quotedPostId && !post.quotedPost && (
-            <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 animate-pulse">
+            <div className="mt-3 border border-zinc-200 dark:border-zinc-800/50 rounded-xl p-3 animate-pulse">
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700" />
                 <div className="h-3 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
@@ -736,17 +736,17 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <Link
                 href={`/post?id=${post.quotedPost.id}`}
                 onClick={(e) => e.stopPropagation()}
-                className="mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
+                className="mt-3 block border border-zinc-200 dark:border-zinc-800/50 rounded-xl p-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer"
               >
-                <div className="flex items-center gap-2 text-sm text-gray-500">
+                <div className="flex items-center gap-2 text-sm text-zinc-500">
                   <UserAvatar userId={post.quotedPost.author.id} size="sm" alt={post.quotedPost.author.displayName} />
-                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                  <span className="font-semibold text-zinc-900 dark:text-zinc-100">
                     {post.quotedPost.author.displayName}
                   </span>
                   {post.quotedPost.author.username && !post.quotedPost.author.username.startsWith('user_') ? (
-                    <span className="text-gray-500">@{post.quotedPost.author.username}</span>
+                    <span className="text-zinc-500">@{post.quotedPost.author.username}</span>
                   ) : (
-                    <span className="text-gray-500 font-mono text-xs">
+                    <span className="text-zinc-500 font-mono text-xs">
                       {post.quotedPost.author.id.slice(0, 8)}...
                     </span>
                   )}
@@ -770,7 +770,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <div
                   key={media.id}
                   className={cn(
-                    'relative aspect-video bg-gray-100 dark:bg-gray-900',
+                    'relative aspect-video bg-zinc-100 dark:bg-zinc-800',
                     post.media && post.media.length === 3 && index === 0 && 'row-span-2'
                   )}
                 >
@@ -795,20 +795,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     "group flex items-center gap-1 p-2 rounded-full transition-colors",
                     !canReplyToPrivate
                       ? "opacity-50 cursor-not-allowed"
-                      : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
+                      : "hover:bg-yappr-50 dark:hover:bg-yappr-950/30"
                   )}
                 >
                   <ChatBubbleOvalLeftIcon className={cn(
                     "h-5 w-5 transition-colors",
                     !canReplyToPrivate
-                      ? "text-gray-400"
-                      : "text-gray-500 group-hover:text-yappr-500"
+                      ? "text-zinc-400"
+                      : "text-zinc-400 group-hover:text-yappr-500"
                   )} />
                   <span className={cn(
                     "text-sm transition-colors",
                     !canReplyToPrivate
-                      ? "text-gray-400"
-                      : "text-gray-500 group-hover:text-yappr-500"
+                      ? "text-zinc-400"
+                      : "text-zinc-400 group-hover:text-yappr-500"
                   )}>
                     {statsReplies > 0 && formatNumber(statsReplies)}
                   </span>
@@ -831,11 +831,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     <ArrowPathIcon className={cn(
                       'h-5 w-5 transition-colors',
                       repostLoading && 'animate-spin',
-                      reposted ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500'
+                      reposted ? 'text-green-500' : 'text-zinc-400 group-hover:text-green-500'
                     )} />
                     <span className={cn(
                       'text-sm transition-colors',
-                      reposted ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500'
+                      reposted ? 'text-green-500' : 'text-zinc-400 group-hover:text-green-500'
                     )}>
                       {reposts > 0 && formatNumber(reposts)}
                     </span>
@@ -843,20 +843,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
-                    className="min-w-[160px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                    className="min-w-[160px] bg-white dark:bg-zinc-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                     sideOffset={5}
                     onClick={(e) => e.stopPropagation()}
                   >
                     <DropdownMenu.Item
                       onClick={(e) => { e.stopPropagation(); handleRepost().catch(console.error); }}
-                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer outline-none"
                     >
                       <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
                       {reposted ? 'Undo Repost' : 'Repost'}
                     </DropdownMenu.Item>
                     <DropdownMenu.Item
                       onClick={(e) => { e.stopPropagation(); handleQuote(); }}
-                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer outline-none"
                     >
                       <PencilSquareIcon className="h-5 w-5" />
                       Quote
@@ -884,12 +884,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     {liked ? (
                       <HeartIconSolid className="h-5 w-5 text-red-500" />
                     ) : (
-                      <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />
+                      <HeartIcon className="h-5 w-5 text-zinc-400 group-hover:text-red-500 transition-colors" />
                     )}
                   </motion.div>
                   <span className={cn(
                     'text-sm transition-colors',
-                    liked ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500'
+                    liked ? 'text-red-500' : 'text-zinc-400 group-hover:text-red-500'
                   )}>
                     {likes > 0 && formatNumber(likes)}
                   </span>
@@ -910,7 +910,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 >
                   <CurrencyDollarIcon className={cn(
                     "h-5 w-5 transition-colors",
-                    isOwnPost ? "text-gray-400" : "text-gray-500 group-hover:text-amber-500"
+                    isOwnPost ? "text-zinc-400" : "text-zinc-500 group-hover:text-amber-500"
                   )} />
                 </button>
               </ActionTooltip>
@@ -921,14 +921,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
                     disabled={bookmarkLoading}
                     className={cn(
-                      'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
+                      'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950/30 transition-colors',
                       bookmarkLoading && 'opacity-50 cursor-wait'
                     )}
                   >
                     {bookmarked ? (
                       <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
                     ) : (
-                      <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                      <BookmarkIcon className="h-5 w-5 text-zinc-400 hover:text-yappr-500 transition-colors" />
                     )}
                   </button>
                 </ActionTooltip>
@@ -936,9 +936,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <ActionTooltip label="Share">
                   <button
                     onClick={(e) => { e.stopPropagation(); handleShare(); }}
-                    className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
+                    className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950/30 transition-colors"
                   >
-                    <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                    <ArrowUpTrayIcon className="h-5 w-5 text-zinc-400 hover:text-yappr-500 transition-colors" />
                   </button>
                 </ActionTooltip>
               </div>

@@ -215,13 +215,13 @@ export function ProfileHoverCard({
         {isLoading && !profileData ? (
           <div className="space-y-3">
             <div className="flex items-start gap-3">
-              <div className="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
+              <div className="w-14 h-14 rounded-full bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
               <div className="flex-1 space-y-2">
-                <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-                <div className="h-3 w-16 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                <div className="h-4 w-24 bg-zinc-200 dark:bg-zinc-700 rounded animate-pulse" />
+                <div className="h-3 w-16 bg-zinc-200 dark:bg-zinc-700 rounded animate-pulse" />
               </div>
             </div>
-            <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+            <div className="h-10 bg-zinc-200 dark:bg-zinc-700 rounded animate-pulse" />
           </div>
         ) : profileData ? (
           <div className="space-y-3">
@@ -240,11 +240,11 @@ export function ProfileHoverCard({
                   className="flex-shrink-0"
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 dark:text-gray-100 truncate hover:underline">
+                  <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate hover:underline">
                     {profileData.displayName}
                   </p>
                   {profileData.username && (
-                    <p className="text-sm text-gray-500 truncate">
+                    <p className="text-sm text-zinc-500 truncate">
                       @{profileData.username}
                     </p>
                   )}
@@ -254,7 +254,7 @@ export function ProfileHoverCard({
 
             {/* Bio */}
             {profileData.bio && (
-              <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">
+              <p className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">
                 {profileData.bio}
               </p>
             )}
@@ -266,20 +266,20 @@ export function ProfileHoverCard({
                 onClick={handleViewProfile}
                 className="hover:underline"
               >
-                <span className="font-semibold text-gray-900 dark:text-gray-100">
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
                   {profileData.followingCount}
                 </span>
-                <span className="text-gray-500 ml-1">Following</span>
+                <span className="text-zinc-500 ml-1">Following</span>
               </Link>
               <Link
                 href={`/user?id=${userId}&tab=followers`}
                 onClick={handleViewProfile}
                 className="hover:underline"
               >
-                <span className="font-semibold text-gray-900 dark:text-gray-100">
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
                   {profileData.followerCount}
                 </span>
-                <span className="text-gray-500 ml-1">Followers</span>
+                <span className="text-zinc-500 ml-1">Followers</span>
               </Link>
             </div>
 
