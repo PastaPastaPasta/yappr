@@ -115,16 +115,16 @@ export function DashPayContactsModal() {
     <Dialog.Root open={isOpen} onOpenChange={handleClose}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 rounded-2xl p-0 w-[500px] max-w-[90vw] max-h-[600px] shadow-xl z-50 flex flex-col">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface-0 dark:bg-surface-1 rounded-2xl p-0 w-[500px] max-w-[90vw] max-h-[600px] shadow-xl z-50 flex flex-col">
           {/* Header */}
-          <div className="sticky top-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between rounded-t-2xl">
+          <div className="sticky top-0 bg-surface-0 dark:bg-surface-1 border-b border-border px-4 py-3 flex items-center justify-between rounded-t-2xl">
             <Dialog.Title className="text-xl font-bold flex items-center gap-2">
               <UserGroupIcon className="h-6 w-6 text-blue-500" />
               Dash Pay Contacts
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full transition-colors disabled:opacity-50"
+                className="p-2 hover:bg-surface-1 dark:hover:bg-surface-2 rounded-full transition-colors disabled:opacity-50"
                 disabled={state === 'following'}
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -161,7 +161,7 @@ export function DashPayContactsModal() {
               )}
 
               {/* Contact list */}
-              <div className="divide-y divide-gray-200 dark:divide-gray-800">
+              <div className="divide-y divide-border">
                 {contacts.map((contact) => (
                   <ContactRow
                     key={contact.identityId}
@@ -176,7 +176,7 @@ export function DashPayContactsModal() {
 
           {/* Footer with Follow All button */}
           {(state === 'ready' || state === 'following') && contacts.length > 1 && (
-            <div className="sticky bottom-0 bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 px-4 py-3 rounded-b-2xl">
+            <div className="sticky bottom-0 bg-surface-0 dark:bg-surface-1 border-t border-border px-4 py-3 rounded-b-2xl">
               <Button
                 onClick={handleFollowAll}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
@@ -213,7 +213,7 @@ function ContactRow({
   const username = contact.username?.replace('.dash', '')
 
   return (
-    <div className="p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors">
+    <div className="p-4 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Avatar>

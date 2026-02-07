@@ -42,7 +42,7 @@ export function FeedReplyContext({
     : replyEnrichment?.displayName || replier.displayName || `User ${replier.id.slice(-6)}`
 
   return (
-    <div className="border-b border-gray-200 dark:border-gray-800">
+    <div className="border-b border-border">
       {/* Header: Who replied */}
       <Link
         href={`/user?id=${replier.id}`}

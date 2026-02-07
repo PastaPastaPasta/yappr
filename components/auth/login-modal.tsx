@@ -284,10 +284,10 @@ export function LoginModal() {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+              className="bg-surface-0 dark:bg-surface-1 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
             >
               {/* Header */}
-              <div className="sticky top-0 bg-white dark:bg-neutral-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+              <div className="sticky top-0 bg-surface-0 dark:bg-surface-1 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
                 <button
                   onClick={handleClose}
                   aria-label="Close"
@@ -315,7 +315,7 @@ export function LoginModal() {
                       value={identityInput}
                       onChange={(e) => setIdentityInput(e.target.value)}
                       placeholder="e.g., john.dash or 5DbLwAxGBzUzo..."
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-10 bg-surface-1 dark:bg-surface-2 border border-border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3">
@@ -351,7 +351,7 @@ export function LoginModal() {
                       value={credential}
                       onChange={(e) => setCredential(e.target.value)}
                       placeholder="Enter your password or private key..."
-                      className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-20 bg-surface-1 dark:bg-surface-2 border border-border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">

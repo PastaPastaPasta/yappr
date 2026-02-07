@@ -947,7 +947,7 @@ export function ComposeModal() {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                    className="w-full max-w-2xl bg-surface-0 dark:bg-surface-1 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
@@ -961,7 +961,7 @@ export function ComposeModal() {
                     </Dialog.Description>
 
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-gray-50 dark:bg-neutral-950">
                       <div className="flex items-center gap-3">
                         <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
                           <XMarkIcon className="h-5 w-5" />
@@ -1134,7 +1134,7 @@ export function ComposeModal() {
                               initial={{ opacity: 0, height: 0 }}
                               animate={{ opacity: 1, height: 'auto' }}
                               exit={{ opacity: 0, height: 0 }}
-                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
+                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-surface-0 dark:bg-surface-1 overflow-hidden"
                             >
                               <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
                                 <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -1228,7 +1228,7 @@ export function ComposeModal() {
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
                               onClick={addThreadPost}
-                              className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
+                              className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-border text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
                             >
                               <PlusIcon className="w-5 h-5" />
                               <span className="text-sm font-medium">Add to thread</span>
@@ -1242,7 +1242,7 @@ export function ComposeModal() {
                     </div>
 
                     {/* Footer - with image button and keyboard hint */}
-                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="px-4 py-2 border-t border-border bg-gray-50 dark:bg-neutral-950">
                       <div className="flex items-center justify-between">
                         {/* Left side: Image button + indicators */}
                         <div className="flex items-center gap-3">
