@@ -651,7 +651,7 @@ function SettingsPage() {
     return (
     <div className="p-6 space-y-6">
       <div className="text-center py-8">
-        <h1 className="text-4xl font-bold text-gradient mb-4">Yappr</h1>
+        <h1 className="text-4xl font-display font-bold text-gradient mb-4">Yappr</h1>
         <p className="text-gray-500 mb-4">Decentralized social media on Dash Platform</p>
 
         <Button variant="outline" asChild>
@@ -747,7 +747,7 @@ function SettingsPage() {
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
-            <h1 className="text-xl font-bold">{getSectionTitle()}</h1>
+            <h1 className="text-xl font-display font-bold">{getSectionTitle()}</h1>
           </div>
         </header>
 

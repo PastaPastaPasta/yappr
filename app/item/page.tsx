@@ -301,7 +301,7 @@ function ItemDetailContent() {
               </button>
             )}
 
-            <h1 className="text-2xl font-bold">{item.title}</h1>
+            <h1 className="text-2xl font-display font-bold">{item.title}</h1>
 
             <p className="text-2xl font-bold text-yappr-600">
               {formatPrice(currentPrice, item.currency)}

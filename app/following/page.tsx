@@ -462,7 +462,7 @@ function FollowingPage() {
                     </button>
                   )}
                   <div>
-                    <h1 className="text-xl font-bold">
+                    <h1 className="text-xl font-display font-bold">
                       {isOwnProfile ? 'Following' : `@${targetUserName || 'User'}'s Following`}
                     </h1>
                     <p className="text-sm text-gray-500 mt-1">

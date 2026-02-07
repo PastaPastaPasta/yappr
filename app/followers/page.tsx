@@ -307,7 +307,7 @@ function FollowersPage() {
                     </button>
                   )}
                   <div>
-                    <h1 className="text-xl font-bold">
+                    <h1 className="text-xl font-display font-bold">
                       {isOwnProfile ? 'Followers' : `@${targetUserName || 'User'}'s Followers`}
                     </h1>
                     <p className="text-sm text-gray-500 mt-1">

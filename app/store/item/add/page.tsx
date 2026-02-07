@@ -246,7 +246,7 @@ function AddItemPage() {
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold">{isEditMode ? 'Edit Product' : 'Add Product'}</h1>
+              <h1 className="text-xl font-display font-bold">{isEditMode ? 'Edit Product' : 'Add Product'}</h1>
             </div>
           </header>
 

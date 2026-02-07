@@ -178,7 +178,7 @@ function BookmarksPage() {
         <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <div>
-              <h1 className="text-xl font-bold">Bookmarks</h1>
+              <h1 className="text-xl font-display font-bold">Bookmarks</h1>
               <p className="text-sm text-gray-500">{bookmarks.length} saved posts</p>
             </div>
             

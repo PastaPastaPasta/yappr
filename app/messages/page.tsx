@@ -550,7 +550,7 @@ function MessagesPage() {
         <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
           <header className="flex-shrink-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
-              <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
+              <h1 className="text-lg sm:text-xl font-display font-bold">Messages</h1>
               <button
                 onClick={() => setShowNewConversation(true)}
                 className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
@@ -830,7 +830,7 @@ function MessagesPage() {
           />
           <div className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">New Message</h2>
+              <h2 className="text-xl font-display font-bold">New Message</h2>
               <button
                 onClick={() => {
                   setShowNewConversation(false)

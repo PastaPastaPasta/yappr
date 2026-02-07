@@ -945,7 +945,7 @@ function UserProfileContent() {
               {isDisplayNameLoading ? (
                 <div className="h-6 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
               ) : (
-                <h1 className="text-xl font-bold">{displayName}</h1>
+                <h1 className="text-xl font-display font-bold">{displayName}</h1>
               )}
               <p className="text-sm text-gray-500">{postCount !== null ? postCount : '–'} posts</p>
             </div>
@@ -1252,7 +1252,7 @@ function UserProfileContent() {
                     {isDisplayNameLoading ? (
                       <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
                     ) : (
-                      <h2 className="text-xl font-bold">{displayName}</h2>
+                      <h2 className="text-xl font-display font-bold">{displayName}</h2>
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
                       {hasDpns && username ? (
@@ -1636,7 +1636,7 @@ function UserProfileContent() {
           />
           <div className="relative bg-white dark:bg-gray-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Customize Avatar</h2>
+              <h2 className="text-lg font-display font-bold">Customize Avatar</h2>
               <button
                 onClick={() => setIsEditingAvatar(false)}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
@@ -1669,7 +1669,7 @@ function UserProfileContent() {
           />
           <div className="relative bg-white dark:bg-gray-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Customize Banner</h2>
+              <h2 className="text-lg font-display font-bold">Customize Banner</h2>
               <button
                 onClick={() => setIsEditingBanner(false)}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"

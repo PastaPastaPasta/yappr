@@ -182,7 +182,7 @@ function StoreDetailContent() {
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold truncate">{store.name}</h1>
+                <h1 className="text-xl font-display font-bold truncate">{store.name}</h1>
               </div>
 
               <div className="flex items-center gap-2">
@@ -253,7 +253,7 @@ function StoreDetailContent() {
                 </div>
 
                 <div className="pt-10 flex-1 min-w-0">
-                  <h2 className="text-xl font-bold truncate">{store.name}</h2>
+                  <h2 className="text-xl font-display font-bold truncate">{store.name}</h2>
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />

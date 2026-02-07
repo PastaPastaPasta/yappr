@@ -26,7 +26,7 @@ export default function PrivacyPage() {
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <ShieldCheckIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">Privacy Policy</h1>
+              <h1 className="text-3xl font-display font-bold">Privacy Policy</h1>
             </div>
             <p className="text-lg opacity-90">
               How your data works on a decentralized platform

@@ -50,7 +50,7 @@ export function FeaturedPosts({
 
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <h2 className="text-2xl font-display font-bold mb-6 flex items-center gap-2 tracking-tight">
         <SparklesIcon className="h-6 w-6 text-yappr-500" />
         Popular Posts
       </h2>

@@ -31,7 +31,7 @@ export default function DPNSRegisterPage() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
-          <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">
+          <h2 className="text-2xl font-display font-bold mb-4 text-gray-900 dark:text-white">
             Authentication Required
           </h2>
           <p className="text-gray-600 dark:text-gray-400 mb-6">
@@ -77,7 +77,7 @@ export default function DPNSRegisterPage() {
         <div className="flex items-center justify-center min-h-screen">
           <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+              <h2 className="text-xl font-display font-bold text-gray-900 dark:text-white">
                 Register DPNS Username
               </h2>
               <button

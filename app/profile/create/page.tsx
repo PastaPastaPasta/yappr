@@ -217,7 +217,7 @@ function CreateProfilePage() {
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold">Create Your Profile</h1>
+            <h1 className="text-3xl font-display font-bold">Create Your Profile</h1>
             <button
               onClick={logout}
               className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"

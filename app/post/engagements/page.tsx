@@ -332,7 +332,7 @@ function EngagementsPageContent() {
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold">Post engagements</h1>
+                <h1 className="text-xl font-display font-bold">Post engagements</h1>
               </div>
             </div>
 

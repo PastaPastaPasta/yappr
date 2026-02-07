@@ -107,7 +107,7 @@ function PostDetailContent() {
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
-            <h1 className="text-xl font-bold">Post</h1>
+            <h1 className="text-xl font-display font-bold">Post</h1>
           </div>
         </header>
 

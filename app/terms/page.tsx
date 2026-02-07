@@ -26,7 +26,7 @@ export default function TermsPage() {
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <DocumentTextIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">Terms of Use</h1>
+              <h1 className="text-3xl font-display font-bold">Terms of Use</h1>
             </div>
             <p className="text-lg opacity-90">
               Understanding how Yappr works as a decentralized platform

@@ -253,7 +253,7 @@ function SearchPageContent() {
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
               <div>
-                <h1 className="text-xl font-bold">Search</h1>
+                <h1 className="text-xl font-display font-bold">Search</h1>
                 <p className="text-sm text-gray-500">
                   Results for &quot;{query}&quot;
                 </p>

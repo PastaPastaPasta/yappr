@@ -156,7 +156,7 @@ function CreateStorePage() {
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold">{isEditMode ? 'Edit Store' : 'Create Store'}</h1>
+              <h1 className="text-xl font-display font-bold">{isEditMode ? 'Edit Store' : 'Create Store'}</h1>
             </div>
           </header>
 

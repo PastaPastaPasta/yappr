@@ -137,7 +137,7 @@ function HashtagPageContent() {
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
               <div>
-                <h1 className="text-xl font-bold flex items-center gap-1">
+                <h1 className="text-xl font-display font-bold flex items-center gap-1">
                   <TagIcon className="h-5 w-5 text-yappr-500" />
                   {displayTag}
                 </h1>

@@ -27,7 +27,7 @@ export default function AboutPage() {
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <InformationCircleIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">About Yappr</h1>
+              <h1 className="text-3xl font-display font-bold">About Yappr</h1>
             </div>
             <p className="text-lg opacity-90">
               Decentralized social media on Dash Platform

@@ -285,7 +285,7 @@ function StoreManagePage() {
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold truncate">Manage Store</h1>
+                <h1 className="text-xl font-display font-bold truncate">Manage Store</h1>
               </div>
               <Button
                 variant="outline"

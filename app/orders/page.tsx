@@ -201,7 +201,7 @@ function OrdersPage() {
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold flex items-center gap-2">
+                <h1 className="text-xl font-display font-bold flex items-center gap-2">
                   <ShoppingBagIcon className="h-6 w-6" />
                   My Orders
                 </h1>
