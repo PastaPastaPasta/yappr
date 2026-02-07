@@ -20,14 +20,14 @@ interface TopUsersSectionProps {
 
 function UserSkeleton() {
   return (
-    <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-xl">
+    <div className="p-4 bg-surface-1 dark:bg-surface-2 rounded-2xl border border-border">
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+        <div className="w-12 h-12 skeleton rounded-full" />
         <div className="flex-1 space-y-2">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="h-3 w-16 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+          <div className="h-4 w-24 skeleton" />
+          <div className="h-3 w-16 skeleton" />
         </div>
-        <div className="h-6 w-14 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        <div className="h-6 w-14 skeleton rounded-lg" />
       </div>
     </div>
   )
@@ -41,7 +41,7 @@ export function TopUsersSection({
 }: TopUsersSectionProps) {
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <h2 className="text-2xl font-display font-bold mb-6 flex items-center gap-2.5 tracking-tight">
         <UserCircleIcon className="h-6 w-6 text-yappr-500" />
         Top Contributors
       </h2>
@@ -79,7 +79,7 @@ export function TopUsersSection({
             >
               <Link
                 href={`/user?id=${user.id}`}
-                className="block p-4 bg-gray-50 dark:bg-gray-950 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="block p-4 bg-surface-1 dark:bg-surface-2 rounded-2xl border border-border hover:border-yappr-500/30 hover:shadow-card-hover dark:hover:shadow-card-dark-hover transition-all duration-200"
               >
                 <div className="flex items-center gap-3">
                   <UserAvatar userId={user.id} size="lg" />
@@ -92,10 +92,10 @@ export function TopUsersSection({
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-yappr-500">
+                    <p className="text-lg font-display font-bold text-yappr-500">
                       {formatNumber(user.postCount)}
                     </p>
-                    <p className="text-xs text-gray-500">posts</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">posts</p>
                   </div>
                 </div>
               </Link>

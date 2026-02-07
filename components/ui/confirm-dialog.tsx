@@ -57,15 +57,15 @@ export function ConfirmDialog({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl"
+                    className="bg-white dark:bg-surface-1 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl border border-border"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="flex items-start gap-4">
-                      <div className={`p-2 rounded-full bg-gray-100 dark:bg-gray-800 ${iconColors[variant]}`}>
+                      <div className={`p-2 rounded-full bg-surface-1 dark:bg-surface-2 ${iconColors[variant]}`}>
                         <ExclamationTriangleIcon className="h-6 w-6" />
                       </div>
                       <div className="flex-1">
-                        <Dialog.Title className="text-lg font-semibold">
+                        <Dialog.Title className="text-lg font-display font-semibold">
                           {title}
                         </Dialog.Title>
                         <Dialog.Description className="text-sm text-gray-500 mt-1">

@@ -210,7 +210,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
     // Still loading
     if (usernameState === undefined) {
-      return <span className="inline-block w-20 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+      return <span className="inline-block w-20 h-4 skeleton rounded" />
     }
 
     // No DPNS and no profile - show identity ID with copy tooltip
@@ -567,7 +567,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <Link
               href={`/user?id=${post.author.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-surface-1 block flex-shrink-0"
+              className="h-12 w-12 rounded-full overflow-hidden bg-surface-0 dark:bg-surface-1 block flex-shrink-0"
             >
               <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
             </Link>
@@ -581,7 +581,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <>
                   {usernameState === undefined || (displayName === 'Unknown User' || displayName?.startsWith('User ')) ? (
                     // Still loading - show skeleton for display name
-                    <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                    <span className="inline-block w-24 h-4 skeleton rounded" />
                   ) : (
                     <ProfileHoverCard
                       userId={post.author.id}
@@ -717,13 +717,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           {post.quotedPostId && !post.quotedPost && (
             <div className="mt-3 border border-border rounded-2xl p-3 animate-pulse">
               <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700" />
-                <div className="h-3 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-3 w-16 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="w-5 h-5 rounded-full skeleton" />
+                <div className="h-3 w-24 skeleton rounded" />
+                <div className="h-3 w-16 skeleton rounded" />
               </div>
               <div className="mt-2 space-y-2">
-                <div className="h-3 w-full bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-3 w-3/4 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-3 w-full skeleton rounded" />
+                <div className="h-3 w-3/4 skeleton rounded" />
               </div>
             </div>
           )}
