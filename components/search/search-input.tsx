@@ -214,7 +214,7 @@ export function SearchInput() {
 
   return (
     <div className="relative">
-      <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500 z-10" />
+      <MagnifyingGlassIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400 z-10" />
       <input
         ref={inputRef}
         type="text"
@@ -223,14 +223,14 @@ export function SearchInput() {
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         placeholder="Search users & hashtags"
-        className="w-full h-10 pl-10 pr-10 bg-gray-100 dark:bg-gray-900 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
+        className="w-full h-10 pl-10 pr-10 bg-zinc-100 dark:bg-zinc-900/50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500/50 focus:bg-white dark:focus:bg-zinc-900 border border-transparent focus:border-zinc-200 dark:focus:border-zinc-800 transition-all duration-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
       />
       {query && (
         <button
           onClick={handleClear}
-          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full z-10"
+          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg z-10 transition-colors"
         >
-          <XMarkIcon className="h-4 w-4 text-gray-500" />
+          <XMarkIcon className="h-4 w-4 text-zinc-400" />
         </button>
       )}
 
@@ -243,10 +243,10 @@ export function SearchInput() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.15 }}
-            className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-50"
+            className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-zinc-900 rounded-xl shadow-surface-lg border border-zinc-200 dark:border-zinc-800/50 overflow-hidden z-50"
           >
             {isSearching ? (
-              <div className="p-3 flex items-center justify-center gap-2 text-gray-500">
+              <div className="p-3 flex items-center justify-center gap-2 text-zinc-500 dark:text-zinc-400">
                 <Spinner size="sm" />
                 <span className="text-sm">Searching...</span>
               </div>
@@ -261,7 +261,7 @@ export function SearchInput() {
                     className={`w-full flex items-center gap-3 p-3 text-left transition-colors ${
                       index === selectedIndex
                         ? 'bg-yappr-50 dark:bg-yappr-900/30'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                        : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
                     }`}
                   >
                     {result.type === 'user' ? (
@@ -277,7 +277,7 @@ export function SearchInput() {
                           <p className="font-medium text-sm truncate">
                             {result.displayName}
                           </p>
-                          <p className="text-xs text-gray-500 truncate">
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
                             @{result.username}
                           </p>
                         </div>
@@ -291,7 +291,7 @@ export function SearchInput() {
                           <p className="font-medium text-sm truncate">
                             #{result.hashtag}
                           </p>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">
                             View hashtag
                           </p>
                         </div>
@@ -306,13 +306,13 @@ export function SearchInput() {
                     router.push(`/search?q=${encodeURIComponent(query.trim())}`)
                     setShowDropdown(false)
                   }}
-                  className="w-full p-3 text-sm text-yappr-500 hover:bg-gray-50 dark:hover:bg-gray-800 text-center border-t border-gray-100 dark:border-gray-800"
+                  className="w-full p-3 text-sm text-yappr-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 text-center border-t border-zinc-100 dark:border-zinc-800"
                 >
                   View all results for &quot;{query.trim()}&quot;
                 </button>
               </div>
             ) : (
-              <div className="p-3 text-center text-sm text-gray-500">
+              <div className="p-3 text-center text-sm text-zinc-500 dark:text-zinc-400">
                 No results found for &quot;{query.trim()}&quot;
               </div>
             )}

@@ -284,20 +284,20 @@ export function LoginModal() {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+              className="bg-white dark:bg-zinc-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
             >
               {/* Header */}
-              <div className="sticky top-0 bg-white dark:bg-neutral-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+              <div className="sticky top-0 bg-white dark:bg-zinc-900 px-6 pt-6 pb-4 border-b border-zinc-200/60 dark:border-zinc-800/40">
                 <button
                   onClick={handleClose}
                   aria-label="Close"
-                  className="absolute top-4 left-4 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+                  className="absolute top-4 left-4 p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
                 >
                   <X className="w-5 h-5" />
                 </button>
                 <div className="text-center">
                   <h1 className="text-2xl font-bold text-gradient">Yappr</h1>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Your decentralized social feed — powered by Dash</p>
                 </div>
               </div>
 
@@ -305,7 +305,7 @@ export function LoginModal() {
               <form onSubmit={handleSubmit} className="p-6 space-y-5">
                 {/* Identity ID / DPNS Input */}
                 <div>
-                  <label htmlFor="loginIdentityInput" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label htmlFor="loginIdentityInput" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
                     Dash Username or Identity ID
                   </label>
                   <div className="relative">
@@ -315,12 +315,12 @@ export function LoginModal() {
                       value={identityInput}
                       onChange={(e) => setIdentityInput(e.target.value)}
                       placeholder="e.g., john.dash or 5DbLwAxGBzUzo..."
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-10 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3">
                       {isLookingUp && (
-                        <Spinner size="sm" className="text-gray-400" />
+                        <Spinner size="sm" className="text-zinc-400" />
                       )}
                       {!isLookingUp && resolvedIdentity && (
                         <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -341,7 +341,7 @@ export function LoginModal() {
 
                 {/* Password or Private Key Input */}
                 <div>
-                  <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label htmlFor="loginCredential" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
                     {hasOnchainBackup ? 'Password or Private Key' : 'Private Key (High or Critical)'}
                   </label>
                   <div className="relative">
@@ -351,20 +351,20 @@ export function LoginModal() {
                       value={credential}
                       onChange={(e) => setCredential(e.target.value)}
                       placeholder="Enter your password or private key..."
-                      className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-20 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
                       <button
                         type="button"
                         onClick={() => setShowCredential(!showCredential)}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="text-zinc-400 hover:text-gray-600"
                         tabIndex={-1}
                       >
                         {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                       </button>
                       {detectedCredentialType === 'key' && keyValidationStatus === 'validating' && (
-                        <Spinner size="sm" className="text-gray-400" />
+                        <Spinner size="sm" className="text-zinc-400" />
                       )}
                       {detectedCredentialType === 'key' && keyValidationStatus === 'valid' && (
                         <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -383,7 +383,7 @@ export function LoginModal() {
                       (detectedCredentialType === 'key' && keyValidationStatus === 'invalid') ||
                       (detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup)
                         ? 'text-red-600 dark:text-red-400'
-                        : 'text-gray-500 dark:text-gray-400'
+                        : 'text-gray-500 dark:text-zinc-400'
                     }`}>
                       {detectedCredentialType === 'key' ? (
                         !resolvedIdentity
@@ -408,14 +408,14 @@ export function LoginModal() {
                       )}
                     </p>
                   )}
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  <p className="mt-2 text-xs text-gray-500 dark:text-zinc-400">
                     🔒 Your keys never leave this device. All signing happens locally.
                   </p>
                 </div>
 
                 {/* Remember Me Toggle */}
                 <div className="flex items-center justify-between">
-                  <label htmlFor="loginRememberMe" className="text-sm text-gray-600 dark:text-gray-400">
+                  <label htmlFor="loginRememberMe" className="text-sm text-zinc-500 dark:text-zinc-400">
                     Stay signed in across tabs
                   </label>
                   <button
@@ -425,7 +425,7 @@ export function LoginModal() {
                     aria-checked={rememberMe}
                     onClick={() => setRememberMe(!rememberMe)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
-                      rememberMe ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-700'
+                      rememberMe ? 'bg-yappr-500' : 'bg-zinc-200 dark:bg-zinc-700'
                     }`}
                   >
                     <span
@@ -459,15 +459,15 @@ export function LoginModal() {
                 </Button>
 
                 {/* Onboarding Gateway */}
-                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                <div className="mt-4 pt-4 border-t border-zinc-200/60 dark:border-zinc-800/40">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-2">
                     Don&apos;t have an identity yet? Create one to start posting on Yappr.
                   </p>
                   <a
                     href="https://bridge.thepasta.org"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-gradient-yappr hover:brightness-110 text-white rounded-xl transition-colors text-sm"
                   >
                     Create Identity
                   </a>

@@ -5,12 +5,33 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 24 10% 10%;
+    --surface: 0 0% 100%;
+    --surface-secondary: 60 9% 96%;
+    --border: 20 6% 90%;
+    --accent: 38 92% 50%;
+    --accent-foreground: 0 0% 100%;
   }
 
   .dark {
-    --background: 0 0% 7%;
-    --foreground: 210 40% 98%;
+    --background: 240 6% 6%;
+    --foreground: 60 9% 98%;
+    --surface: 240 6% 10%;
+    --surface-secondary: 240 5% 12%;
+    --border: 240 4% 16%;
+    --accent: 38 92% 50%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    color: hsl(var(--foreground));
+    background: hsl(var(--background));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
@@ -29,19 +50,19 @@
   }
 
   .glass-effect {
-    @apply backdrop-blur-xl bg-white/80 dark:bg-neutral-900/80;
+    @apply backdrop-blur-xl bg-white/80 dark:bg-zinc-950/80;
   }
 
   .glass-border {
-    @apply border border-gray-200/50 dark:border-gray-800/50;
+    @apply border border-zinc-200/50 dark:border-zinc-800/50;
   }
 
   .interactive-scale {
-    @apply transition-transform duration-150 active:scale-[0.98];
+    @apply transition-all duration-150 active:scale-[0.98];
   }
 
   .text-gradient {
-    @apply bg-gradient-to-r from-yappr-500 to-yappr-600 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-yappr-400 via-yappr-500 to-yappr-600 bg-clip-text text-transparent;
   }
 
   .safe-area-inset-bottom {
@@ -50,5 +71,31 @@
 
   .safe-area-inset-top {
     padding-top: env(safe-area-inset-top, 0);
+  }
+
+  /* Subtle warm surface for cards in dark mode */
+  .surface-card {
+    @apply bg-white dark:bg-zinc-900/50;
+  }
+
+  .surface-elevated {
+    @apply bg-white dark:bg-zinc-900 shadow-surface dark:shadow-none;
+  }
+
+  /* Shimmer loading effect */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(245, 158, 11, 0.06) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Focus ring with brand color */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950;
   }
 }

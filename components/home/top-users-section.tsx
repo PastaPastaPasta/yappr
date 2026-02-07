@@ -20,14 +20,14 @@ interface TopUsersSectionProps {
 
 function UserSkeleton() {
   return (
-    <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-xl">
+    <div className="p-4 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200/50 dark:border-zinc-800/30">
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+        <div className="w-11 h-11 bg-zinc-200 dark:bg-zinc-800 rounded-full animate-pulse" />
         <div className="flex-1 space-y-2">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="h-3 w-16 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+          <div className="h-4 w-24 bg-zinc-200 dark:bg-zinc-800 rounded-lg animate-pulse" />
+          <div className="h-3 w-16 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg animate-pulse" />
         </div>
-        <div className="h-6 w-14 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        <div className="h-6 w-14 bg-zinc-200 dark:bg-zinc-800 rounded-lg animate-pulse" />
       </div>
     </div>
   )
@@ -41,14 +41,14 @@ export function TopUsersSection({
 }: TopUsersSectionProps) {
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-        <UserCircleIcon className="h-6 w-6 text-yappr-500" />
+      <h2 className="text-xl font-bold mb-5 flex items-center gap-2 tracking-tight">
+        <UserCircleIcon className="h-5 w-5 text-yappr-500" />
         Top Contributors
       </h2>
 
       {error ? (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+          <p className="text-zinc-500 dark:text-zinc-400 mb-4 text-sm">{error}</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <ArrowPathIcon className="h-4 w-4 mr-2" />
@@ -57,19 +57,19 @@ export function TopUsersSection({
           )}
         </div>
       ) : loading ? (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
           {[...Array(3)].map((_, i) => (
             <UserSkeleton key={i} />
           ))}
         </div>
       ) : users.length === 0 ? (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400">
+          <p className="text-zinc-500 dark:text-zinc-400 text-sm">
             No users yet. Be the first to join!
           </p>
         </div>
       ) : (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
           {users.map((user, index) => (
             <motion.div
               key={user.id}
@@ -79,23 +79,23 @@ export function TopUsersSection({
             >
               <Link
                 href={`/user?id=${user.id}`}
-                className="block p-4 bg-gray-50 dark:bg-gray-950 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="block p-4 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-all duration-200 border border-zinc-200/50 dark:border-zinc-800/30"
               >
                 <div className="flex items-center gap-3">
                   <UserAvatar userId={user.id} size="lg" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900 dark:text-gray-100 truncate">
+                    <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate text-sm">
                       {user.displayName}
                     </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
                       @{user.username}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-yappr-500">
+                    <p className="text-lg font-bold text-yappr-600 dark:text-yappr-400">
                       {formatNumber(user.postCount)}
                     </p>
-                    <p className="text-xs text-gray-500">posts</p>
+                    <p className="text-2xs text-zinc-500">posts</p>
                   </div>
                 </div>
               </Link>

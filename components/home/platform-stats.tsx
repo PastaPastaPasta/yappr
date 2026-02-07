@@ -35,15 +35,15 @@ export function PlatformStats({
       label: 'Active Users',
       value: totalUsers,
       icon: UserGroupIcon,
-      color: 'text-blue-500'
+      color: 'text-yappr-600 dark:text-yappr-400'
     },
   ]
 
   if (error) {
     return (
-      <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+      <section className="py-8 border-y border-zinc-200/60 dark:border-zinc-800/40">
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+          <p className="text-zinc-500 dark:text-zinc-400 mb-4 text-sm">{error}</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <ArrowPathIcon className="h-4 w-4 mr-2" />
@@ -56,7 +56,7 @@ export function PlatformStats({
   }
 
   return (
-    <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+    <section className="py-10 border-y border-zinc-200/60 dark:border-zinc-800/40">
       <div className="grid grid-cols-2 gap-8">
         {stats.map((stat, index) => (
           <motion.div
@@ -66,13 +66,15 @@ export function PlatformStats({
             transition={{ delay: index * 0.1 }}
             className="text-center"
           >
-            <stat.icon className={`h-8 w-8 ${stat.color} mx-auto mb-2`} />
+            <div className="w-12 h-12 rounded-2xl bg-yappr-500/10 flex items-center justify-center mx-auto mb-3">
+              <stat.icon className={`h-6 w-6 ${stat.color}`} />
+            </div>
             {loading ? (
-              <div className="h-9 w-20 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-1 animate-pulse" />
+              <div className="h-9 w-20 bg-zinc-200 dark:bg-zinc-800 rounded-lg mx-auto mb-1.5 animate-pulse" />
             ) : (
-              <div className="text-3xl font-bold">{formatNumber(stat.value)}</div>
+              <div className="text-3xl font-bold tracking-tight">{formatNumber(stat.value)}</div>
             )}
-            <div className="text-sm text-gray-500">{stat.label}</div>
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">{stat.label}</div>
           </motion.div>
         ))}
       </div>
