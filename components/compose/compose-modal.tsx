@@ -939,7 +939,7 @@ export function ComposeModal() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                className={`fixed inset-0 bg-surface-950/60 dark:bg-black/70 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
               >
                 <Dialog.Content asChild>
                   <motion.div
@@ -947,7 +947,7 @@ export function ComposeModal() {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                    className="w-full max-w-2xl bg-white dark:bg-surface-900 rounded-3xl shadow-2xl border border-surface-200/40 dark:border-surface-800/40 overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
@@ -961,13 +961,13 @@ export function ComposeModal() {
                     </Dialog.Description>
 
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-surface-200/60 dark:border-surface-800/40 bg-surface-50/80 dark:bg-surface-900/80">
                       <div className="flex items-center gap-3">
-                        <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
+                        <IconButton onClick={handleClose} className="hover:bg-surface-200 dark:hover:bg-surface-800">
                           <XMarkIcon className="h-5 w-5" />
                         </IconButton>
                         <div className="flex items-center gap-2">
-                          <h2 className="font-semibold text-gray-900 dark:text-gray-100">
+                          <h2 className="font-semibold text-surface-900 dark:text-surface-100">
                             {getModalTitle(!!replyingTo, !!quotingPost, threadPosts.length)}
                           </h2>
                           {/* Preview toggle */}
@@ -975,8 +975,8 @@ export function ComposeModal() {
                             onClick={() => setShowPreview(!showPreview)}
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                               showPreview
-                                ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400'
-                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                ? 'bg-yappr-100 dark:bg-yappr-900/20 text-yappr-600 dark:text-yappr-400'
+                                : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-surface-700'
                             }`}
                           >
                             {showPreview ? (
@@ -1002,7 +1002,7 @@ export function ComposeModal() {
                           className={`min-w-[100px] h-10 px-5 text-sm font-semibold transition-all ${
                             canPost
                               ? 'bg-yappr-500 hover:bg-yappr-600 shadow-lg shadow-yappr-500/25 hover:shadow-xl hover:shadow-yappr-500/30 hover:scale-[1.02]'
-                              : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                              : 'bg-surface-200 dark:bg-surface-700 text-surface-400 dark:text-surface-500 cursor-not-allowed'
                           }`}
                         >
                           <PostButtonContent
@@ -1078,10 +1078,10 @@ export function ComposeModal() {
                             <motion.div
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700"
                             >
                               <Spinner size="sm" className="h-4 w-4 border-purple-500" />
-                              <span className="text-sm text-gray-500 dark:text-gray-400">
+                              <span className="text-sm text-surface-500 dark:text-surface-400">
                                 Checking encryption inheritance...
                               </span>
                             </motion.div>
@@ -1134,10 +1134,10 @@ export function ComposeModal() {
                               initial={{ opacity: 0, height: 0 }}
                               animate={{ opacity: 1, height: 'auto' }}
                               exit={{ opacity: 0, height: 0 }}
-                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
+                              className="rounded-xl border-2 border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 overflow-hidden"
                             >
-                              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
-                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                              <div className="px-4 py-2 bg-surface-50 dark:bg-surface-800/30 border-b border-surface-200 dark:border-surface-700">
+                                <span className="text-xs font-medium text-surface-500 dark:text-surface-400">
                                   Public Teaser (visible to everyone)
                                 </span>
                               </div>
@@ -1151,7 +1151,7 @@ export function ComposeModal() {
                                     }
                                   }}
                                   placeholder="Write a teaser to entice others to request access..."
-                                  className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                                  className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-surface-400 dark:placeholder:text-surface-600"
                                   maxLength={TEASER_LIMIT + 50}
                                 />
                                 <div className="flex items-center justify-end mt-2">
@@ -1160,7 +1160,7 @@ export function ComposeModal() {
                                       ? 'text-red-500'
                                       : (firstPost?.teaser?.length || 0) > TEASER_LIMIT - 20
                                       ? 'text-amber-500'
-                                      : 'text-gray-400'
+                                      : 'text-surface-400'
                                   }`}>
                                     {firstPost?.teaser?.length || 0}/{TEASER_LIMIT}
                                   </span>
@@ -1173,7 +1173,7 @@ export function ComposeModal() {
                           {visibility === 'private-with-teaser' && (
                             <div className="flex items-center gap-2 mt-2">
                               <LockClosedIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                              <span className="text-xs font-medium text-surface-500 dark:text-surface-400">
                                 Private Content (encrypted)
                               </span>
                             </div>
@@ -1209,7 +1209,7 @@ export function ComposeModal() {
                               />
                               {imageUrlExtraLength > 0 && (
                                 <div className={`mt-2 text-xs ${
-                                  isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'
+                                  isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-surface-500'
                                 }`}>
                                   Image URL adds {imageUrlExtraLength} characters to your post.
                                   {isOverLimitDueToImage && (
@@ -1228,7 +1228,7 @@ export function ComposeModal() {
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
                               onClick={addThreadPost}
-                              className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
+                              className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-surface-200 dark:border-surface-800 hover:border-yappr-400 dark:hover:border-yappr-600 text-surface-500 hover:text-yappr-500 transition-colors"
                             >
                               <PlusIcon className="w-5 h-5" />
                               <span className="text-sm font-medium">Add to thread</span>
@@ -1242,7 +1242,7 @@ export function ComposeModal() {
                     </div>
 
                     {/* Footer - with image button and keyboard hint */}
-                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="px-4 py-2 border-t border-surface-200/60 dark:border-surface-800/40 bg-surface-50/80 dark:bg-surface-900/80">
                       <div className="flex items-center justify-between">
                         {/* Left side: Image button + indicators */}
                         <div className="flex items-center gap-3">
@@ -1253,8 +1253,8 @@ export function ComposeModal() {
                             disabled={!canAttachImage}
                             className={`p-1.5 rounded-md transition-colors ${
                               canAttachImage
-                                ? 'text-gray-500 hover:text-yappr-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                                : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                                ? 'text-surface-500 hover:text-yappr-500 hover:bg-surface-100 dark:hover:bg-surface-800'
+                                : 'text-surface-300 dark:text-surface-600 cursor-not-allowed'
                             }`}
                             title={
                               willBeEncrypted
@@ -1295,7 +1295,7 @@ export function ComposeModal() {
                         </div>
 
                         {/* Right side: keyboard hint */}
-                        <span className="text-xs text-gray-400">
+                        <span className="text-xs text-surface-400">
                           {threadPosts.length > 1
                             ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`
                             : `${isMac ? '⌘' : 'Ctrl'}+Enter to post`}
