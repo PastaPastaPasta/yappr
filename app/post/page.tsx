@@ -99,7 +99,7 @@ function PostDetailContent() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
@@ -173,7 +173,7 @@ function PostDetailContent() {
             ) : (
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
                 <p className="text-gray-500 text-sm">
-                  <button onClick={openLoginModal} className="text-purple-600 hover:underline">Log in</button> to reply
+                  <button onClick={openLoginModal} className="text-yappr-500 hover:underline">Log in</button> to reply
                 </p>
               </div>
             )}

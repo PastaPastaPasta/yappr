@@ -182,8 +182,8 @@ export function ThreadPostEditor({
           isPosted
             ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 cursor-default'
             : isActive
-            ? 'border-yappr-500 bg-white dark:bg-neutral-900 shadow-sm cursor-pointer'
-            : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950 hover:border-gray-300 dark:hover:border-gray-700 cursor-pointer'
+            ? 'border-yappr-500 bg-white dark:bg-gray-900 shadow-sm cursor-pointer'
+            : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950 hover:border-gray-300 dark:hover:border-gray-700 cursor-pointer'
         }`}
       >
         {/* Post number/status indicator - only show for threads (multiple posts) or posted status */}

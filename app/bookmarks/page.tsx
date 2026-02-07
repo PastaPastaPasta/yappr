@@ -175,7 +175,7 @@ function BookmarksPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
@@ -191,7 +191,7 @@ function BookmarksPage() {
               
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                  className="min-w-[200px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
@@ -265,14 +265,14 @@ function BookmarksPage() {
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
-                      <button className={`p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 ${potatoMode ? '' : 'backdrop-blur-sm'}`}>
+                      <button className={`p-2 bg-white/90 dark:bg-gray-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 ${potatoMode ? '' : 'backdrop-blur-sm'}`}>
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
                     </DropdownMenu.Trigger>
                     
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content
-                        className="min-w-[180px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                        className="min-w-[180px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                         sideOffset={5}
                       >
                         <DropdownMenu.Item

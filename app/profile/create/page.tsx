@@ -202,7 +202,7 @@ function CreateProfilePage() {
   // Show loading state while checking for existing profile
   if (isCheckingProfile) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <Spinner size="lg" className="mx-auto mb-4" />
           <p className="text-gray-600 dark:text-gray-400">Checking profile status...</p>
@@ -212,7 +212,7 @@ function CreateProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4 py-8">
       <div className="max-w-lg w-full">
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
@@ -232,8 +232,8 @@ function CreateProfilePage() {
 
           {/* Display username if available */}
           {(user?.dpnsUsername || sessionStorage.getItem('yappr_dpns_username')) && (
-            <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 mb-6">
-              <p className="text-sm text-purple-700 dark:text-purple-300">
+            <div className="bg-yappr-50 dark:bg-yappr-900/20 rounded-lg p-4 mb-6">
+              <p className="text-sm text-yappr-600 dark:text-yappr-300">
                 <span className="font-semibold">Username:</span> @{user?.dpnsUsername || sessionStorage.getItem('yappr_dpns_username')}
               </p>
             </div>

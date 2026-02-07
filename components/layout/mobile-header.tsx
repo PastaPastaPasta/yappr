@@ -19,7 +19,7 @@ export function MobileHeader() {
   }, [])
 
   return (
-    <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-900">
+    <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
       <Link href="/" className="flex items-center gap-2">
         <span className="text-xl font-bold text-gradient">Yappr</span>
         <Image
@@ -50,7 +50,7 @@ export function MobileHeader() {
 
           <DropdownMenu.Portal>
             <DropdownMenu.Content
-              className="min-w-[180px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+              className="min-w-[180px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
               sideOffset={8}
               align="end"
             >

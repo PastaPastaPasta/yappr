@@ -1,16 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 0 0% 98%;
+    --foreground: 240 6% 6%;
   }
 
   .dark {
-    --background: 0 0% 7%;
-    --foreground: 210 40% 98%;
+    --background: 240 6% 4%;
+    --foreground: 0 0% 96%;
   }
 }
 
@@ -41,7 +43,7 @@
   }
 
   .text-gradient {
-    @apply bg-gradient-to-r from-yappr-500 to-yappr-600 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-yappr-500 to-yappr-400 bg-clip-text text-transparent;
   }
 
   .safe-area-inset-bottom {

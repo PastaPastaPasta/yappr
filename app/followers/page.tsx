@@ -294,7 +294,7 @@ function FollowersPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -356,7 +356,7 @@ function FollowersPage() {
                       >
                         <button
                           onClick={() => router.push(`/user?id=${follower.id}`)}
-                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-gray-900 cursor-pointer hover:opacity-80 transition-opacity"
                         >
                           <UserAvatar userId={follower.id} size="lg" alt={follower.displayName} />
                         </button>

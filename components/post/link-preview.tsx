@@ -74,7 +74,7 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
       }}
     >
       <div
-        className="bg-white dark:bg-neutral-900 rounded-xl max-w-md w-full max-h-[90vh] flex flex-col shadow-xl"
+        className="bg-white dark:bg-gray-900 rounded-xl max-w-md w-full max-h-[90vh] flex flex-col shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

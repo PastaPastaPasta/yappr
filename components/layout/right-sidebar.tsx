@@ -12,8 +12,8 @@ export function RightSidebar() {
   return (
     <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-[calc(100vh-40px)] sticky top-[40px] overflow-y-auto scrollbar-hide">
       <SearchInput />
-      <div className="bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-hidden">
-        <h2 className="text-xl font-bold px-4 py-3">Getting Started</h2>
+      <div className="bg-gray-100 dark:bg-gray-900 rounded-xl overflow-hidden">
+        <h2 className="text-lg font-display font-bold px-4 py-3">Getting Started</h2>
         <div className="px-4 py-3 space-y-3 text-sm">
           <p className="text-gray-600 dark:text-gray-400">
             Welcome to Yappr! Here&apos;s what you can do:

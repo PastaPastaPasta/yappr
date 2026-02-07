@@ -75,8 +75,8 @@ export default function PublicHomePage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
-            <h1 className="text-3xl md:text-5xl font-bold mb-4">
-              Welcome to <span className="text-gradient">Yappr</span>
+            <h1 className="text-4xl md:text-6xl font-display font-bold mb-4 tracking-tight">
+              Welcome to <span className="text-gradient">yappr</span>
             </h1>
             <div className="flex justify-center mb-4">
               <Image
@@ -94,7 +94,7 @@ export default function PublicHomePage() {
                 className="hidden dark:block"
               />
             </div>
-            <p className="text-base md:text-xl text-gray-600 dark:text-gray-400 mb-6 md:mb-8 max-w-2xl mx-auto px-2">
+            <p className="text-base md:text-xl text-gray-500 dark:text-gray-400 mb-6 md:mb-8 max-w-2xl mx-auto px-2 leading-relaxed">
               The decentralized social platform where you own your data, your identity, and your voice.
               Built on Dash Platform.
             </p>
@@ -140,8 +140,8 @@ export default function PublicHomePage() {
 
         {/* CTA Section */}
         <section className="py-16 text-center border-t border-gray-200 dark:border-gray-800">
-          <h2 className="text-3xl font-bold mb-4">Ready to join the conversation?</h2>
-          <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
+          <h2 className="text-3xl font-display font-bold mb-4 tracking-tight">Ready to join the conversation?</h2>
+          <p className="text-lg text-gray-500 dark:text-gray-400 mb-8">
             Create your decentralized identity and start sharing your thoughts.
           </p>
           <Button size="lg" className="shadow-yappr-lg" onClick={openLoginModal}>

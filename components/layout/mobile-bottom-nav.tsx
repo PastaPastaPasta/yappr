@@ -99,12 +99,12 @@ export function MobileBottomNav() {
 
       {/* More Menu Sheet */}
       <div className={cn(
-        "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
+        "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
         moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Menu</h3>
+            <h3 className="text-lg font-display font-semibold">Menu</h3>
             <button
               onClick={() => setMoreMenuOpen(false)}
               className="p-2 -mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -166,7 +166,7 @@ export function MobileBottomNav() {
                   setMoreMenuOpen(false)
                   openLoginModal()
                 }}
-                className="flex items-center justify-center w-full p-3 rounded-xl bg-yappr-500 text-white font-medium hover:bg-yappr-600 transition-colors"
+                className="flex items-center justify-center w-full p-3 rounded-lg bg-yappr-500 text-white font-display font-medium hover:bg-yappr-600 transition-colors"
               >
                 Sign In
               </button>
@@ -176,7 +176,7 @@ export function MobileBottomNav() {
       </div>
 
       {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
         <div className="flex items-center justify-around h-14">
           {/* First two nav items */}
           {navItems.slice(0, 2).map((item) => {
@@ -200,14 +200,14 @@ export function MobileBottomNav() {
           {user ? (
             <button
               onClick={() => setComposeOpen(true)}
-              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
+              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-2xl bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
             >
               <PlusIcon className="h-7 w-7" />
             </button>
           ) : (
             <button
               onClick={openLoginModal}
-              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
+              className="flex items-center justify-center -mt-4 h-14 w-14 rounded-2xl bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
             >
               <PlusIcon className="h-7 w-7" />
             </button>

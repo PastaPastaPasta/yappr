@@ -79,13 +79,13 @@ const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }
   { key: 'like', label: 'Likes', icon: <HeartIcon className="h-4 w-4 text-red-500" /> },
   { key: 'repost', label: 'Reposts', icon: <ArrowPathRoundedSquareIcon className="h-4 w-4 text-green-500" /> },
   { key: 'reply', label: 'Replies', icon: <ChatBubbleLeftIcon className="h-4 w-4 text-blue-500" /> },
-  { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-purple-500" /> },
+  { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-yappr-500" /> },
   { key: 'mention', label: 'Mentions', icon: <AtSymbolIcon className="h-4 w-4 text-yellow-500" /> },
   { key: 'privateFeed', label: 'Private', icon: <LockClosedIcon className="h-4 w-4 text-blue-500" /> }
 ]
 
 const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
-  follow: <UserPlusIcon className="h-5 w-5 text-purple-500" />,
+  follow: <UserPlusIcon className="h-5 w-5 text-yappr-500" />,
   mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />,
   like: <HeartIcon className="h-5 w-5 text-red-500" />,
   repost: <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />,
@@ -184,7 +184,7 @@ function NotificationsPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
       <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
             <div className="flex items-center gap-2">
@@ -216,7 +216,7 @@ function NotificationsPage() {
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content
-                      className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
+                      className="min-w-[200px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
                       sideOffset={8}
                       align="end"
                     >
@@ -330,7 +330,7 @@ function NotificationsPage() {
                       <Link
                         href={`/user?id=${notification.from?.id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0"
+                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-gray-900 flex-shrink-0"
                       >
                         <UserAvatar userId={notification.from?.id || ''} size="md" alt="User avatar" />
                       </Link>

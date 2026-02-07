@@ -947,7 +947,7 @@ export function ComposeModal() {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                    className="w-full max-w-2xl bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
@@ -961,13 +961,13 @@ export function ComposeModal() {
                     </Dialog.Description>
 
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
                       <div className="flex items-center gap-3">
                         <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
                           <XMarkIcon className="h-5 w-5" />
                         </IconButton>
                         <div className="flex items-center gap-2">
-                          <h2 className="font-semibold text-gray-900 dark:text-gray-100">
+                          <h2 className="font-display font-semibold text-gray-900 dark:text-gray-100">
                             {getModalTitle(!!replyingTo, !!quotingPost, threadPosts.length)}
                           </h2>
                           {/* Preview toggle */}
@@ -1064,10 +1064,10 @@ export function ComposeModal() {
                             <motion.div
                               initial={{ opacity: 0, y: -10 }}
                               animate={{ opacity: 1, y: 0 }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800"
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yappr-50 dark:bg-yappr-900/20 border border-yappr-200 dark:border-yappr-800"
                             >
-                              <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                              <span className="text-sm text-purple-700 dark:text-purple-300">
+                              <LinkIcon className="w-4 h-4 text-yappr-500 dark:text-yappr-400" />
+                              <span className="text-sm text-yappr-600 dark:text-yappr-300">
                                 Your reply will be visible to all subscribers of this private feed
                               </span>
                             </motion.div>
@@ -1080,7 +1080,7 @@ export function ComposeModal() {
                               animate={{ opacity: 1 }}
                               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
                             >
-                              <Spinner size="sm" className="h-4 w-4 border-purple-500" />
+                              <Spinner size="sm" className="h-4 w-4 border-yappr-500" />
                               <span className="text-sm text-gray-500 dark:text-gray-400">
                                 Checking encryption inheritance...
                               </span>
@@ -1134,7 +1134,7 @@ export function ComposeModal() {
                               initial={{ opacity: 0, height: 0 }}
                               animate={{ opacity: 1, height: 'auto' }}
                               exit={{ opacity: 0, height: 0 }}
-                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
+                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden"
                             >
                               <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
                                 <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -1242,7 +1242,7 @@ export function ComposeModal() {
                     </div>
 
                     {/* Footer - with image button and keyboard hint */}
-                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
                       <div className="flex items-center justify-between">
                         {/* Left side: Image button + indicators */}
                         <div className="flex items-center gap-3">
@@ -1287,7 +1287,7 @@ export function ComposeModal() {
                           )}
                           {/* Inherited encryption indicator */}
                           {inheritedEncryption && !isPrivatePostVisibility && (
-                            <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
+                            <div className="flex items-center gap-1.5 text-xs text-yappr-500 dark:text-yappr-400">
                               <LinkIcon className="w-3 h-3" />
                               <span>Reply inherits parent&apos;s encryption</span>
                             </div>

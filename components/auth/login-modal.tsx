@@ -284,10 +284,10 @@ export function LoginModal() {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+              className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
             >
               {/* Header */}
-              <div className="sticky top-0 bg-white dark:bg-neutral-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+              <div className="sticky top-0 bg-white dark:bg-gray-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
                 <button
                   onClick={handleClose}
                   aria-label="Close"
@@ -467,7 +467,7 @@ export function LoginModal() {
                     href="https://bridge.thepasta.org"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-yappr-500 hover:bg-yappr-600 text-white rounded-lg transition-colors text-sm"
                   >
                     Create Identity
                   </a>

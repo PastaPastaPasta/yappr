@@ -967,7 +967,7 @@ function FeedPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="px-4 py-3 flex items-center justify-between">
             <h1 className="text-xl font-bold">Home</h1>
             <button
@@ -1024,7 +1024,7 @@ function FeedPage() {
         <div className="border-b border-gray-200 dark:border-gray-800 px-4 py-2 md:p-4">
           {user ? (
             <div className="flex gap-3">
-              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-white dark:bg-gray-900 flex-shrink-0">
                 {isHydrated ? (
                   <UserAvatar userId={user.identityId} size="lg" alt="Your avatar" />
                 ) : (

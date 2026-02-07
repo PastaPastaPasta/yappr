@@ -64,7 +64,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-xl"
+        className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-xl"
       >
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center gap-2">

@@ -192,7 +192,7 @@ export function KeyBackupSettings() {
                     <span className={`text-xs px-2 py-0.5 rounded ${
                       encryptionKeyInfo.type === 'derived'
                         ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-                        : 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
+                        : 'bg-yappr-100 dark:bg-yappr-900 text-yappr-600 dark:text-yappr-300'
                     }`}>
                       {encryptionKeyInfo.type === 'derived' ? 'Derived' : 'External'}
                     </span>
@@ -281,19 +281,19 @@ export function KeyBackupSettings() {
           <h4 className="font-medium mb-2">How it works:</h4>
           <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
             <li className="flex gap-2">
-              <span className="text-purple-500">•</span>
+              <span className="text-yappr-500">•</span>
               Your login key is encrypted with a strong passphrase you choose
             </li>
             <li className="flex gap-2">
-              <span className="text-purple-500">•</span>
+              <span className="text-yappr-500">•</span>
               The encrypted backup is stored publicly on Dash Platform
             </li>
             <li className="flex gap-2">
-              <span className="text-purple-500">•</span>
+              <span className="text-yappr-500">•</span>
               Your encryption key is auto-derived from your login key on each login
             </li>
             <li className="flex gap-2">
-              <span className="text-purple-500">•</span>
+              <span className="text-yappr-500">•</span>
               Use a strong, unique passphrase (16+ characters)
             </li>
           </ul>

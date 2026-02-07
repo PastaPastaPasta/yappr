@@ -369,7 +369,7 @@ function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverr
 // Container wrapper for quoted post previews
 function QuotedPostContainer({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
+    <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-gray-950">
       {children}
     </div>
   )
@@ -607,7 +607,7 @@ export function ReplyContext({ author }: ReplyContextProps) {
   const displayName = getAuthorDisplayName(author)
 
   return (
-    <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-950 border-b border-gray-200 dark:border-gray-800">
+    <div className="px-4 py-3 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
       <div className="flex items-center gap-2 text-sm">
         <span className="text-gray-500">Replying to</span>
         <span className="text-yappr-500 font-medium">{displayName}</span>

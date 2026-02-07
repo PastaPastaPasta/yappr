@@ -142,7 +142,7 @@ function DefaultErrorFallback({ error, retry, level }: DefaultErrorFallbackProps
       
       <button
         onClick={action}
-        className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+        className="inline-flex items-center gap-2 px-4 py-2 bg-yappr-500 text-white rounded-lg hover:bg-yappr-600 transition-colors"
       >
         <ArrowPathIcon className="h-4 w-4" />
         {actionText}

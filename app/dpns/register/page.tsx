@@ -29,7 +29,7 @@ export default function DPNSRegisterPage() {
   // If not authenticated, show login prompt
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
           <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">
             Authentication Required
@@ -40,7 +40,7 @@ export default function DPNSRegisterPage() {
           <div className="space-y-4">
             <button
               onClick={openLoginModal}
-              className="block w-full text-center bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors"
+              className="block w-full text-center bg-yappr-500 text-white py-3 px-4 rounded-lg hover:bg-yappr-600 transition-colors"
             >
               Go to Login
             </button>
@@ -60,7 +60,7 @@ export default function DPNSRegisterPage() {
   if (user.dpnsUsername) {
     router.push('/')
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
           <p className="text-gray-600 dark:text-gray-400">
             You already have a DPNS username: {user.dpnsUsername}
@@ -73,7 +73,7 @@ export default function DPNSRegisterPage() {
   return (
     <>
       {/* Background content */}
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <div className="flex items-center justify-center min-h-screen">
           <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
             <div className="flex justify-between items-center mb-4">

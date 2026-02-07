@@ -567,7 +567,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <Link
               href={`/user?id=${post.author.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-gray-900 block flex-shrink-0"
             >
               <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
             </Link>
@@ -624,7 +624,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                  className="min-w-[200px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
@@ -843,7 +843,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
-                    className="min-w-[160px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                    className="min-w-[160px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                     sideOffset={5}
                     onClick={(e) => e.stopPropagation()}
                   >

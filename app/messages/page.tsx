@@ -548,7 +548,7 @@ function MessagesPage() {
       <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
         {/* Conversations List */}
         <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
-          <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
+          <header className="flex-shrink-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
               <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
               <button
@@ -599,7 +599,7 @@ function MessagesPage() {
                     selectedConversation?.id === conversation.id ? 'bg-gray-50 dark:bg-gray-950' : ''
                   }`}
                 >
-                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-white dark:bg-gray-900 flex-shrink-0">
                     <UserAvatar userId={conversation.participantId} size="lg" alt="User avatar" />
                   </div>
 
@@ -641,7 +641,7 @@ function MessagesPage() {
         {/* Message Thread */}
         {selectedConversation ? (
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
+            <header className="flex-shrink-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                   {/* Back button - mobile only */}
@@ -655,7 +655,7 @@ function MessagesPage() {
                     href={`/user?id=${selectedConversation.participantId}`}
                     className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity min-w-0 flex-1"
                   >
-                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-white dark:bg-gray-900 flex-shrink-0">
                       <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
                     </div>
                     <div className="min-w-0 flex-1">

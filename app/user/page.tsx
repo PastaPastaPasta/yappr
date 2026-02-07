@@ -933,7 +933,7 @@ function UserProfileContent() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
@@ -963,7 +963,7 @@ function UserProfileContent() {
             </div>
             <div className="px-4 pb-4">
               <div className="relative -mt-16 mb-4">
-                <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+                <div className="h-32 w-32 rounded-full bg-white dark:bg-gray-900 p-1">
                   <div className="h-full w-full rounded-full overflow-hidden blur-sm opacity-60">
                     <UserAvatar
                       userId={userId || 'default'}
@@ -1002,7 +1002,7 @@ function UserProfileContent() {
             <div className="px-4 pb-4">
               <div className="relative flex justify-between items-start -mt-16 mb-4">
                 <div className="relative">
-                  <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+                  <div className="h-32 w-32 rounded-full bg-white dark:bg-gray-900 p-1">
                     <UserAvatar
                       key={avatarKey}
                       userId={userId || 'default'}
@@ -1634,7 +1634,7 @@ function UserProfileContent() {
             className="absolute inset-0 bg-black/50"
             onClick={() => setIsEditingAvatar(false)}
           />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="relative bg-white dark:bg-gray-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">Customize Avatar</h2>
               <button
@@ -1667,7 +1667,7 @@ function UserProfileContent() {
             className="absolute inset-0 bg-black/50"
             onClick={() => setIsEditingBanner(false)}
           />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="relative bg-white dark:bg-gray-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">Customize Banner</h2>
               <button
@@ -1739,7 +1739,7 @@ function LoadingFallback() {
             <div className="h-48 bg-gradient-yappr opacity-50" />
             <div className="px-4 pb-4">
               <div className="relative -mt-16 mb-4">
-                <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+                <div className="h-32 w-32 rounded-full bg-white dark:bg-gray-900 p-1">
                   <div className="h-full w-full rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
                 </div>
               </div>
