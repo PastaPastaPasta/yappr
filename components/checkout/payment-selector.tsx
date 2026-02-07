@@ -80,7 +80,7 @@ export function PaymentSelector({
       )}
 
       {selected && (
-        <div className="border-t border-gray-200 dark:border-gray-800 pt-4 space-y-4">
+        <div className="border-t border-border pt-4 space-y-4">
           <PaymentQRCode
             paymentUri={selected}
             onBack={() => handleSelect(null)}

@@ -80,7 +80,7 @@ export function SaveAddressPrompt({
   }
 
   return (
-    <div className="p-4 bg-gray-50 dark:bg-gray-900/50 border-y border-gray-200 dark:border-gray-800">
+    <div className="p-4 bg-gray-50 dark:bg-gray-900/50 border-y border-border">
       <div className="flex items-start gap-3">
         <BookmarkIcon className="h-5 w-5 text-yappr-500 flex-shrink-0 mt-0.5" />
         <div className="flex-1">

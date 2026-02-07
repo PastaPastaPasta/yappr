@@ -169,7 +169,7 @@ export function InventoryUploadModal({
         className="relative w-full max-w-2xl bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-hidden flex flex-col"
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-lg font-bold">Upload Inventory</h2>
           <button
             onClick={step === 'uploading' ? undefined : handleClose}
@@ -433,7 +433,7 @@ export function InventoryUploadModal({
         </div>
 
         {/* Footer */}
-        <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="flex gap-3 p-4 border-t border-border bg-white dark:bg-gray-900">
           {step === 'select' && (
             <Button
               variant="outline"
