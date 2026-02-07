@@ -116,7 +116,7 @@ function SubSection({ title, children }: { title: string; children: React.ReactN
 
 export default function PrivateFeedsPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-1 dark:bg-surface-2">
       <div className="max-w-4xl mx-auto px-4 py-8">
         {/* Back link */}
         <div className="mb-8">
@@ -132,7 +132,7 @@ export default function PrivateFeedsPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-surface-0 dark:bg-surface-1 rounded-2xl shadow-lg overflow-hidden"
         >
           {/* Header */}
           <div className="bg-gradient-yappr p-8 text-white">
@@ -321,7 +321,7 @@ export default function PrivateFeedsPage() {
               </p>
 
               {/* Tree Diagram - SVG-based for proper rendering */}
-              <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+              <div className="my-6 p-6 bg-surface-1 dark:bg-surface-2 rounded-xl border border-border">
                 <svg viewBox="0 0 600 320" className="w-full max-w-2xl mx-auto" style={{ minHeight: '280px' }}>
                   {/* Connection lines */}
                   <g stroke="currentColor" strokeWidth="2" fill="none" className="text-gray-300 dark:text-gray-600">
@@ -418,7 +418,7 @@ export default function PrivateFeedsPage() {
               </p>
 
               {/* Path Diagram */}
-              <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+              <div className="my-6 p-6 bg-surface-1 dark:bg-surface-2 rounded-xl border border-border">
                 <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-5">Alice knows these keys (slot 1):</p>
                 <div className="relative ml-4">
                   {/* Vertical connecting line */}
@@ -499,7 +499,7 @@ export default function PrivateFeedsPage() {
               </p>
 
               {/* Hash Chain Diagram */}
-              <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+              <div className="my-6 p-6 bg-surface-1 dark:bg-surface-2 rounded-xl border border-border">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-center text-gray-500 dark:text-gray-400 mb-6">Hash Chain</h4>
                 <div className="flex flex-col items-center">
                   {/* CEK[2000] */}
@@ -630,7 +630,7 @@ export default function PrivateFeedsPage() {
               {/* Revocation Before/After Diagram */}
               <div className="my-6 grid md:grid-cols-2 gap-4">
                 {/* Before */}
-                <div className="p-5 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
+                <div className="p-5 bg-surface-1 dark:bg-surface-2 rounded-xl border border-border">
                   <div className="text-center mb-4">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Before Revocation</h4>
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">(Epoch 1)</p>
@@ -986,28 +986,28 @@ export default function PrivateFeedsPage() {
                   Four document types power the private feed system:
                 </p>
                 <ul className="space-y-3 mt-4">
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-1 dark:bg-surface-2 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedState</strong>
                     <p className="text-sm mt-1">
                       Created once when enabling private feed. Contains the encrypted seed (for owner recovery),
                       tree capacity, and initial state. ~300 bytes.
                     </p>
                   </li>
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-1 dark:bg-surface-2 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedGrant</strong>
                     <p className="text-sm mt-1">
                       Created for each approved follower. Contains their leaf slot assignment and an encrypted
                       bundle of path keys + current CEK. ~500 bytes per follower.
                     </p>
                   </li>
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-1 dark:bg-surface-2 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedRekey</strong>
                     <p className="text-sm mt-1">
                       Created on each revocation. Contains rekey packets (new keys encrypted for sibling subtrees),
                       the new epoch number, and a state snapshot for recovery. ~1-2 KB.
                     </p>
                   </li>
-                  <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                  <li className="bg-surface-1 dark:bg-surface-2 rounded-lg p-4">
                     <strong className="text-gray-900 dark:text-gray-100">Post</strong>
                     <span className="text-xs ml-2 text-gray-500">(extended)</span>
                     <p className="text-sm mt-1">
@@ -1100,14 +1100,14 @@ export default function PrivateFeedsPage() {
             </Section>
 
             {/* Footer / Resources */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-border">
               <h2 className="text-xl font-semibold mb-4">Resources</h2>
               <div className="grid md:grid-cols-2 gap-4">
                 <a
                   href="https://github.com/pastapastapasta/yappr/blob/master/docs/YAPPR_PRIVATE_FEED_SPEC_v1.md"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-1 dark:bg-surface-2 rounded-lg p-4 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Full Technical Specification</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -1118,7 +1118,7 @@ export default function PrivateFeedsPage() {
                   href="https://github.com/pastapastapasta/yappr"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-1 dark:bg-surface-2 rounded-lg p-4 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Yappr on GitHub</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -1129,7 +1129,7 @@ export default function PrivateFeedsPage() {
                   href="https://dashplatform.readme.io"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-1 dark:bg-surface-2 rounded-lg p-4 hover:bg-surface-1 dark:hover:bg-surface-2 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Dash Platform Documentation</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
