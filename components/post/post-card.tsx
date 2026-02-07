@@ -539,7 +539,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={handleCardClick}
-      className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
+      className="border-b border-surface-200 dark:border-neutral-750 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
     >
       {/* Reposted by header */}
       {post.repostedBy && (
@@ -567,7 +567,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <Link
               href={`/user?id=${post.author.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0"
+              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-surface-900 block flex-shrink-0"
             >
               <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
             </Link>
@@ -624,13 +624,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                  className="min-w-[200px] bg-white dark:bg-surface-900 rounded-xl shadow-elevated border border-surface-200 dark:border-neutral-750 py-2 z-50"
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleFollow().catch(console.error); }}
                     disabled={followLoading}
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
+                    className="px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none disabled:opacity-50"
                   >
                     {isFollowing ? 'Unfollow' : 'Follow'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
@@ -639,14 +639,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       e.stopPropagation();
                       router.push(`/post/engagements?id=${post.id}`);
                     }}
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none"
+                    className="px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none"
                   >
                     View post engagements
                   </DropdownMenu.Item>
                   {isOwnPost && (
                     <DropdownMenu.Item
                       onClick={(e) => { e.stopPropagation(); handleDelete(); }}
-                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500"
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none text-red-500"
                     >
                       <TrashIcon className="h-4 w-4" />
                       Delete post
@@ -655,7 +655,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <DropdownMenu.Item
                     onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
                     disabled={blockLoading}
-                    className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
+                    className="px-4 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-800 cursor-pointer outline-none text-red-500 disabled:opacity-50"
                   >
                     {isBlocked ? 'Unblock' : 'Block'} {usernameState ? `@${usernameState}` : displayName}
                   </DropdownMenu.Item>
@@ -770,7 +770,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <div
                   key={media.id}
                   className={cn(
-                    'relative aspect-video bg-gray-100 dark:bg-gray-900',
+                    'relative aspect-video bg-surface-100 dark:bg-surface-800',
                     post.media && post.media.length === 3 && index === 0 && 'row-span-2'
                   )}
                 >
@@ -843,7 +843,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
-                    className="min-w-[160px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                    className="min-w-[160px] bg-white dark:bg-surface-900 rounded-xl shadow-elevated border border-surface-200 dark:border-neutral-750 py-2 z-50"
                     sideOffset={5}
                     onClick={(e) => e.stopPropagation()}
                   >
