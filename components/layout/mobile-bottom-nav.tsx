@@ -37,11 +37,41 @@ export function MobileBottomNav() {
   const openLoginModal = useLoginModal((s) => s.open)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false)
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
 
   useEffect(() => {
     setIsHydrated(true)
   }, [])
+
+  useEffect(() => {
+    if (!pathname.startsWith('/messages')) {
+      setIsKeyboardOpen(false)
+      return
+    }
+
+    const viewport = window.visualViewport
+    if (!viewport) {
+      return
+    }
+
+    let baselineHeight = viewport.height
+
+    const handleResize = () => {
+      const heightDelta = baselineHeight - viewport.height
+      const keyboardLikelyOpen = heightDelta > 100
+      setIsKeyboardOpen(keyboardLikelyOpen)
+      if (!keyboardLikelyOpen) {
+        baselineHeight = Math.max(baselineHeight, viewport.height)
+      }
+    }
+
+    handleResize()
+    viewport.addEventListener('resize', handleResize)
+    return () => {
+      viewport.removeEventListener('resize', handleResize)
+    }
+  }, [pathname])
 
   // Close menu on route change
   useEffect(() => {
@@ -90,7 +120,7 @@ export function MobileBottomNav() {
   return (
     <>
       {/* Overlay */}
-      {moreMenuOpen && (
+      {moreMenuOpen && !isKeyboardOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
           onClick={() => setMoreMenuOpen(false)}
@@ -100,7 +130,7 @@ export function MobileBottomNav() {
       {/* More Menu Sheet */}
       <div className={cn(
         "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
-        moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
+        moreMenuOpen && !isKeyboardOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
@@ -176,7 +206,10 @@ export function MobileBottomNav() {
       </div>
 
       {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
+      <nav className={cn(
+        "fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom transition-transform duration-200",
+        isKeyboardOpen && pathname.startsWith('/messages') ? "translate-y-full" : "translate-y-0"
+      )}>
         <div className="flex items-center justify-around h-14">
           {/* First two nav items */}
           {navItems.slice(0, 2).map((item) => {
