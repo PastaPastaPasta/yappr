@@ -30,8 +30,8 @@ export function QuantityControl({
   }
 
   const buttonClasses = size === 'sm'
-    ? 'p-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'
-    : 'p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'
+    ? 'p-1 rounded border border-surface-200 dark:border-neutral-750 hover:bg-gray-100 dark:hover:bg-gray-800'
+    : 'p-2 rounded-lg border border-surface-200 dark:border-neutral-750 hover:bg-gray-100 dark:hover:bg-gray-800'
 
   const iconClasses = 'h-4 w-4'
 

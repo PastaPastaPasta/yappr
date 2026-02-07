@@ -7,7 +7,7 @@ import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-100 dark:bg-surface-800">
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-8">
           <Link
@@ -22,7 +22,7 @@ export default function AboutPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
@@ -96,7 +96,7 @@ export default function AboutPage() {
                   { title: 'Block & Mute', desc: 'Control what you see in your feed' },
                 ].map((feature, i) => {
                   const content = (
-                    <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+                    <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-4">
                       <div className="flex items-center gap-2">
                         {feature.icon && <feature.icon className="h-4 w-4 text-yappr-500" />}
                         <h3 className="font-medium text-gray-900 dark:text-gray-100">{feature.title}</h3>
@@ -170,7 +170,7 @@ export default function AboutPage() {
                 <CpuChipIcon className="h-5 w-5 text-gray-500" />
                 <h2 className="text-xl font-semibold">Technical Details</h2>
               </div>
-              <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4 space-y-3">
+              <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-4 space-y-3">
                 <div>
                   <p className="text-sm text-gray-500">Contract ID</p>
                   <p className="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{YAPPR_CONTRACT_ID}</p>
@@ -203,7 +203,7 @@ export default function AboutPage() {
                   href="https://dashplatform.readme.io"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-100 dark:bg-surface-800 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Dash Platform Docs</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Learn about the underlying technology</p>
@@ -212,7 +212,7 @@ export default function AboutPage() {
                   href="https://www.dash.org"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  className="block bg-surface-100 dark:bg-surface-800 rounded-lg p-4 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                 >
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Dash.org</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">The Dash cryptocurrency project</p>
@@ -221,7 +221,7 @@ export default function AboutPage() {
             </section>
 
             {/* Last Updated */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-surface-200 dark:border-neutral-750">
               <p className="text-sm text-gray-500">
                 Last updated: January 2025
               </p>

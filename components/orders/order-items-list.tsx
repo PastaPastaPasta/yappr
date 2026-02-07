@@ -13,7 +13,7 @@ interface OrderItemsListProps {
 
 export function OrderItemsList({ items, currency, subtotal, shippingCost, total }: OrderItemsListProps) {
   return (
-    <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+    <div className="p-3 bg-surface-100 dark:bg-surface-800 rounded-lg">
       <p className="text-sm font-medium mb-2">Items</p>
       <div className="space-y-1">
         {items.map((item, idx) => (
@@ -27,7 +27,7 @@ export function OrderItemsList({ items, currency, subtotal, shippingCost, total 
           </div>
         ))}
       </div>
-      <div className="border-t border-gray-200 dark:border-gray-700 mt-2 pt-2">
+      <div className="border-t border-surface-200 dark:border-neutral-750 mt-2 pt-2">
         <div className="flex justify-between text-sm">
           <span>Subtotal</span>
           <span>{formatPrice(subtotal, currency)}</span>

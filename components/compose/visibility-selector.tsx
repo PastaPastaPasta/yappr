@@ -133,7 +133,7 @@ export function VisibilitySelector({
       {isExpanded && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden"
+          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-neutral-750 shadow-xl z-50 overflow-hidden"
         >
           {visibilityOptions.map((option) => {
             const Icon = option.icon
@@ -150,7 +150,7 @@ export function VisibilitySelector({
                 className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors ${
                   isSelected
                     ? 'bg-yappr-50 dark:bg-yappr-900/20'
-                    : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                    : 'hover:bg-surface-100 dark:hover:bg-surface-800'
                 } ${isDisabled && !onEnablePrivateFeedRequest ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
               >
                 <div
@@ -204,7 +204,7 @@ export function VisibilitySelector({
             </div>
           )}
           {isPrivate && privateFollowerCount > 0 && (
-            <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800">
+            <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-surface-200 dark:border-neutral-750">
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Visible to {privateFollowerCount} private follower{privateFollowerCount !== 1 ? 's' : ''}
               </p>

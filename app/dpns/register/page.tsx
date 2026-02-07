@@ -30,7 +30,7 @@ export default function DPNSRegisterPage() {
   if (!user) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
-        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
+        <div className="bg-white dark:bg-surface-900 rounded-lg shadow-lg p-8 max-w-md w-full">
           <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">
             Authentication Required
           </h2>
@@ -61,7 +61,7 @@ export default function DPNSRegisterPage() {
     router.push('/')
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
-        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
+        <div className="bg-white dark:bg-surface-900 rounded-lg shadow-lg p-8 max-w-md w-full">
           <p className="text-gray-600 dark:text-gray-400">
             You already have a DPNS username: {user.dpnsUsername}
           </p>
@@ -75,7 +75,7 @@ export default function DPNSRegisterPage() {
       {/* Background content */}
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
         <div className="flex items-center justify-center min-h-screen">
-          <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">
+          <div className="bg-white dark:bg-surface-900 rounded-lg shadow-lg p-8 max-w-md w-full">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                 Register DPNS Username

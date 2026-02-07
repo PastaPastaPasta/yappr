@@ -194,8 +194,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
       <Card>
         <CardContent className="pt-6">
           <div data-testid="loading-skeleton" className="animate-pulse space-y-2">
-            <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-3/4"></div>
-            <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2"></div>
+            <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-3/4"></div>
+            <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-1/2"></div>
           </div>
         </CardContent>
       </Card>

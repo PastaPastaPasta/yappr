@@ -41,7 +41,7 @@ export function StorageProviderModal({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                    className="w-full max-w-md bg-white dark:bg-surface-900 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="sr-only">Connect Storage Provider</Dialog.Title>

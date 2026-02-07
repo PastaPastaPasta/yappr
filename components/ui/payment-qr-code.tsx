@@ -237,7 +237,7 @@ export function PaymentQRCode({
       <div className="flex gap-2">
         <button
           onClick={handleCopy}
-          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-neutral-800 transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-surface-200 dark:border-neutral-750 hover:bg-gray-50 dark:hover:bg-neutral-800 transition-colors"
         >
           {copied ? (
             <>

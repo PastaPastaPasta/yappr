@@ -284,20 +284,20 @@ export function LoginModal() {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+              className="bg-white dark:bg-surface-900 rounded-2xl shadow-elevated-lg w-full max-w-md relative max-h-[90vh] overflow-y-auto border border-surface-200 dark:border-neutral-750"
             >
               {/* Header */}
-              <div className="sticky top-0 bg-white dark:bg-neutral-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+              <div className="sticky top-0 bg-white dark:bg-surface-900 px-6 pt-6 pb-4 border-b border-surface-200 dark:border-neutral-750">
                 <button
                   onClick={handleClose}
                   aria-label="Close"
-                  className="absolute top-4 left-4 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+                  className="absolute top-4 left-4 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-xl hover:bg-surface-100 dark:hover:bg-surface-800"
                 >
                   <X className="w-5 h-5" />
                 </button>
                 <div className="text-center">
-                  <h1 className="text-2xl font-bold text-gradient">Yappr</h1>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
+                  <h1 className="font-display text-3xl text-gradient">Yappr</h1>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
                 </div>
               </div>
 
@@ -315,7 +315,7 @@ export function LoginModal() {
                       value={identityInput}
                       onChange={(e) => setIdentityInput(e.target.value)}
                       placeholder="e.g., john.dash or 5DbLwAxGBzUzo..."
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-4 py-2.5 pr-10 bg-surface-100 dark:bg-surface-800 border border-surface-300 dark:border-neutral-750 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500/50 focus:border-transparent transition-all"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3">
@@ -351,14 +351,14 @@ export function LoginModal() {
                       value={credential}
                       onChange={(e) => setCredential(e.target.value)}
                       placeholder="Enter your password or private key..."
-                      className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-4 py-2.5 pr-20 bg-surface-100 dark:bg-surface-800 border border-surface-300 dark:border-neutral-750 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500/50 focus:border-transparent transition-all"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
                       <button
                         type="button"
                         onClick={() => setShowCredential(!showCredential)}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                         tabIndex={-1}
                       >
                         {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -409,7 +409,7 @@ export function LoginModal() {
                     </p>
                   )}
                   <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    🔒 Your keys never leave this device. All signing happens locally.
+                    Your keys never leave this device. All signing happens locally.
                   </p>
                 </div>
 
@@ -424,8 +424,8 @@ export function LoginModal() {
                     role="switch"
                     aria-checked={rememberMe}
                     onClick={() => setRememberMe(!rememberMe)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
-                      rememberMe ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-700'
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yappr-500/50 focus:ring-offset-2 ${
+                      rememberMe ? 'bg-yappr-500' : 'bg-surface-200 dark:bg-neutral-750'
                     }`}
                   >
                     <span
@@ -437,7 +437,7 @@ export function LoginModal() {
                 </div>
 
                 {error && (
-                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-600 rounded-lg p-3">
+                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-600 rounded-xl p-3">
                     <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
                   </div>
                 )}
@@ -459,15 +459,15 @@ export function LoginModal() {
                 </Button>
 
                 {/* Onboarding Gateway */}
-                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                <div className="mt-4 pt-4 border-t border-surface-200 dark:border-neutral-750">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
                     Don&apos;t have an identity yet? Create one to start posting on Yappr.
                   </p>
                   <a
                     href="https://bridge.thepasta.org"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                    className="inline-flex items-center justify-center w-full px-4 py-2.5 bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-neutral-750 text-gray-900 dark:text-gray-100 rounded-xl transition-colors text-sm font-semibold border border-surface-300 dark:border-neutral-750"
                   >
                     Create Identity
                   </a>

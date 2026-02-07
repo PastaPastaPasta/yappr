@@ -162,7 +162,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
     return (
       <div className="space-y-4">
         <div className="animate-pulse">
-          <div className="aspect-[3/1] rounded-xl bg-gray-200 dark:bg-gray-800" />
+          <div className="aspect-[3/1] rounded-xl bg-surface-200 dark:bg-surface-800" />
         </div>
       </div>
     )

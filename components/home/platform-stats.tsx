@@ -35,13 +35,13 @@ export function PlatformStats({
       label: 'Active Users',
       value: totalUsers,
       icon: UserGroupIcon,
-      color: 'text-blue-500'
+      color: 'text-accent-teal'
     },
   ]
 
   if (error) {
     return (
-      <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+      <section className="py-8 border-y border-surface-200 dark:border-neutral-750">
         <div className="text-center py-8">
           <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
           {onRetry && (
@@ -56,7 +56,7 @@ export function PlatformStats({
   }
 
   return (
-    <section className="py-8 border-y border-gray-200 dark:border-gray-800">
+    <section className="py-8 border-y border-surface-200 dark:border-neutral-750">
       <div className="grid grid-cols-2 gap-8">
         {stats.map((stat, index) => (
           <motion.div
@@ -68,11 +68,11 @@ export function PlatformStats({
           >
             <stat.icon className={`h-8 w-8 ${stat.color} mx-auto mb-2`} />
             {loading ? (
-              <div className="h-9 w-20 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-1 animate-pulse" />
+              <div className="h-9 w-20 bg-surface-200 dark:bg-surface-800 rounded mx-auto mb-1 animate-pulse" />
             ) : (
-              <div className="text-3xl font-bold">{formatNumber(stat.value)}</div>
+              <div className="text-3xl font-bold text-gray-900 dark:text-gray-100">{formatNumber(stat.value)}</div>
             )}
-            <div className="text-sm text-gray-500">{stat.label}</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">{stat.label}</div>
           </motion.div>
         ))}
       </div>

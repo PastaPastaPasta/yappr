@@ -448,9 +448,9 @@ function FollowingPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-neutral-750">
         <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+            <div className="px-4 py-3 border-b border-surface-200 dark:border-neutral-750">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {!isOwnProfile && (
@@ -490,7 +490,7 @@ function FollowingPage() {
 
             {/* Only show search bar when viewing own following list */}
             {isOwnProfile && (
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+              <div className="px-4 py-3 border-b border-surface-200 dark:border-neutral-750">
                 <div className="relative">
                   <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500" />
                   <Input
@@ -531,7 +531,7 @@ function FollowingPage() {
                   </div>
                 ) : searchResults.length > 0 ? (
                   <div>
-                    <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 text-sm text-gray-500">
+                    <div className="px-4 py-2 bg-surface-100 dark:bg-surface-800 text-sm text-gray-500">
                       Search Results
                     </div>
                     {searchResults.map((searchUser) => (
@@ -539,7 +539,7 @@ function FollowingPage() {
                         key={searchUser.id}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                        className="border-b border-surface-200 dark:border-neutral-750 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
                       >
                         <div className="flex items-start gap-3">
                           <ProfileHoverCard
@@ -549,7 +549,7 @@ function FollowingPage() {
                           >
                             <button
                               onClick={() => router.push(`/user?id=${searchUser.id}`)}
-                              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                              className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-surface-900 cursor-pointer hover:opacity-80 transition-opacity"
                             >
                               <UserAvatar userId={searchUser.id} size="lg" alt={searchUser.displayName} />
                             </button>
@@ -664,7 +664,7 @@ function FollowingPage() {
                     key={followingUser.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                    className="border-b border-surface-200 dark:border-neutral-750 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
                   >
                     <div className="flex items-start gap-3">
                       <ProfileHoverCard
@@ -674,7 +674,7 @@ function FollowingPage() {
                       >
                         <button
                           onClick={() => router.push(`/user?id=${followingUser.id}`)}
-                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-surface-900 cursor-pointer hover:opacity-80 transition-opacity"
                         >
                           <UserAvatar userId={followingUser.id} size="lg" alt={followingUser.displayName} />
                         </button>

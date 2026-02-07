@@ -113,7 +113,7 @@ function DefaultErrorFallback({ error, retry, level }: DefaultErrorFallbackProps
   const { title, description, actionText, action } = getErrorContent()
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[200px] p-6 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+    <div className="flex flex-col items-center justify-center min-h-[200px] p-6 bg-gray-50 dark:bg-gray-900 rounded-lg border border-surface-200 dark:border-neutral-750">
       <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mb-4" />
       <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
         {title}

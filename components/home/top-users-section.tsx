@@ -20,14 +20,14 @@ interface TopUsersSectionProps {
 
 function UserSkeleton() {
   return (
-    <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-xl">
+    <div className="p-4 bg-surface-100 dark:bg-surface-800 rounded-2xl">
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+        <div className="w-12 h-12 bg-surface-200 dark:bg-neutral-750 rounded-full animate-pulse" />
         <div className="flex-1 space-y-2">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="h-3 w-16 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+          <div className="h-4 w-24 bg-surface-200 dark:bg-neutral-750 rounded animate-pulse" />
+          <div className="h-3 w-16 bg-surface-100 dark:bg-surface-800 rounded animate-pulse" />
         </div>
-        <div className="h-6 w-14 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        <div className="h-6 w-14 bg-surface-200 dark:bg-neutral-750 rounded animate-pulse" />
       </div>
     </div>
   )
@@ -41,7 +41,7 @@ export function TopUsersSection({
 }: TopUsersSectionProps) {
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-gray-900 dark:text-gray-100">
         <UserCircleIcon className="h-6 w-6 text-yappr-500" />
         Top Contributors
       </h2>
@@ -79,7 +79,7 @@ export function TopUsersSection({
             >
               <Link
                 href={`/user?id=${user.id}`}
-                className="block p-4 bg-gray-50 dark:bg-gray-950 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="block p-4 bg-surface-100 dark:bg-surface-800 rounded-2xl hover:bg-surface-200 dark:hover:bg-neutral-750 transition-colors border border-surface-200 dark:border-neutral-750"
               >
                 <div className="flex items-center gap-3">
                   <UserAvatar userId={user.id} size="lg" />
@@ -95,7 +95,7 @@ export function TopUsersSection({
                     <p className="text-lg font-bold text-yappr-500">
                       {formatNumber(user.postCount)}
                     </p>
-                    <p className="text-xs text-gray-500">posts</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">posts</p>
                   </div>
                 </div>
               </Link>

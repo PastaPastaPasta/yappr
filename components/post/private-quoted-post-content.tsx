@@ -147,7 +147,7 @@ export function PrivateQuotedPostContent({
 
   // Common link wrapper class for all states
   const linkClass = cn(
-    'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
+    'mt-3 block border border-surface-200 dark:border-neutral-750 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
     className
   )
 

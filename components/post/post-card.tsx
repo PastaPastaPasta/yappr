@@ -715,7 +715,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Quoted post - show skeleton while loading, then actual content */}
           {post.quotedPostId && !post.quotedPost && (
-            <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 animate-pulse">
+            <div className="mt-3 border border-surface-200 dark:border-neutral-750 rounded-xl p-3 animate-pulse">
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700" />
                 <div className="h-3 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
@@ -736,7 +736,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <Link
                 href={`/post?id=${post.quotedPost.id}`}
                 onClick={(e) => e.stopPropagation()}
-                className="mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
+                className="mt-3 block border border-surface-200 dark:border-neutral-750 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
               >
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <UserAvatar userId={post.quotedPost.author.id} size="sm" alt={post.quotedPost.author.displayName} />

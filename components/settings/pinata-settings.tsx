@@ -172,7 +172,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
           <span className="font-medium">Pinata</span>
         </div>
         <div className="animate-pulse space-y-2">
-          <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-3/4"></div>
+          <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-3/4"></div>
         </div>
       </div>
     )

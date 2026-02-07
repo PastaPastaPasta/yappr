@@ -286,7 +286,7 @@ export function TipModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                 <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -472,7 +472,7 @@ export function TipModal() {
                                 key={idx}
                                 type="button"
                                 onClick={() => handleShowQr(paymentUri)}
-                                className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/10 text-left transition-all group"
+                                className="w-full p-3 rounded-lg border border-surface-200 dark:border-neutral-750 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/10 text-left transition-all group"
                               >
                                 <div className="flex items-center gap-3">
                                   <PaymentSchemeIcon scheme={paymentUri.scheme} size="lg" />
@@ -512,7 +512,7 @@ export function TipModal() {
                         <span className="font-medium">{recipientName}</span>
                       </div>
                       {tipMessage.trim() && (
-                        <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+                        <div className="pt-2 border-t border-surface-200 dark:border-neutral-750">
                           <span className="text-gray-600 dark:text-gray-400 text-sm">Message:</span>
                           <p className="text-sm mt-1">{tipMessage}</p>
                         </div>

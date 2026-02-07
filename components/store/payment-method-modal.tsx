@@ -64,9 +64,9 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-xl"
+        className="relative w-full max-w-md bg-white dark:bg-surface-900 rounded-2xl shadow-xl"
       >
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between p-4 border-b border-surface-200 dark:border-neutral-750">
           <div className="flex items-center gap-2">
             <WalletIcon className="h-5 w-5 text-yappr-500" />
             <h2 className="text-lg font-bold">Add Payment Method</h2>
@@ -94,7 +94,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                   className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
                     scheme === s.scheme
                       ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
-                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                      : 'border-surface-200 dark:border-neutral-750 hover:border-gray-300 dark:hover:border-gray-600'
                   }`}
                 >
                   <PaymentSchemeIcon scheme={s.scheme} size="lg" />
@@ -142,7 +142,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
           </div>
         </div>
 
-        <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex gap-3 p-4 border-t border-surface-200 dark:border-neutral-750">
           <Button
             variant="outline"
             className="flex-1"

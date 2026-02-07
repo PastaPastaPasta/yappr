@@ -83,7 +83,7 @@ export function PolicyAgreement({
           return (
             <div
               key={index}
-              className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
+              className="border border-surface-200 dark:border-neutral-750 rounded-lg overflow-hidden"
             >
               {/* Policy Header */}
               <button
@@ -101,7 +101,7 @@ export function PolicyAgreement({
 
               {/* Policy Content (expanded) */}
               {isExpanded && (
-                <div className="px-4 py-3 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+                <div className="px-4 py-3 bg-white dark:bg-surface-900 border-t border-surface-200 dark:border-neutral-750">
                   <p className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap text-sm">
                     {policy.content || 'No content provided.'}
                   </p>
@@ -109,7 +109,7 @@ export function PolicyAgreement({
               )}
 
               {/* Agreement Checkbox */}
-              <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+              <div className="px-4 py-3 border-t border-surface-200 dark:border-neutral-750 bg-white dark:bg-surface-900">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <div className="relative">
                     <input

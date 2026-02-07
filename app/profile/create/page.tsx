@@ -214,7 +214,7 @@ function CreateProfilePage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center px-4 py-8">
       <div className="max-w-lg w-full">
-        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
+        <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold">Create Your Profile</h1>
@@ -264,7 +264,7 @@ function CreateProfilePage() {
               <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avatar</h3>
 
               {/* Avatar Source Tabs */}
-              <div className="flex border-b border-gray-200 dark:border-gray-700">
+              <div className="flex border-b border-surface-200 dark:border-neutral-750">
                 <button
                   type="button"
                   onClick={() => setAvatarSource('generated')}
@@ -305,7 +305,7 @@ function CreateProfilePage() {
                 <div className="flex items-start gap-6">
                   {/* Avatar Preview */}
                   <div className="flex-shrink-0">
-                    <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
+                    <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-surface-200 dark:border-neutral-750">
                       {avatarSeed && (
                         <Image
                           src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
@@ -328,7 +328,7 @@ function CreateProfilePage() {
                       <select
                         value={avatarStyle}
                         onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       >
                         {DICEBEAR_STYLES.map((style) => (
                           <option key={style} value={style}>
@@ -367,7 +367,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Banner Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="space-y-4 pt-4 border-t border-surface-200 dark:border-neutral-750">
               <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Banner (Optional)</h3>
 
               {/* Banner Preview */}
@@ -397,7 +397,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Basic Info Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="space-y-4 pt-4 border-t border-surface-200 dark:border-neutral-750">
               <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Basic Info</h3>
 
               <div>
@@ -476,7 +476,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Payment Addresses Section */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="pt-4 border-t border-surface-200 dark:border-neutral-750">
               <PaymentUriInput
                 uris={paymentUris}
                 onChange={setPaymentUris}
@@ -485,7 +485,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Social Links Section */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="pt-4 border-t border-surface-200 dark:border-neutral-750">
               <SocialLinksInput
                 links={socialLinks}
                 onChange={setSocialLinks}
@@ -494,7 +494,7 @@ function CreateProfilePage() {
             </div>
 
             {/* Content Settings */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="space-y-4 pt-4 border-t border-surface-200 dark:border-neutral-750">
               <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Content Settings</h3>
 
               <label className="flex items-center gap-3 cursor-pointer">

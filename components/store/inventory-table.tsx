@@ -300,7 +300,7 @@ export function InventoryTable({
       </div>
 
       {/* Table */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+      <div className="border border-surface-200 dark:border-neutral-750 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-gray-800">
@@ -374,7 +374,7 @@ export function InventoryTable({
 
                 return (
                   <React.Fragment key={item.id}>
-                    <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <tr className="hover:bg-surface-100 dark:hover:bg-surface-800/50">
                       <td className="px-3 py-3">
                         {hasVariants && (
                           <button

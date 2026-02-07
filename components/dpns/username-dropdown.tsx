@@ -49,7 +49,7 @@ export function UsernameDropdown({ username, allUsernames }: UsernameDropdownPro
             className="fixed inset-0 z-10"
             onClick={() => setIsOpen(false)}
           />
-          <div className="absolute top-full left-0 mt-1 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[160px]">
+          <div className="absolute top-full left-0 mt-1 z-20 bg-white dark:bg-gray-800 border border-surface-200 dark:border-neutral-750 rounded-lg shadow-lg py-1 min-w-[160px]">
             {allUsernames.map((name, index) => (
               <button
                 key={name}
