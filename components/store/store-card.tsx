@@ -34,11 +34,11 @@ export function StoreCard({ store, rating, onClick }: StoreCardProps) {
       }}
       role="button"
       tabIndex={0}
-      className="p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer border-b border-gray-200 dark:border-gray-800 last:border-b-0 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-inset"
+      className="p-4 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors cursor-pointer border-b border-surface-200 dark:border-surface-800 last:border-b-0 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-inset"
     >
       <div className="flex gap-4">
         {/* Store Logo */}
-        <div className="flex-shrink-0 w-16 h-16 rounded-lg bg-gray-200 dark:bg-gray-800 overflow-hidden">
+        <div className="flex-shrink-0 w-16 h-16 rounded-lg bg-surface-200 dark:bg-surface-800 overflow-hidden">
           {store.logoUrl ? (
             <img
               src={store.logoUrl}

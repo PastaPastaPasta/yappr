@@ -237,16 +237,16 @@ function AddItemPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
-                className="p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                className="p-2 -ml-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold">{isEditMode ? 'Edit Product' : 'Add Product'}</h1>
+              <h1 className="text-xl font-display font-bold">{isEditMode ? 'Edit Product' : 'Add Product'}</h1>
             </div>
           </header>
 
@@ -276,7 +276,7 @@ function AddItemPage() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Enter product title"
-                className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 required
                 maxLength={200}
               />
@@ -290,7 +290,7 @@ function AddItemPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe your product"
                 rows={4}
-                className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+                className="w-full px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
                 maxLength={2000}
               />
             </div>
@@ -302,7 +302,7 @@ function AddItemPage() {
               {imageUrls.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 mb-3">
                   {imageUrls.map((url, index) => (
-                    <div key={index} className="relative aspect-square bg-gray-100 dark:bg-gray-900 rounded-lg overflow-hidden">
+                    <div key={index} className="relative aspect-square bg-surface-100 dark:bg-surface-800 rounded-lg overflow-hidden">
                       <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
@@ -323,7 +323,7 @@ function AddItemPage() {
                     value={newImageUrl}
                     onChange={(e) => setNewImageUrl(e.target.value)}
                     placeholder="Enter image URL"
-                    className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="flex-1 px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                   <Button
                     type="button"
@@ -345,19 +345,19 @@ function AddItemPage() {
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="e.g., Electronics, Clothing"
-                className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 maxLength={50}
               />
             </div>
 
             {/* Variants Toggle */}
-            <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+            <div className="border-t border-surface-200 dark:border-surface-800 pt-6">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={hasVariants}
                   onChange={(e) => setHasVariants(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+                  className="w-5 h-5 rounded border-surface-200 text-yappr-500 focus:ring-yappr-500"
                 />
                 <span className="font-medium">This product has variants (e.g., size, color)</span>
               </label>
@@ -368,7 +368,7 @@ function AddItemPage() {
               <div className="space-y-4">
                 {/* Existing Axes */}
                 {variantAxes.map((axis, index) => (
-                  <div key={index} className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+                  <div key={index} className="p-3 bg-surface-50 dark:bg-surface-900 rounded-lg">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-medium">{axis.name}</span>
                       <button
@@ -381,7 +381,7 @@ function AddItemPage() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {axis.options.map((option, optIndex) => (
-                        <span key={optIndex} className="px-2 py-1 bg-white dark:bg-gray-800 rounded text-sm">
+                        <span key={optIndex} className="px-2 py-1 bg-white dark:bg-surface-800 rounded text-sm">
                           {option}
                         </span>
                       ))}
@@ -391,7 +391,7 @@ function AddItemPage() {
 
                 {/* Add New Axis */}
                 {variantAxes.length < 2 && (
-                  <div className="p-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
+                  <div className="p-3 border border-dashed border-surface-200 dark:border-surface-700 rounded-lg">
                     <p className="text-sm text-gray-500 mb-3">
                       Add variant option (max 2, e.g., Size, Color)
                     </p>
@@ -401,14 +401,14 @@ function AddItemPage() {
                         value={newAxisName}
                         onChange={(e) => setNewAxisName(e.target.value)}
                         placeholder="Option name (e.g., Size)"
-                        className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm"
+                        className="px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm"
                       />
                       <input
                         type="text"
                         value={newAxisOptions}
                         onChange={(e) => setNewAxisOptions(e.target.value)}
                         placeholder="Values (e.g., S, M, L)"
-                        className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm"
+                        className="px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm"
                       />
                     </div>
                     <Button
@@ -430,9 +430,9 @@ function AddItemPage() {
                     <label className="block text-sm font-medium mb-2">
                       Variant Pricing & Stock
                     </label>
-                    <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
+                    <div className="border border-surface-200 dark:border-surface-800 rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
-                        <thead className="bg-gray-50 dark:bg-gray-900">
+                        <thead className="bg-surface-50 dark:bg-surface-900">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">Variant</th>
                             <th className="px-3 py-2 text-left font-medium">Price ({currency})</th>
@@ -451,7 +451,7 @@ function AddItemPage() {
                                   placeholder="0.00"
                                   step={getCurrencyStep(currency)}
                                   min="0"
-                                  className="w-24 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                                  className="w-24 px-2 py-1 bg-surface-100 dark:bg-surface-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
                                 />
                               </td>
                               <td className="px-3 py-2">
@@ -461,7 +461,7 @@ function AddItemPage() {
                                   onChange={(e) => setCombinationStocks({ ...combinationStocks, [key]: e.target.value })}
                                   placeholder="Unlimited"
                                   min="0"
-                                  className="w-20 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                                  className="w-20 px-2 py-1 bg-surface-100 dark:bg-surface-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
                                 />
                               </td>
                             </tr>
@@ -487,7 +487,7 @@ function AddItemPage() {
                         placeholder="0.00"
                         step={getCurrencyStep(currency)}
                         min="0"
-                        className="w-full pl-8 pr-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        className="w-full pl-8 pr-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       />
                     </div>
                   </div>
@@ -496,7 +496,7 @@ function AddItemPage() {
                     <select
                       value={currency}
                       onChange={(e) => setCurrency(e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      className="w-full px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     >
                       <option value="USD">USD</option>
                       <option value="EUR">EUR</option>
@@ -514,7 +514,7 @@ function AddItemPage() {
                     onChange={(e) => setStockQuantity(e.target.value)}
                     placeholder="Unlimited"
                     min="0"
-                    className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
               </>
@@ -527,7 +527,7 @@ function AddItemPage() {
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-4 py-3 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 >
                   <option value="USD">USD</option>
                   <option value="EUR">EUR</option>

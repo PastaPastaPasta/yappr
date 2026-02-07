@@ -80,7 +80,7 @@ export function SaveAddressPrompt({
   }
 
   return (
-    <div className="p-4 bg-gray-50 dark:bg-gray-900/50 border-y border-gray-200 dark:border-gray-800">
+    <div className="p-4 bg-surface-50 dark:bg-surface-900/50 border-y border-surface-200 dark:border-surface-800">
       <div className="flex items-start gap-3">
         <BookmarkIcon className="h-5 w-5 text-yappr-500 flex-shrink-0 mt-0.5" />
         <div className="flex-1">
@@ -100,7 +100,7 @@ export function SaveAddressPrompt({
                     className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                       label === suggestion
                         ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-950/30 text-yappr-700 dark:text-yappr-300'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        : 'border-surface-200 dark:border-surface-700 hover:border-surface-200 dark:hover:border-gray-600'
                     }`}
                   >
                     {suggestion}
@@ -113,7 +113,7 @@ export function SaveAddressPrompt({
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="Enter a label..."
-                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 autoFocus
               />
             )}

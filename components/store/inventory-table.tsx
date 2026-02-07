@@ -219,7 +219,7 @@ export function InventoryTable({
           placeholder="Unlimited"
           min="0"
           autoFocus
-          className="w-20 px-2 py-1 text-sm bg-white dark:bg-gray-800 border border-yappr-500 rounded focus:outline-none"
+          className="w-20 px-2 py-1 text-sm bg-white dark:bg-surface-800 border border-yappr-500 rounded focus:outline-none"
         />
       )
     }
@@ -227,7 +227,7 @@ export function InventoryTable({
     return (
       <button
         onClick={() => handleStockEdit(item.id, stock, variantKey)}
-        className="text-right hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-1 rounded transition-colors"
+        className="text-right hover:bg-surface-100 dark:hover:bg-surface-800 px-2 py-1 rounded transition-colors"
       >
         {stock === Infinity ? (
           <span className="text-gray-400">Unlimited</span>
@@ -274,7 +274,7 @@ export function InventoryTable({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search by name, SKU, or tag..."
-            className="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            className="w-full pl-9 pr-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
           />
         </div>
 
@@ -283,7 +283,7 @@ export function InventoryTable({
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            className="px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
           >
             <option value="all">All Status</option>
             <option value="active">Active</option>
@@ -300,10 +300,10 @@ export function InventoryTable({
       </div>
 
       {/* Table */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+      <div className="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 dark:bg-gray-800">
+            <thead className="bg-surface-50 dark:bg-surface-800">
               <tr>
                 <th className="w-8 px-3 py-3"></th>
                 <th className="text-left px-3 py-3 font-medium">
@@ -338,7 +338,7 @@ export function InventoryTable({
                   ? item.variants!.combinations.map((combo: VariantCombination) => (
                       <tr
                         key={`${item.id}-${combo.key}`}
-                        className="bg-gray-50 dark:bg-gray-800/30"
+                        className="bg-surface-50 dark:bg-surface-800/30"
                       >
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2">
@@ -350,9 +350,9 @@ export function InventoryTable({
                                 className="w-8 h-8 object-cover rounded"
                               />
                             ) : (
-                              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
+                              <div className="w-8 h-8 bg-surface-200 dark:bg-surface-700 rounded" />
                             )}
-                            <span className="text-gray-600 dark:text-gray-400">
+                            <span className="text-surface-500 dark:text-surface-400">
                               {combo.key.replace(/\|/g, ' / ')}
                             </span>
                           </div>
@@ -374,12 +374,12 @@ export function InventoryTable({
 
                 return (
                   <React.Fragment key={item.id}>
-                    <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <tr className="hover:bg-surface-50 dark:hover:bg-surface-800/50">
                       <td className="px-3 py-3">
                         {hasVariants && (
                           <button
                             onClick={() => toggleExpand(item.id)}
-                            className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                            className="p-1 hover:bg-gray-200 dark:hover:bg-surface-700 rounded"
                           >
                             {isExpanded ? (
                               <ChevronDownIcon className="h-4 w-4" />
@@ -398,7 +398,7 @@ export function InventoryTable({
                               className="w-10 h-10 object-cover rounded"
                             />
                           ) : (
-                            <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
+                            <div className="w-10 h-10 bg-surface-200 dark:bg-surface-700 rounded flex items-center justify-center">
                               <CubeIcon className="h-5 w-5 text-gray-400" />
                             </div>
                           )}
@@ -441,7 +441,7 @@ export function InventoryTable({
                               ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
                               : item.status === 'sold_out'
                                 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                                : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                                : 'bg-gray-100 text-gray-700 dark:bg-surface-800 dark:text-gray-400'
                         }`}>
                           {item.status}
                         </span>
@@ -450,7 +450,7 @@ export function InventoryTable({
                         <div className="flex justify-end gap-1">
                           <button
                             onClick={() => onEditItem(item)}
-                            className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                            className="p-2 hover:bg-gray-200 dark:hover:bg-surface-700 rounded"
                             title="Edit"
                           >
                             <PencilIcon className="h-4 w-4 text-gray-500" />

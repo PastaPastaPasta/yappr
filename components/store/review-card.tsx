@@ -118,7 +118,7 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
 
           {/* Review content */}
           {review.content && (
-            <p className="text-gray-600 dark:text-gray-400 mt-1">{review.content}</p>
+            <p className="text-surface-500 dark:text-surface-400 mt-1">{review.content}</p>
           )}
         </div>
       </div>

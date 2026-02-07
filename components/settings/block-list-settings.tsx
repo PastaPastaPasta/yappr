@@ -171,15 +171,15 @@ export function BlockListSettings() {
         </p>
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
-            <div key={i} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+            <div key={i} className="flex items-center justify-between p-3 bg-surface-50 dark:bg-surface-950 rounded-lg">
               <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
+                <div className="h-8 w-8 rounded-full bg-surface-200 dark:bg-surface-800 animate-pulse" />
                 <div>
-                  <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
-                  <div className="h-3 w-16 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+                  <div className="h-4 w-24 bg-surface-200 dark:bg-surface-800 rounded animate-pulse mb-1" />
+                  <div className="h-3 w-16 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
                 </div>
               </div>
-              <div className="h-6 w-11 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+              <div className="h-6 w-11 bg-surface-200 dark:bg-surface-800 rounded-full animate-pulse" />
             </div>
           ))}
         </div>
@@ -198,17 +198,17 @@ export function BlockListSettings() {
       </p>
 
       {followedUsers.length === 0 ? (
-        <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg text-center">
+        <div className="p-4 bg-surface-50 dark:bg-surface-950 rounded-lg text-center">
           <p className="text-gray-500 text-sm">You&apos;re not following anyone yet</p>
           <p className="text-gray-400 text-xs mt-1">Follow users to see them here</p>
         </div>
       ) : (
         <>
-          <div className="space-y-1 divide-y divide-gray-200 dark:divide-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
+          <div className="space-y-1 divide-y divide-gray-200 dark:divide-gray-800 border border-surface-200 dark:border-surface-800 rounded-lg overflow-hidden">
             {followedUsers.map(followedUser => (
               <div
                 key={followedUser.id}
-                className="flex items-center justify-between p-3 bg-white dark:bg-neutral-900 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                className="flex items-center justify-between p-3 bg-white dark:bg-surface-900 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors"
               >
                 <Link
                   href={`/user?id=${followedUser.id}`}

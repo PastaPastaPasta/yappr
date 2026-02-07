@@ -67,11 +67,11 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
               leaveFrom="opacity-100 translate-y-0 sm:scale-100"
               leaveTo="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
             >
-              <Dialog.Panel className="relative transform overflow-hidden rounded-lg bg-white dark:bg-gray-900 px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-sm sm:p-6">
+              <Dialog.Panel className="relative transform overflow-hidden rounded-lg bg-white dark:bg-surface-900 px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-sm sm:p-6">
                 <div className="absolute right-0 top-0 pr-4 pt-4">
                   <button
                     type="button"
-                    className="rounded-md bg-white dark:bg-gray-900 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                    className="rounded-md bg-white dark:bg-surface-900 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
                     onClick={onClose}
                   >
                     <span className="sr-only">Close</span>
@@ -82,8 +82,8 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
                   <Dialog.Title as="h3" className="text-lg font-semibold leading-6 text-gray-900 dark:text-white mb-4">
                     All Usernames
                   </Dialog.Title>
-                  <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Identity ID</p>
+                  <div className="mb-4 p-3 bg-surface-50 dark:bg-surface-800 rounded-lg">
+                    <p className="text-xs text-surface-500 dark:text-surface-400">Identity ID</p>
                     <p className="text-sm font-mono text-gray-900 dark:text-white break-all">{identityId}</p>
                   </div>
                   <div className="space-y-2">
@@ -95,7 +95,7 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
                         <div
                           key={username}
                           className={`flex items-center justify-between px-3 py-2 rounded-lg ${
-                            isPrimary ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-gray-50 dark:bg-gray-800'
+                            isPrimary ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-surface-50 dark:bg-surface-800'
                           }`}
                         >
                           <span className="text-sm font-medium text-gray-900 dark:text-white">

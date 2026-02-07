@@ -247,7 +247,7 @@ export function AddEncryptionKeyModal({
               Add Encryption Key
             </Dialog.Title>
 
-            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+            <Dialog.Description className="text-surface-500 dark:text-surface-400 mb-4">
               {messages.description}
             </Dialog.Description>
 
@@ -264,9 +264,9 @@ export function AddEncryptionKeyModal({
                 </div>
               </div>
 
-              <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
+              <div className="bg-surface-50 dark:bg-surface-900 p-4 rounded-lg">
                 <h4 className="font-medium mb-2 text-sm">What this key does:</h4>
-                <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                <ul className="text-sm text-surface-500 dark:text-surface-400 space-y-1">
                   {messages.benefits.map((benefit, i) => (
                     <li key={i} className="flex gap-2">
                       <span className="text-yappr-500">•</span>
@@ -297,7 +297,7 @@ export function AddEncryptionKeyModal({
               Save Your Encryption Key
             </Dialog.Title>
 
-            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+            <Dialog.Description className="text-surface-500 dark:text-surface-400 mb-4">
               Your encryption key has been created. Save it securely as backup.
             </Dialog.Description>
 
@@ -316,8 +316,8 @@ export function AddEncryptionKeyModal({
               {/* Encryption Key Display */}
               <div className="space-y-2">
                 <label className="text-sm font-medium">Encryption Key (WIF)</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Used only for private feeds. Does not control funds.</p>
-                <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                <p className="text-xs text-surface-500 dark:text-surface-400">Used only for private feeds. Does not control funds.</p>
+                <div className="flex items-center bg-surface-100 dark:bg-surface-800 rounded-lg border border-surface-200 dark:border-surface-700">
                   <div className="flex-1 p-3 font-mono text-sm overflow-hidden min-h-[44px] flex items-center">
                     {showPrivateKey ? (
                       <span>
@@ -329,11 +329,11 @@ export function AddEncryptionKeyModal({
                       <span className="truncate">••••••••••••••••••••••••••••••••</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1 px-2 border-l border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-1 px-2 border-l border-surface-200 dark:border-surface-700">
                     <button
                       type="button"
                       onClick={() => setShowPrivateKey(!showPrivateKey)}
-                      className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                      className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-surface-700 rounded transition-colors"
                       title={showPrivateKey ? 'Hide key' : 'Show key'}
                     >
                       {showPrivateKey ? (
@@ -345,7 +345,7 @@ export function AddEncryptionKeyModal({
                     <button
                       type="button"
                       onClick={copyToClipboard}
-                      className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                      className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-surface-700 rounded transition-colors"
                       title="Copy to clipboard"
                     >
                       {hasCopied ? (
@@ -359,13 +359,13 @@ export function AddEncryptionKeyModal({
               </div>
 
               {/* Backup Confirmation */}
-              <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="flex items-start gap-3 p-3 bg-surface-50 dark:bg-surface-900 rounded-lg">
                 <input
                   type="checkbox"
                   id="confirm-backup"
                   checked={hasConfirmedBackup}
                   onChange={(e) => setHasConfirmedBackup(e.target.checked)}
-                  className="mt-1 h-4 w-4 rounded border-gray-300 text-yappr-600 focus:ring-yappr-500"
+                  className="mt-1 h-4 w-4 rounded border-surface-200 text-yappr-600 focus:ring-yappr-500"
                 />
                 <label
                   htmlFor="confirm-backup"
@@ -399,13 +399,13 @@ export function AddEncryptionKeyModal({
               Confirm with Master Key
             </Dialog.Title>
 
-            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+            <Dialog.Description className="text-surface-500 dark:text-surface-400 mb-4">
               Enter your Master key to confirm this change to your identity.
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
-              <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
-                <div className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="bg-surface-50 dark:bg-surface-900 p-4 rounded-lg">
+                <div className="text-sm text-surface-500 dark:text-surface-400">
                   <p>
                     Your Master key is different from your login key.
                     It was provided when you created your identity.
@@ -437,7 +437,7 @@ export function AddEncryptionKeyModal({
                     setKeyValidationError(null)
                   }}
                   placeholder="Enter your Master key..."
-                  className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-3 py-2 bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
                 {keyValidationError && (
                   <p className="text-sm text-red-600 dark:text-red-400">{keyValidationError}</p>
@@ -489,7 +489,7 @@ export function AddEncryptionKeyModal({
 
             <div className="flex flex-col items-center justify-center py-8">
               <Spinner size="lg" className="mb-4" />
-              <p className="text-gray-600 dark:text-gray-400 text-center">
+              <p className="text-surface-500 dark:text-surface-400 text-center">
                 Broadcasting identity update transaction...
               </p>
               <p className="text-sm text-gray-500 mt-2 text-center">
@@ -518,7 +518,7 @@ export function AddEncryptionKeyModal({
                 </div>
               </div>
 
-              <div className="text-sm text-gray-600 dark:text-gray-400 space-y-2">
+              <div className="text-sm text-surface-500 dark:text-surface-400 space-y-2">
                 <p>You can now:</p>
                 <ul className="list-disc ml-5 space-y-1">
                   {messages.successItems.map((item, i) => (
@@ -588,13 +588,13 @@ export function AddEncryptionKeyModal({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
+                    className="bg-white dark:bg-surface-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {step !== 'adding' && (
                       <button
                         onClick={handleClose}
-                        className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                        className="absolute top-4 right-4 p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                       >
                         <XMarkIcon className="h-5 w-5" />
                       </button>

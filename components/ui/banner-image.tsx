@@ -130,7 +130,7 @@ export const BannerImage = memo(function BannerImage({
   // Show loading state (fetching profile)
   if (isLoading) {
     return (
-      <div className={`bg-gray-200 dark:bg-gray-800 animate-pulse ${className}`} />
+      <div className={`bg-surface-200 dark:bg-surface-800 animate-pulse ${className}`} />
     )
   }
 
@@ -141,7 +141,7 @@ export const BannerImage = memo(function BannerImage({
       return (
         <div className={`relative ${className}`}>
           {!imageLoaded && (
-            <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 animate-pulse" />
+            <div className="absolute inset-0 bg-surface-200 dark:bg-surface-800 animate-pulse" />
           )}
           <IpfsImage
             src={bannerUrl}

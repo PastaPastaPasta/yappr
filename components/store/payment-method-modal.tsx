@@ -64,16 +64,16 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-xl"
+        className="relative w-full max-w-md bg-white dark:bg-surface-900 rounded-2xl shadow-xl"
       >
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between p-4 border-b border-surface-200 dark:border-surface-800">
           <div className="flex items-center gap-2">
             <WalletIcon className="h-5 w-5 text-yappr-500" />
             <h2 className="text-lg font-bold">Add Payment Method</h2>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+            className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
           >
             <XMarkIcon className="h-5 w-5" />
           </button>
@@ -94,7 +94,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                   className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
                     scheme === s.scheme
                       ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
-                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                      : 'border-surface-200 dark:border-surface-700 hover:border-surface-200 dark:hover:border-gray-600'
                   }`}
                 >
                   <PaymentSchemeIcon scheme={s.scheme} size="lg" />
@@ -120,7 +120,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               placeholder={selectedScheme.placeholder}
-              className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+              className="w-full px-4 py-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
             />
             <p className="text-xs text-gray-500 mt-1">
               {selectedScheme.hint}
@@ -137,12 +137,12 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="e.g., Main Wallet, Business Account"
-              className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+              className="w-full px-4 py-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
             />
           </div>
         </div>
 
-        <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex gap-3 p-4 border-t border-surface-200 dark:border-surface-800">
           <Button
             variant="outline"
             className="flex-1"

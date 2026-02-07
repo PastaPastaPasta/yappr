@@ -84,7 +84,7 @@ export function AddressForm({
               value={address.name}
               onChange={(e) => updateAddress('name', e.target.value)}
               required
-              className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
             />
           </div>
 
@@ -95,7 +95,7 @@ export function AddressForm({
               value={address.street}
               onChange={(e) => updateAddress('street', e.target.value)}
               required
-              className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
             />
           </div>
 
@@ -107,7 +107,7 @@ export function AddressForm({
                 value={address.city}
                 onChange={(e) => updateAddress('city', e.target.value)}
                 required
-                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
               />
             </div>
             <div>
@@ -116,7 +116,7 @@ export function AddressForm({
                 type="text"
                 value={address.state || ''}
                 onChange={(e) => updateAddress('state', e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
               />
             </div>
           </div>
@@ -129,7 +129,7 @@ export function AddressForm({
                 value={address.postalCode}
                 onChange={(e) => updateAddress('postalCode', e.target.value)}
                 required
-                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
               />
             </div>
             <div>
@@ -137,7 +137,7 @@ export function AddressForm({
               <select
                 value={address.country}
                 onChange={(e) => updateAddress('country', e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
               >
                 <option value="US">United States</option>
                 <option value="CA">Canada</option>
@@ -149,7 +149,7 @@ export function AddressForm({
             </div>
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-800 pt-4 mt-4">
+          <div className="border-t border-surface-200 dark:border-surface-800 pt-4 mt-4">
             <div className="flex items-center gap-2 text-lg font-medium mb-4">
               Contact Information
             </div>
@@ -160,7 +160,7 @@ export function AddressForm({
                   type="email"
                   value={contact.email || ''}
                   onChange={(e) => updateContact('email', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>
               <div>
@@ -169,7 +169,7 @@ export function AddressForm({
                   type="tel"
                   value={contact.phone || ''}
                   onChange={(e) => updateContact('phone', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>
             </div>

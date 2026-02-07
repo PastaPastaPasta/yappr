@@ -6,11 +6,26 @@
   :root {
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
+    --surface-tint: 217 92% 97%;
   }
 
   .dark {
-    --background: 0 0% 7%;
+    --background: 222 47% 3%;
     --foreground: 210 40% 98%;
+    --surface-tint: 222 47% 8%;
+  }
+
+  /* Smooth font rendering */
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Better selection colors */
+  ::selection {
+    background-color: rgba(59, 124, 248, 0.2);
+    color: inherit;
   }
 }
 
@@ -28,27 +43,97 @@
     display: none;
   }
 
+  /* Refined glass morphism */
   .glass-effect {
-    @apply backdrop-blur-xl bg-white/80 dark:bg-neutral-900/80;
+    @apply backdrop-blur-2xl bg-white/70 dark:bg-surface-950/70;
   }
 
   .glass-border {
-    @apply border border-gray-200/50 dark:border-gray-800/50;
+    @apply border border-white/20 dark:border-white/5;
   }
 
+  .glass-subtle {
+    @apply backdrop-blur-xl bg-white/50 dark:bg-surface-950/50;
+  }
+
+  /* Interactive feedback */
   .interactive-scale {
-    @apply transition-transform duration-150 active:scale-[0.98];
+    @apply transition-transform duration-150 active:scale-[0.97];
   }
 
+  .interactive-lift {
+    @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-elevated;
+  }
+
+  /* Brand gradient text */
   .text-gradient {
-    @apply bg-gradient-to-r from-yappr-500 to-yappr-600 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-yappr-500 via-yappr-600 to-yappr-700 bg-clip-text text-transparent;
   }
 
+  .text-gradient-warm {
+    @apply bg-gradient-to-r from-yappr-500 to-purple-600 bg-clip-text text-transparent;
+  }
+
+  /* Atmospheric backgrounds */
+  .bg-atmosphere {
+    @apply bg-gradient-mesh;
+  }
+
+  .bg-glow {
+    @apply bg-gradient-glow;
+  }
+
+  /* Shimmer loading effect */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(59, 124, 248, 0.04) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  .dark .shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(59, 124, 248, 0.08) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+  }
+
+  /* Gradient border effect */
+  .gradient-border {
+    position: relative;
+  }
+
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(59, 124, 248, 0.3), rgba(124, 58, 237, 0.1), rgba(255, 149, 56, 0.1));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Safe area insets for mobile */
   .safe-area-inset-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0);
   }
 
   .safe-area-inset-top {
     padding-top: env(safe-area-inset-top, 0);
+  }
+
+  /* Focus ring style */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-surface-950;
   }
 }

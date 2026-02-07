@@ -30,7 +30,7 @@ function LoadingFallback() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800 flex items-center justify-center">
           <Spinner />
         </main>
       </div>
@@ -137,7 +137,7 @@ function StoreDetailContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800 flex items-center justify-center">
             <Spinner />
           </main>
         </div>
@@ -151,7 +151,7 @@ function StoreDetailContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-8">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800 flex flex-col items-center justify-center p-8">
             <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mb-4" />
             <p className="text-gray-500 font-medium">Store not found</p>
             <Button className="mt-4" onClick={() => router.push('/store')}>
@@ -171,18 +171,18 @@ function StoreDetailContent() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => router.back()}
-                  className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                  className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold truncate">{store.name}</h1>
+                <h1 className="text-xl font-display font-bold truncate">{store.name}</h1>
               </div>
 
               <div className="flex items-center gap-2">
@@ -217,7 +217,7 @@ function StoreDetailContent() {
                 )}
                 <button
                   onClick={() => router.push('/cart')}
-                  className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                  className="relative p-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
                 >
                   <ShoppingCartIcon className="h-6 w-6" />
                   {cartItemCount > 0 && (
@@ -233,7 +233,7 @@ function StoreDetailContent() {
           {/* Store Banner & Info */}
           <div>
             {store.bannerUrl ? (
-              <div className="h-32 bg-gray-200 dark:bg-gray-800">
+              <div className="h-32 bg-surface-200 dark:bg-surface-800">
                 <img src={store.bannerUrl} alt="" className="w-full h-full object-cover" />
               </div>
             ) : (
@@ -242,18 +242,18 @@ function StoreDetailContent() {
 
             <div className="px-4 pb-4 -mt-8">
               <div className="flex gap-4">
-                <div className="w-24 h-24 rounded-xl bg-white dark:bg-gray-900 border-4 border-white dark:border-gray-900 overflow-hidden flex-shrink-0">
+                <div className="w-24 h-24 rounded-xl bg-white dark:bg-surface-900 border-4 border-white dark:border-gray-900 overflow-hidden flex-shrink-0">
                   {store.logoUrl ? (
                     <img src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
                   ) : (
-                    <div className="w-full h-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
+                    <div className="w-full h-full bg-surface-200 dark:bg-surface-800 flex items-center justify-center">
                       <BuildingStorefrontIcon className="h-10 w-10 text-gray-400" />
                     </div>
                   )}
                 </div>
 
                 <div className="pt-10 flex-1 min-w-0">
-                  <h2 className="text-xl font-bold truncate">{store.name}</h2>
+                  <h2 className="text-xl font-display font-bold truncate">{store.name}</h2>
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />
@@ -282,13 +282,13 @@ function StoreDetailContent() {
               </div>
 
               {store.description && (
-                <p className="mt-4 text-gray-600 dark:text-gray-400">{store.description}</p>
+                <p className="mt-4 text-surface-500 dark:text-surface-400">{store.description}</p>
               )}
             </div>
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-gray-200 dark:border-gray-800">
+          <div className="flex border-b border-surface-200 dark:border-surface-800">
             <button
               onClick={() => setActiveTab('items')}
               className={`flex-1 py-3 text-center font-medium transition-colors relative ${
@@ -351,7 +351,7 @@ function StoreDetailContent() {
                       onClick={() => handleItemClick(item.id)}
                       className="cursor-pointer group"
                     >
-                      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
+                      <div className="relative aspect-square bg-surface-100 dark:bg-surface-800 rounded-lg overflow-hidden">
                         {item.imageUrls?.[0] ? (
                           <img
                             src={item.imageUrls[0]}

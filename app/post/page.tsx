@@ -82,7 +82,7 @@ function PostDetailContent() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
             <div className="p-8 text-center text-gray-500">
               <p>Post not found</p>
             </div>
@@ -98,16 +98,16 @@ function PostDetailContent() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
-              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+              className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
-            <h1 className="text-xl font-bold">Post</h1>
+            <h1 className="text-xl font-display font-bold">Post</h1>
           </div>
         </header>
 
@@ -120,7 +120,7 @@ function PostDetailContent() {
           <>
             {/* Reply chain - show predecessors leading up to this post */}
             {replyChain.length > 0 && (
-              <div className="border-b border-gray-200 dark:border-gray-800">
+              <div className="border-b border-surface-200 dark:border-surface-800">
                 {replyChain.map((chainPost) => (
                   <div key={chainPost.id} className="relative">
                     {/* Thread line connecting to next item */}
@@ -138,13 +138,13 @@ function PostDetailContent() {
             )}
 
             {/* Main post - the one being viewed */}
-            <div className="border-b border-gray-200 dark:border-gray-800">
+            <div className="border-b border-surface-200 dark:border-surface-800">
               <PostCard post={post} enrichment={postEnrichment} hideReplyTo />
             </div>
 
             {user ? (
               isCheckingAccess ? (
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+                <div className="p-4 border-b border-surface-200 dark:border-surface-800">
                   <Button
                     variant="outline"
                     className="w-full"
@@ -154,7 +154,7 @@ function PostDetailContent() {
                   </Button>
                 </div>
               ) : canReplyToPrivate ? (
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+                <div className="p-4 border-b border-surface-200 dark:border-surface-800">
                   <Button
                     onClick={handleReply}
                     variant="outline"
@@ -164,16 +164,16 @@ function PostDetailContent() {
                   </Button>
                 </div>
               ) : (
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+                <div className="p-4 border-b border-surface-200 dark:border-surface-800 text-center">
                   <p className="text-gray-500 text-sm">
                     {cantReplyReason || "Can't reply to this post"}
                   </p>
                 </div>
               )
             ) : (
-              <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+              <div className="p-4 border-b border-surface-200 dark:border-surface-800 text-center">
                 <p className="text-gray-500 text-sm">
-                  <button onClick={openLoginModal} className="text-purple-600 hover:underline">Log in</button> to reply
+                  <button onClick={openLoginModal} className="text-yappr-500 hover:underline">Log in</button> to reply
                 </p>
               </div>
             )}
@@ -219,7 +219,7 @@ function LoadingFallback() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
           <div className="p-8 text-center">
             <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading post...</p>

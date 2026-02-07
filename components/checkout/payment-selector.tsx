@@ -65,7 +65,7 @@ export function PaymentSelector({
               className={`w-full p-4 border rounded-lg text-left transition-colors ${
                 selected?.uri === uri.uri
                   ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
-                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                  : 'border-surface-200 dark:border-surface-700 hover:border-surface-200'
               }`}
             >
               <p className="font-medium">{uri.label || uri.scheme.replace(':', '')}</p>
@@ -80,7 +80,7 @@ export function PaymentSelector({
       )}
 
       {selected && (
-        <div className="border-t border-gray-200 dark:border-gray-800 pt-4 space-y-4">
+        <div className="border-t border-surface-200 dark:border-surface-800 pt-4 space-y-4">
           <PaymentQRCode
             paymentUri={selected}
             onBack={() => handleSelect(null)}
@@ -110,10 +110,10 @@ export function PaymentSelector({
                 if (wasAutoFilled) setWasAutoFilled(false)
               }}
               placeholder={isSelectedDashPayment ? "Will auto-fill when detected" : "Enter after payment"}
-              className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm ${
+              className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm ${
                 wasAutoFilled
                   ? 'border-green-300 dark:border-green-700'
-                  : 'border-gray-200 dark:border-gray-700'
+                  : 'border-surface-200 dark:border-surface-700'
               }`}
             />
             {detectedAmount !== null && wasAutoFilled && (

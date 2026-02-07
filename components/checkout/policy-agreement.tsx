@@ -83,13 +83,13 @@ export function PolicyAgreement({
           return (
             <div
               key={index}
-              className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
+              className="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden"
             >
               {/* Policy Header */}
               <button
                 type="button"
                 onClick={() => toggleExpanded(index)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                className="w-full flex items-center justify-between px-4 py-3 bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
               >
                 <span className="font-medium">{policy.name || 'Store Policy'}</span>
                 {isExpanded ? (
@@ -101,15 +101,15 @@ export function PolicyAgreement({
 
               {/* Policy Content (expanded) */}
               {isExpanded && (
-                <div className="px-4 py-3 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
-                  <p className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap text-sm">
+                <div className="px-4 py-3 bg-white dark:bg-surface-900 border-t border-surface-200 dark:border-surface-700">
+                  <p className="text-surface-500 dark:text-surface-400 whitespace-pre-wrap text-sm">
                     {policy.content || 'No content provided.'}
                   </p>
                 </div>
               )}
 
               {/* Agreement Checkbox */}
-              <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+              <div className="px-4 py-3 border-t border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <div className="relative">
                     <input
@@ -122,7 +122,7 @@ export function PolicyAgreement({
                       className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
                         isAgreed
                           ? 'bg-yappr-500 border-yappr-500'
-                          : 'border-gray-300 dark:border-gray-600'
+                          : 'border-surface-200 dark:border-surface-600'
                       }`}
                     >
                       {isAgreed && <CheckIcon className="h-3.5 w-3.5 text-white" />}
@@ -140,7 +140,7 @@ export function PolicyAgreement({
 
       {/* Agree to All */}
       {policies.length > 1 && (
-        <label className="flex items-center gap-3 cursor-pointer p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+        <label className="flex items-center gap-3 cursor-pointer p-3 bg-surface-50 dark:bg-surface-800/50 rounded-lg">
           <div className="relative">
             <input
               type="checkbox"
@@ -152,7 +152,7 @@ export function PolicyAgreement({
               className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
                 allAgreed
                   ? 'bg-yappr-500 border-yappr-500'
-                  : 'border-gray-300 dark:border-gray-600'
+                  : 'border-surface-200 dark:border-surface-600'
               }`}
             >
               {allAgreed && <CheckIcon className="h-3.5 w-3.5 text-white" />}

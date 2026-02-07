@@ -147,16 +147,16 @@ function CreateStorePage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
-                className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold">{isEditMode ? 'Edit Store' : 'Create Store'}</h1>
+              <h1 className="text-xl font-display font-bold">{isEditMode ? 'Edit Store' : 'Create Store'}</h1>
             </div>
           </header>
 
@@ -168,7 +168,7 @@ function CreateStorePage() {
           <form onSubmit={handleSubmit} className="p-4 space-y-6">
             {/* Store Icon */}
             <div className="flex justify-center">
-              <div className="w-24 h-24 rounded-xl bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
+              <div className="w-24 h-24 rounded-xl bg-surface-200 dark:bg-surface-800 flex items-center justify-center">
                 {logoUrl ? (
                   <img src={logoUrl} alt="Store logo" className="w-full h-full object-cover rounded-xl" />
                 ) : (
@@ -196,7 +196,7 @@ function CreateStorePage() {
                   placeholder="Your Store Name"
                   required
                   maxLength={100}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>
 
@@ -208,7 +208,7 @@ function CreateStorePage() {
                   placeholder="Describe your store and what you sell"
                   rows={3}
                   maxLength={500}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+                  className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
                 />
               </div>
 
@@ -220,7 +220,7 @@ function CreateStorePage() {
                     value={logoUrl}
                     onChange={(e) => setLogoUrl(e.target.value)}
                     placeholder="https://..."
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
                 <div>
@@ -230,7 +230,7 @@ function CreateStorePage() {
                     value={bannerUrl}
                     onChange={(e) => setBannerUrl(e.target.value)}
                     placeholder="https://..."
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
               </div>
@@ -244,7 +244,7 @@ function CreateStorePage() {
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="City, Country"
                     maxLength={100}
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
                 <div>
@@ -252,7 +252,7 @@ function CreateStorePage() {
                   <select
                     value={defaultCurrency}
                     onChange={(e) => setDefaultCurrency(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   >
                     <option value="USD">USD - US Dollar</option>
                     <option value="EUR">EUR - Euro</option>

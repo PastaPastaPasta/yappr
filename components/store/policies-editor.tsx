@@ -74,7 +74,7 @@ export function PoliciesEditor({
           {policies.map((policy, index) => (
             <div
               key={index}
-              className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg space-y-3"
+              className="p-4 border border-surface-200 dark:border-surface-700 rounded-lg space-y-3"
             >
               {/* Policy Name */}
               <div className="relative" ref={openSuggestionIndex === index ? suggestionRef : undefined}>
@@ -88,7 +88,7 @@ export function PoliciesEditor({
                       onFocus={() => setOpenSuggestionIndex(index)}
                       placeholder="e.g., Return Policy"
                       maxLength={100}
-                      className="w-full px-4 py-2 pr-10 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      className="w-full px-4 py-2 pr-10 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     />
                     <button
                       type="button"
@@ -110,14 +110,14 @@ export function PoliciesEditor({
 
                 {/* Suggestions dropdown */}
                 {openSuggestionIndex === index && (
-                  <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  <div className="absolute z-10 mt-1 w-full bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                     {getAvailableSuggestions(index).length > 0 ? (
                       getAvailableSuggestions(index).map((name) => (
                         <button
                           key={name}
                           type="button"
                           onClick={() => selectSuggestion(index, name)}
-                          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800 first:rounded-t-lg last:rounded-b-lg"
+                          className="w-full px-4 py-2 text-left text-sm hover:bg-surface-50 dark:hover:bg-surface-800 first:rounded-t-lg last:rounded-b-lg"
                         >
                           {name}
                         </button>
@@ -139,7 +139,7 @@ export function PoliciesEditor({
                   onChange={(e) => updatePolicy(index, 'content', e.target.value)}
                   placeholder="Describe this policy..."
                   rows={4}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+                  className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
                 />
               </div>
             </div>

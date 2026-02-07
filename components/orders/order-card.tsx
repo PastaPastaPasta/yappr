@@ -64,7 +64,7 @@ export function OrderCard({
           <div className="flex gap-3 flex-1 min-w-0">
             <button
               onClick={handleStoreClick}
-              className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0 hover:ring-2 hover:ring-yappr-500 transition-all"
+              className="w-12 h-12 rounded-lg bg-surface-100 dark:bg-surface-800 flex items-center justify-center flex-shrink-0 hover:ring-2 hover:ring-yappr-500 transition-all"
             >
               {store?.logoUrl ? (
                 <img src={store.logoUrl} alt={store.name} className="w-full h-full rounded-lg object-cover" />
@@ -112,9 +112,9 @@ export function OrderCard({
           />
 
           {/* Shipping Address */}
-          <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+          <div className="p-3 bg-surface-50 dark:bg-surface-950 rounded-lg">
             <p className="text-sm font-medium mb-1">Ships to</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-surface-500 dark:text-surface-400">
               {payload.shippingAddress.name}, {payload.shippingAddress.city}, {payload.shippingAddress.country}
             </p>
           </div>
@@ -122,7 +122,7 @@ export function OrderCard({
       )}
 
       {status?.trackingNumber && (
-        <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+        <div className="mt-3 p-3 bg-surface-50 dark:bg-surface-950 rounded-lg">
           <p className="text-sm text-gray-500">Tracking:</p>
           <p className="font-mono text-sm">
             {status.trackingCarrier && `${status.trackingCarrier}: `}

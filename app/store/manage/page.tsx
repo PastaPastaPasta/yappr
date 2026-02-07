@@ -257,7 +257,7 @@ function StoreManagePage() {
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+          <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800 flex items-center justify-center">
             <Spinner />
           </main>
         </div>
@@ -275,17 +275,17 @@ function StoreManagePage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => router.push('/store')}
-                  className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+                  className="p-2 -ml-2 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold truncate">Manage Store</h1>
+                <h1 className="text-xl font-display font-bold truncate">Manage Store</h1>
               </div>
               <Button
                 variant="outline"
@@ -305,7 +305,7 @@ function StoreManagePage() {
 
             {/* Store Info */}
             <div className="px-4 pb-4 flex items-center gap-4">
-              <div className="w-16 h-16 rounded-xl bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
+              <div className="w-16 h-16 rounded-xl bg-surface-200 dark:bg-surface-800 overflow-hidden flex-shrink-0">
                 {store.logoUrl ? (
                   <img src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
                 ) : (
@@ -330,7 +330,7 @@ function StoreManagePage() {
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-gray-200 dark:border-gray-800">
+            <div className="flex border-b border-surface-200 dark:border-surface-800">
               <button
                 onClick={() => setActiveTab('items')}
                 className={`flex-1 py-3 text-center font-medium transition-colors relative flex items-center justify-center gap-2 ${
@@ -474,9 +474,9 @@ function StoreManagePage() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: index * 0.03 }}
-                        className="flex items-center gap-4 p-3 border border-gray-200 dark:border-gray-800 rounded-lg"
+                        className="flex items-center gap-4 p-3 border border-surface-200 dark:border-surface-800 rounded-lg"
                       >
-                        <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden flex-shrink-0">
+                        <div className="w-16 h-16 bg-surface-100 dark:bg-surface-800 rounded-lg overflow-hidden flex-shrink-0">
                           {item.imageUrls?.[0] ? (
                             <img src={item.imageUrls[0]} alt={item.title} className="w-full h-full object-cover" />
                           ) : (
@@ -501,7 +501,7 @@ function StoreManagePage() {
                         <div className="flex gap-1">
                           <button
                             onClick={() => router.push(`/store/item/add?itemId=${item.id}&storeId=${store?.id}`)}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                            className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-lg"
                           >
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
@@ -548,7 +548,7 @@ function StoreManagePage() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.03 }}
-                      className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg"
+                      className="p-4 border border-surface-200 dark:border-surface-800 rounded-lg"
                     >
                       <div className="flex items-center justify-between">
                         <div>
@@ -565,7 +565,7 @@ function StoreManagePage() {
                         <div className="flex gap-1">
                           <button
                             onClick={() => setEditingZone(zone)}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                            className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-lg"
                           >
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
@@ -590,7 +590,7 @@ function StoreManagePage() {
                 <h3 className="font-medium mb-4">Store Settings</h3>
 
                 <div className="space-y-4">
-                  <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
+                  <div className="p-4 border border-surface-200 dark:border-surface-800 rounded-lg">
                     <div className="flex items-center justify-between">
                       <div>
                         <h4 className="font-medium">Store Status</h4>
@@ -611,7 +611,7 @@ function StoreManagePage() {
                             console.error('Failed to update status:', error)
                           }
                         }}
-                        className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
+                        className="px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900"
                       >
                         <option value="active">Active</option>
                         <option value="paused">Paused</option>
@@ -631,7 +631,7 @@ function StoreManagePage() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+              <div className="border-t border-surface-200 dark:border-surface-800 pt-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-medium">Payment Methods</h3>
                   <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
@@ -642,7 +642,7 @@ function StoreManagePage() {
                 {store.paymentUris && store.paymentUris.length > 0 ? (
                   <div className="space-y-2">
                     {store.paymentUris.map((uri, i) => (
-                      <div key={i} className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg flex items-center justify-between">
+                      <div key={i} className="p-3 bg-surface-50 dark:bg-surface-950 rounded-lg flex items-center justify-between">
                         <div className="min-w-0 flex-1">
                           <p className="font-medium">{uri.label || uri.scheme.replace(':', '')}</p>
                           <p className="text-sm text-gray-500 font-mono truncate">{uri.uri}</p>

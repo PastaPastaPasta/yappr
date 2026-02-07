@@ -194,8 +194,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
       <Card>
         <CardContent className="pt-6">
           <div data-testid="loading-skeleton" className="animate-pulse space-y-2">
-            <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-3/4"></div>
-            <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2"></div>
+            <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-3/4"></div>
+            <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-1/2"></div>
           </div>
         </CardContent>
       </Card>
@@ -237,7 +237,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
             {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
+              <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg text-center">
                 <div className="flex items-center justify-center gap-1 mb-1">
                   <UserGroupIcon className="h-4 w-4 text-gray-500" />
                 </div>
@@ -245,12 +245,12 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 <p className="text-xs text-gray-500">/ {TREE_CAPACITY}</p>
                 <p className="text-xs text-gray-500">Followers</p>
               </div>
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
+              <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg text-center">
                 <p className="text-lg font-semibold">{currentEpoch}</p>
                 <p className="text-xs text-gray-500">/ {MAX_EPOCH}</p>
                 <p className="text-xs text-gray-500">Epoch</p>
               </div>
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
+              <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg text-center">
                 <p className="text-lg font-semibold">{TREE_CAPACITY - followerCount}</p>
                 <p className="text-xs text-gray-500">Available</p>
                 <p className="text-xs text-gray-500">Slots</p>
@@ -321,7 +321,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
             <div className="pt-4 border-t">
               <h4 className="font-medium mb-2 text-sm">Capacity:</h4>
-              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+              <ul className="space-y-2 text-sm text-surface-500 dark:text-surface-400">
                 <li className="flex gap-2">
                   <span className="text-yappr-500">•</span>
                   Up to {TREE_CAPACITY.toLocaleString()} private followers
@@ -372,12 +372,12 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           <>
             {!showKeyInput ? (
               <>
-                <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
+                <div className="bg-surface-50 dark:bg-surface-900 p-4 rounded-lg">
                   <div className="space-y-3">
                     <p className="text-sm text-gray-700 dark:text-gray-300">
                       Create a private feed visible only to approved followers
                     </p>
-                    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                    <ul className="space-y-2 text-sm text-surface-500 dark:text-surface-400">
                       <li className="flex gap-2">
                         <span className="text-yappr-500">•</span>
                         You control who can see your private posts
@@ -499,7 +499,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
             <div className="pt-4 border-t">
               <h4 className="font-medium mb-2 text-sm">How it works:</h4>
-              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+              <ul className="space-y-2 text-sm text-surface-500 dark:text-surface-400">
                 <li className="flex gap-2">
                   <span className="text-yappr-500">•</span>
                   Your private posts are encrypted with a unique feed key

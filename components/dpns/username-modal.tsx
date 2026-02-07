@@ -64,7 +64,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             className="fixed inset-0 flex items-center justify-center z-50 px-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
               {/* Close button */}
               <button
                 onClick={onClose}
@@ -74,12 +74,12 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
               </button>
 
               <h1 className="text-2xl font-bold text-center mb-2">Register Username</h1>
-              <p className="text-gray-600 dark:text-gray-400 text-center mb-6">
+              <p className="text-surface-500 dark:text-surface-400 text-center mb-6">
                 Choose one or more usernames for your Dash Platform identity
               </p>
 
               {/* Identity ID Display */}
-              <div className="mb-6 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <div className="mb-6 p-3 bg-surface-100 dark:bg-surface-800 rounded-lg">
                 <label className="text-xs text-gray-500 uppercase tracking-wide">
                   Identity ID
                 </label>

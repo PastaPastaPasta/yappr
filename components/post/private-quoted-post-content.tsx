@@ -147,7 +147,7 @@ export function PrivateQuotedPostContent({
 
   // Common link wrapper class for all states
   const linkClass = cn(
-    'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
+    'mt-3 block border border-surface-200 dark:border-surface-700 rounded-xl p-3 hover:bg-surface-50 dark:hover:bg-surface-800/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
     className
   )
 
@@ -173,9 +173,9 @@ export function PrivateQuotedPostContent({
 
   // Locked content indicator (used in locked and error states)
   const renderLockedIndicator = () => (
-    <div className="mt-2 flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+    <div className="mt-2 flex items-center gap-2 p-2 bg-surface-100 dark:bg-surface-800 rounded-lg">
       <LockClosedIconSolid className="h-4 w-4 text-gray-500" />
-      <span className="text-sm text-gray-600 dark:text-gray-400">
+      <span className="text-sm text-surface-500 dark:text-surface-400">
         Private post from {authorDisplay}
       </span>
     </div>
@@ -191,7 +191,7 @@ export function PrivateQuotedPostContent({
           <span className="text-sm">Decrypting...</span>
         </div>
         {hasTeaser && (
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
+          <div className="mt-1 text-sm text-surface-500 dark:text-surface-400 line-clamp-2">
             {quotedPost.content}
           </div>
         )}
@@ -205,7 +205,7 @@ export function PrivateQuotedPostContent({
       <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
         {renderHeader()}
         {hasTeaser && (
-          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
+          <div className="mt-1 text-xs text-surface-500 dark:text-surface-400 line-clamp-1">
             {quotedPost.content}
           </div>
         )}
@@ -222,7 +222,7 @@ export function PrivateQuotedPostContent({
       <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
         {renderHeader()}
         {hasTeaser && (
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
+          <div className="mt-1 text-sm text-surface-500 dark:text-surface-400 line-clamp-2">
             {quotedPost.content}
           </div>
         )}

@@ -147,7 +147,7 @@ export function PaymentQRCode({
 
       {/* Amount Display */}
       {displayTotal !== null && (
-        <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-4 space-y-2">
+        <div className="bg-surface-50 dark:bg-neutral-800 rounded-lg p-4 space-y-2">
           {isPriceLoading ? (
             <div className="flex items-center justify-center gap-2 text-gray-500">
               <ArrowPathIcon className="w-4 h-4 animate-spin" />
@@ -214,7 +214,7 @@ export function PaymentQRCode({
       </div>
 
       {/* Address display */}
-      <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-3 space-y-2">
+      <div className="bg-surface-50 dark:bg-neutral-800 rounded-lg p-3 space-y-2">
         <p className="text-xs text-gray-500 font-medium">Address</p>
         <p className="font-mono text-sm break-all text-gray-900 dark:text-gray-100">
           {address}
@@ -237,7 +237,7 @@ export function PaymentQRCode({
       <div className="flex gap-2">
         <button
           onClick={handleCopy}
-          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-neutral-800 transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-neutral-800 transition-colors"
         >
           {copied ? (
             <>

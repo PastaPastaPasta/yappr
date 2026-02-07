@@ -293,21 +293,21 @@ function FollowersPage() {
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <main className="w-full max-w-[700px] md:border-x border-surface-200 dark:border-surface-800">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-surface-950/70 border-b border-surface-200 dark:border-surface-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {!isOwnProfile && (
                     <button
                       onClick={() => router.back()}
-                      className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="p-1 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full transition-colors"
                     >
                       <ArrowLeftIcon className="h-5 w-5" />
                     </button>
                   )}
                   <div>
-                    <h1 className="text-xl font-bold">
+                    <h1 className="text-xl font-display font-bold">
                       {isOwnProfile ? 'Followers' : `@${targetUserName || 'User'}'s Followers`}
                     </h1>
                     <p className="text-sm text-gray-500 mt-1">
@@ -346,7 +346,7 @@ function FollowersPage() {
                     key={follower.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                    className="border-b border-surface-200 dark:border-surface-800 px-4 py-3 hover:bg-surface-50 dark:hover:bg-surface-950 transition-colors"
                   >
                     <div className="flex items-start gap-3">
                       <ProfileHoverCard
@@ -356,7 +356,7 @@ function FollowersPage() {
                       >
                         <button
                           onClick={() => router.push(`/user?id=${follower.id}`)}
-                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-surface-900 cursor-pointer hover:opacity-80 transition-opacity"
                         >
                           <UserAvatar userId={follower.id} size="lg" alt={follower.displayName} />
                         </button>
@@ -407,7 +407,7 @@ function FollowersPage() {
                                   </Tooltip.Trigger>
                                   <Tooltip.Portal>
                                     <Tooltip.Content
-                                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                                      className="bg-gray-800 dark:bg-surface-700 text-white text-xs px-2 py-1 rounded"
                                       sideOffset={5}
                                     >
                                       Click to copy full identity ID

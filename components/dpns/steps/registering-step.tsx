@@ -30,20 +30,20 @@ function getRowStyles(state: RegistrationState): string {
     case 'failed':
       return 'border-red-500 bg-red-50 dark:bg-red-900/20'
     case 'pending':
-      return 'border-gray-200 dark:border-gray-700 opacity-50'
+      return 'border-surface-200 dark:border-surface-700 opacity-50'
   }
 }
 
 function RegistrationIcon({ state }: { state: RegistrationState }): React.ReactNode {
   switch (state) {
     case 'current':
-      return <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
+      return <Loader2 className="w-5 h-5 animate-spin text-yappr-500" />
     case 'success':
       return <CheckCircle2 className="w-5 h-5 text-green-500" />
     case 'failed':
       return <XCircle className="w-5 h-5 text-red-500" />
     case 'pending':
-      return <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+      return <div className="w-5 h-5 rounded-full border-2 border-surface-200" />
   }
 }
 
@@ -73,9 +73,9 @@ export function RegisteringStep(): React.ReactNode {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <Loader2 className="w-12 h-12 animate-spin text-purple-600 mx-auto mb-4" />
+        <Loader2 className="w-12 h-12 animate-spin text-yappr-500 mx-auto mb-4" />
         <h2 className="text-xl font-semibold mb-2">Registering Usernames</h2>
-        <p className="text-gray-600 dark:text-gray-400">
+        <p className="text-surface-500 dark:text-surface-400">
           Registering {displayIndex} of {total}...
         </p>
       </div>

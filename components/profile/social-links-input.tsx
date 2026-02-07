@@ -120,7 +120,7 @@ export function SocialLinksInput({
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
         {label}
       </label>
-      <p className="text-xs text-gray-500 dark:text-gray-400">
+      <p className="text-xs text-surface-500 dark:text-surface-400">
         {description}
       </p>
 
@@ -130,12 +130,12 @@ export function SocialLinksInput({
           {links.map((link, index) => (
             <div
               key={index}
-              className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg"
+              className="flex items-center gap-2 p-2 bg-surface-50 dark:bg-surface-800 rounded-lg"
             >
-              <span className="px-2 py-0.5 text-xs font-medium bg-gray-200 dark:bg-gray-700 rounded">
+              <span className="px-2 py-0.5 text-xs font-medium bg-surface-200 dark:bg-surface-700 rounded">
                 {getPlatformLabel(link.platform)}
               </span>
-              <span className="flex-1 text-sm truncate text-gray-600 dark:text-gray-300">
+              <span className="flex-1 text-sm truncate text-surface-600 dark:text-surface-300">
                 {link.handle}
               </span>
               <button
@@ -158,8 +158,8 @@ export function SocialLinksInput({
             value={selectedPlatform}
             onChange={(e) => setSelectedPlatform(e.target.value as SocialPlatform)}
             disabled={disabled}
-            className="px-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-900
-                       border-gray-300 dark:border-gray-600
+            className="px-3 py-2 text-sm border rounded-lg bg-white dark:bg-surface-900
+                       border-surface-200 dark:border-surface-600
                        focus:ring-2 focus:ring-blue-500 focus:border-transparent
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -179,8 +179,8 @@ export function SocialLinksInput({
             onKeyPress={handleKeyPress}
             disabled={disabled}
             placeholder={getPlatformPlaceholder(selectedPlatform)}
-            className="flex-1 px-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-900
-                       border-gray-300 dark:border-gray-600
+            className="flex-1 px-3 py-2 text-sm border rounded-lg bg-white dark:bg-surface-900
+                       border-surface-200 dark:border-surface-600
                        focus:ring-2 focus:ring-blue-500 focus:border-transparent
                        disabled:opacity-50 disabled:cursor-not-allowed"
           />

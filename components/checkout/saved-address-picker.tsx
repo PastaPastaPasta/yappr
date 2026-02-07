@@ -32,7 +32,7 @@ export function SavedAddressPicker({
   }
 
   return (
-    <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+    <div className="p-4 border-b border-surface-200 dark:border-surface-800">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
           <BookmarkIcon className="h-4 w-4" />
@@ -57,14 +57,14 @@ export function SavedAddressPicker({
             className={`w-full p-3 rounded-lg border transition-colors text-left flex items-start gap-3 ${
               selectedId === address.id
                 ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-950/20'
-                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                : 'border-surface-200 dark:border-surface-700 hover:border-surface-200 dark:hover:border-gray-600'
             }`}
           >
             <div
               className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
                 selectedId === address.id
                   ? 'border-yappr-500 bg-yappr-500'
-                  : 'border-gray-300 dark:border-gray-600'
+                  : 'border-surface-200 dark:border-surface-600'
               }`}
             >
               {selectedId === address.id && (
@@ -75,12 +75,12 @@ export function SavedAddressPicker({
               <div className="flex items-center gap-2">
                 <span className="font-medium">{address.label}</span>
                 {address.isDefault && (
-                  <span className="text-xs px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-400">
+                  <span className="text-xs px-1.5 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-surface-500 dark:text-surface-400">
                     Default
                   </span>
                 )}
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+              <p className="text-sm text-surface-500 dark:text-surface-400 mt-0.5">
                 {address.address.name}
               </p>
               <p className="text-sm text-gray-500 truncate">
@@ -96,14 +96,14 @@ export function SavedAddressPicker({
           className={`w-full p-3 rounded-lg border transition-colors text-left flex items-start gap-3 ${
             selectedId === null
               ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-950/20'
-              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              : 'border-surface-200 dark:border-surface-700 hover:border-surface-200 dark:hover:border-gray-600'
           }`}
         >
           <div
             className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
               selectedId === null
                 ? 'border-yappr-500 bg-yappr-500'
-                : 'border-gray-300 dark:border-gray-600'
+                : 'border-surface-200 dark:border-surface-600'
             }`}
           >
             {selectedId === null && (

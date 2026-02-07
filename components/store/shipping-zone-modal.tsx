@@ -177,13 +177,13 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto"
+        className="relative w-full max-w-lg bg-white dark:bg-surface-900 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto"
       >
-        <div className="sticky top-0 flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="sticky top-0 flex items-center justify-between p-4 border-b border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900">
           <h2 className="text-lg font-bold">{isEditing ? 'Edit Shipping Zone' : 'Add Shipping Zone'}</h2>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
+            className="p-2 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-full"
           >
             <XMarkIcon className="h-5 w-5" />
           </button>
@@ -198,7 +198,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g., Domestic, Europe, Worldwide"
-              className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              className="w-full px-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
               maxLength={63}
             />
           </div>
@@ -214,7 +214,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                   setIsWorldwide(e.target.checked)
                   if (e.target.checked) setCountryPattern('')
                 }}
-                className="w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+                className="w-4 h-4 rounded border-surface-200 text-yappr-500 focus:ring-yappr-500"
               />
               <span className="text-sm">Worldwide (ships to all countries)</span>
             </label>
@@ -225,7 +225,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                   value={countryPattern}
                   onChange={(e) => setCountryPattern(e.target.value)}
                   placeholder="e.g., US, US|CA, US.IL"
-                  className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Examples: US, US|CA, US.IL (state), US.6 (zip prefix), CA.K (postal prefix)
@@ -247,7 +247,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
               }}
               placeholder="0"
               min="0"
-              className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              className="w-full px-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
             />
             <p className="text-xs text-gray-500 mt-1">
               Lower = higher priority. Use to make specific zones (e.g., US.IL) match before general ones (e.g., US).
@@ -255,7 +255,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
           </div>
 
           {/* Pricing Section */}
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+          <div className="border-t border-surface-200 dark:border-surface-700 pt-4">
             <h3 className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">PRICING</h3>
 
             {/* Rate Type (hidden, kept for backwards compat) */}
@@ -274,7 +274,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                     placeholder="0.00"
                     step={getCurrencyStep(currency)}
                     min="0"
-                    className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full pl-7 pr-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
               </div>
@@ -283,7 +283,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  className="w-full px-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 >
                   <option value="USD">USD</option>
                   <option value="EUR">EUR</option>
@@ -306,7 +306,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                     placeholder="0.00"
                     step={getCurrencyStep(currency)}
                     min="0"
-                    className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="w-full pl-7 pr-4 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -314,7 +314,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                   <select
                     value={weightUnit}
                     onChange={(e) => setWeightUnit(e.target.value)}
-                    className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   >
                     <option value="lb">lb</option>
                     <option value="oz">oz</option>
@@ -353,7 +353,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                         step={getCurrencyStep(currency)}
                         min="0"
                         disabled={index === multipliers.length - 1 && m.upTo === ''}
-                        className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
+                        className="w-full px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
                       />
                       <div className="relative">
                         <input
@@ -363,7 +363,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                           placeholder="100"
                           step="1"
                           min="0"
-                          className="w-full px-3 py-2 pr-8 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                          className="w-full px-3 py-2 pr-8 bg-surface-100 dark:bg-surface-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">%</span>
                       </div>
@@ -389,7 +389,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
               </button>
 
               {multipliers.length > 0 && (
-                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-xs text-gray-600 dark:text-gray-400">
+                <div className="mt-3 p-3 bg-surface-50 dark:bg-surface-800/50 rounded-lg text-xs text-surface-500 dark:text-surface-400">
                   <strong>Formula:</strong> shipping = (base + weight x rate) x multiplier%
                   <br />
                   <strong>Tip:</strong> Use 0% for free shipping above a threshold.
@@ -399,7 +399,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
           </div>
         </div>
 
-        <div className="sticky bottom-0 flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="sticky bottom-0 flex gap-3 p-4 border-t border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900">
           <Button
             variant="outline"
             className="flex-1"

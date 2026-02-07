@@ -166,10 +166,10 @@ export function InventoryUploadModal({
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-2xl bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="relative w-full max-w-2xl bg-white dark:bg-surface-900 rounded-xl shadow-xl max-h-[90vh] overflow-hidden flex flex-col"
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between p-4 border-b border-surface-200 dark:border-surface-800">
           <h2 className="text-lg font-bold">Upload Inventory</h2>
           <button
             onClick={step === 'uploading' ? undefined : handleClose}
@@ -179,7 +179,7 @@ export function InventoryUploadModal({
             className={`p-2 rounded-full ${
               step === 'uploading'
                 ? 'opacity-50 cursor-not-allowed'
-                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                : 'hover:bg-surface-100 dark:hover:bg-surface-800'
             }`}
           >
             <XMarkIcon className="h-5 w-5" />
@@ -193,7 +193,7 @@ export function InventoryUploadModal({
               {/* File Upload Area */}
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center cursor-pointer hover:border-yappr-500 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                className="border-2 border-dashed border-surface-200 dark:border-surface-700 rounded-xl p-8 text-center cursor-pointer hover:border-yappr-500 hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors"
               >
                 <ArrowUpTrayIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <p className="text-lg font-medium mb-2">Click to select a CSV file</p>
@@ -210,7 +210,7 @@ export function InventoryUploadModal({
               </div>
 
               {/* Template Download */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+              <div className="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <h3 className="font-medium mb-2">Need a template?</h3>
                 <p className="text-sm text-gray-500 mb-3">
                   Download our CSV template with example data to get started quickly.
@@ -245,7 +245,7 @@ export function InventoryUploadModal({
           {step === 'preview' && (
             <div className="space-y-4">
               {/* File Info */}
-              <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <div className="flex items-center gap-3 p-3 bg-surface-50 dark:bg-surface-800 rounded-lg">
                 <DocumentTextIcon className="h-8 w-8 text-gray-400" />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{fileName}</p>
@@ -310,10 +310,10 @@ export function InventoryUploadModal({
               {items.length > 0 && (
                 <div>
                   <h3 className="font-medium mb-3">Items to Upload</h3>
-                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  <div className="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden">
                     <div className="max-h-64 overflow-y-auto">
                       <table className="w-full text-sm">
-                        <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
+                        <thead className="bg-surface-50 dark:bg-surface-800 sticky top-0">
                           <tr>
                             <th className="text-left px-3 py-2 font-medium">Item</th>
                             <th className="text-left px-3 py-2 font-medium">Variants</th>
@@ -323,7 +323,7 @@ export function InventoryUploadModal({
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                           {items.map((item, i) => (
-                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                            <tr key={i} className="hover:bg-surface-50 dark:hover:bg-surface-800/50">
                               <td className="px-3 py-2">
                                 <div className="font-medium truncate max-w-[200px]">{item.title}</div>
                                 {item.category && (
@@ -433,7 +433,7 @@ export function InventoryUploadModal({
         </div>
 
         {/* Footer */}
-        <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="flex gap-3 p-4 border-t border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900">
           {step === 'select' && (
             <Button
               variant="outline"

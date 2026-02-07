@@ -71,12 +71,12 @@ export function PoliciesDisplay({ policies }: PoliciesDisplayProps) {
           return (
             <div
               key={index}
-              className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
+              className="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden"
             >
               <button
                 type="button"
                 onClick={() => toggleExpanded(index)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                className="w-full flex items-center justify-between px-4 py-3 bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
               >
                 <span className="font-medium">{policy.name || 'Untitled Policy'}</span>
                 {isExpanded ? (
@@ -87,8 +87,8 @@ export function PoliciesDisplay({ policies }: PoliciesDisplayProps) {
               </button>
 
               {isExpanded && (
-                <div className="px-4 py-3 bg-white dark:bg-gray-900">
-                  <p className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
+                <div className="px-4 py-3 bg-white dark:bg-surface-900">
+                  <p className="text-surface-500 dark:text-surface-400 whitespace-pre-wrap">
                     {policy.content || 'No content provided.'}
                   </p>
                 </div>

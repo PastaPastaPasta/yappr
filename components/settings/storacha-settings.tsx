@@ -179,7 +179,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
           <span className="font-medium">Storacha</span>
         </div>
         <div className="animate-pulse space-y-2">
-          <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-3/4"></div>
+          <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-3/4"></div>
         </div>
       </div>
     )
@@ -193,7 +193,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
           <CloudArrowUpIcon className="h-5 w-5 text-gray-400" />
           <span className="font-medium">Storacha</span>
         </div>
-        <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
+        <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg">
           <p className="text-sm text-gray-500">
             Disconnect the other provider first to switch to Storacha.
           </p>
@@ -240,7 +240,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
             </div>
           </div>
 
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-surface-500 dark:text-surface-400">
             Credentials stored locally on this device. Re-authenticate via email on new devices.
           </p>
 
@@ -323,8 +323,8 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
         <>
           {!showEmailInput ? (
             <>
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg">
+                <p className="text-sm text-surface-500 dark:text-surface-400">
                   5GB free tier available. Requires credit card for signup.
                 </p>
               </div>

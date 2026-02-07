@@ -47,11 +47,11 @@ export function OrderReview({
       </div>
 
       {/* Store */}
-      <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg flex items-center gap-3">
+      <div className="p-4 bg-surface-50 dark:bg-surface-950 rounded-lg flex items-center gap-3">
         {store?.logoUrl ? (
           <img src={store.logoUrl} alt={store.name} className="w-10 h-10 rounded-lg object-cover" />
         ) : (
-          <div className="w-10 h-10 rounded-lg bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-lg bg-surface-200 dark:bg-surface-800 flex items-center justify-center">
             <BuildingStorefrontIcon className="h-5 w-5 text-gray-400" />
           </div>
         )}
@@ -59,10 +59,10 @@ export function OrderReview({
       </div>
 
       {/* Items */}
-      <div className="border border-gray-200 dark:border-gray-800 rounded-lg divide-y divide-gray-200 dark:divide-gray-800">
+      <div className="border border-surface-200 dark:border-surface-800 rounded-lg divide-y divide-gray-200 dark:divide-gray-800">
         {items.map((item) => (
           <div key={`${item.itemId}-${item.variantKey}`} className="p-3 flex items-center gap-3">
-            <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+            <div className="w-12 h-12 bg-surface-100 dark:bg-surface-800 rounded overflow-hidden">
               {item.imageUrl ? (
                 <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
               ) : (
@@ -86,7 +86,7 @@ export function OrderReview({
       </div>
 
       {/* Shipping Address */}
-      <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
+      <div className="p-4 border border-surface-200 dark:border-surface-800 rounded-lg">
         <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
         <p>{shippingAddress.name}</p>
         <p>{shippingAddress.street}</p>
@@ -104,7 +104,7 @@ export function OrderReview({
           <span className="text-gray-500">Shipping</span>
           <span>{formatPrice(shippingCost, currency)}</span>
         </div>
-        <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex justify-between text-lg font-bold pt-2 border-t border-surface-200 dark:border-surface-800">
           <span>Total</span>
           <span>{formatPrice(total, currency)}</span>
         </div>
@@ -118,7 +118,7 @@ export function OrderReview({
           onChange={(e) => onNotesChange(e.target.value)}
           placeholder="Any special instructions for the seller"
           rows={2}
-          className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+          className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
         />
       </div>
 
@@ -132,7 +132,7 @@ export function OrderReview({
           value={refundAddress}
           onChange={(e) => onRefundAddressChange(e.target.value)}
           placeholder={`Your ${paymentScheme || 'crypto'} address for refunds`}
-          className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
+          className="w-full px-4 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
         />
       </div>
 

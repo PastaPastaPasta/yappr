@@ -275,7 +275,7 @@ export function LoginModal() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleClose}
-            className={`fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+            className={`fixed inset-0 z-50 flex items-center justify-center px-4 bg-surface-950/60 dark:bg-black/70 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
           >
             {/* Modal content - stop propagation to prevent dismiss when clicking inside */}
             <motion.div
@@ -284,20 +284,20 @@ export function LoginModal() {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+              className="bg-white dark:bg-surface-900 rounded-3xl shadow-elevated-lg border border-surface-200/40 dark:border-surface-800/40 w-full max-w-md relative max-h-[90vh] overflow-y-auto"
             >
               {/* Header */}
-              <div className="sticky top-0 bg-white dark:bg-neutral-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+              <div className="sticky top-0 bg-white dark:bg-surface-900 px-6 pt-6 pb-4 border-b border-surface-100 dark:border-surface-800">
                 <button
                   onClick={handleClose}
                   aria-label="Close"
-                  className="absolute top-4 left-4 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+                  className="absolute top-4 left-4 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-surface-100 dark:hover:bg-surface-800"
                 >
                   <X className="w-5 h-5" />
                 </button>
                 <div className="text-center">
-                  <h1 className="text-2xl font-bold text-gradient">Yappr</h1>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
+                  <h1 className="text-2xl font-display font-bold text-gradient">Yappr</h1>
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Your decentralized social feed — powered by Dash</p>
                 </div>
               </div>
 
@@ -315,7 +315,7 @@ export function LoginModal() {
                       value={identityInput}
                       onChange={(e) => setIdentityInput(e.target.value)}
                       placeholder="e.g., john.dash or 5DbLwAxGBzUzo..."
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-10 bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3">
@@ -351,7 +351,7 @@ export function LoginModal() {
                       value={credential}
                       onChange={(e) => setCredential(e.target.value)}
                       placeholder="Enter your password or private key..."
-                      className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className="w-full px-3 py-2 pr-20 bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
@@ -383,7 +383,7 @@ export function LoginModal() {
                       (detectedCredentialType === 'key' && keyValidationStatus === 'invalid') ||
                       (detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup)
                         ? 'text-red-600 dark:text-red-400'
-                        : 'text-gray-500 dark:text-gray-400'
+                        : 'text-surface-500 dark:text-surface-400'
                     }`}>
                       {detectedCredentialType === 'key' ? (
                         !resolvedIdentity
@@ -408,14 +408,14 @@ export function LoginModal() {
                       )}
                     </p>
                   )}
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
                     🔒 Your keys never leave this device. All signing happens locally.
                   </p>
                 </div>
 
                 {/* Remember Me Toggle */}
                 <div className="flex items-center justify-between">
-                  <label htmlFor="loginRememberMe" className="text-sm text-gray-600 dark:text-gray-400">
+                  <label htmlFor="loginRememberMe" className="text-sm text-surface-500 dark:text-surface-400">
                     Stay signed in across tabs
                   </label>
                   <button
@@ -425,7 +425,7 @@ export function LoginModal() {
                     aria-checked={rememberMe}
                     onClick={() => setRememberMe(!rememberMe)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
-                      rememberMe ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-700'
+                      rememberMe ? 'bg-yappr-500' : 'bg-surface-200 dark:bg-surface-700'
                     }`}
                   >
                     <span
@@ -459,15 +459,15 @@ export function LoginModal() {
                 </Button>
 
                 {/* Onboarding Gateway */}
-                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                <div className="mt-4 pt-4 border-t border-surface-100 dark:border-surface-800">
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mb-2">
                     Don&apos;t have an identity yet? Create one to start posting on Yappr.
                   </p>
                   <a
                     href="https://bridge.thepasta.org"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                    className="inline-flex items-center justify-center w-full px-4 py-2.5 bg-gradient-warm text-white rounded-full transition-all hover:shadow-yappr text-sm font-semibold"
                   >
                     Create Identity
                   </a>

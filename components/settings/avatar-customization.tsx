@@ -151,12 +151,12 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
         <h3 className="font-semibold">Avatar</h3>
         <div className="animate-pulse space-y-4">
           <div className="flex justify-center">
-            <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800" />
+            <div className="w-24 h-24 rounded-full bg-surface-200 dark:bg-surface-800" />
           </div>
-          <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2 mx-auto" />
+          <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-1/2 mx-auto" />
           <div className={`grid ${compact ? 'grid-cols-7 gap-1' : 'grid-cols-4 sm:grid-cols-5 gap-2'}`}>
             {Array.from({ length: compact ? 28 : 8 }).map((_, i) => (
-              <div key={i} className={`aspect-square rounded-lg bg-gray-200 dark:bg-gray-800 ${compact ? 'p-1' : ''}`} />
+              <div key={i} className={`aspect-square rounded-lg bg-surface-200 dark:bg-surface-800 ${compact ? 'p-1' : ''}`} />
             ))}
           </div>
         </div>
@@ -179,7 +179,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
       <h3 className="font-semibold">Avatar</h3>
 
       {/* Source Tabs */}
-      <div className="flex border-b border-gray-200 dark:border-gray-700">
+      <div className="flex border-b border-surface-200 dark:border-surface-700">
         <button
           onClick={() => setAvatarSource('generated')}
           className={`flex-1 py-2 px-4 text-sm font-medium transition-colors relative ${
@@ -224,11 +224,11 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
                 alt="Avatar preview"
                 width={96}
                 height={96}
-                className="w-24 h-24 rounded-full border-4 border-gray-200 dark:border-gray-700"
+                className="w-24 h-24 rounded-full border-4 border-surface-200 dark:border-surface-700"
                 unoptimized
               />
             ) : (
-              <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
+              <div className="w-24 h-24 rounded-full bg-surface-200 dark:bg-surface-800 flex items-center justify-center">
                 <SparklesIcon className="w-8 h-8 text-gray-400" />
               </div>
             )}
@@ -249,7 +249,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
                     className={`relative ${compact ? 'p-1' : 'p-2'} rounded-lg border-2 transition-all ${
                       isSelected
                         ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-950/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        : 'border-surface-200 dark:border-surface-700 hover:border-surface-200 dark:hover:border-gray-600'
                     }`}
                     title={DICEBEAR_STYLE_LABELS[s]}
                   >
@@ -277,7 +277,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
                 value={seed}
                 onChange={(e) => setSeed(e.target.value)}
                 placeholder="Enter custom seed..."
-                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                className="flex-1 px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 maxLength={100}
               />
               <Button

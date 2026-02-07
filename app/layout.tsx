@@ -27,7 +27,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
-      <body className="font-sans h-full bg-white dark:bg-neutral-900">
+      <body className="font-sans h-full bg-white dark:bg-surface-950 text-gray-900 dark:text-gray-100 antialiased">
         <ErrorBoundary level="app">
           <Providers>
             <LinkPreviewModalProvider>
@@ -48,11 +48,13 @@ export default function RootLayout({
           toastOptions={{
             duration: 3000,
             style: {
-              background: '#1f2937',
-              color: '#fff',
-              borderRadius: '8px',
-              padding: '12px 16px',
+              background: '#0f172a',
+              color: '#f8fafc',
+              borderRadius: '12px',
+              padding: '12px 20px',
               fontSize: '14px',
+              border: '1px solid rgba(59, 124, 248, 0.1)',
+              boxShadow: '0 8px 32px -8px rgba(0, 0, 0, 0.3)',
             },
           }}
         />

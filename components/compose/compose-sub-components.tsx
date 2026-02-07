@@ -27,7 +27,7 @@ export function FormatButton({ onClick, title, children, disabled = false }: For
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
     >
       {children}
     </button>
@@ -302,7 +302,7 @@ export function PostingProgressBar({ progress }: PostingProgressBarProps) {
     <div className="px-4 py-2 bg-yappr-50 dark:bg-yappr-950/30 border-b border-yappr-200 dark:border-yappr-800">
       <div className="flex items-center gap-3">
         <div className="flex-1">
-          <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-surface-200 dark:bg-surface-700 rounded-full overflow-hidden">
             <div
               className="h-full bg-yappr-500 rounded-full transition-all duration-300"
               style={{ width: `${percentage}%` }}
@@ -369,7 +369,7 @@ function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverr
 // Container wrapper for quoted post previews
 function QuotedPostContainer({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-neutral-950">
+    <div className="mt-4 border border-surface-200 dark:border-surface-700 rounded-xl p-3 bg-surface-50 dark:bg-surface-950">
       {children}
     </div>
   )
@@ -542,7 +542,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
           <span className="text-sm">Decrypting...</span>
         </div>
         {hasTeaser && (
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
+          <p className="mt-1 text-sm text-surface-500 dark:text-surface-400 line-clamp-2">
             {post.content}
           </p>
         )}
@@ -561,7 +561,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
           authorDisplayOverride={authorDisplay}
         />
         {hasTeaser && (
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
+          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400 line-clamp-1">
             {post.content}
           </p>
         )}
@@ -582,13 +582,13 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         authorDisplayOverride={authorDisplay}
       />
       {hasTeaser && (
-        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
+        <p className="mt-2 text-sm text-surface-500 dark:text-surface-400 line-clamp-2">
           {post.content}
         </p>
       )}
-      <div className="mt-2 flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+      <div className="mt-2 flex items-center gap-2 p-2 bg-surface-100 dark:bg-surface-800 rounded-lg">
         <LockClosedIconSolid className="h-4 w-4 text-gray-500" />
-        <span className="text-sm text-gray-600 dark:text-gray-400">
+        <span className="text-sm text-surface-500 dark:text-surface-400">
           Private post from {authorDisplay}
         </span>
       </div>
@@ -607,7 +607,7 @@ export function ReplyContext({ author }: ReplyContextProps) {
   const displayName = getAuthorDisplayName(author)
 
   return (
-    <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-950 border-b border-gray-200 dark:border-gray-800">
+    <div className="px-4 py-3 bg-surface-50 dark:bg-surface-950 border-b border-surface-200 dark:border-surface-800">
       <div className="flex items-center gap-2 text-sm">
         <span className="text-gray-500">Replying to</span>
         <span className="text-yappr-500 font-medium">{displayName}</span>

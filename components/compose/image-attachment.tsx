@@ -32,7 +32,7 @@ export function ImageAttachment({
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="relative mt-3 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700"
+      className="relative mt-3 rounded-xl overflow-hidden border border-surface-200 dark:border-surface-700"
     >
       {/* Preview image */}
       <img

@@ -311,7 +311,7 @@ export function MentionAutocomplete({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -5 }}
         transition={{ duration: 0.15 }}
-        className="absolute z-50 w-64 bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
+        className="absolute z-50 w-64 bg-white dark:bg-surface-900 rounded-xl shadow-lg border border-surface-200 dark:border-surface-700 overflow-hidden"
         style={{
           top: dropdownPosition.top,
           left: dropdownPosition.left,
@@ -338,7 +338,7 @@ export function MentionAutocomplete({
                 className={`w-full flex items-center gap-3 p-2 text-left transition-colors ${
                   index === selectedIndex
                     ? 'bg-yappr-50 dark:bg-yappr-900/30'
-                    : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                    : 'hover:bg-surface-50 dark:hover:bg-surface-800'
                 }`}
               >
                 <div className="h-8 w-8 rounded-full overflow-hidden flex-shrink-0">

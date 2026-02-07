@@ -172,7 +172,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
           <span className="font-medium">Pinata</span>
         </div>
         <div className="animate-pulse space-y-2">
-          <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-3/4"></div>
+          <div className="h-4 bg-surface-200 dark:bg-surface-800 rounded w-3/4"></div>
         </div>
       </div>
     )
@@ -186,7 +186,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
           <KeyIcon className="h-5 w-5 text-gray-400" />
           <span className="font-medium">Pinata</span>
         </div>
-        <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
+        <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg">
           <p className="text-sm text-gray-500">
             Disconnect the other provider first to switch to Pinata.
           </p>
@@ -233,7 +233,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
             </div>
           </div>
 
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-surface-500 dark:text-surface-400">
             API key stored locally on this device. Re-enter on new devices.
           </p>
 
@@ -249,8 +249,8 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
         <>
           {!showApiKeyInput ? (
             <>
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="bg-surface-50 dark:bg-surface-900 p-3 rounded-lg">
+                <p className="text-sm text-surface-500 dark:text-surface-400">
                   1GB free tier, no credit card required.
                 </p>
               </div>

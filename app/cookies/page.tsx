@@ -6,12 +6,12 @@ import { motion } from 'framer-motion'
 
 export default function CookiesPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-surface-50 dark:bg-surface-950">
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-8">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+            className="inline-flex items-center gap-2 text-surface-500 dark:text-surface-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
           >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to Yappr
@@ -21,12 +21,12 @@ export default function CookiesPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <CircleStackIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">Cookies & Storage</h1>
+              <h1 className="text-3xl font-display font-bold">Cookies & Storage</h1>
             </div>
             <p className="text-lg opacity-90">
               How Yappr uses browser storage
@@ -37,7 +37,7 @@ export default function CookiesPage() {
             {/* No Tracking */}
             <section>
               <h2 className="text-xl font-semibold mb-3">No Tracking Cookies</h2>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed">
                 Yappr does not use cookies for tracking, analytics, or advertising. We don&apos;t set any third-party
                 cookies, and we don&apos;t participate in any ad networks or tracking systems. Your browsing activity
                 on Yappr is not monitored or recorded.
@@ -47,14 +47,14 @@ export default function CookiesPage() {
             {/* What We Store */}
             <section>
               <h2 className="text-xl font-semibold mb-3">What We Store Locally</h2>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed mb-6">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed mb-6">
                 For the app to function, we use your browser&apos;s built-in storage mechanisms. Here&apos;s exactly
                 what we store and why:
               </p>
 
               <div className="space-y-6">
                 {/* Session Storage */}
-                <div className="bg-gray-50 dark:bg-gray-950 rounded-xl p-6">
+                <div className="bg-surface-50 dark:bg-surface-950 rounded-xl p-6">
                   <div className="flex items-center gap-2 mb-3">
                     <div className="h-3 w-3 bg-green-500 rounded-full" />
                     <h3 className="font-semibold">Session Storage</h3>
@@ -62,7 +62,7 @@ export default function CookiesPage() {
                       Most Secure
                     </span>
                   </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mb-4">
                     Automatically cleared when you close the browser tab. Isolated to each tab.
                   </p>
                   <div className="border-l-2 border-green-500 pl-4">
@@ -80,7 +80,7 @@ export default function CookiesPage() {
                 </div>
 
                 {/* Local Storage */}
-                <div className="bg-gray-50 dark:bg-gray-950 rounded-xl p-6">
+                <div className="bg-surface-50 dark:bg-surface-950 rounded-xl p-6">
                   <div className="flex items-center gap-2 mb-3">
                     <div className="h-3 w-3 bg-blue-500 rounded-full" />
                     <h3 className="font-semibold">Local Storage</h3>
@@ -88,7 +88,7 @@ export default function CookiesPage() {
                       Persistent
                     </span>
                   </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  <p className="text-sm text-surface-500 dark:text-surface-400 mb-4">
                     Persists until manually cleared. Shared across tabs on the same domain.
                   </p>
                   <div className="space-y-4">
@@ -114,7 +114,7 @@ export default function CookiesPage() {
             {/* Why This Design */}
             <section>
               <h2 className="text-xl font-semibold mb-3">Why This Design?</h2>
-              <div className="text-gray-600 dark:text-gray-400 leading-relaxed space-y-3">
+              <div className="text-surface-500 dark:text-surface-400 leading-relaxed space-y-3">
                 <p>
                   Security and convenience often conflict. We chose this approach because:
                 </p>
@@ -138,7 +138,7 @@ export default function CookiesPage() {
             {/* Clearing Storage */}
             <section>
               <h2 className="text-xl font-semibold mb-3">Clearing Your Data</h2>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+              <p className="text-surface-500 dark:text-surface-400 leading-relaxed">
                 You can clear all locally stored data by using your browser&apos;s &quot;Clear site data&quot; feature,
                 or by logging out of the app. Clearing this data will log you out and remove all cached
                 preferences. It will not affect your data on the blockchain.
@@ -146,7 +146,7 @@ export default function CookiesPage() {
             </section>
 
             {/* Last Updated */}
-            <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+            <div className="pt-6 border-t border-surface-200 dark:border-surface-800">
               <p className="text-sm text-gray-500">
                 Last updated: January 2025
               </p>

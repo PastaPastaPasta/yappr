@@ -54,7 +54,7 @@ export function StatusUpdateForm({
   isSubmitting
 }: StatusUpdateFormProps) {
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
+    <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-4 space-y-4">
       <h4 className="font-medium">Update Order Status</h4>
 
       <div>
@@ -62,7 +62,7 @@ export function StatusUpdateForm({
         <select
           value={currentStatus}
           onChange={(e) => onStatusChange(e.target.value as OrderStatus)}
-          className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+          className="w-full px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
         >
           {statusOptions.map((s) => (
             <option key={s} value={s}>
@@ -79,7 +79,7 @@ export function StatusUpdateForm({
             <select
               value={trackingCarrier}
               onChange={(e) => onTrackingCarrierChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              className="w-full px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
             >
               <option value="">Select carrier...</option>
               {carrierOptions.map((c) => (
@@ -94,7 +94,7 @@ export function StatusUpdateForm({
               value={trackingNumber}
               onChange={(e) => onTrackingNumberChange(e.target.value)}
               placeholder="Enter tracking number"
-              className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              className="w-full px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
             />
           </div>
         </>
@@ -107,7 +107,7 @@ export function StatusUpdateForm({
           onChange={(e) => onMessageChange(e.target.value)}
           placeholder="Optional message..."
           rows={2}
-          className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+          className="w-full px-3 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
         />
       </div>
 

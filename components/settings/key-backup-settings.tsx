@@ -168,7 +168,7 @@ export function KeyBackupSettings() {
           <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Keys Status</h4>
           <div className="space-y-2">
             {/* Login Key - Always present */}
-            <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+            <div className="flex items-center justify-between py-2 px-3 bg-surface-50 dark:bg-surface-900 rounded-lg">
               <div className="flex items-center gap-2">
                 <KeyIcon className="h-4 w-4 text-gray-500" />
                 <span className="text-sm">Login Key</span>
@@ -181,7 +181,7 @@ export function KeyBackupSettings() {
             </div>
 
             {/* Encryption Key */}
-            <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+            <div className="flex items-center justify-between py-2 px-3 bg-surface-50 dark:bg-surface-900 rounded-lg">
               <div className="flex items-center gap-2">
                 <LockClosedIcon className="h-4 w-4 text-gray-500" />
                 <span className="text-sm">Encryption Key</span>
@@ -201,7 +201,7 @@ export function KeyBackupSettings() {
                     </span>
                   </>
                 ) : (
-                  <span className="text-xs px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded">
+                  <span className="text-xs px-2 py-0.5 bg-surface-200 dark:bg-surface-700 text-surface-500 dark:text-surface-400 rounded">
                     Not configured
                   </span>
                 )}
@@ -279,7 +279,7 @@ export function KeyBackupSettings() {
 
         <div className="pt-4 border-t">
           <h4 className="font-medium mb-2">How it works:</h4>
-          <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+          <ul className="space-y-2 text-sm text-surface-500 dark:text-surface-400">
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
               Your login key is encrypted with a strong passphrase you choose

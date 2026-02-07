@@ -162,7 +162,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
     return (
       <div className="space-y-4">
         <div className="animate-pulse">
-          <div className="aspect-[3/1] rounded-xl bg-gray-200 dark:bg-gray-800" />
+          <div className="aspect-[3/1] rounded-xl bg-surface-200 dark:bg-surface-800" />
         </div>
       </div>
     )
@@ -172,10 +172,10 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
   if (!isProviderConnected) {
     return (
       <div className="space-y-4">
-        <div className="aspect-[3/1] rounded-xl bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-700 flex items-center justify-center">
+        <div className="aspect-[3/1] rounded-xl bg-surface-100 dark:bg-surface-800 border-2 border-dashed border-surface-200 dark:border-surface-700 flex items-center justify-center">
           <div className="text-center p-4">
             <Cog6ToothIcon className="h-10 w-10 mx-auto text-gray-400 mb-3" />
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+            <p className="text-sm text-surface-500 dark:text-surface-400 mb-3">
               Connect a storage provider to upload images
             </p>
             <Link href="/settings">
@@ -248,10 +248,10 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-200/50 dark:hover:bg-gray-700/50 transition-colors w-full"
+            className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-200/50 dark:hover:bg-surface-700/50 transition-colors w-full"
           >
             <ImagePlus className="h-12 w-12 text-gray-400 mb-3" />
-            <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+            <span className="text-sm font-medium text-surface-600 dark:text-surface-300">
               Click to upload banner
             </span>
             <span className="text-xs text-gray-400 mt-1">
