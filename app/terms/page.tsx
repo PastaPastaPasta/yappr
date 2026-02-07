@@ -21,12 +21,12 @@ export default function TermsPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <DocumentTextIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">Terms of Use</h1>
+              <h1 className="text-3xl font-display font-bold">Terms of Use</h1>
             </div>
             <p className="text-lg opacity-90">
               Understanding how Yappr works as a decentralized platform

@@ -20,7 +20,7 @@ export function OrderStatusBadge({ status, showLabel = true }: OrderStatusBadgeP
       case 'delivered':
         return <CheckCircleIcon className="h-5 w-5 text-green-500" />
       case 'shipped':
-        return <TruckIcon className="h-5 w-5 text-purple-500" />
+        return <TruckIcon className="h-5 w-5 text-yappr-500" />
       case 'cancelled':
       case 'refunded':
         return <XCircleIcon className="h-5 w-5 text-red-500" />

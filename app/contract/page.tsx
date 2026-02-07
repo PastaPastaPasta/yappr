@@ -49,12 +49,12 @@ export default function ContractPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg overflow-hidden"
         >
           <div className="bg-gradient-yappr p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
               <CodeBracketIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">Yappr Data Contract</h1>
+              <h1 className="text-3xl font-display font-bold">Yappr Data Contract</h1>
             </div>
             <p className="text-lg opacity-90 mb-6">
               Dash Platform data contract for the Yappr social media platform
@@ -142,7 +142,7 @@ export default function ContractPage() {
             <div className="mt-8 p-6 bg-yappr-50 dark:bg-yappr-950 rounded-lg">
               <h3 className="font-semibold mb-2">Deployment Instructions</h3>
               <ol className="space-y-2 text-sm list-decimal list-inside">
-                <li>Update the <code className="bg-white dark:bg-neutral-900 px-2 py-1 rounded">ownerId</code> field with your Dash identity ID</li>
+                <li>Update the <code className="bg-white dark:bg-gray-900 px-2 py-1 rounded">ownerId</code> field with your Dash identity ID</li>
                 <li>Use the Dash SDK to register the contract on Platform</li>
                 <li>Fund the contract with credits for storage operations</li>
                 <li>Start building your decentralized social network!</li>

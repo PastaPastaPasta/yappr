@@ -57,7 +57,7 @@ export function ConfirmDialog({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl"
+                    className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="flex items-start gap-4">

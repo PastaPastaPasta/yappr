@@ -456,7 +456,7 @@ function SettingsPage() {
   const renderAppearanceSettings = () => (
     <div className="p-6 space-y-6">
       <div>
-        <h3 className="font-semibold mb-4">Theme</h3>
+        <h3 className="font-display font-semibold mb-4">Theme</h3>
         <RadioGroup.Root
           value={theme}
           onValueChange={setTheme}
@@ -510,7 +510,7 @@ function SettingsPage() {
       </div>
 
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-        <h3 className="font-semibold mb-4">Performance</h3>
+        <h3 className="font-display font-semibold mb-4">Performance</h3>
         <div className="flex items-center justify-between">
           <div>
             <p className="font-medium">Potato Mode</p>
@@ -651,7 +651,7 @@ function SettingsPage() {
     return (
     <div className="p-6 space-y-6">
       <div className="text-center py-8">
-        <h1 className="text-4xl font-bold text-gradient mb-4">Yappr</h1>
+        <h1 className="text-4xl font-display font-bold text-gradient mb-4 tracking-tight">yappr</h1>
         <p className="text-gray-500 mb-4">Decentralized social media on Dash Platform</p>
 
         <Button variant="outline" asChild>
@@ -739,7 +739,7 @@ function SettingsPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}
@@ -747,7 +747,7 @@ function SettingsPage() {
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
-            <h1 className="text-xl font-bold">{getSectionTitle()}</h1>
+            <h1 className="text-xl font-display font-bold">{getSectionTitle()}</h1>
           </div>
         </header>
 

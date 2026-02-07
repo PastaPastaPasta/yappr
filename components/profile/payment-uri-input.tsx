@@ -143,14 +143,14 @@ export function PaymentUriInput({
             placeholder="dash:XnNh3... or bitcoin:bc1..."
             className="flex-1 px-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-900
                        border-gray-300 dark:border-gray-600
-                       focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                       focus:ring-2 focus:ring-yappr-500 focus:border-transparent
                        disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button
             type="button"
             onClick={handleAddUri}
             disabled={disabled || !newUri.trim()}
-            className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600
+            className="px-3 py-2 bg-yappr-500 text-white rounded-lg hover:bg-yappr-600
                        disabled:opacity-50 disabled:cursor-not-allowed
                        flex items-center gap-1"
           >

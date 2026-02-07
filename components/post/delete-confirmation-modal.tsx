@@ -39,7 +39,7 @@ export function DeleteConfirmationModal() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
+                    className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">

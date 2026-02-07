@@ -541,7 +541,7 @@ function CheckoutPage() {
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-8">
             <CheckCircleIcon className="h-20 w-20 text-green-500 mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Order Placed!</h1>
+            <h1 className="text-2xl font-display font-bold mb-2">Order Placed!</h1>
             <p className="text-gray-500 text-center max-w-sm mb-6">
               Your order has been sent to the seller. They will process it and provide updates.
             </p>
@@ -566,7 +566,7 @@ function CheckoutPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => step === 'address' ? router.back() : setStep(
@@ -578,7 +578,7 @@ function CheckoutPage() {
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold">Checkout</h1>
+              <h1 className="text-xl font-display font-bold">Checkout</h1>
             </div>
 
             {/* Progress Steps */}

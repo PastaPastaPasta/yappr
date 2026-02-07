@@ -261,7 +261,7 @@ function ItemDetailContent() {
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center justify-between p-4">
               <button
                 onClick={() => router.back()}
@@ -301,7 +301,7 @@ function ItemDetailContent() {
               </button>
             )}
 
-            <h1 className="text-2xl font-bold">{item.title}</h1>
+            <h1 className="text-2xl font-display font-bold">{item.title}</h1>
 
             <p className="text-2xl font-bold text-yappr-600">
               {formatPrice(currentPrice, item.currency)}

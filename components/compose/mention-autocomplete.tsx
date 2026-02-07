@@ -311,7 +311,7 @@ export function MentionAutocomplete({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -5 }}
         transition={{ duration: 0.15 }}
-        className="absolute z-50 w-64 bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
+        className="absolute z-50 w-64 bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
         style={{
           top: dropdownPosition.top,
           left: dropdownPosition.left,

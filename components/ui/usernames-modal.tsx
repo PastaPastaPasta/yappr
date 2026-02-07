@@ -71,7 +71,7 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
                 <div className="absolute right-0 top-0 pr-4 pt-4">
                   <button
                     type="button"
-                    className="rounded-md bg-white dark:bg-gray-900 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                    className="rounded-md bg-white dark:bg-gray-900 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2"
                     onClick={onClose}
                   >
                     <span className="sr-only">Close</span>
@@ -95,7 +95,7 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
                         <div
                           key={username}
                           className={`flex items-center justify-between px-3 py-2 rounded-lg ${
-                            isPrimary ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-gray-50 dark:bg-gray-800'
+                            isPrimary ? 'bg-yappr-50 dark:bg-yappr-900/20' : 'bg-gray-50 dark:bg-gray-800'
                           }`}
                         >
                           <span className="text-sm font-medium text-gray-900 dark:text-white">
@@ -103,7 +103,7 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
                           </span>
                           <div className="flex items-center gap-2">
                             {isPrimary && (
-                              <span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 px-2 py-1 rounded">
+                              <span className="text-xs bg-yappr-100 dark:bg-yappr-900 text-yappr-600 dark:text-yappr-300 px-2 py-1 rounded">
                                 Primary
                               </span>
                             )}

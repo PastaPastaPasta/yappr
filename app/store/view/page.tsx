@@ -173,7 +173,7 @@ function StoreDetailContent() {
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
@@ -182,7 +182,7 @@ function StoreDetailContent() {
                 >
                   <ArrowLeftIcon className="h-5 w-5" />
                 </button>
-                <h1 className="text-xl font-bold truncate">{store.name}</h1>
+                <h1 className="text-xl font-display font-bold truncate">{store.name}</h1>
               </div>
 
               <div className="flex items-center gap-2">
@@ -253,7 +253,7 @@ function StoreDetailContent() {
                 </div>
 
                 <div className="pt-10 flex-1 min-w-0">
-                  <h2 className="text-xl font-bold truncate">{store.name}</h2>
+                  <h2 className="text-xl font-display font-bold truncate">{store.name}</h2>
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />

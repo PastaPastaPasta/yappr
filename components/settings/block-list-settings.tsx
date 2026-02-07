@@ -208,7 +208,7 @@ export function BlockListSettings() {
             {followedUsers.map(followedUser => (
               <div
                 key={followedUser.id}
-                className="flex items-center justify-between p-3 bg-white dark:bg-neutral-900 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+                className="flex items-center justify-between p-3 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
               >
                 <Link
                   href={`/user?id=${followedUser.id}`}

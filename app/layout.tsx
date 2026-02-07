@@ -13,7 +13,7 @@ const basePath = process.env.BASE_PATH || ''
 
 export const metadata: Metadata = {
   title: 'Yappr - Share Your Voice',
-  description: 'A modern social platform for sharing thoughts and connecting with others',
+  description: 'The decentralized social platform where you own your voice',
   icons: {
     icon: `${basePath}/yappr.jpg`,
     apple: `${basePath}/yappr.jpg`,
@@ -27,7 +27,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
-      <body className="font-sans h-full bg-white dark:bg-neutral-900">
+      <body className="font-sans h-full bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-50 antialiased">
         <ErrorBoundary level="app">
           <Providers>
             <LinkPreviewModalProvider>
@@ -48,11 +48,12 @@ export default function RootLayout({
           toastOptions={{
             duration: 3000,
             style: {
-              background: '#1f2937',
-              color: '#fff',
-              borderRadius: '8px',
+              background: '#18181b',
+              color: '#fafafa',
+              borderRadius: '10px',
               padding: '12px 16px',
               fontSize: '14px',
+              fontFamily: 'Space Grotesk, -apple-system, sans-serif',
             },
           }}
         />

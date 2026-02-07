@@ -35,7 +35,7 @@ export function PlatformStats({
       label: 'Active Users',
       value: totalUsers,
       icon: UserGroupIcon,
-      color: 'text-blue-500'
+      color: 'text-yappr-400'
     },
   ]
 
@@ -70,7 +70,7 @@ export function PlatformStats({
             {loading ? (
               <div className="h-9 w-20 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-1 animate-pulse" />
             ) : (
-              <div className="text-3xl font-bold">{formatNumber(stat.value)}</div>
+              <div className="text-3xl font-display font-bold">{formatNumber(stat.value)}</div>
             )}
             <div className="text-sm text-gray-500">{stat.label}</div>
           </motion.div>

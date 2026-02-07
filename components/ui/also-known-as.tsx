@@ -39,7 +39,7 @@ export function AlsoKnownAs({ primaryUsername, allUsernames, identityId }: AlsoK
           also known as <span className="font-medium">@{otherUsernames[0]}</span> and{' '}
           <button
             onClick={() => setShowModal(true)}
-            className="font-medium text-purple-600 hover:text-purple-700 hover:underline"
+            className="font-medium text-yappr-500 hover:text-yappr-600 hover:underline"
           >
             {otherUsernames.length - 1} others
           </button>

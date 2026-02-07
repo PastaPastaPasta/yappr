@@ -133,7 +133,7 @@ export function VisibilitySelector({
       {isExpanded && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden"
+          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden"
         >
           {visibilityOptions.map((option) => {
             const Icon = option.icon

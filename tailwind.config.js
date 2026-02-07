@@ -10,24 +10,46 @@ module.exports = {
     extend: {
       colors: {
         yappr: {
-          50: '#f0f9ff',
-          100: '#e0f2fe',
-          200: '#bae6fd',
-          300: '#7dd3fc',
-          400: '#38bdf8',
-          500: '#0ea5e9',
-          600: '#0284c7',
-          700: '#0369a1',
-          800: '#075985',
-          900: '#0c4a6e',
-          950: '#082f49',
+          50: '#fef2f0',
+          100: '#fde3de',
+          200: '#fcc4b8',
+          300: '#fba08e',
+          400: '#f87461',
+          500: '#e54d2e',
+          600: '#cd3d22',
+          700: '#a3311b',
+          800: '#832b1a',
+          900: '#6c291b',
+          950: '#3b110a',
+        },
+        // Override default gray with zinc for warmer neutrals
+        gray: {
+          50: '#fafafa',
+          100: '#f4f4f5',
+          200: '#e4e4e7',
+          300: '#d4d4d8',
+          400: '#a1a1aa',
+          500: '#71717a',
+          600: '#52525b',
+          700: '#3f3f46',
+          800: '#27272a',
+          900: '#18181b',
+          950: '#09090b',
         },
         neutral: {
-          750: '#323232',
-          850: '#1a1a1a',
+          750: '#2e2e32',
+          850: '#1a1a1d',
+          900: '#171719',
         }
       },
       fontFamily: {
+        display: [
+          'Space Grotesk',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Segoe UI',
+          'sans-serif',
+        ],
         sans: [
           '-apple-system',
           'BlinkMacSystemFont',
@@ -36,6 +58,13 @@ module.exports = {
           'Helvetica Neue',
           'Arial',
           'sans-serif',
+        ],
+        mono: [
+          'JetBrains Mono',
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'monospace',
         ],
       },
       animation: {
@@ -68,12 +97,12 @@ module.exports = {
         }
       },
       backgroundImage: {
-        'gradient-yappr': 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-        'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+        'gradient-yappr': 'linear-gradient(135deg, #e54d2e 0%, #cd3d22 100%)',
+        'gradient-dark': 'linear-gradient(135deg, #18181b 0%, #09090b 100%)',
       },
       boxShadow: {
-        'yappr': '0 4px 20px -4px rgba(14, 165, 233, 0.5)',
-        'yappr-lg': '0 10px 40px -10px rgba(14, 165, 233, 0.4)',
+        'yappr': '0 4px 20px -4px rgba(229, 77, 46, 0.4)',
+        'yappr-lg': '0 10px 40px -10px rgba(229, 77, 46, 0.3)',
       }
     },
   },

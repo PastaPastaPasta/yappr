@@ -183,13 +183,13 @@ export function Sidebar() {
   const formatIdentityId = (id: string) => truncateId(id, 6, 4)
 
   return (
-    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
+    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-3 sticky top-[40px]">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
-        <Link href="/" className="flex items-center px-3 py-4 mb-2 group">
-          <div className="text-2xl font-bold text-gradient">Yappr</div>
+        <Link href="/" className="flex items-center px-3 py-4 mb-3 group">
+          <div className="text-2xl font-display font-bold text-gradient tracking-tight">yappr</div>
         </Link>
 
-        <nav className="space-y-1">
+        <nav className="space-y-0.5">
           {navigation.map((item) => {
             const isActive = pathname === item.href
             const Icon = isActive ? item.activeIcon : item.icon
@@ -200,15 +200,15 @@ export function Sidebar() {
                 key={item.name}
                 href={item.href}
                 className={cn(
-                  'flex items-center gap-4 px-3 py-3 text-xl rounded-full transition-all duration-200',
-                  'hover:bg-gray-100 dark:hover:bg-gray-900',
-                  isActive && 'font-bold'
+                  'flex items-center gap-4 px-3 py-2.5 text-[15px] font-display rounded-lg transition-all duration-150',
+                  'hover:bg-gray-100 dark:hover:bg-gray-800',
+                  isActive ? 'font-bold text-yappr-600 dark:text-yappr-400' : 'text-gray-700 dark:text-gray-300'
                 )}
               >
                 <div className="relative">
-                  <Icon className="h-7 w-7" />
+                  <Icon className="h-6 w-6" />
                   {showBadge && (
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-yappr-500 text-[9px] font-bold text-white">
                       {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
                     </span>
                   )}
@@ -217,13 +217,13 @@ export function Sidebar() {
               </Link>
             )
           })}
-          
+
           {user && isHydrated && (
             <Link
               href="/settings"
-              className="flex items-center gap-4 px-3 py-3 text-xl rounded-full transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-900"
+              className="flex items-center gap-4 px-3 py-2.5 text-[15px] font-display rounded-lg transition-all duration-150 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
             >
-              <Cog6ToothIcon className="h-7 w-7" />
+              <Cog6ToothIcon className="h-6 w-6" />
               <span>Settings</span>
             </Link>
           )}
@@ -263,7 +263,7 @@ export function Sidebar() {
         {user && isHydrated && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button className="flex items-center gap-3 p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors w-full">
+              <button className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors w-full">
                 <UserAvatar userId={user.identityId} size="md" alt="Your avatar" />
                 <div className="flex flex-1 text-left">
                   <div className="flex-1 min-w-0">
@@ -279,7 +279,7 @@ export function Sidebar() {
             
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
+                className="min-w-[200px] bg-white dark:bg-gray-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
                 sideOffset={5}
               >
                 <DropdownMenu.Item
