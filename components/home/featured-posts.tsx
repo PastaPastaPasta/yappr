@@ -19,20 +19,20 @@ interface FeaturedPostsProps {
 
 function PostSkeleton() {
   return (
-    <div className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
+    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200/60 dark:border-surface-800/40 p-6">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+        <div className="w-10 h-10 bg-surface-200 dark:bg-surface-800 rounded-full shimmer" />
         <div className="flex-1 space-y-3">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+          <div className="h-4 w-24 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
           <div className="space-y-2">
-            <div className="h-4 w-full bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
-            <div className="h-4 w-3/4 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+            <div className="h-4 w-full bg-surface-100 dark:bg-surface-800 rounded shimmer" />
+            <div className="h-4 w-3/4 bg-surface-100 dark:bg-surface-800 rounded shimmer" />
           </div>
           <div className="flex gap-6 pt-2">
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-10 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+            <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
+            <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
+            <div className="h-4 w-8 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
+            <div className="h-4 w-10 bg-surface-200 dark:bg-surface-800 rounded shimmer" />
           </div>
         </div>
       </div>
@@ -50,14 +50,14 @@ export function FeaturedPosts({
 
   return (
     <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <h2 className="font-display text-2xl font-bold mb-6 flex items-center gap-2">
         <SparklesIcon className="h-6 w-6 text-yappr-500" />
         Popular Posts
       </h2>
 
       {error ? (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+          <p className="text-surface-500 dark:text-surface-400 mb-4">{error}</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <ArrowPathIcon className="h-4 w-4 mr-2" />
@@ -73,7 +73,7 @@ export function FeaturedPosts({
         </div>
       ) : posts.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">
+          <p className="text-surface-500 dark:text-surface-400 mb-4">
             No posts yet. Be the first to share something!
           </p>
           <Button onClick={openLoginModal}>
@@ -88,7 +88,7 @@ export function FeaturedPosts({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
-              className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden"
+              className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200/60 dark:border-surface-800/40 shadow-elevated hover:shadow-elevated-lg transition-all duration-200 overflow-hidden"
             >
               <PostCard post={post} />
             </motion.div>
