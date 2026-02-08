@@ -4,7 +4,6 @@ import { Toaster } from 'react-hot-toast'
 import { Providers } from '@/components/providers'
 import ErrorBoundary from '@/components/error-boundary'
 import { DevelopmentBanner } from '@/components/ui/development-banner'
-import { TestnetDowntimeBanner } from '@/components/ui/testnet-downtime-banner'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { LoginModal } from '@/components/auth/login-modal'
 import { LinkPreviewModalProvider } from '@/components/post/link-preview'
@@ -32,8 +31,7 @@ export default function RootLayout({
           <Providers>
             <LinkPreviewModalProvider>
               <DevelopmentBanner />
-              <TestnetDowntimeBanner />
-              <div className="h-[64px] sm:h-[80px]" /> {/* Spacer for fixed banners */}
+              <div className="h-[32px] sm:h-[40px]" /> {/* Spacer for fixed banner */}
               <ErrorBoundary level="page">
                 {children}
               </ErrorBoundary>
