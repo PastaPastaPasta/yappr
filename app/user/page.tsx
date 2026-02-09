@@ -121,7 +121,7 @@ function UserProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const userId = searchParams.get('id')
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, logout } = useAuth()
   const { requireAuth } = useRequireAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
@@ -228,6 +228,28 @@ function UserProfileContent() {
         ])
 
         setPostCount(totalPostCount)
+
+        // If viewing own profile and no profile document exists, verify identity
+        if (!profileResult && isOwnProfile && currentUser?.identityId) {
+          try {
+            const { identityService } = await import('@/lib/services/identity-service')
+            const identity = await identityService.getIdentity(userId)
+
+            if (!identity) {
+              // Identity doesn't exist on platform (possibly wiped) - log out
+              toast.error('Your identity was not found on the network. Please log in again.')
+              logout()
+              return
+            }
+
+            // Identity exists but no profile document - redirect to create profile
+            router.push('/profile/create')
+            return
+          } catch (identityError) {
+            // Network error checking identity - continue loading page normally
+            console.error('Failed to verify identity for profile check:', identityError)
+          }
+        }
 
         // Process profile
         let profileDisplayName = `User ${userId.slice(-6)}`
