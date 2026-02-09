@@ -92,12 +92,6 @@ export function SocialLinksInput({
       return
     }
 
-    // Check for duplicate platform (except 'other')
-    if (selectedPlatform !== 'other' && links.some(l => l.platform === selectedPlatform)) {
-      setError(`${getPlatformLabel(selectedPlatform)} is already added`)
-      return
-    }
-
     onChange([...links, { platform: selectedPlatform, handle: handle.trim() }])
     setHandle('')
     setError(null)
