@@ -23,10 +23,8 @@ export interface RetryResult<T> {
 function defaultRetryCondition(error: unknown): boolean {
   if (!error) return false
 
-  const errObj = error as { message?: string; toString?: () => string }
-  const errorMessage = errObj.message?.toLowerCase() || ''
-  const errorString = errObj.toString?.()?.toLowerCase() || ''
-  
+  const errorMessage = getErrorMessage(error).toLowerCase()
+
   // Network-related errors
   const networkErrors = [
     'network error',
@@ -34,6 +32,8 @@ function defaultRetryCondition(error: unknown): boolean {
     'fetch failed',
     'connection refused',
     'timeout',
+    'timed out',
+    'deadline',
     'etimedout',
     'enotfound',
     'econnreset',
@@ -45,8 +45,54 @@ function defaultRetryCondition(error: unknown): boolean {
   
   // Check if it's a retryable error
   return networkErrors.some(networkError => 
-    errorMessage.includes(networkError) || errorString.includes(networkError)
+    errorMessage.includes(networkError)
   )
+}
+
+function getErrorMessage(error: unknown): string {
+  if (!error) return ''
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (typeof error === 'object') {
+    const errObj = error as { message?: unknown }
+    if (typeof errObj.message === 'string') return errObj.message
+    if (errObj.message && typeof errObj.message === 'object') {
+      try {
+        return JSON.stringify(errObj.message)
+      } catch {
+        return String(errObj.message)
+      }
+    }
+    try {
+      const asJson = JSON.stringify(error)
+      if (asJson && asJson !== '{}') return asJson
+    } catch {
+      // Ignore JSON stringify errors
+    }
+  }
+  return String(error)
+}
+
+/**
+ * Check if a post creation error is ambiguous and might have actually succeeded.
+ * Includes network/timeouts and Dash Platform specific retryable errors.
+ */
+export function isPostCreationAmbiguousError(error: unknown): boolean {
+  if (defaultRetryCondition(error)) return true
+
+  const errorMessage = getErrorMessage(error).toLowerCase()
+
+  const dashErrors = [
+    'internal error',
+    'temporarily unavailable',
+    'service unavailable',
+    'consensus error',
+    'quorum not available',
+    'tenderdash is not available',
+    'tenderdash not available'
+  ]
+
+  return dashErrors.some(dashError => errorMessage.includes(dashError))
 }
 
 /**
@@ -130,23 +176,7 @@ export async function retryPostCreation<T>(
     initialDelayMs: 2000,
     maxDelayMs: 8000,
     backoffMultiplier: 2,
-    retryCondition: (error) => {
-      // Use default retry condition plus Dash Platform specific errors
-      if (defaultRetryCondition(error)) return true
-
-      const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
-
-      // Dash Platform specific retryable errors
-      const dashErrors = [
-        'internal error',
-        'temporarily unavailable',
-        'service unavailable',
-        'consensus error',
-        'quorum not available'
-      ]
-
-      return dashErrors.some(dashError => errorMessage.includes(dashError))
-    },
+    retryCondition: isPostCreationAmbiguousError,
     ...options
   })
 }
