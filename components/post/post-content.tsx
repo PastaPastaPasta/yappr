@@ -7,10 +7,12 @@ import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
 import { MentionValidationStatus } from '@/hooks/use-mention-validation'
 import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt, LinkPreviewInfoIcon } from './link-preview'
 import { useLinkPreview, extractFirstUrl, stripTrailingPunctuation } from '@/hooks/use-link-preview'
-import { useSettingsStore, LinkPreviewChoice } from '@/lib/store'
+import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
+import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { MentionLink } from './mention-link'
 import { cn, isEmojiOnly } from '@/lib/utils'
+import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
 
 interface PostContentProps {
   content: string
@@ -25,6 +27,8 @@ interface PostContentProps {
   onFailedMentionClick?: (username: string) => void
   /** Optional: disable link preview */
   disableLinkPreview?: boolean
+  /** Optional: disable internal Yappr post embedding for this content block */
+  disableInternalPostEmbed?: boolean
 }
 
 type PartType = 'text' | 'hashtag' | 'cashtag' | 'mention' | 'url' | 'bold' | 'italic' | 'code'
@@ -34,6 +38,29 @@ interface ContentPart {
   value: string
   // For bold/italic, children contains parsed inner content (hashtags, mentions, etc.)
   children?: ContentPart[]
+}
+
+function stripFirstUrlAndTrim(content: string, firstUrl: string | null): string {
+  if (!firstUrl) return content
+
+  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/i
+  const match = content.match(urlPattern)
+  if (!match || typeof match.index !== 'number') return content
+
+  const rawUrl = match[0]
+  const normalizedRawUrl = rawUrl.toLowerCase().startsWith('www.')
+    ? `https://${rawUrl}`
+    : rawUrl
+  const cleanRawUrl = stripTrailingPunctuation(normalizedRawUrl)
+
+  if (cleanRawUrl !== firstUrl) return content
+
+  const displayWithoutTrailingPunctuation = rawUrl.replace(/[.,;:!?)]+$/, '')
+  const trailingPunctuation = rawUrl.slice(displayWithoutTrailingPunctuation.length)
+  const before = content.slice(0, match.index)
+  const after = content.slice(match.index + rawUrl.length)
+
+  return `${before}${trailingPunctuation}${after}`.trim()
 }
 
 /**
@@ -47,22 +74,41 @@ export function PostContent({
   onFailedHashtagClick,
   mentionValidations,
   onFailedMentionClick,
-  disableLinkPreview = false
+  disableLinkPreview = false,
+  disableInternalPostEmbed = false
 }: PostContentProps) {
   const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
   const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
 
-  // Check if content is emoji-only for large emoji display
-  const isEmojiOnlyContent = useMemo(() => isEmojiOnly(content), [content])
-
   // Extract first URL for preview
   const firstUrl = useMemo(() => extractFirstUrl(content), [content])
+  const shouldResolveInternalReference = !disableLinkPreview && !disableInternalPostEmbed
+  const {
+    matched: internalReferenceMatched,
+    post: internalReferencePost,
+    loading: internalReferenceLoading,
+    resolved: internalReferenceResolved
+  } = useYapprPostReference(firstUrl, { disabled: !shouldResolveInternalReference })
 
   // Only fetch preview if link previews are enabled
   const { data: previewData, loading: previewLoading } = useLinkPreview(
     firstUrl,
     { disabled: disableLinkPreview || !linkPreviewsEnabled }
   )
+
+  const shouldHideFirstUrl = (
+    (internalReferenceMatched && (internalReferenceLoading || internalReferencePost !== null)) ||
+    (linkPreviewsEnabled && !!firstUrl && (previewLoading || !!previewData))
+  )
+
+  const displayContent = useMemo(() => {
+    if (!shouldHideFirstUrl) return content
+    return stripFirstUrlAndTrim(content, firstUrl)
+  }, [content, firstUrl, shouldHideFirstUrl])
+
+  // Check if content is emoji-only for large emoji display
+  const isEmojiOnlyContent = useMemo(() => isEmojiOnly(displayContent), [displayContent])
+
   const parsedContent = useMemo(() => {
     // Patterns for inline elements (hashtags, cashtags, mentions, urls)
     const inlinePatterns: Array<{ regex: RegExp; type: PartType }> = [
@@ -155,7 +201,7 @@ export function PostContent({
     for (const { regex, type } of allPatterns) {
       let match
       const re = new RegExp(regex.source, regex.flags)
-      while ((match = re.exec(content)) !== null) {
+      while ((match = re.exec(displayContent)) !== null) {
         allMatches.push({
           type,
           start: match.index,
@@ -186,7 +232,7 @@ export function PostContent({
     for (const match of filteredMatches) {
       // Add text before this match
       if (match.start > currentIndex) {
-        const textContent = content.slice(currentIndex, match.start)
+        const textContent = displayContent.slice(currentIndex, match.start)
         if (textContent) {
           parts.push({ type: 'text', value: textContent })
         }
@@ -211,12 +257,12 @@ export function PostContent({
     }
 
     // Add remaining text
-    if (currentIndex < content.length) {
-      parts.push({ type: 'text', value: content.slice(currentIndex) })
+    if (currentIndex < displayContent.length) {
+      parts.push({ type: 'text', value: displayContent.slice(currentIndex) })
     }
 
     return parts
-  }, [content])
+  }, [displayContent])
 
   // Helper to render a single inline part (hashtag, cashtag, mention, url, text)
   // Used for both top-level and nested content inside bold/italic
@@ -229,6 +275,16 @@ export function PostContent({
       const cleanHref = stripTrailingPunctuation(href)
       const cleanDisplay = part.value.replace(/[.,;:!?)]+$/, '')
       const trailingPunctuation = part.value.slice(cleanDisplay.length)
+
+      // Internal Yappr post embeds: hide the first URL while embed is loading or rendered.
+      if (
+        internalReferenceMatched &&
+        firstUrl &&
+        cleanHref === firstUrl &&
+        (internalReferenceLoading || internalReferencePost !== null)
+      ) {
+        return trailingPunctuation ? <Fragment key={key}>{trailingPunctuation}</Fragment> : null
+      }
 
       // If link previews are enabled and this URL is being previewed (loading or loaded), strip it from content
       // Keep only trailing punctuation (if any). If preview fetch fails, the raw URL remains visible.
@@ -388,13 +444,22 @@ export function PostContent({
           return renderInlinePart(part, index)
         })}
       </div>
+      {/* Internal Yappr post embed takes priority over standard link preview */}
+      {shouldResolveInternalReference && internalReferenceMatched && internalReferenceLoading && (
+        <EmbeddedPostSkeleton />
+      )}
+      {shouldResolveInternalReference && internalReferenceMatched && internalReferencePost && (
+        <EmbeddedPostCard post={internalReferencePost} />
+      )}
       {/* Link preview */}
-      {!disableLinkPreview && linkPreviewsEnabled && previewLoading && <LinkPreviewSkeleton url={firstUrl ?? undefined} />}
-      {!disableLinkPreview && linkPreviewsEnabled && previewData && (
+      {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferencePost)) && previewLoading && (
+        <LinkPreviewSkeleton url={firstUrl ?? undefined} />
+      )}
+      {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferencePost)) && previewData && (
         <LinkPreview data={previewData} />
       )}
       {/* Enable link previews prompt - only shown when user hasn't made a choice yet */}
-      {!disableLinkPreview && linkPreviewsChoice === 'undecided' && firstUrl && (
+      {!disableLinkPreview && linkPreviewsChoice === 'undecided' && firstUrl && !internalReferenceMatched && (
         <LinkPreviewEnablePrompt />
       )}
     </div>

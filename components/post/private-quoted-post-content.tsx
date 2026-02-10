@@ -210,7 +210,7 @@ export function PrivateQuotedPostContent({
           </div>
         )}
         <div className="mt-1">
-          <PostContent content={state.content} className="text-sm line-clamp-3" />
+          <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed />
         </div>
       </Link>
     )
