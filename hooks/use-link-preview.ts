@@ -5,6 +5,73 @@ import type { LinkPreviewData } from '@/components/post/link-preview'
 
 // YouTube domain patterns for URL detection
 const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
+const YAPPR_POST_HOSTS = new Set(['yap.pr', 'www.yap.pr'])
+
+function normalizeOrigin(origin?: string): string | null {
+  if (!origin) return null
+  try {
+    return new URL(origin).origin.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Extract Yappr post ID from URLs that target this app's post route.
+ * This function uses `new URL(url)` (no base URL), so callers must pass
+ * absolute URLs.
+ * Supports:
+ * - https://yap.pr/post/?id=POST_ID
+ * - https://www.yap.pr/post/?id=POST_ID
+ * - same-origin absolute URL, e.g. https://your-host/post/?id=POST_ID
+ * - absolute /post/POST_ID path fallback on supported hosts/origins
+ * Returns null when URL is not a supported Yappr post URL or has no valid ID.
+ */
+export function extractYapprPostId(url: string, currentOrigin?: string): string | null {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+    const normalizedCurrentOrigin = normalizeOrigin(currentOrigin)
+      ?? (typeof window !== 'undefined' ? normalizeOrigin(window.location.origin) : null)
+    const isSameOrigin = normalizedCurrentOrigin ? parsed.origin.toLowerCase() === normalizedCurrentOrigin : false
+    const isSupportedHost = YAPPR_POST_HOSTS.has(hostname) || isSameOrigin
+
+    if (!isSupportedHost) return null
+
+    const pathSegments = parsed.pathname.split('/').filter(Boolean)
+    if (pathSegments.length === 0) return null
+
+    const lastSegment = pathSegments[pathSegments.length - 1].toLowerCase()
+    const penultimateSegment = pathSegments.length > 1
+      ? pathSegments[pathSegments.length - 2].toLowerCase()
+      : null
+
+    // Match /.../post or /.../post/{id}
+    const hasPostPath = lastSegment === 'post' || penultimateSegment === 'post'
+    if (!hasPostPath) return null
+
+    // Prefer query parameter style: /post?id=...
+    const idParam = parsed.searchParams.get('id')?.trim()
+    if (idParam) return idParam
+
+    // Fallback path style: /post/{id}
+    if (penultimateSegment === 'post') {
+      const pathId = decodeURIComponent(pathSegments[pathSegments.length - 1]).trim()
+      if (pathId) return pathId
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Returns true when a URL points to an internal Yappr post route and includes a valid post ID.
+ */
+export function isYapprPostUrl(url: string, currentOrigin?: string): boolean {
+  return extractYapprPostId(url, currentOrigin) !== null
+}
 
 /**
  * Extract YouTube video ID from various YouTube URL formats.
