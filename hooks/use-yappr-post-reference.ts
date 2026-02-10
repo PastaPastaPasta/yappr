@@ -67,7 +67,6 @@ async function fetchReferencedPost(postId: string): Promise<Post | null> {
       return convertedReply
     } catch (error) {
       console.error('useYapprPostReference: Failed to resolve linked post:', error)
-      referenceCache.set(postId, null)
       return null
     } finally {
       pendingReferences.delete(postId)
@@ -117,6 +116,12 @@ export function useYapprPostReference(
     fetchReferencedPost(referencedPostId).then((resolvedPost) => {
       if (cancelled) return
       setPost(resolvedPost)
+      setLoading(false)
+      setResolved(true)
+    }).catch((error) => {
+      if (cancelled) return
+      console.error('useYapprPostReference: Failed to apply linked post state:', error)
+      setPost(null)
       setLoading(false)
       setResolved(true)
     })

@@ -48,17 +48,20 @@ function stripFirstUrlAndTrim(content: string, firstUrl: string | null): string 
   if (!match || typeof match.index !== 'number') return content
 
   const rawUrl = match[0]
-  const normalizedRawUrl = rawUrl.toLowerCase().startsWith('www.')
-    ? `https://${rawUrl}`
-    : rawUrl
+  const hasPrependedScheme = rawUrl.toLowerCase().startsWith('www.')
+  const normalizedRawUrl = hasPrependedScheme ? `https://${rawUrl}` : rawUrl
   const cleanRawUrl = stripTrailingPunctuation(normalizedRawUrl)
 
   if (cleanRawUrl !== firstUrl) return content
 
-  const displayWithoutTrailingPunctuation = rawUrl.replace(/[.,;:!?)]+$/, '')
-  const trailingPunctuation = rawUrl.slice(displayWithoutTrailingPunctuation.length)
+  const trailingNormalized = normalizedRawUrl.slice(cleanRawUrl.length)
+  const trailingLength = Math.min(trailingNormalized.length, rawUrl.length)
+  const trailingPunctuation = trailingLength > 0
+    ? rawUrl.slice(rawUrl.length - trailingLength)
+    : ''
+  const displayWithoutTrailingPunctuation = rawUrl.slice(0, rawUrl.length - trailingPunctuation.length)
   const before = content.slice(0, match.index)
-  const after = content.slice(match.index + rawUrl.length)
+  const after = content.slice(match.index + displayWithoutTrailingPunctuation.length + trailingPunctuation.length)
 
   return `${before}${trailingPunctuation}${after}`.trim()
 }

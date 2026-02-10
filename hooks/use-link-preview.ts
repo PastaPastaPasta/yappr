@@ -18,11 +18,13 @@ function normalizeOrigin(origin?: string): string | null {
 
 /**
  * Extract Yappr post ID from URLs that target this app's post route.
+ * This function uses `new URL(url)` (no base URL), so callers must pass
+ * absolute URLs.
  * Supports:
  * - https://yap.pr/post/?id=POST_ID
  * - https://www.yap.pr/post/?id=POST_ID
- * - same-origin /post/?id=POST_ID
- * - /post/POST_ID path fallback
+ * - same-origin absolute URL, e.g. https://your-host/post/?id=POST_ID
+ * - absolute /post/POST_ID path fallback on supported hosts/origins
  * Returns null when URL is not a supported Yappr post URL or has no valid ID.
  */
 export function extractYapprPostId(url: string, currentOrigin?: string): string | null {
