@@ -63,6 +63,7 @@ function StoreDetailContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [hasMoreItems, setHasMoreItems] = useState(false)
+  const [lastCursor, setLastCursor] = useState<string | undefined>()
   const [activeTab, setActiveTab] = useState<'items' | 'reviews' | 'policies'>('items')
   const [cartItemCount, setCartItemCount] = useState(0)
   const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
@@ -94,6 +95,9 @@ function StoreDetailContent() {
         setStore(storeData)
         setItems(itemsData.items.filter(i => i.status === 'active'))
         setHasMoreItems(itemsData.items.length >= 100)
+        if (itemsData.items.length > 0) {
+          setLastCursor(itemsData.items[itemsData.items.length - 1].id)
+        }
         setReviews(reviewsData.reviews)
         setRatingSummary(ratingData)
 
@@ -136,20 +140,22 @@ function StoreDetailContent() {
 
     setIsLoadingMore(true)
     try {
-      const lastItem = items[items.length - 1]
       const moreData = await storeItemService.getByStore(storeId, {
         limit: 100,
-        startAfter: lastItem?.id
+        startAfter: lastCursor
       })
       const activeItems = moreData.items.filter(i => i.status === 'active')
       setItems(prev => [...prev, ...activeItems])
       setHasMoreItems(moreData.items.length >= 100)
+      if (moreData.items.length > 0) {
+        setLastCursor(moreData.items[moreData.items.length - 1].id)
+      }
     } catch (error) {
       console.error('Failed to load more items:', error)
     } finally {
       setIsLoadingMore(false)
     }
-  }, [storeId, isLoadingMore, hasMoreItems, items])
+  }, [storeId, isLoadingMore, hasMoreItems, lastCursor])
 
   const handleItemClick = (itemId: string) => {
     router.push(`/item?id=${itemId}`)

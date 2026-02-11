@@ -31,28 +31,28 @@ function InventoryPage() {
   const [store, setStore] = useState<Store | null>(null)
   const [items, setItems] = useState<StoreItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [hasMoreItems, setHasMoreItems] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
 
   const loadAllItems = useCallback(async (storeId: string) => {
-    let allItems: StoreItem[] = []
+    const allItems: StoreItem[] = []
     let cursor: string | undefined
+    const MAX_BATCHES = 50
 
-    // Paginate through all items
-    while (true) {
+    // Paginate through all items (100 per batch, up to 5000 items)
+    for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const result = await storeItemService.getByStore(storeId, {
         limit: 100,
         startAfter: cursor
       })
-      allItems = [...allItems, ...result.items]
+      for (const item of result.items) {
+        allItems.push(item)
+      }
 
       if (result.items.length < 100) break
       cursor = result.items[result.items.length - 1].id
     }
 
     setItems(allItems)
-    setHasMoreItems(false)
   }, [])
 
   // Load store and items
@@ -131,26 +131,6 @@ function InventoryPage() {
       }
     }))
   }, [])
-
-  const handleLoadMore = useCallback(async () => {
-    if (!store?.id || isLoadingMore || !hasMoreItems) return
-
-    setIsLoadingMore(true)
-    try {
-      const lastItem = items[items.length - 1]
-      const result = await storeItemService.getByStore(store.id, {
-        limit: 100,
-        startAfter: lastItem?.id
-      })
-      setItems(prev => [...prev, ...result.items])
-      setHasMoreItems(result.items.length >= 100)
-    } catch (error) {
-      console.error('Failed to load more items:', error)
-      toast.error('Failed to load more items')
-    } finally {
-      setIsLoadingMore(false)
-    }
-  }, [store?.id, isLoadingMore, hasMoreItems, items])
 
   const handleExportCSV = useCallback(() => {
     if (items.length === 0) {
@@ -342,17 +322,6 @@ function InventoryPage() {
               onItemDeleted={handleItemDeleted}
               onStockUpdate={handleStockUpdate}
             />
-            {hasMoreItems && (
-              <div className="py-4 text-center">
-                <Button
-                  variant="outline"
-                  onClick={handleLoadMore}
-                  disabled={isLoadingMore}
-                >
-                  {isLoadingMore ? 'Loading...' : 'Load More Items'}
-                </Button>
-              </div>
-            )}
           </div>
         </main>
       </div>
