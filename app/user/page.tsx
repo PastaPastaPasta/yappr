@@ -238,7 +238,7 @@ function UserProfileContent() {
             if (!identity) {
               // Identity doesn't exist on platform (possibly wiped) - log out
               toast.error('Your identity was not found on the network. Please log in again.')
-              logout()
+              await logout()
               return
             }
 
