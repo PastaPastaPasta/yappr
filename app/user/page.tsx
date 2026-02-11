@@ -136,6 +136,7 @@ function UserProfileContent() {
   const [isFollowing, setIsFollowing] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
+  const [profileDocumentMissing, setProfileDocumentMissing] = useState(false)
 
   // Pagination state
   const [hasMore, setHasMore] = useState(true)
@@ -217,39 +218,22 @@ function UserProfileContent() {
     const loadProfileData = async () => {
       try {
         setIsLoading(true)
+        setProfileDocumentMissing(false)
 
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
 
         // Fetch profile from unified service, posts, and post count in parallel
+        let profileFetchErrored = false
         const [profileResult, postsResult, totalPostCount] = await Promise.all([
-          unifiedProfileService.getProfile(userId).catch(() => null),
+          unifiedProfileService.getProfile(userId).catch(() => { profileFetchErrored = true; return null }),
           postService.getUserPosts(userId, { limit: 50 }).catch(() => ({ documents: [], hasMore: false })),
           postService.countUserPosts(userId).catch(() => 0)
         ])
 
         setPostCount(totalPostCount)
 
-        // If viewing own profile and no profile document exists, verify identity
-        if (!profileResult && isOwnProfile && currentUser?.identityId) {
-          try {
-            const { identityService } = await import('@/lib/services/identity-service')
-            const identity = await identityService.getIdentity(userId)
-
-            if (!identity) {
-              // Identity doesn't exist on platform (possibly wiped) - log out
-              toast.error('Your identity was not found on the network. Please log in again.')
-              await logout()
-              return
-            }
-
-            // Identity exists but no profile document - redirect to create profile
-            router.push('/profile/create')
-            return
-          } catch (identityError) {
-            // Network error checking identity - continue loading page normally
-            console.error('Failed to verify identity for profile check:', identityError)
-          }
-        }
+        // Track whether profile document is genuinely missing (not just a network error)
+        setProfileDocumentMissing(!profileResult && !profileFetchErrored)
 
         // Process profile
         let profileDisplayName = `User ${userId.slice(-6)}`
@@ -482,6 +466,31 @@ function UserProfileContent() {
   // currentUser is intentionally not a dependency - we only want to reload on userId change
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
+
+  // If own profile document is missing after load, verify identity and redirect
+  useEffect(() => {
+    if (!profileDocumentMissing || !isOwnProfile || !currentUser?.identityId || isLoading) return
+
+    const checkIdentityAndRedirect = async () => {
+      try {
+        const { identityService } = await import('@/lib/services/identity-service')
+        const identity = await identityService.getIdentity(currentUser.identityId)
+
+        if (!identity) {
+          toast.error('Your identity was not found on the network. Please log in again.')
+          await logout()
+          return
+        }
+
+        router.push('/profile/create')
+      } catch (error) {
+        // Network error checking identity - don't take drastic action
+        console.error('Failed to verify identity for profile check:', error)
+      }
+    }
+
+    checkIdentityAndRedirect().catch(err => console.error('Identity check failed:', err))
+  }, [profileDocumentMissing, isOwnProfile, currentUser?.identityId, isLoading, logout, router])
 
   // Define handleStartEdit before the useEffect that uses it
   const handleStartEdit = useCallback(() => {
