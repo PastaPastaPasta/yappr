@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -61,6 +61,8 @@ function StoreDetailContent() {
   const [ratingSummary, setRatingSummary] = useState<StoreRatingSummary | null>(null)
   const [storePolicies, setStorePolicies] = useState<StorePolicy[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMoreItems, setHasMoreItems] = useState(false)
   const [activeTab, setActiveTab] = useState<'items' | 'reviews' | 'policies'>('items')
   const [cartItemCount, setCartItemCount] = useState(0)
   const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
@@ -84,13 +86,14 @@ function StoreDetailContent() {
 
         const [storeData, itemsData, reviewsData, ratingData] = await Promise.all([
           storeService.getById(storeId),
-          storeItemService.getByStore(storeId, { limit: 50 }),
+          storeItemService.getByStore(storeId, { limit: 100 }),
           storeReviewService.getStoreReviews(storeId, { limit: 20 }),
           storeReviewService.calculateRatingSummary(storeId)
         ])
 
         setStore(storeData)
         setItems(itemsData.items.filter(i => i.status === 'active'))
+        setHasMoreItems(itemsData.items.length >= 100)
         setReviews(reviewsData.reviews)
         setRatingSummary(ratingData)
 
@@ -127,6 +130,26 @@ function StoreDetailContent() {
 
     loadStore().catch(console.error)
   }, [sdkReady, storeId])
+
+  const handleLoadMoreItems = useCallback(async () => {
+    if (!storeId || isLoadingMore || !hasMoreItems) return
+
+    setIsLoadingMore(true)
+    try {
+      const lastItem = items[items.length - 1]
+      const moreData = await storeItemService.getByStore(storeId, {
+        limit: 100,
+        startAfter: lastItem?.id
+      })
+      const activeItems = moreData.items.filter(i => i.status === 'active')
+      setItems(prev => [...prev, ...activeItems])
+      setHasMoreItems(moreData.items.length >= 100)
+    } catch (error) {
+      console.error('Failed to load more items:', error)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [storeId, isLoadingMore, hasMoreItems, items])
 
   const handleItemClick = (itemId: string) => {
     router.push(`/item?id=${itemId}`)
@@ -338,49 +361,62 @@ function StoreDetailContent() {
                   <p className="text-gray-500">No products listed yet</p>
                 </div>
               ) : (
-                items.map((item, index) => {
-                  const priceRange = storeItemService.getPriceRange(item)
-                  const isOutOfStock = storeItemService.isOutOfStock(item)
+                <>
+                  {items.map((item, index) => {
+                    const priceRange = storeItemService.getPriceRange(item)
+                    const isOutOfStock = storeItemService.isOutOfStock(item)
 
-                  return (
-                    <motion.div
-                      key={item.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      onClick={() => handleItemClick(item.id)}
-                      className="cursor-pointer group"
-                    >
-                      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
-                        {item.imageUrls?.[0] ? (
-                          <img
-                            src={item.imageUrls[0]}
-                            alt={item.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    return (
+                      <motion.div
+                        key={item.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: Math.min(index, 20) * 0.05 }}
+                        onClick={() => handleItemClick(item.id)}
+                        className="cursor-pointer group"
+                      >
+                        <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
+                          {item.imageUrls?.[0] ? (
+                            <img
+                              src={item.imageUrls[0]}
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <BuildingStorefrontIcon className="h-12 w-12 text-gray-300" />
+                            </div>
+                          )}
+                          {isOutOfStock && (
+                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                              <span className="text-white font-medium">Out of Stock</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-2">
+                          <h3 className="font-medium truncate">{item.title}</h3>
+                          <PriceRangeDisplay
+                            minPrice={priceRange.min}
+                            maxPrice={priceRange.max}
+                            currency={item.currency}
+                            size="sm"
                           />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <BuildingStorefrontIcon className="h-12 w-12 text-gray-300" />
-                          </div>
-                        )}
-                        {isOutOfStock && (
-                          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                            <span className="text-white font-medium">Out of Stock</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-2">
-                        <h3 className="font-medium truncate">{item.title}</h3>
-                        <PriceRangeDisplay
-                          minPrice={priceRange.min}
-                          maxPrice={priceRange.max}
-                          currency={item.currency}
-                          size="sm"
-                        />
-                      </div>
-                    </motion.div>
-                  )
-                })
+                        </div>
+                      </motion.div>
+                    )
+                  })}
+                  {hasMoreItems && (
+                    <div className="col-span-2 py-4 text-center">
+                      <Button
+                        variant="outline"
+                        onClick={handleLoadMoreItems}
+                        disabled={isLoadingMore}
+                      >
+                        {isLoadingMore ? 'Loading...' : 'Load More Products'}
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ) : activeTab === 'reviews' ? (

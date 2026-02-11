@@ -31,7 +31,29 @@ function InventoryPage() {
   const [store, setStore] = useState<Store | null>(null)
   const [items, setItems] = useState<StoreItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMoreItems, setHasMoreItems] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
+
+  const loadAllItems = useCallback(async (storeId: string) => {
+    let allItems: StoreItem[] = []
+    let cursor: string | undefined
+
+    // Paginate through all items
+    while (true) {
+      const result = await storeItemService.getByStore(storeId, {
+        limit: 100,
+        startAfter: cursor
+      })
+      allItems = [...allItems, ...result.items]
+
+      if (result.items.length < 100) break
+      cursor = result.items[result.items.length - 1].id
+    }
+
+    setItems(allItems)
+    setHasMoreItems(false)
+  }, [])
 
   // Load store and items
   useEffect(() => {
@@ -63,9 +85,8 @@ function InventoryPage() {
           setStore(storeData)
         }
 
-        // Load all items
-        const itemsResult = await storeItemService.getByStore(currentStoreId, { limit: 100 })
-        setItems(itemsResult.items)
+        // Load all items for inventory management
+        await loadAllItems(currentStoreId)
       } catch (error) {
         console.error('Failed to load inventory:', error)
         toast.error('Failed to load inventory')
@@ -75,7 +96,7 @@ function InventoryPage() {
     }
 
     loadData().catch(console.error)
-  }, [sdkReady, storeId, user?.identityId, router])
+  }, [sdkReady, storeId, user?.identityId, router, loadAllItems])
 
   const handleEditItem = useCallback((item: StoreItem) => {
     router.push(`/store/item/add?itemId=${item.id}&storeId=${store?.id}`)
@@ -110,6 +131,26 @@ function InventoryPage() {
       }
     }))
   }, [])
+
+  const handleLoadMore = useCallback(async () => {
+    if (!store?.id || isLoadingMore || !hasMoreItems) return
+
+    setIsLoadingMore(true)
+    try {
+      const lastItem = items[items.length - 1]
+      const result = await storeItemService.getByStore(store.id, {
+        limit: 100,
+        startAfter: lastItem?.id
+      })
+      setItems(prev => [...prev, ...result.items])
+      setHasMoreItems(result.items.length >= 100)
+    } catch (error) {
+      console.error('Failed to load more items:', error)
+      toast.error('Failed to load more items')
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [store?.id, isLoadingMore, hasMoreItems, items])
 
   const handleExportCSV = useCallback(() => {
     if (items.length === 0) {
@@ -219,14 +260,12 @@ function InventoryPage() {
     setShowUploadModal(false)
     if (addedCount > 0) {
       toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to inventory`)
-      // Reload items
+      // Reload all items
       if (store?.id) {
-        storeItemService.getByStore(store.id, { limit: 100 })
-          .then(result => setItems(result.items))
-          .catch(console.error)
+        loadAllItems(store.id).catch(console.error)
       }
     }
-  }, [store?.id])
+  }, [store?.id, loadAllItems])
 
   if (isLoading) {
     return (
@@ -303,6 +342,17 @@ function InventoryPage() {
               onItemDeleted={handleItemDeleted}
               onStockUpdate={handleStockUpdate}
             />
+            {hasMoreItems && (
+              <div className="py-4 text-center">
+                <Button
+                  variant="outline"
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? 'Loading...' : 'Load More Items'}
+                </Button>
+              </div>
+            )}
           </div>
         </main>
       </div>
