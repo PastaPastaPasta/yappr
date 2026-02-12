@@ -17,6 +17,7 @@ import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { cacheManager } from '@/lib/cache-manager'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 import { identifierToBase58 } from '@/lib/services/sdk-helpers'
 import { Button } from '@/components/ui/button'
 
@@ -130,6 +131,9 @@ function FeedPage() {
     currentUserId: user?.identityId,
     skipFollowStatus: activeTab === 'following' // On Following tab, all authors are followed by definition
   })
+
+  // Restore scroll position after back navigation (e.g., from post detail page)
+  useScrollRestoration('/feed/', postsState.data !== null && postsState.data.length > 0)
 
   // Prevent hydration mismatches
   useEffect(() => {

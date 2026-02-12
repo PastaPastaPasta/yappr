@@ -44,6 +44,7 @@ import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { tipService } from '@/lib/services/tip-service'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { saveScrollPosition } from '@/hooks/use-scroll-restoration'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
 type UsernameState = string | null | undefined
@@ -525,6 +526,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       replyTo: progressiveEnrichment?.replyTo
     }
     setPendingPostNavigation(enrichedPost, resolvedEnrichment)
+
+    // Save scroll position so list pages can restore it on back navigation
+    saveScrollPosition(window.location.pathname)
 
     // Handle Ctrl/Cmd+click to open in new tab (standard browser behavior)
     if (e.ctrlKey || e.metaKey) {

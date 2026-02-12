@@ -14,6 +14,7 @@ import { hashtagService } from '@/lib/services/hashtag-service'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 
@@ -27,6 +28,8 @@ function HashtagPageContent() {
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [postCount, setPostCount] = useState(0)
+
+  useScrollRestoration('/hashtag/', !isLoading && posts.length > 0)
 
   // Determine if this is a cashtag and get display values
   const isCashtag = isCashtagStorage(tag)
