@@ -18,6 +18,7 @@ import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisp
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
+import { saveScrollPosition, useScrollRestoration } from '@/hooks/use-scroll-restoration'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
@@ -68,6 +69,9 @@ function StoreDetailContent() {
   const [cartItemCount, setCartItemCount] = useState(0)
   const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
   const [ownerUsername, setOwnerUsername] = useState<string | null>(null)
+
+  // Restore scroll position after back navigation (e.g., from item detail page)
+  useScrollRestoration('/store/view/', !isLoading && items.length > 0)
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -158,6 +162,7 @@ function StoreDetailContent() {
   }, [storeId, isLoadingMore, hasMoreItems, lastCursor])
 
   const handleItemClick = (itemId: string) => {
+    saveScrollPosition('/store/view/')
     router.push(`/item?id=${itemId}`)
   }
 

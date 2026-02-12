@@ -49,7 +49,6 @@ import { cn } from '@/lib/utils'
 import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 import { UsernameModal } from '@/components/dpns/username-modal'
 import { useSettingsStore } from '@/lib/store'
-import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 
 interface ProfileData {
   displayName: string
@@ -134,9 +133,6 @@ function UserProfileContent() {
   const [hasDpns, setHasDpns] = useState(false)
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
-
-  useScrollRestoration('/user/', !isLoading && posts.length > 0)
-
   const [isFollowing, setIsFollowing] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)

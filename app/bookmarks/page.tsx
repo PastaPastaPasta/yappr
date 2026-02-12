@@ -19,7 +19,6 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
-import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 
 interface BookmarkedPost {
   id: string
@@ -51,8 +50,6 @@ function BookmarksPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
-
-  useScrollRestoration('/bookmarks/', !isLoading && bookmarks.length > 0)
 
   useEffect(() => {
     const loadBookmarks = async () => {
