@@ -267,7 +267,7 @@ function StoreDetailContent() {
           return (a.basePrice ?? 0) - (b.basePrice ?? 0)
         case 'newest':
         default:
-          return b.createdAt.getTime() - a.createdAt.getTime()
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       }
     })
   }, [items, searchQuery, categoryFilter, sortField])
