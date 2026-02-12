@@ -37,7 +37,7 @@ function getCacheKey(storeId: string): string {
  * Serialize Date objects to epoch milliseconds for JSON storage.
  */
 function serializeForStorage(data: StoreViewCacheData): string {
-  return JSON.stringify(data, (_key, value) => {
+  return JSON.stringify(data, (key, value) => {
     if (value instanceof Date) {
       return { __date: value.getTime() }
     }
@@ -49,7 +49,7 @@ function serializeForStorage(data: StoreViewCacheData): string {
  * Reconstruct Date objects from epoch milliseconds after JSON parsing.
  */
 function deserializeFromStorage(raw: string): StoreViewCacheData {
-  return JSON.parse(raw, (_key, value) => {
+  return JSON.parse(raw, (key, value) => {
     if (value && typeof value === 'object' && '__date' in value) {
       return new Date(value.__date)
     }
