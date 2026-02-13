@@ -5,6 +5,7 @@ import * as Popover from '@radix-ui/react-popover'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
 import { useTheme } from 'next-themes'
+import { useSettingsStore } from '@/lib/store'
 
 interface EmojiData {
   native: string
@@ -20,6 +21,7 @@ interface EmojiPickerProps {
 export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProps) {
   const [open, setOpen] = useState(false)
   const { resolvedTheme } = useTheme()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const handleEmojiSelect = useCallback(
     (emoji: EmojiData) => {
@@ -54,6 +56,7 @@ export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProp
           <div
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
+            className={potatoMode ? 'potato-mode' : ''}
           >
             <Picker
               data={data}
