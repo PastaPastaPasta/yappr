@@ -146,6 +146,19 @@ class DirectMessageService {
    */
   async getConversations(userId: string): Promise<Conversation[]> {
     try {
+      const shells = await this.getConversationShells(userId)
+      return await this.enrichConversations(userId, shells)
+    } catch (error) {
+      console.error('Error getting conversations:', error)
+      return []
+    }
+  }
+
+  /**
+   * Get base conversation shells quickly (no message/metadata lookups).
+   */
+  async getConversationShells(userId: string): Promise<Conversation[]> {
+    try {
       const sdk = await getEvoSdk()
 
       // 1. Get invites where I'm the recipient (inbox)
@@ -171,120 +184,132 @@ class DirectMessageService {
       const receivedInvites = this.extractDocuments(receivedInvitesResponse)
       const sentInvites = this.extractDocuments(sentInvitesResponse)
 
-      // 3. Build conversation map from invites
       const conversationMap = new Map<string, {
         participantId: string
-        invites: Record<string, unknown>[]
+        latestInviteAt: number
       }>()
 
-      // Process received invites (they sent to me)
+      const updateLatestInvite = (convId: string, participantId: string, invite: Record<string, unknown>) => {
+        const inviteCreatedAt = (invite.$createdAt as number) || 0
+        const existing = conversationMap.get(convId)
+        if (!existing || inviteCreatedAt > existing.latestInviteAt) {
+          conversationMap.set(convId, {
+            participantId,
+            latestInviteAt: inviteCreatedAt
+          })
+        }
+      }
+
       for (const invite of receivedInvites) {
         const inviteData = invite.data as Record<string, unknown> | undefined
         const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
         const convId = bs58.encode(Buffer.from(convIdBytes))
-        const senderId = invite.$ownerId
-
-        const existingConv = conversationMap.get(convId)
-        if (!existingConv) {
-          conversationMap.set(convId, {
-            participantId: senderId as string,
-            invites: [invite]
-          })
-        } else {
-          existingConv.invites.push(invite)
-        }
+        const senderId = invite.$ownerId as string
+        updateLatestInvite(convId, senderId, invite)
       }
 
-      // Process sent invites (I sent to them)
       for (const invite of sentInvites) {
         const inviteData = invite.data as Record<string, unknown> | undefined
         const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
         const convId = bs58.encode(Buffer.from(convIdBytes))
         const recipientIdBytes = this.extractByteArray(invite.recipientId || inviteData?.recipientId)
         const recipientId = bs58.encode(Buffer.from(recipientIdBytes))
-
-        const existingSentConv = conversationMap.get(convId)
-        if (!existingSentConv) {
-          conversationMap.set(convId, {
-            participantId: recipientId,
-            invites: [invite]
-          })
-        } else {
-          existingSentConv.invites.push(invite)
-        }
+        updateLatestInvite(convId, recipientId, invite)
       }
 
-      // 4. For each conversation, get latest message and read receipt
-      const conversations: Conversation[] = []
+      const conversations = Array.from(conversationMap.entries()).map(([convId, data]) => ({
+        id: convId,
+        participantId: data.participantId,
+        unreadCount: 0,
+        updatedAt: data.latestInviteAt ? new Date(data.latestInviteAt) : new Date()
+      }))
 
-      for (const [convId, data] of Array.from(conversationMap.entries())) {
-        try {
-          // Get messages (fetch once, use for both latest and unread count)
-          const allMessages = await this.getConversationMessagesRaw(convId, 100)
-          const latestDoc = allMessages[allMessages.length - 1] // Messages are ordered asc
-
-          // Get my read receipt
-          const myReceipt = await this.getMyReadReceipt(userId, convId)
-
-          // Count unread messages (v3: use $updatedAt as last-read timestamp)
-          const lastReadAt = (myReceipt?.$updatedAt as number) || 0
-          const unreadCount = allMessages.filter(
-            m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt
-          ).length
-
-          // Get participant username and display name
-          let participantUsername: string | undefined
-          let participantDisplayName: string | undefined
-          try {
-            participantUsername = await dpnsService.resolveUsername(data.participantId) || undefined
-          } catch {
-            // Ignore DPNS errors
-          }
-          try {
-            const profile = await unifiedProfileService.getProfile(data.participantId)
-            participantDisplayName = profile?.displayName
-          } catch {
-            // Ignore profile errors
-          }
-
-          // Decrypt latest message for preview
-          let lastMessage: DirectMessage | null = null
-          if (latestDoc) {
-            try {
-              lastMessage = await this.decryptMessage(latestDoc, userId, data.participantId)
-            } catch {
-              lastMessage = {
-                id: latestDoc.$id as string,
-                senderId: latestDoc.$ownerId as string,
-                recipientId: latestDoc.$ownerId === userId ? data.participantId : userId,
-                conversationId: convId,
-                content: '[Encrypted message]',
-                createdAt: new Date(latestDoc.$createdAt as number)
-              }
-            }
-          }
-
-          conversations.push({
-            id: convId,
-            participantId: data.participantId,
-            participantUsername,
-            participantDisplayName,
-            lastMessage,
-            unreadCount,
-            updatedAt: latestDoc ? new Date(latestDoc.$createdAt as number) : new Date()
-          })
-        } catch (err) {
-          console.error(`Error processing conversation ${convId}:`, err)
-        }
-      }
-
-      // Sort by most recent
-      return conversations.sort((a, b) =>
-        b.updatedAt.getTime() - a.updatedAt.getTime()
-      )
+      return conversations.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
     } catch (error) {
-      console.error('Error getting conversations:', error)
+      console.error('Error getting conversation shells:', error)
       return []
+    }
+  }
+
+  /**
+   * Enrich conversation shells with metadata, last message, and unread count.
+   * Optionally provide an onUpdate callback for progressive UI updates.
+   */
+  async enrichConversations(
+    userId: string,
+    conversations: Conversation[],
+    onUpdate?: (conversation: Conversation) => void
+  ): Promise<Conversation[]> {
+    try {
+      const participantIds = Array.from(new Set(conversations.map(conv => conv.participantId)))
+      const [usernameMap, profiles] = await Promise.all([
+        dpnsService.resolveUsernamesBatch(participantIds),
+        participantIds.length > 0
+          ? unifiedProfileService.getProfilesByIdentityIds(participantIds).catch(() => [])
+          : Promise.resolve([])
+      ])
+
+      const profileMap = new Map(
+        profiles.map(profile => [profile.$ownerId || profile.ownerId, profile])
+      )
+
+      const batchSize = 5
+      const results: Conversation[] = []
+
+      for (let i = 0; i < conversations.length; i += batchSize) {
+        const batch = conversations.slice(i, i + batchSize)
+        const enrichedBatch = await Promise.all(
+          batch.map(async (conversation) => {
+            const participantUsername = usernameMap.get(conversation.participantId) || undefined
+            const profile = profileMap.get(conversation.participantId)
+            const participantDisplayName = profile?.displayName
+
+            const myReceipt = await this.getMyReadReceipt(userId, conversation.id)
+            const lastReadAt = (myReceipt?.$updatedAt as number) || 0
+
+            const [latestDoc, unreadDocs] = await Promise.all([
+              this.getLatestMessageRaw(conversation.id),
+              this.getConversationMessagesRaw(conversation.id, 100, lastReadAt || undefined, 'asc')
+            ])
+
+            const unreadCount = unreadDocs.filter(
+              m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt
+            ).length
+
+            let lastMessage: DirectMessage | null = null
+            if (latestDoc) {
+              lastMessage = await this.decryptMessageDocument(
+                latestDoc,
+                userId,
+                conversation.participantId,
+                '[Encrypted message]'
+              )
+            }
+
+            const updatedConversation: Conversation = {
+              ...conversation,
+              participantUsername,
+              participantDisplayName,
+              lastMessage,
+              unreadCount,
+              updatedAt: latestDoc ? new Date(latestDoc.$createdAt as number) : conversation.updatedAt
+            }
+
+            if (onUpdate) {
+              onUpdate(updatedConversation)
+            }
+
+            return updatedConversation
+          })
+        )
+
+        results.push(...enrichedBatch)
+      }
+
+      return results.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+    } catch (error) {
+      console.error('Error enriching conversations:', error)
+      return conversations
     }
   }
 
@@ -333,6 +358,41 @@ class DirectMessageService {
     }
   }
 
+  async getConversationMessageDocuments(
+    conversationId: string,
+    limit: number = 100,
+    sinceTimestamp?: number,
+    order: 'asc' | 'desc' = 'asc'
+  ): Promise<Record<string, unknown>[]> {
+    return this.getConversationMessagesRaw(conversationId, limit, sinceTimestamp, order)
+  }
+
+  async decryptMessageDocument(
+    doc: Record<string, unknown>,
+    currentUserId: string,
+    otherPartyId: string,
+    fallbackContent: string = '[Could not decrypt message]'
+  ): Promise<DirectMessage | null> {
+    try {
+      const decrypted = await this.decryptMessage(doc, currentUserId, otherPartyId)
+      if (decrypted) return decrypted
+    } catch {
+      // handled below with fallback
+    }
+
+    const docData = doc.data as Record<string, unknown> | undefined
+    const convIdBytes = this.extractByteArray(doc.conversationId || docData?.conversationId)
+
+    return {
+      id: doc.$id as string,
+      senderId: doc.$ownerId as string,
+      recipientId: doc.$ownerId === currentUserId ? otherPartyId : currentUserId,
+      conversationId: bs58.encode(Buffer.from(convIdBytes)),
+      content: fallbackContent,
+      createdAt: new Date(doc.$createdAt as number)
+    }
+  }
+
   /**
    * Poll for new messages - queries only messages newer than sinceTimestamp
    * Returns only the NEW messages (already decrypted)
@@ -372,7 +432,8 @@ class DirectMessageService {
   private async getConversationMessagesRaw(
     conversationId: string,
     limit: number = 100,
-    sinceTimestamp?: number
+    sinceTimestamp?: number,
+    order: 'asc' | 'desc' = 'asc'
   ): Promise<Record<string, unknown>[]> {
     try {
       const sdk = await getEvoSdk()
@@ -390,7 +451,7 @@ class DirectMessageService {
         dataContractId: this.contractId,
         documentTypeName: 'directMessage',
         where,
-        orderBy: [['$createdAt', 'asc']],
+        orderBy: [['$createdAt', order]],
         limit
       })
 
@@ -399,6 +460,11 @@ class DirectMessageService {
       console.error('Error getting raw messages:', error)
       return []
     }
+  }
+
+  private async getLatestMessageRaw(conversationId: string): Promise<Record<string, unknown> | null> {
+    const docs = await this.getConversationMessagesRaw(conversationId, 1, undefined, 'desc')
+    return docs[0] || null
   }
 
   /**
