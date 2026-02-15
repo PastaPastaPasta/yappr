@@ -11,7 +11,6 @@ import {
   ArrowsUpDownIcon,
   CubeIcon
 } from '@heroicons/react/24/outline'
-import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils/format'
 import { storeItemService } from '@/lib/services/store-item-service'
@@ -41,6 +40,7 @@ export function InventoryTable({
 }: InventoryTableProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
@@ -51,6 +51,19 @@ export function InventoryTable({
   } | null>(null)
   const [deleteItemId, setDeleteItemId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  // Bulk selection state
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false)
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null)
+
+  // Derive unique categories from items
+  const categories = useMemo(() => {
+    const cats = items
+      .filter(i => i.category)
+      .map(i => i.category as string)
+    return Array.from(new Set(cats)).sort()
+  }, [items])
 
   // Filter and sort items
   const filteredItems = useMemo(() => {
@@ -70,6 +83,11 @@ export function InventoryTable({
     // Status filter
     if (statusFilter !== 'all') {
       filtered = filtered.filter(item => item.status === statusFilter)
+    }
+
+    // Category filter
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(item => item.category === categoryFilter)
     }
 
     // Sort
@@ -101,7 +119,72 @@ export function InventoryTable({
     })
 
     return filtered
-  }, [items, searchQuery, statusFilter, sortField, sortDirection])
+  }, [items, searchQuery, statusFilter, categoryFilter, sortField, sortDirection])
+
+  // Clean up selection when filtered items change (remove items no longer visible)
+  const filteredItemIds = useMemo(() => new Set(filteredItems.map(i => i.id)), [filteredItems])
+
+  const activeSelectedCount = useMemo(
+    () => Array.from(selectedItems).filter(id => filteredItemIds.has(id)).length,
+    [selectedItems, filteredItemIds]
+  )
+
+  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedItems.has(item.id))
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedItems(prev => {
+      const next = new Set(prev)
+      if (allFilteredSelected) {
+        // Deselect all filtered items
+        for (const item of filteredItems) {
+          next.delete(item.id)
+        }
+      } else {
+        // Select all filtered items
+        for (const item of filteredItems) {
+          next.add(item.id)
+        }
+      }
+      return next
+    })
+  }, [allFilteredSelected, filteredItems])
+
+  const toggleSelectItem = useCallback((itemId: string) => {
+    setSelectedItems(prev => {
+      const next = new Set(prev)
+      if (next.has(itemId)) {
+        next.delete(itemId)
+      } else {
+        next.add(itemId)
+      }
+      return next
+    })
+  }, [])
+
+  const handleBulkDelete = useCallback(async () => {
+    const idsToDelete = Array.from(selectedItems).filter(id => filteredItemIds.has(id))
+    const total = idsToDelete.length
+    if (total === 0) return
+
+    setIsDeleting(true)
+    setBulkDeleteProgress({ current: 0, total })
+
+    for (let i = 0; i < idsToDelete.length; i++) {
+      const itemId = idsToDelete[i]
+      setBulkDeleteProgress({ current: i + 1, total })
+      try {
+        await storeItemService.delete(itemId, ownerId)
+        onItemDeleted(itemId)
+      } catch (err) {
+        console.error(`Failed to delete item ${itemId}:`, err)
+      }
+    }
+
+    setSelectedItems(new Set())
+    setBulkDeleteProgress(null)
+    setIsDeleting(false)
+    setShowBulkDeleteDialog(false)
+  }, [selectedItems, filteredItemIds, ownerId, onItemDeleted])
 
   const toggleExpand = useCallback((itemId: string) => {
     setExpandedItems(prev => {
@@ -211,9 +294,9 @@ export function InventoryTable({
           type="number"
           value={editingStock.value}
           onChange={(e) => setEditingStock({ ...editingStock, value: e.target.value })}
-          onBlur={handleStockSave}
+          onBlur={() => { handleStockSave().catch((err) => console.error('Failed to save stock:', err)) }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') handleStockSave()
+            if (e.key === 'Enter') handleStockSave().catch((err) => console.error('Failed to save stock:', err))
             if (e.key === 'Escape') setEditingStock(null)
           }}
           placeholder="Unlimited"
@@ -263,6 +346,10 @@ export function InventoryTable({
     )
   }
 
+  const bulkDeleteMessage = bulkDeleteProgress
+    ? `Deleting ${bulkDeleteProgress.current} of ${bulkDeleteProgress.total}...`
+    : `Are you sure you want to delete ${activeSelectedCount} selected item${activeSelectedCount === 1 ? '' : 's'}? This action cannot be undone.`
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -291,7 +378,27 @@ export function InventoryTable({
             <option value="sold_out">Sold Out</option>
             <option value="deleted">Deleted</option>
           </select>
+
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+          >
+            <option value="all">All Categories</option>
+            {categories.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
         </div>
+
+        {activeSelectedCount > 0 && (
+          <button
+            onClick={() => setShowBulkDeleteDialog(true)}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+          >
+            Delete Selected ({activeSelectedCount})
+          </button>
+        )}
       </div>
 
       {/* Results count */}
@@ -305,6 +412,14 @@ export function InventoryTable({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
+                <th className="w-10 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+                  />
+                </th>
                 <th className="w-8 px-3 py-3"></th>
                 <th className="text-left px-3 py-3 font-medium">
                   <SortButton field="title">Item</SortButton>
@@ -341,6 +456,7 @@ export function InventoryTable({
                         className="bg-gray-50 dark:bg-gray-800/30"
                       >
                         <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2"></td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-3 pl-6">
                             {combo.imageUrl ? (
@@ -375,6 +491,14 @@ export function InventoryTable({
                 return (
                   <React.Fragment key={item.id}>
                     <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.has(item.id)}
+                          onChange={() => toggleSelectItem(item.id)}
+                          className="rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+                        />
+                      </td>
                       <td className="px-3 py-3">
                         {hasVariants && (
                           <button
@@ -474,7 +598,7 @@ export function InventoryTable({
         </div>
       </div>
 
-      {/* Delete Confirmation */}
+      {/* Single Delete Confirmation */}
       <ConfirmDialog
         isOpen={deleteItemId !== null}
         onClose={() => setDeleteItemId(null)}
@@ -482,6 +606,18 @@ export function InventoryTable({
         title="Delete Item"
         message="Are you sure you want to delete this item? This action cannot be undone."
         confirmText="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+      />
+
+      {/* Bulk Delete Confirmation */}
+      <ConfirmDialog
+        isOpen={showBulkDeleteDialog}
+        onClose={() => setShowBulkDeleteDialog(false)}
+        onConfirm={() => { handleBulkDelete().catch((err) => console.error('Bulk delete failed:', err)) }}
+        title="Delete Selected Items"
+        message={bulkDeleteMessage}
+        confirmText={bulkDeleteProgress ? `Deleting ${bulkDeleteProgress.current}/${bulkDeleteProgress.total}...` : `Delete ${activeSelectedCount} Items`}
         variant="danger"
         isLoading={isDeleting}
       />
