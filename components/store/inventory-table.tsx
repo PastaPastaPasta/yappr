@@ -210,7 +210,7 @@ export function InventoryTable({
           type="number"
           value={editingStock.value}
           onChange={(e) => setEditingStock({ ...editingStock, value: e.target.value })}
-          onBlur={handleStockSave}
+          onBlur={() => { handleStockSave().catch((err) => console.error('Failed to save stock:', err)) }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleStockSave().catch((err) => console.error('Failed to save stock:', err))
             if (e.key === 'Escape') setEditingStock(null)
