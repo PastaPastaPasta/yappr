@@ -108,7 +108,7 @@ export function Sidebar() {
       }
     }
 
-    fetchDisplayName()
+    fetchDisplayName().catch((err) => console.error('Failed to fetch display name:', err))
 
     return () => {
       mounted = false
@@ -168,7 +168,7 @@ export function Sidebar() {
       }
     }
 
-    fetchAndSchedule(true)
+    fetchAndSchedule(true).catch((err) => console.error('Notification fetch failed:', err))
 
     return () => {
       cancelled = true

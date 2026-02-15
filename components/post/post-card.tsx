@@ -128,15 +128,13 @@ interface PostCardProps {
   isOwnPost?: boolean
   /** Progressive enrichment data - use this when available for faster rendering */
   enrichment?: ProgressiveEnrichment
-  /** Hide the "Replying to" annotation (used on post detail pages where structure makes it clear) */
-  hideReplyTo?: boolean
   /** For replies to private posts, the root post owner ID to check access against */
   rootPostOwnerId?: string
   /** Callback when post is successfully deleted - parent component should remove post from list */
   onDelete?: (postId: string) => void
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, hideReplyTo = false, rootPostOwnerId, onDelete }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, rootPostOwnerId, onDelete }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()

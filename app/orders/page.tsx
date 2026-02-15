@@ -178,7 +178,7 @@ function OrdersPage() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && orders.length > 0) {
-        refreshStatuses(orders)
+        refreshStatuses(orders).catch((err) => console.error('Failed to refresh order statuses:', err))
       }
     }
 

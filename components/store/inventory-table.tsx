@@ -11,7 +11,6 @@ import {
   ArrowsUpDownIcon,
   CubeIcon
 } from '@heroicons/react/24/outline'
-import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils/format'
 import { storeItemService } from '@/lib/services/store-item-service'
@@ -213,7 +212,7 @@ export function InventoryTable({
           onChange={(e) => setEditingStock({ ...editingStock, value: e.target.value })}
           onBlur={handleStockSave}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') handleStockSave()
+            if (e.key === 'Enter') handleStockSave().catch((err) => console.error('Failed to save stock:', err))
             if (e.key === 'Escape') setEditingStock(null)
           }}
           placeholder="Unlimited"
