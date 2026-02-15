@@ -7,7 +7,7 @@
  * - Standard CSV parsing with proper escaping handling
  */
 
-import type { StoreItem, ItemVariants, VariantAxis, VariantCombination } from '../types'
+import type { ItemVariants, VariantAxis, VariantCombination } from '../types'
 
 // CSV column mapping to internal field names
 export interface InventoryCSVColumns {

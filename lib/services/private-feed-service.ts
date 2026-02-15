@@ -35,9 +35,6 @@ import { paginateFetchAll } from './pagination-utils';
 import { identityService } from './identity-service';
 import { parsePublicKeyData } from '../crypto/key-validation';
 
-// Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
-const MAX_PLAINTEXT_SIZE = 999;
-
 /**
  * PrivateFeedState document from platform
  */

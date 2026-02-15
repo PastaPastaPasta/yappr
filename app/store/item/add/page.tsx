@@ -109,7 +109,7 @@ function AddItemPage() {
       }
     }
 
-    loadItem()
+    loadItem().catch((err) => console.error('Failed to load item:', err))
   }, [sdkReady, isEditMode, itemId])
 
   // Generate all combinations from axes

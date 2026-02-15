@@ -126,7 +126,7 @@ export function EncryptionKeyModal() {
   // Trigger auto-recovery when modal opens
   useEffect(() => {
     if (isOpen && user && autoRecoveryStatus === 'idle') {
-      attemptAutoRecovery()
+      attemptAutoRecovery().catch((err) => console.error('Auto-recovery failed:', err))
     }
   }, [isOpen, user, autoRecoveryStatus, attemptAutoRecovery])
 

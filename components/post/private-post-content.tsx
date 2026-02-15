@@ -603,7 +603,7 @@ export function PrivatePostContent({
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  cancelRequest()
+                  cancelRequest().catch((err) => console.error('Failed to cancel request:', err))
                   setShowCancelOption(false)
                 }}
                 disabled={isRequestProcessing}
@@ -652,7 +652,7 @@ export function PrivatePostContent({
         <button
           onClick={(e) => {
             e.stopPropagation()
-            requestAccess()
+            requestAccess().catch((err) => console.error('Failed to request access:', err))
           }}
           className="px-3 py-1 bg-yappr-500 hover:bg-yappr-600 text-white rounded-full text-xs font-medium transition-colors"
         >

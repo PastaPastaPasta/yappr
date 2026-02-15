@@ -89,7 +89,7 @@ function CreateStorePage() {
       }
     }
 
-    loadStore()
+    loadStore().catch((err) => console.error('Failed to load store:', err))
   }, [sdkReady, isEditMode, storeId, user?.identityId])
 
   const handleSubmit = async (e: React.FormEvent) => {
