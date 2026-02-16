@@ -771,12 +771,12 @@ export function ComposeModal() {
             break
           }
         } else {
-          // Check if this is a timeout error - might have actually succeeded
+          // Check if this is a timeout error - the state-transition-service already
+          // tried to verify on Platform. If we still get here, it couldn't confirm.
+          // Retrying is safe — idempotency checks will prevent double-posting.
           if (isTimeoutError(result.error)) {
-            console.warn(`Post ${i + 1} timed out - may have succeeded. Continuing...`)
+            console.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
             timeoutPosts.push({ index: i, threadPostId })
-            // Continue with last known good previousPostId for subsequent posts
-            // Timed-out posts are kept for retry - user can press Post again
             continue
           }
 

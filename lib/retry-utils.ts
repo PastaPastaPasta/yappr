@@ -131,7 +131,9 @@ export async function retryPostCreation<T>(
     maxDelayMs: 8000,
     backoffMultiplier: 2,
     retryCondition: (error) => {
-      // Use default retry condition plus Dash Platform specific errors
+      // defaultRetryCondition covers network/timeout errors — these are safe to retry
+      // because state-transition-service.createDocument() performs idempotency checks
+      // before each attempt (verifies on Platform + checks pending store).
       if (defaultRetryCondition(error)) return true
 
       const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
