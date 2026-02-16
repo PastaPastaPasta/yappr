@@ -4,6 +4,14 @@ import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
+import { extractErrorMessage, isTimeoutError, isAlreadyExistsError } from '../error-utils';
+import {
+  DocumentCreateTransition,
+  BatchedTransition,
+  BatchTransition,
+  StateTransition,
+  PrivateKey,
+} from '@dashevo/evo-sdk';
 
 export interface StateTransitionResult {
   success: boolean;
@@ -12,49 +20,80 @@ export interface StateTransitionResult {
   error?: string;
 }
 
+/** Key for localStorage ST cache */
+const ST_CACHE_PREFIX = 'yappr:pending-st:';
+
 /**
- * Extract a meaningful error message from any error type,
- * including WasmSdkError which has a complex structure.
+ * Save serialized state transition bytes for retry.
+ * Uses localStorage for persistence across page reloads.
  */
-function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
+function savePendingSTBytes(documentId: string, bytes: Uint8Array): void {
+  try {
+    const key = ST_CACHE_PREFIX + documentId;
+    // Store as base64
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    localStorage.setItem(key, base64);
+  } catch (err) {
+    console.warn('Failed to save pending ST bytes:', err);
   }
-  if (error && typeof error === 'object') {
-    // WasmSdkError has message, kind, code properties
-    const wasmError = error as {
-      message?: string | object;
-      kind?: string | number;
-      code?: number;
-      toString?: () => string
-    };
+}
 
-    // Log details for debugging
-    console.error('WasmSdkError details:', {
-      kind: wasmError.kind,
-      code: wasmError.code,
-      message: wasmError.message,
-      messageType: typeof wasmError.message
-    });
+/**
+ * Load previously saved state transition bytes.
+ */
+function loadPendingSTBytes(documentId: string): Uint8Array | null {
+  try {
+    const key = ST_CACHE_PREFIX + documentId;
+    const base64 = localStorage.getItem(key);
+    if (!base64) return null;
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return null;
+  }
+}
 
-    // Try to extract message
-    if (typeof wasmError.message === 'string') {
-      return wasmError.message;
-    }
-    if (wasmError.message && typeof wasmError.message === 'object') {
-      // Message might be a nested object - try to stringify it
-      return JSON.stringify(wasmError.message);
-    }
-    if (wasmError.toString && typeof wasmError.toString === 'function') {
-      const str = wasmError.toString();
-      if (str !== '[object Object]') {
-        return str;
+/**
+ * Clear saved state transition bytes after confirmation.
+ */
+function clearPendingSTBytes(documentId: string): void {
+  try {
+    localStorage.removeItem(ST_CACHE_PREFIX + documentId);
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Clean up old pending ST entries (older than 24h).
+ */
+function cleanupOldPendingSTs(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(ST_CACHE_PREFIX)) {
+        keys.push(key);
       }
     }
-    // Last resort: stringify the whole error
-    return JSON.stringify(error);
+    // Keep at most 50 entries — remove oldest if over limit
+    if (keys.length > 50) {
+      // Can't easily sort by age without metadata, just trim from the front
+      for (let i = 0; i < keys.length - 50; i++) {
+        localStorage.removeItem(keys[i]);
+      }
+    }
+  } catch {
+    // Ignore
   }
-  return String(error);
 }
 
 class StateTransitionService {
@@ -79,14 +118,6 @@ class StateTransitionService {
 
   /**
    * Find the WASM identity public key that matches the stored private key.
-   *
-   * This is critical for the typed API: we must use the key that matches our signer's private key.
-   * The signer only has one private key, so we find which identity key it corresponds to.
-   *
-   * @param privateKeyWif - The stored private key in WIF format
-   * @param wasmPublicKeys - The identity's WASM public keys
-   * @param requiredSecurityLevel - Maximum allowed security level (lower = more secure)
-   * @returns The matching WASM key or null if not found/not suitable
    */
   private findMatchingSigningKey(
     privateKeyWif: string,
@@ -95,10 +126,7 @@ class StateTransitionService {
   ): WasmIdentityPublicKey | null {
     const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
 
-    // Convert WASM keys to the format expected by findMatchingKeyIndex
     const keyInfos: IdentityPublicKeyInfo[] = wasmPublicKeys.map(key => {
-      // Get the raw data from the WASM key
-      // The data getter returns hex string, convert to Uint8Array
       const dataHex = key.data;
       const data = new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
 
@@ -111,7 +139,6 @@ class StateTransitionService {
       };
     });
 
-    // Find which key matches our private key
     const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
 
     if (!match) {
@@ -121,14 +148,11 @@ class StateTransitionService {
 
     console.log(`Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
 
-    // Check if the matched key is suitable for document operations
-    // Must be AUTHENTICATION purpose
     if (match.purpose !== KeyPurpose.AUTHENTICATION) {
       console.error(`Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
       return null;
     }
 
-    // Must be CRITICAL (1) or HIGH (2) - NOT MASTER (0) and not below required level
     if (match.securityLevel < SecurityLevel.CRITICAL) {
       console.error(`Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for document operations (only CRITICAL or HIGH)`);
       return null;
@@ -139,13 +163,49 @@ class StateTransitionService {
       return null;
     }
 
-    // Return the WASM key object for the matched key
     const wasmKey = wasmPublicKeys.find(k => k.keyId === match.keyId);
     return wasmKey || null;
   }
 
   /**
-   * Create a document using the the typed API
+   * Check if a document already exists on Platform by ID.
+   */
+  private async checkDocumentExists(
+    contractId: string,
+    documentType: string,
+    documentId: string
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const sdk = await getEvoSdk();
+      const doc = await sdk.documents.get(contractId, documentType, documentId);
+      if (doc) {
+        const json = typeof doc.toJSON === 'function' ? doc.toJSON() : doc;
+        return json as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Create a document with idempotent retry via ST byte caching.
+   *
+   * Instead of using sdk.documents.create() (which atomically builds,
+   * signs, broadcasts, and waits — bumping the nonce each time), we:
+   *
+   * 1. Build the Document and wrap it in a DocumentCreateTransition
+   * 2. Bundle into a BatchTransition → StateTransition
+   * 3. Fetch the identity contract nonce from Platform and set it
+   * 4. Sign the StateTransition
+   * 5. Cache the signed ST bytes (localStorage)
+   * 6. Broadcast via sdk.wasm.broadcastStateTransition()
+   * 7. Wait via sdk.wasm.waitForResponse()
+   *
+   * On timeout/retry, we reload the cached bytes and rebroadcast the
+   * SAME signed ST. Platform either accepts it (first broadcast) or
+   * recognizes it's already processed (replay). No new nonce = no
+   * double post, enforced at the protocol level.
    */
   async createDocument(
     contractId: string,
@@ -155,65 +215,192 @@ class StateTransitionService {
   ): Promise<StateTransitionResult> {
     try {
       const sdk = await getEvoSdk();
-      const privateKey = await this.getPrivateKey(ownerId);
+      const wasm = sdk.wasm;
+      const privateKeyWif = await this.getPrivateKey(ownerId);
 
       console.log(`Creating ${documentType} document with data:`, documentData);
-      console.log(`Contract ID: ${contractId}`);
-      console.log(`Owner ID: ${ownerId}`);
 
-      // Validate that the private key belongs to the identity and is suitable for document ops
+      // Validate signing key
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
       const wasmPublicKeys = identity.getPublicKeys();
-      console.log(`Identity has ${wasmPublicKeys.length} public keys`);
-
-      // Validate key matches and is suitable for document operations
-      const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
       console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Build the WASM Document object for creation
+      // Build the Document
       const document = await documentBuilderService.buildDocumentForCreate(
         contractId,
         documentType,
         ownerId,
         documentData
       );
-      console.log('Built document for creation');
+      const documentId = documentBuilderService.getDocumentId(document);
+      console.log(`Built document, ID: ${documentId}`);
 
-      // Create signer and identity key for the state transition
-      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
-        privateKey,
-        identityKey
+      // --- Check for a cached ST from a previous timed-out attempt ---
+      const cachedBytes = loadPendingSTBytes(documentId);
+      if (cachedBytes) {
+        console.log(`Found cached ST bytes for ${documentId} — checking Platform...`);
+
+        // First check if it already landed
+        const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
+        if (existingDoc) {
+          console.log(`Document ${documentId} already confirmed on Platform`);
+          clearPendingSTBytes(documentId);
+          return { success: true, transactionHash: documentId, document: existingDoc };
+        }
+
+        // Not confirmed yet — rebroadcast the same ST
+        console.log(`Rebroadcasting cached ST for ${documentId}...`);
+        try {
+          const cachedST = StateTransition.fromBytes(cachedBytes);
+          await wasm.broadcastStateTransition(cachedST);
+          const result = await wasm.waitForResponse(cachedST);
+          console.log(`Rebroadcast succeeded for ${documentId}`, result);
+          clearPendingSTBytes(documentId);
+          return {
+            success: true,
+            transactionHash: documentId,
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+          };
+        } catch (rebroadcastErr) {
+          if (isAlreadyExistsError(rebroadcastErr)) {
+            // Already processed — confirm on Platform
+            const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+            if (doc) {
+              clearPendingSTBytes(documentId);
+              return { success: true, transactionHash: documentId, document: doc };
+            }
+          }
+          if (isTimeoutError(rebroadcastErr)) {
+            // Still timing out — check Platform one more time
+            const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+            if (doc) {
+              clearPendingSTBytes(documentId);
+              return { success: true, transactionHash: documentId, document: doc };
+            }
+          }
+          // Genuine failure on rebroadcast — clear cache and fall through to create fresh
+          console.warn('Rebroadcast failed, will create fresh ST:', extractErrorMessage(rebroadcastErr));
+          clearPendingSTBytes(documentId);
+        }
+      }
+
+      // --- Check if document already on Platform (e.g., from a previous session) ---
+      const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
+      if (existingDoc) {
+        console.log(`Document ${documentId} already exists on Platform — skipping creation`);
+        return { success: true, transactionHash: documentId, document: existingDoc };
+      }
+
+      // --- Build the StateTransition manually ---
+
+      // Fetch current identity contract nonce from Platform
+      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
+      const newNonce = (currentNonce ?? BigInt(0)) + BigInt(1);
+      console.log(`Nonce: current=${currentNonce}, using=${newNonce}`);
+
+      // Create DocumentCreateTransition from the Document
+      const createTransition = new DocumentCreateTransition(
+        document,
+        newNonce,
+        null,  // prefundedVotingBalance
+        null   // tokenPaymentInfo
       );
 
-      // Create document using the the typed API
-      await sdk.documents.create({
-        document,
-        identityKey: signingKey,
-        signer
-      });
+      // Wrap in a BatchTransition
+      const docTransition = createTransition.toDocumentTransition();
+      const batched = new BatchedTransition(docTransition);
+      const batchTransition = BatchTransition.fromBatchedTransitions(
+        [batched],
+        ownerId,
+        0  // userFeeIncrease
+      );
 
-      console.log('Document creation submitted successfully');
+      // Convert to StateTransition for signing and broadcasting
+      const stateTransition = batchTransition.toStateTransition();
 
-      // Get the document ID from the built document
-      const documentId = documentBuilderService.getDocumentId(document);
+      // Set the identity contract nonce on the ST
+      stateTransition.setIdentityContractNonce(newNonce);
+
+      // Sign the state transition
+      const privateKey = PrivateKey.fromWIF(privateKeyWif);
+      stateTransition.sign(privateKey, identityKey);
+      console.log('StateTransition built and signed');
+
+      // Cache the signed ST bytes BEFORE broadcasting
+      const stBytes = stateTransition.toBytes();
+      if (stBytes instanceof Uint8Array) {
+        savePendingSTBytes(documentId, stBytes);
+      } else {
+        // toBytes() might return ArrayBuffer or similar
+        savePendingSTBytes(documentId, new Uint8Array(stBytes));
+      }
+      console.log(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
+
+      // Broadcast
+      try {
+        await wasm.broadcastStateTransition(stateTransition);
+        console.log('Broadcast succeeded, waiting for confirmation...');
+      } catch (broadcastErr) {
+        if (isAlreadyExistsError(broadcastErr)) {
+          // Race condition: another broadcast landed first
+          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+          if (doc) {
+            clearPendingSTBytes(documentId);
+            return { success: true, transactionHash: documentId, document: doc };
+          }
+        }
+        throw broadcastErr;
+      }
+
+      // Wait for confirmation
+      try {
+        await wasm.waitForResponse(stateTransition);
+        console.log(`Document ${documentId} confirmed`);
+        clearPendingSTBytes(documentId);
+      } catch (waitErr) {
+        if (isTimeoutError(waitErr)) {
+          console.warn(`waitForResponse timed out for ${documentId} — ST bytes cached for retry`);
+          // Check Platform in case it landed despite timeout
+          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+          if (doc) {
+            clearPendingSTBytes(documentId);
+            return { success: true, transactionHash: documentId, document: doc };
+          }
+          // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
+          // since broadcast succeeded and the ST is valid
+          return {
+            success: true,
+            transactionHash: documentId,
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+          };
+        }
+        if (isAlreadyExistsError(waitErr)) {
+          clearPendingSTBytes(documentId);
+          return {
+            success: true,
+            transactionHash: documentId,
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+          };
+        }
+        throw waitErr;
+      }
+
+      // Cleanup old entries periodically
+      cleanupOldPendingSTs();
 
       return {
         success: true,
         transactionHash: documentId,
-        document: {
-          $id: documentId,
-          $ownerId: ownerId,
-          $type: documentType,
-          ...documentData
-        }
+        document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
       };
     } catch (error) {
       console.error('Error creating document:', error);
@@ -225,7 +412,7 @@ class StateTransitionService {
   }
 
   /**
-   * Update a document using the the typed API API
+   * Update a document using the typed API
    */
   async updateDocument(
     contractId: string,
@@ -241,14 +428,12 @@ class StateTransitionService {
 
       console.log(`Updating ${documentType} document ${documentId}...`);
 
-      // Validate that the private key belongs to the identity
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
       const wasmPublicKeys = identity.getPublicKeys();
-
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
@@ -256,10 +441,7 @@ class StateTransitionService {
 
       console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // The new revision should be current revision + 1
       const newRevision = revision + 1;
-
-      // Build the WASM Document object for replacement
       const document = await documentBuilderService.buildDocumentForReplace(
         contractId,
         documentType,
@@ -270,19 +452,12 @@ class StateTransitionService {
       );
       console.log('Built document for replacement');
 
-      // Create signer and identity key for the state transition
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
         identityKey
       );
 
-      // Replace document using the the typed API
-      await sdk.documents.replace({
-        document,
-        identityKey: signingKey,
-        signer
-      });
-
+      await sdk.documents.replace({ document, identityKey: signingKey, signer });
       console.log('Document update submitted successfully');
 
       return {
@@ -306,7 +481,7 @@ class StateTransitionService {
   }
 
   /**
-   * Delete a document using the the typed API API
+   * Delete a document using the typed API
    */
   async deleteDocument(
     contractId: string,
@@ -320,14 +495,12 @@ class StateTransitionService {
 
       console.log(`Deleting ${documentType} document ${documentId}...`);
 
-      // Validate that the private key belongs to the identity
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
 
       const wasmPublicKeys = identity.getPublicKeys();
-
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
@@ -335,7 +508,6 @@ class StateTransitionService {
 
       console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Build document identifier object for deletion
       const documentForDelete = documentBuilderService.buildDocumentForDelete(
         contractId,
         documentType,
@@ -344,19 +516,12 @@ class StateTransitionService {
       );
       console.log('Built document identifier for deletion');
 
-      // Create signer and identity key for the state transition
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
         identityKey
       );
 
-      // Delete document using the the typed API
-      await sdk.documents.delete({
-        document: documentForDelete,
-        identityKey: signingKey,
-        signer
-      });
-
+      await sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
       console.log('Document deletion submitted successfully');
 
       return {
@@ -382,8 +547,6 @@ class StateTransitionService {
       onProgress?: (attempt: number, elapsed: number) => void
     } = {}
   ): Promise<{ success: boolean; result?: unknown; error?: string }> {
-    // Note: maxWaitTimeMs and onProgress are available for future use but currently
-    // we use a fixed short timeout due to known DAPI gateway issues
     void options;
 
     try {
@@ -391,35 +554,25 @@ class StateTransitionService {
 
       console.log(`Waiting for transaction confirmation: ${transactionHash}`);
 
-      // Try wait_for_state_transition_result once with a short timeout
       try {
-        // Create a timeout promise
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Wait timeout')), 8000); // 8 second timeout
+          setTimeout(() => reject(new Error('Wait timeout')), 8000);
         });
 
-        // Race the wait call against the timeout
-        // Use sdk.wasm to get the underlying WasmSdk for the method call
         const result = await Promise.race([
           sdk.wasm.waitForStateTransitionResult(transactionHash),
           timeoutPromise
         ]);
 
         if (result) {
-          console.log('Transaction confirmed via wait_for_state_transition_result:', result);
+          console.log('Transaction confirmed:', result);
           return { success: true, result };
         }
       } catch (waitError) {
-        // This is expected to timeout frequently due to DAPI gateway issues
-        console.log('wait_for_state_transition_result timed out (expected):', waitError);
+        console.log('waitForStateTransitionResult timed out (expected):', waitError);
       }
 
-      // Since wait_for_state_transition_result often times out even for successful transactions,
-      // we'll assume success if the transaction was broadcast successfully
-      // This is a workaround for the known DAPI gateway timeout issue
       console.log('Transaction broadcast successfully. Assuming confirmation due to known DAPI timeout issue.');
-      console.log('Note: The transaction is likely confirmed on the network despite the timeout.');
-
       return {
         success: true,
         result: {
@@ -428,7 +581,6 @@ class StateTransitionService {
           transactionHash
         }
       };
-
     } catch (error) {
       console.error('Error waiting for confirmation:', error);
       return {

@@ -51,6 +51,34 @@ export function isTimeoutError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error indicates the state transition already exists
+ * (in mempool, in chain, or nonce already used). These errors mean
+ * the broadcast likely succeeded even though we didn't get confirmation.
+ */
+export function isAlreadyExistsError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('already in mempool') ||
+    msg.includes('already in chain') ||
+    msg.includes('nonce already present') ||
+    msg.includes('already exists')
+  )
+}
+
+/**
+ * Checks if an error is related to identity contract nonce issues.
+ */
+export function isNonceError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('nonce already present') ||
+    msg.includes('nonce too far') ||
+    msg.includes('invalid identity nonce') ||
+    msg.includes('invalididentitynonceerror')
+  )
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
