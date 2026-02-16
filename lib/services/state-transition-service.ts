@@ -113,11 +113,17 @@ function cleanupOldPendingSTs(): void {
   try {
     const now = Date.now();
     const entries: { key: string; cachedAt: number }[] = [];
+    const keysToRemove: string[] = [];
 
+    // Collect all ST cache keys first to avoid index-shifting bugs
+    // when calling removeItem() during index-based iteration.
+    const allKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key?.startsWith(ST_CACHE_PREFIX)) continue;
+      if (key?.startsWith(ST_CACHE_PREFIX)) allKeys.push(key);
+    }
 
+    for (const key of allKeys) {
       const raw = localStorage.getItem(key);
       if (!raw) continue;
 
@@ -132,11 +138,15 @@ function cleanupOldPendingSTs(): void {
 
       // Evict entries older than 24h (or legacy entries without timestamp)
       if (cachedAt === 0 || now - cachedAt > ST_CACHE_MAX_AGE_MS) {
-        localStorage.removeItem(key);
+        keysToRemove.push(key);
         continue;
       }
 
       entries.push({ key, cachedAt });
+    }
+
+    for (const key of keysToRemove) {
+      localStorage.removeItem(key);
     }
 
     // If still over the hard cap, remove oldest first
