@@ -66,19 +66,6 @@ export function isAlreadyExistsError(error: unknown): boolean {
 }
 
 /**
- * Checks if an error is related to identity contract nonce issues.
- */
-export function isNonceError(error: unknown): boolean {
-  const msg = extractErrorMessage(error).toLowerCase()
-  return (
-    msg.includes('nonce already present') ||
-    msg.includes('nonce too far') ||
-    msg.includes('invalid identity nonce') ||
-    msg.includes('invalididentitynonceerror')
-  )
-}
-
-/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {

@@ -11,6 +11,7 @@ import {
   BatchTransition,
   StateTransition,
   PrivateKey,
+  Identifier,
 } from '@dashevo/evo-sdk';
 
 export interface StateTransitionResult {
@@ -23,6 +24,19 @@ export interface StateTransitionResult {
 /** Key for localStorage ST cache */
 const ST_CACHE_PREFIX = 'yappr:pending-st:';
 
+/** Max age for cached ST entries (24 hours in ms) */
+const ST_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Hard cap on cached entries as a safety net */
+const ST_CACHE_MAX_ENTRIES = 50;
+
+interface CachedSTEntry {
+  /** Base64-encoded ST bytes */
+  data: string;
+  /** Timestamp when cached (ms since epoch) */
+  cachedAt: number;
+}
+
 /**
  * Save serialized state transition bytes for retry.
  * Uses localStorage for persistence across page reloads.
@@ -30,13 +44,16 @@ const ST_CACHE_PREFIX = 'yappr:pending-st:';
 function savePendingSTBytes(documentId: string, bytes: Uint8Array): void {
   try {
     const key = ST_CACHE_PREFIX + documentId;
-    // Store as base64
+    // Store as base64 with timestamp
     let binary = '';
     for (let i = 0; i < bytes.length; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
-    const base64 = btoa(binary);
-    localStorage.setItem(key, base64);
+    const entry: CachedSTEntry = {
+      data: btoa(binary),
+      cachedAt: Date.now(),
+    };
+    localStorage.setItem(key, JSON.stringify(entry));
   } catch (err) {
     console.warn('Failed to save pending ST bytes:', err);
   }
@@ -48,8 +65,24 @@ function savePendingSTBytes(documentId: string, bytes: Uint8Array): void {
 function loadPendingSTBytes(documentId: string): Uint8Array | null {
   try {
     const key = ST_CACHE_PREFIX + documentId;
-    const base64 = localStorage.getItem(key);
-    if (!base64) return null;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+
+    // Support both legacy (plain base64) and new (JSON with timestamp) formats
+    let base64: string;
+    try {
+      const parsed = JSON.parse(raw) as CachedSTEntry;
+      // Check if entry is expired
+      if (parsed.cachedAt && Date.now() - parsed.cachedAt > ST_CACHE_MAX_AGE_MS) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      base64 = parsed.data;
+    } catch {
+      // Legacy format: plain base64 string
+      base64 = raw;
+    }
+
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -73,22 +106,44 @@ function clearPendingSTBytes(documentId: string): void {
 }
 
 /**
- * Clean up old pending ST entries (older than 24h).
+ * Clean up old pending ST entries older than 24 hours,
+ * and enforce a hard cap of ST_CACHE_MAX_ENTRIES.
  */
 function cleanupOldPendingSTs(): void {
   try {
-    const keys: string[] = [];
+    const now = Date.now();
+    const entries: { key: string; cachedAt: number }[] = [];
+
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(ST_CACHE_PREFIX)) {
-        keys.push(key);
+      if (!key?.startsWith(ST_CACHE_PREFIX)) continue;
+
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+
+      let cachedAt = 0;
+      try {
+        const parsed = JSON.parse(raw) as CachedSTEntry;
+        cachedAt = parsed.cachedAt ?? 0;
+      } catch {
+        // Legacy entry without timestamp — treat as expired
+        cachedAt = 0;
       }
+
+      // Evict entries older than 24h (or legacy entries without timestamp)
+      if (cachedAt === 0 || now - cachedAt > ST_CACHE_MAX_AGE_MS) {
+        localStorage.removeItem(key);
+        continue;
+      }
+
+      entries.push({ key, cachedAt });
     }
-    // Keep at most 50 entries — remove oldest if over limit
-    if (keys.length > 50) {
-      // Can't easily sort by age without metadata, just trim from the front
-      for (let i = 0; i < keys.length - 50; i++) {
-        localStorage.removeItem(keys[i]);
+
+    // If still over the hard cap, remove oldest first
+    if (entries.length > ST_CACHE_MAX_ENTRIES) {
+      entries.sort((a, b) => a.cachedAt - b.cachedAt);
+      for (let i = 0; i < entries.length - ST_CACHE_MAX_ENTRIES; i++) {
+        localStorage.removeItem(entries[i].key);
       }
     }
   } catch {
@@ -169,22 +224,30 @@ class StateTransitionService {
 
   /**
    * Check if a document already exists on Platform by ID.
+   * Returns the document if found, null if not found.
+   * Throws on network/transport errors so callers can handle them.
    */
   private async checkDocumentExists(
     contractId: string,
     documentType: string,
     documentId: string
   ): Promise<Record<string, unknown> | null> {
+    const sdk = await getEvoSdk();
     try {
-      const sdk = await getEvoSdk();
       const doc = await sdk.documents.get(contractId, documentType, documentId);
       if (doc) {
         const json = typeof doc.toJSON === 'function' ? doc.toJSON() : doc;
         return json as Record<string, unknown>;
       }
       return null;
-    } catch {
-      return null;
+    } catch (err) {
+      // If the error indicates the document was not found, return null.
+      // Otherwise, let network/transport errors propagate.
+      const msg = extractErrorMessage(err).toLowerCase();
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('no document')) {
+        return null;
+      }
+      throw err;
     }
   }
 
@@ -265,6 +328,7 @@ class StateTransitionService {
           const result = await wasm.waitForResponse(cachedST);
           console.log(`Rebroadcast succeeded for ${documentId}`, result);
           clearPendingSTBytes(documentId);
+          try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
             success: true,
             transactionHash: documentId,
@@ -303,9 +367,14 @@ class StateTransitionService {
       // --- Build the StateTransition manually ---
 
       // Fetch current identity contract nonce from Platform
+      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
+      // upper 24 bits = missing revision bitset. Only increment the sequence part.
+      const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
       const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
-      const newNonce = (currentNonce ?? BigInt(0)) + BigInt(1);
-      console.log(`Nonce: current=${currentNonce}, using=${newNonce}`);
+      const rawNonce = currentNonce ?? BigInt(0);
+      const sequenceNumber = rawNonce & SEQUENCE_MASK;
+      const newNonce = sequenceNumber + BigInt(1);
+      console.log(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
       // Create DocumentCreateTransition from the Document
       const createTransition = new DocumentCreateTransition(
@@ -366,6 +435,14 @@ class StateTransitionService {
         await wasm.waitForResponse(stateTransition);
         console.log(`Document ${documentId} confirmed`);
         clearPendingSTBytes(documentId);
+        // Refresh the SDK's internal nonce cache since we manually managed the nonce.
+        // Without this, subsequent operations using the high-level API (e.g. delete)
+        // would use a stale cached nonce.
+        try {
+          await wasm.refreshIdentityNonce(new Identifier(ownerId));
+        } catch (refreshErr) {
+          console.warn('Failed to refresh nonce cache:', refreshErr);
+        }
       } catch (waitErr) {
         if (isTimeoutError(waitErr)) {
           console.warn(`waitForResponse timed out for ${documentId} — ST bytes cached for retry`);
@@ -377,6 +454,7 @@ class StateTransitionService {
           }
           // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
           // since broadcast succeeded and the ST is valid
+          try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
             success: true,
             transactionHash: documentId,
@@ -385,6 +463,7 @@ class StateTransitionService {
         }
         if (isAlreadyExistsError(waitErr)) {
           clearPendingSTBytes(documentId);
+          try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
             success: true,
             transactionHash: documentId,
@@ -547,16 +626,17 @@ class StateTransitionService {
       onProgress?: (attempt: number, elapsed: number) => void
     } = {}
   ): Promise<{ success: boolean; result?: unknown; error?: string }> {
-    void options;
+    const { maxWaitTimeMs = 8000, onProgress } = options;
 
     try {
       const sdk = await getEvoSdk();
 
       console.log(`Waiting for transaction confirmation: ${transactionHash}`);
+      onProgress?.(1, 0);
 
       try {
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Wait timeout')), 8000);
+          setTimeout(() => reject(new Error('Wait timeout')), maxWaitTimeMs);
         });
 
         const result = await Promise.race([
