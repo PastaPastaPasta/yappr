@@ -89,8 +89,8 @@ export abstract class BaseDocumentService<T> {
         return null;
       }
 
-      // Document has toJSON method
-      const docData = typeof response.toJSON === 'function' ? response.toJSON() : response;
+      // Document has toJSON method — cast to Record for transformDocument
+      const docData = (typeof response.toJSON === 'function' ? response.toJSON() : response) as Record<string, unknown>;
       const transformed = this.transformDocument(docData);
 
       // Cache the result

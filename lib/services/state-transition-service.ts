@@ -14,6 +14,7 @@ import {
   Identifier,
 } from '@dashevo/evo-sdk';
 
+
 export interface StateTransitionResult {
   success: boolean;
   transactionHash?: string;
@@ -299,7 +300,7 @@ class StateTransitionService {
         throw new Error('Identity not found');
       }
 
-      const wasmPublicKeys = identity.getPublicKeys();
+      const wasmPublicKeys = identity.publicKeys;
       const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
@@ -334,8 +335,9 @@ class StateTransitionService {
         console.log(`Rebroadcasting cached ST for ${documentId}...`);
         try {
           const cachedST = StateTransition.fromBytes(cachedBytes);
-          await wasm.broadcastStateTransition(cachedST);
-          const result = await wasm.waitForResponse(cachedST);
+          // v3.1: Use StateTransitionsFacade instead of direct wasm access
+          await sdk.stateTransitions.broadcastStateTransition(cachedST);
+          const result = await sdk.stateTransitions.waitForResponse(cachedST);
           console.log(`Rebroadcast succeeded for ${documentId}`, result);
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
@@ -380,19 +382,18 @@ class StateTransitionService {
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
       // upper 24 bits = missing revision bitset. Only increment the sequence part.
       const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
+      // v3.1: getIdentityContractNonce returns bigint | undefined (was bigint | null)
       const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
       const rawNonce = currentNonce ?? BigInt(0);
       const sequenceNumber = rawNonce & SEQUENCE_MASK;
       const newNonce = sequenceNumber + BigInt(1);
       console.log(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
-      // Create DocumentCreateTransition from the Document
-      const createTransition = new DocumentCreateTransition(
+      // v3.1: DocumentCreateTransition takes an options object
+      const createTransition = new DocumentCreateTransition({
         document,
-        newNonce,
-        null,  // prefundedVotingBalance
-        null   // tokenPaymentInfo
-      );
+        identityContractNonce: newNonce,
+      });
 
       // Wrap in a BatchTransition
       const docTransition = createTransition.toDocumentTransition();
@@ -424,9 +425,9 @@ class StateTransitionService {
       }
       console.log(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
 
-      // Broadcast
+      // Broadcast via StateTransitionsFacade (v3.1)
       try {
-        await wasm.broadcastStateTransition(stateTransition);
+        await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         console.log('Broadcast succeeded, waiting for confirmation...');
       } catch (broadcastErr) {
         if (isAlreadyExistsError(broadcastErr)) {
@@ -440,9 +441,10 @@ class StateTransitionService {
         throw broadcastErr;
       }
 
-      // Wait for confirmation
+      // Wait for confirmation via StateTransitionsFacade (v3.1)
+      // SDK v3.1 returns typed StateTransitionProofResultType and auto-retries on deadline exceeded
       try {
-        await wasm.waitForResponse(stateTransition);
+        await sdk.stateTransitions.waitForResponse(stateTransition);
         console.log(`Document ${documentId} confirmed`);
         clearPendingSTBytes(documentId);
         // Refresh the SDK's internal nonce cache since we manually managed the nonce.
@@ -522,7 +524,7 @@ class StateTransitionService {
         throw new Error('Identity not found');
       }
 
-      const wasmPublicKeys = identity.getPublicKeys();
+      const wasmPublicKeys = identity.publicKeys;
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
@@ -589,7 +591,7 @@ class StateTransitionService {
         throw new Error('Identity not found');
       }
 
-      const wasmPublicKeys = identity.getPublicKeys();
+      const wasmPublicKeys = identity.publicKeys;
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys, SecurityLevel.HIGH);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
@@ -649,8 +651,9 @@ class StateTransitionService {
           setTimeout(() => reject(new Error('Wait timeout')), maxWaitTimeMs);
         });
 
+        // v3.1: Use StateTransitionsFacade instead of direct wasm access
         const result = await Promise.race([
-          sdk.wasm.waitForStateTransitionResult(transactionHash),
+          sdk.stateTransitions.waitForStateTransitionResult(transactionHash),
           timeoutPromise
         ]);
 

@@ -163,7 +163,7 @@ export async function validateKey(
   // Step 4: Find all candidate keys on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
   // Exclude disabled keys (check both camelCase and snake_case variants)
   const candidateKeys = identityData.publicKeys.filter(
-    (key) => key.purpose === purpose && key.type === 0 && !key.disabledAt && !key.disabled_at
+    (key) => key.purpose === purpose && key.type === 0 && !key.disabledAt
   )
 
   if (candidateKeys.length === 0) {
@@ -283,7 +283,7 @@ export async function validateKeyBytes(
   // Step 3: Find all candidate keys on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
   // Exclude disabled keys (check both camelCase and snake_case variants)
   const candidateKeys = identityData.publicKeys.filter(
-    (key) => key.purpose === purpose && key.type === 0 && !key.disabledAt && !key.disabled_at
+    (key) => key.purpose === purpose && key.type === 0 && !key.disabledAt
   )
 
   if (candidateKeys.length === 0) {

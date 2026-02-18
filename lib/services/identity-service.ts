@@ -16,14 +16,10 @@ export interface IdentityPublicKey {
   id: number;
   type: number;
   purpose: number;
-  securityLevel: number;              // Now required (normalized in getIdentity)
-  security_level?: number;            // SDK may return snake_case variant
+  securityLevel: number;              // Required (normalized in getIdentity)
   readOnly?: boolean;
-  read_only?: boolean;                // SDK may return snake_case variant
   disabledAt?: number;
-  disabled_at?: number;               // SDK may return snake_case variant
   contractBounds?: unknown;
-  contract_bounds?: unknown;          // SDK may return snake_case variant
   data: string | Uint8Array;
 }
 
@@ -73,15 +69,16 @@ class IdentityService {
       console.log('Public keys from identity:', identity.publicKeys);
 
       // Normalize public keys to ensure all fields are present
-      const rawPublicKeys = identity.publicKeys || identity.public_keys || [];
+      // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
+      const rawPublicKeys = identity.publicKeys || [];
       const normalizedPublicKeys: IdentityPublicKey[] = rawPublicKeys.map((key: IdentityPublicKey) => ({
         id: key.id,
         type: key.type,
         purpose: key.purpose,
-        securityLevel: key.securityLevel ?? key.security_level ?? 2, // Default to HIGH (2) if missing
-        readOnly: key.readOnly ?? key.read_only ?? false,
-        disabledAt: key.disabledAt ?? key.disabled_at,
-        contractBounds: key.contractBounds ?? key.contract_bounds,
+        securityLevel: key.securityLevel ?? 2, // Default to HIGH (2) if missing
+        readOnly: key.readOnly ?? false,
+        disabledAt: key.disabledAt,
+        contractBounds: key.contractBounds,
         data: key.data
       }));
 
@@ -118,11 +115,11 @@ class IdentityService {
 
       const sdk = await getEvoSdk();
 
-      // Fetch balance using EvoSDK facade (v3 SDK returns bigint | null)
+      // Fetch balance using EvoSDK facade (v3.1 SDK returns bigint | undefined)
       console.log(`Fetching balance for: ${identityId}`);
       const balanceResponse = await sdk.identities.balance(identityId);
 
-      // Convert bigint to number, handle null
+      // Convert bigint to number, handle undefined
       const confirmedBalance = balanceResponse ? Number(balanceResponse) : 0;
 
       console.log(`Balance for ${identityId}: ${confirmedBalance} credits`);
@@ -248,11 +245,12 @@ class IdentityService {
       }
 
       // Convert identity public keys to the format expected by findMatchingKeyIndex
+      // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
       const publicKeys = identity.publicKeys.map(key => ({
         id: key.id,
         type: key.type,
         purpose: key.purpose,
-        securityLevel: key.securityLevel ?? key.security_level ?? 0,
+        securityLevel: key.securityLevel ?? 0,
         data: typeof key.data === 'string'
           ? Uint8Array.from(atob(key.data), c => c.charCodeAt(0))
           : key.data as Uint8Array
@@ -326,7 +324,7 @@ class IdentityService {
       }
 
       // Check if encryption key already exists
-      const existingKey = identity.getPublicKeys().find(
+      const existingKey = identity.publicKeys.find(
         (key) => key.purpose === 'ENCRYPTION' && key.keyType === 'ECDSA_SECP256K1'
       );
       if (existingKey) {
@@ -334,7 +332,7 @@ class IdentityService {
       }
 
       // Get the next available key ID
-      const currentKeys = identity.getPublicKeys();
+      const currentKeys = identity.publicKeys;
       const maxKeyId = currentKeys.reduce((max, key) => Math.max(max, key.keyId), 0);
       const newKeyId = maxKeyId + 1;
 
@@ -354,16 +352,15 @@ class IdentityService {
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      const newKey = new wasm.IdentityPublicKeyInCreation(
-        newKeyId,           // id
-        'ENCRYPTION',       // purpose (string format works)
-        'MEDIUM',           // securityLevel (string format works)
-        'ECDSA_SECP256K1',  // keyType (string format works)
-        false,              // readOnly
-        publicKeyBytes,     // data as Uint8Array
-        null,               // signature (null for new keys)
-        null                // contractBounds (null = no contract binding)
-      );
+      // v3.1: IdentityPublicKeyInCreation takes an options object
+      const newKey = new wasm.IdentityPublicKeyInCreation({
+        keyId: newKeyId,
+        purpose: 'ENCRYPTION',
+        securityLevel: 'MEDIUM',
+        keyType: 'ECDSA_SECP256K1',
+        isReadOnly: false,
+        data: publicKeyBytes,
+      });
       console.log('IdentityPublicKeyInCreation created successfully');
 
       // Validate signing key has sufficient security level before calling SDK
@@ -481,7 +478,7 @@ class IdentityService {
       }
 
       // Check if transfer key already exists (purpose='TRANSFER')
-      const existingKey = identity.getPublicKeys().find(
+      const existingKey = identity.publicKeys.find(
         (key) => key.purpose === 'TRANSFER' && key.keyType === 'ECDSA_SECP256K1'
       );
       if (existingKey) {
@@ -489,7 +486,7 @@ class IdentityService {
       }
 
       // Get the next available key ID
-      const currentKeys = identity.getPublicKeys();
+      const currentKeys = identity.publicKeys;
       const maxKeyId = currentKeys.reduce((max, key) => Math.max(max, key.keyId), 0);
       const newKeyId = maxKeyId + 1;
 
@@ -505,16 +502,15 @@ class IdentityService {
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=TRANSFER, securityLevel=HIGH, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      const newKey = new wasm.IdentityPublicKeyInCreation(
-        newKeyId,           // id
-        'TRANSFER',         // purpose (string format works)
-        'HIGH',             // securityLevel (HIGH for transfer operations)
-        'ECDSA_SECP256K1',  // keyType (string format works)
-        false,              // readOnly
-        publicKeyBytes,     // data as Uint8Array
-        null,               // signature (null for new keys)
-        null                // contractBounds (null = no contract binding)
-      );
+      // v3.1: IdentityPublicKeyInCreation takes an options object
+      const newKey = new wasm.IdentityPublicKeyInCreation({
+        keyId: newKeyId,
+        purpose: 'TRANSFER',
+        securityLevel: 'HIGH',
+        keyType: 'ECDSA_SECP256K1',
+        isReadOnly: false,
+        data: publicKeyBytes,
+      });
       console.log('IdentityPublicKeyInCreation created successfully');
 
       // Validate signing key has sufficient security level before calling SDK
