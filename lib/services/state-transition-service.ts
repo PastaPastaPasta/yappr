@@ -273,8 +273,8 @@ class StateTransitionService {
    * 3. Fetch the identity contract nonce from Platform and set it
    * 4. Sign the StateTransition
    * 5. Cache the signed ST bytes (localStorage)
-   * 6. Broadcast via sdk.wasm.broadcastStateTransition()
-   * 7. Wait via sdk.wasm.waitForResponse()
+   * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
+   * 7. Wait via sdk.stateTransitions.waitForResponse()
    *
    * On timeout/retry, we reload the cached bytes and rebroadcast the
    * SAME signed ST. Platform either accepts it (first broadcast) or

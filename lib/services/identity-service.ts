@@ -263,8 +263,7 @@ class IdentityService {
         return { isValid: false, error: 'Private key does not match any key on this identity' };
       }
 
-      // For identity updates in SDK 3.0.0, we REQUIRE MASTER (0) security level
-      // The WASM SDK explicitly checks: key.security_level() == SecurityLevel::MASTER
+      // Identity modifications REQUIRE MASTER (0) security level
       // CRITICAL (1) and below are NOT sufficient for identity updates
       if (match.securityLevel !== 0) {
         const levelName = getSecurityLevelName(match.securityLevel);
@@ -340,14 +339,7 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
-      // Create IdentityPublicKeyInCreation using the constructor directly
-      // The constructor takes: (id, purpose, securityLevel, keyType, readOnly, data, signature, contractBounds)
-      // - purpose: can be number (1 = ENCRYPTION) or string ("ENCRYPTION")
-      // - securityLevel: can be number (3 = MEDIUM) or string ("MEDIUM")
-      // - keyType: can be number (0 = ECDSA_SECP256K1) or string ("ECDSA_SECP256K1")
-      // - data: must be Uint8Array (not base64 string)
-      // - signature: null for new keys
-      // - contractBounds: null or ContractBounds object
+      // Create IdentityPublicKeyInCreation using v3.1 options object
 
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
