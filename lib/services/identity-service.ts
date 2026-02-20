@@ -250,7 +250,7 @@ class IdentityService {
         id: key.id,
         type: key.type,
         purpose: key.purpose,
-        securityLevel: key.securityLevel ?? 0,
+        securityLevel: key.securityLevel,
         data: typeof key.data === 'string'
           ? Uint8Array.from(atob(key.data), c => c.charCodeAt(0))
           : key.data as Uint8Array
