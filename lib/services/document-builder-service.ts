@@ -180,7 +180,8 @@ class DocumentBuilderService {
     }
     // Fallback: try to get from JSON
     const json = document.toJSON();
-    return json.$id || '';
+    if (json.$id) return json.$id;
+    throw new Error('Unable to extract document ID from Document object');
   }
 }
 
