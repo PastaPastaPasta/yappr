@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, KeyIcon, ExclamationTriangleIcon, CheckCircleIcon, ClipboardIcon, EyeIcon, EyeSlashIcon, ShieldCheckIcon, CheckIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -20,7 +20,7 @@ interface AddEncryptionKeyModalProps {
   context?: EncryptionKeyContext
 }
 
-type Step = 'intro' | 'generate' | 'critical-key' | 'adding' | 'success' | 'error'
+type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'generate' | 'critical-key' | 'adding' | 'success' | 'error'
 
 /**
  * AddEncryptionKeyModal Component
@@ -88,7 +88,7 @@ export function AddEncryptionKeyModal({
   }
 
   const messages = contextMessages[context]
-  const [step, setStep] = useState<Step>('intro')
+  const [step, setStep] = useState<Step>('checking')
   const [privateKeyWif, setPrivateKeyWif] = useState<string>('')
   const [privateKeyBytes, setPrivateKeyBytes] = useState<Uint8Array | null>(null)
   const [showPrivateKey, setShowPrivateKey] = useState(false)
@@ -100,6 +100,118 @@ export function AddEncryptionKeyModal({
   const [showCriticalKey, setShowCriticalKey] = useState(false)
   const [isValidatingKey, setIsValidatingKey] = useState(false)
   const [keyValidationError, setKeyValidationError] = useState<string | null>(null)
+  // Enter-existing-key path
+  const [existingKeyInput, setExistingKeyInput] = useState('')
+  const [showExistingKeyInput, setShowExistingKeyInput] = useState(false)
+  const [existingKeyError, setExistingKeyError] = useState<string | null>(null)
+  const [isValidatingExistingKey, setIsValidatingExistingKey] = useState(false)
+  const [isEnterExistingPath, setIsEnterExistingPath] = useState(false)
+
+  // Track open state in a ref so async callbacks can bail out if the modal closes
+  // while a network call (validateDerivedKeyMatchesIdentity, validateEncryptionKey) is in flight.
+  const isOpenRef = useRef(isOpen)
+  useEffect(() => {
+    isOpenRef.current = isOpen
+  }, [isOpen])
+
+  // On modal open: check if user already has an encryption key on their identity.
+  // If so, redirect to the enter-existing path instead of the create-new path.
+  useEffect(() => {
+    if (!isOpen || !user) return
+    let cancelled = false
+    setStep('checking')
+    import('@/lib/services/identity-service').then(({ identityService }) =>
+      identityService.hasEncryptionKey(user.identityId)
+    ).then(hasKey => {
+      if (!cancelled) setStep(hasKey ? 'existing-key' : 'intro')
+    }).catch(() => {
+      // If check fails, default to the normal create flow
+      if (!cancelled) setStep('intro')
+    })
+    return () => { cancelled = true }
+  }, [isOpen, user])
+
+  // Attempt auto-derivation then fall back to manual entry for an existing on-chain key
+  const enterExistingKey = useCallback(async () => {
+    if (!user) return
+
+    setExistingKeyError(null)
+    setIsValidatingExistingKey(true)
+
+    try {
+      const { getPrivateKey } = await import('@/lib/secure-storage')
+      const authKeyWif = getPrivateKey(user.identityId)
+
+      if (authKeyWif) {
+        try {
+          const { parsePrivateKey, privateKeyToWif } = await import('@/lib/crypto/wif')
+          const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } = await import('@/lib/crypto/key-derivation')
+
+          const parsed = parsePrivateKey(authKeyWif)
+          const derivedKey = deriveEncryptionKey(parsed.privateKey, user.identityId)
+          const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId, 1)
+
+          // Modal may have been closed while the network call was in flight
+          if (!isOpenRef.current) return
+
+          if (matches) {
+            const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+            const derivedKeyWif = privateKeyToWif(derivedKey, network, true)
+            const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
+            storeEncryptionKey(user.identityId, derivedKeyWif)
+            storeEncryptionKeyType(user.identityId, 'derived')
+            setIsEnterExistingPath(true)
+            setIsValidatingExistingKey(false)
+            setStep('success')
+            if (onSuccess) onSuccess()
+            return
+          }
+        } catch (err) {
+          console.error('Auto-derivation failed, falling back to manual entry:', err)
+        }
+      }
+    } catch (err) {
+      console.error('Error in enterExistingKey:', err)
+    }
+
+    // Auto-derivation unavailable or failed — show manual entry form
+    setIsValidatingExistingKey(false)
+    setStep('enter-existing')
+  }, [user, onSuccess])
+
+  // Validate a manually entered existing key and store it
+  const validateAndStoreExistingKey = useCallback(async () => {
+    if (!user || !existingKeyInput.trim()) return
+
+    setIsValidatingExistingKey(true)
+    setExistingKeyError(null)
+
+    try {
+      const { validateEncryptionKey } = await import('@/lib/crypto/key-validation')
+      const validation = await validateEncryptionKey(existingKeyInput.trim(), user.identityId)
+
+      // Modal may have been closed while the network call was in flight
+      if (!isOpenRef.current) return
+
+      if (!validation.isValid) {
+        setExistingKeyError(validation.error || 'Invalid key')
+        setIsValidatingExistingKey(false)
+        return
+      }
+
+      const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
+      storeEncryptionKey(user.identityId, existingKeyInput.trim())
+      storeEncryptionKeyType(user.identityId, 'external')
+      setIsEnterExistingPath(true)
+      setIsValidatingExistingKey(false)
+      setStep('success')
+      if (onSuccess) onSuccess()
+    } catch (err) {
+      console.error('Error validating existing key:', err)
+      setExistingKeyError(err instanceof Error ? err.message : 'Failed to validate key')
+      setIsValidatingExistingKey(false)
+    }
+  }, [user, existingKeyInput, onSuccess])
 
   // Derive encryption key from auth key using HKDF
   const deriveKey = useCallback(async () => {
@@ -223,7 +335,7 @@ export function AddEncryptionKeyModal({
   // Handle close
   const handleClose = useCallback(() => {
     // Reset state
-    setStep('intro')
+    setStep('checking')
     setPrivateKeyWif('')
     setPrivateKeyBytes(null)
     setShowPrivateKey(false)
@@ -233,12 +345,169 @@ export function AddEncryptionKeyModal({
     setCriticalKeyWif('')
     setShowCriticalKey(false)
     setKeyValidationError(null)
+    setExistingKeyInput('')
+    setShowExistingKeyInput(false)
+    setExistingKeyError(null)
+    setIsValidatingExistingKey(false)
+    setIsEnterExistingPath(false)
     onClose()
   }, [onClose])
 
   // Render step content
   const renderStepContent = () => {
     switch (step) {
+      case 'checking':
+        return (
+          <>
+            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+              <KeyIcon className="h-6 w-6 text-yappr-500" />
+              Checking Identity...
+            </Dialog.Title>
+
+            <div className="flex flex-col items-center justify-center py-8">
+              <Spinner size="lg" className="mb-4" />
+              <p className="text-gray-600 dark:text-gray-400 text-center">
+                Checking your identity for an existing encryption key...
+              </p>
+            </div>
+          </>
+        )
+
+      case 'existing-key':
+        return (
+          <>
+            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+              <KeyIcon className="h-6 w-6 text-yappr-500" />
+              Encryption Key Already Set Up
+            </Dialog.Title>
+
+            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+              Your identity already has an encryption key registered on Dash Platform.
+            </Dialog.Description>
+
+            <div className="space-y-4 mb-6">
+              <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg">
+                <div className="flex gap-3">
+                  <ShieldCheckIcon className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                  <div className="text-sm text-blue-700 dark:text-blue-300">
+                    <p className="font-medium">Key found on your identity</p>
+                    <p className="mt-1">
+                      Enter your existing encryption key to restore access in this session.
+                      If your key was derived from your login key, it will be recovered automatically.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <Button onClick={enterExistingKey} className="w-full" disabled={isValidatingExistingKey}>
+                {isValidatingExistingKey ? (
+                  <>
+                    <Spinner size="xs" className="mr-2" />
+                    Recovering key...
+                  </>
+                ) : (
+                  <>
+                    <KeyIcon className="h-4 w-4 mr-2" />
+                    Enter Existing Key
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={() => setStep('intro')}
+                variant="outline"
+                className="w-full text-sm"
+                disabled={isValidatingExistingKey}
+              >
+                Create Replacement Key Instead
+              </Button>
+              <Button onClick={handleClose} variant="outline" className="w-full" disabled={isValidatingExistingKey}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        )
+
+      case 'enter-existing':
+        return (
+          <>
+            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+              <KeyIcon className="h-6 w-6 text-yappr-500" />
+              Enter Your Encryption Key
+            </Dialog.Title>
+
+            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+              Your encryption key could not be automatically recovered. Enter it manually below.
+            </Dialog.Description>
+
+            <div className="space-y-4 mb-6">
+              <div className="space-y-2">
+                <div className="text-sm font-medium flex items-center justify-between">
+                  <span>Encryption Key</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowExistingKeyInput(!showExistingKeyInput)}
+                    aria-label={showExistingKeyInput ? 'Hide encryption key' : 'Show encryption key'}
+                    title={showExistingKeyInput ? 'Hide encryption key' : 'Show encryption key'}
+                    className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1"
+                  >
+                    {showExistingKeyInput ? (
+                      <EyeSlashIcon className="h-4 w-4" />
+                    ) : (
+                      <EyeIcon className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <input
+                  type={showExistingKeyInput ? 'text' : 'password'}
+                  value={existingKeyInput}
+                  onChange={(e) => {
+                    setExistingKeyInput(e.target.value)
+                    setExistingKeyError(null)
+                  }}
+                  placeholder="WIF (cXyz...) or hex (64 chars)"
+                  className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                />
+                {existingKeyError && (
+                  <p className="text-sm text-red-600 dark:text-red-400">{existingKeyError}</p>
+                )}
+              </div>
+              <p className="text-xs text-gray-500">
+                Enter the WIF or hex format of your encryption key. This is the key associated with your identity on Dash Platform.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <Button
+                onClick={validateAndStoreExistingKey}
+                disabled={!existingKeyInput.trim() || isValidatingExistingKey}
+                className="w-full"
+              >
+                {isValidatingExistingKey ? (
+                  <>
+                    <Spinner size="xs" className="mr-2" />
+                    Validating...
+                  </>
+                ) : (
+                  <>
+                    <KeyIcon className="h-4 w-4 mr-2" />
+                    Save Key
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={() => setStep('existing-key')}
+                variant="outline"
+                className="w-full"
+                disabled={isValidatingExistingKey}
+              >
+                Back
+              </Button>
+            </div>
+          </>
+        )
+
       case 'intro':
         return (
           <>
@@ -504,7 +773,7 @@ export function AddEncryptionKeyModal({
           <>
             <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
               <CheckCircleIcon className="h-6 w-6 text-green-500" />
-              Encryption Key Added
+              {isEnterExistingPath ? 'Encryption Key Restored' : 'Encryption Key Added'}
             </Dialog.Title>
 
             <div className="space-y-4 mb-6">
@@ -513,7 +782,12 @@ export function AddEncryptionKeyModal({
                   <CheckCircleIcon className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
                   <div className="text-sm text-green-700 dark:text-green-300">
                     <p className="font-medium">Success!</p>
-                    <p>Your encryption key has been added to your identity and is now ready to use.</p>
+                    <p>
+                      {isEnterExistingPath
+                        ? 'Your encryption key has been saved for this session and is ready to use.'
+                        : 'Your encryption key has been added to your identity and is now ready to use.'
+                      }
+                    </p>
                   </div>
                 </div>
               </div>

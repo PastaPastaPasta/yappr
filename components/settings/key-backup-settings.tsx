@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
@@ -16,6 +16,7 @@ import { CloudArrowUpIcon, TrashIcon, ShieldCheckIcon, CheckCircleIcon, KeyIcon,
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
+import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 
 interface KeyInfo {
   hasKey: boolean
@@ -24,6 +25,7 @@ interface KeyInfo {
 
 export function KeyBackupSettings() {
   const { user } = useAuth()
+  const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasBackup, setHasBackup] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -31,6 +33,9 @@ export function KeyBackupSettings() {
   const [backupDate, setBackupDate] = useState<Date | null>(null)
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [encryptionKeyInfo, setEncryptionKeyInfo] = useState<KeyInfo>({ hasKey: false, type: null })
+  const [hasKeyOnIdentity, setHasKeyOnIdentity] = useState<boolean | null>(null)
+  // Run token: ensures only the latest invocation of checkBackupStatus updates state
+  const latestRunIdRef = useRef(0)
 
   const refreshEncryptionKeyInfo = useCallback(() => {
     if (!user) {
@@ -52,22 +57,41 @@ export function KeyBackupSettings() {
       return
     }
 
+    const runId = ++latestRunIdRef.current
+
     try {
       const configured = encryptedKeyService.isConfigured()
+      if (runId !== latestRunIdRef.current) return
       setIsConfigured(configured)
 
       if (configured) {
-        const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
-        setHasBackup(!!backup)
-        if (backup) {
-          setBackupDate(new Date(backup.$createdAt))
+        try {
+          const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
+          if (runId !== latestRunIdRef.current) return
+          setHasBackup(!!backup)
+          if (backup) {
+            setBackupDate(new Date(backup.$createdAt))
+          }
+        } catch (err) {
+          console.error('Error checking backup status:', err)
         }
       }
     } catch (error) {
-      console.error('Error checking backup status:', error)
-    } finally {
-      setIsLoading(false)
+      console.error('Error checking backup configuration:', error)
     }
+
+    // Check on-chain identity state for the encryption key (independent of session and backup)
+    try {
+      const { identityService } = await import('@/lib/services/identity-service')
+      const onChain = await identityService.hasEncryptionKey(user.identityId)
+      if (runId !== latestRunIdRef.current) return
+      setHasKeyOnIdentity(onChain)
+    } catch (err) {
+      console.error('Error checking on-chain encryption key status:', err)
+    }
+
+    if (runId !== latestRunIdRef.current) return
+    setIsLoading(false)
   }, [user])
 
   useEffect(() => {
@@ -209,6 +233,16 @@ export function KeyBackupSettings() {
                       Active
                     </span>
                   </>
+                ) : hasKeyOnIdentity ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => openEncryptionKeyModal('generic', refreshEncryptionKeyInfo)}
+                  >
+                    <KeyIcon className="h-3 w-3 mr-1" />
+                    Enter Key
+                  </Button>
                 ) : (
                   <Button
                     variant="outline"
