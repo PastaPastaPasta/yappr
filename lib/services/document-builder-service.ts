@@ -43,18 +43,15 @@ class DocumentBuilderService {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // Create document with revision 1 for new documents
-    // Document ID is undefined to let the SDK generate it based on entropy
-    // Note: TypeScript types are stricter than the actual WASM API - undefined is valid
-    // and causes the SDK to auto-generate the document ID from entropy
-    const document = new Document(
-      data,              // Document data fields
-      documentTypeName,  // Document type name
-      BigInt(1),         // Revision (must be BigInt, 1 for new documents)
-      contractId,        // Data contract ID
-      ownerId,           // Owner identity ID
-      undefined as unknown as string  // Document ID (undefined = auto-generated)
-    );
+    // v3.1: Document constructor takes a single DocumentOptions object
+    const document = new Document({
+      properties: data,
+      documentTypeName,
+      dataContractId: contractId,
+      ownerId,
+      revision: BigInt(1),
+      // id omitted = auto-generated from entropy
+    });
 
     return document;
   }
@@ -84,15 +81,15 @@ class DocumentBuilderService {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // Create document with the incremented revision
-    const document = new Document(
-      data,              // Updated document data fields
-      documentTypeName,  // Document type name
-      BigInt(newRevision), // New revision (must be BigInt)
-      contractId,        // Data contract ID
-      ownerId,           // Owner identity ID
-      documentId         // Existing document ID
-    );
+    // v3.1: Document constructor takes a single DocumentOptions object
+    const document = new Document({
+      properties: data,
+      documentTypeName,
+      dataContractId: contractId,
+      ownerId,
+      revision: BigInt(newRevision),
+      id: documentId,
+    });
 
     return document;
   }
@@ -183,7 +180,8 @@ class DocumentBuilderService {
     }
     // Fallback: try to get from JSON
     const json = document.toJSON();
-    return json.$id || json.id || '';
+    if (json.$id) return json.$id;
+    throw new Error('Unable to extract document ID from Document object');
   }
 }
 

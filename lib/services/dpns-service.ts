@@ -495,7 +495,7 @@ class DpnsService {
       }
 
       // Get WASM public keys to find the matching signing key
-      const wasmPublicKeys = identity.getPublicKeys();
+      const wasmPublicKeys = identity.publicKeys;
 
       // Find a signing key that matches the provided private key
       // DPNS operations require CRITICAL or HIGH security level

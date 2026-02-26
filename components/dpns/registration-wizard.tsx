@@ -42,7 +42,7 @@ function convertToKeyInfo(keys: IdentityPublicKey[]): IdentityPublicKeyInfo[] {
       id: key.id,
       type: key.type,
       purpose: key.purpose,
-      securityLevel: key.securityLevel ?? key.security_level ?? 0,
+      securityLevel: key.securityLevel,
       data,
     }
   })

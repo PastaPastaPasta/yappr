@@ -202,7 +202,7 @@ class TipService {
       }
 
       // Get WASM public keys and find the transfer key that matches the private key
-      const wasmPublicKeys = identity.getPublicKeys();
+      const wasmPublicKeys = identity.publicKeys;
       const transferKey = this.findMatchingTransferKey(transferKeyWif.trim(), wasmPublicKeys, keyId);
       if (!transferKey) {
         return {
@@ -227,13 +227,15 @@ class TipService {
       );
 
       console.log('Calling sdk.identities.creditTransfer...');
+      // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
+      // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
       const result = await sdk.identities.creditTransfer({
         identity,
         recipientId,
         amount: BigInt(amountCredits),
         signer,
         signingKey
-      });
+      } as Parameters<typeof sdk.identities.creditTransfer>[0]);
 
       // Clear sender's balance cache so it refreshes
       identityService.clearCache(senderId);
