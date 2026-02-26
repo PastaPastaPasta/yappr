@@ -369,6 +369,9 @@ class IdentityService {
       // Hash160(compressed_public_key) in the signer, so it must contain both:
       // 1. The master key (to authorize the identity update)
       // 2. The new key (to generate the key proof)
+      if (encryptionPrivateKey.length !== 32) {
+        return { success: false, error: `Invalid encryption private key: expected 32 bytes, got ${encryptionPrivateKey.length}` };
+      }
       const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
       const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
       const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
@@ -514,6 +517,9 @@ class IdentityService {
       // Hash160(compressed_public_key) in the signer, so it must contain both:
       // 1. The master key (to authorize the identity update)
       // 2. The new key (to generate the key proof)
+      if (transferPrivateKey.length !== 32) {
+        return { success: false, error: `Invalid transfer private key: expected 32 bytes, got ${transferPrivateKey.length}` };
+      }
       const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
       const transferKeyHex = Array.from(transferPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
       const transferPrivateKeyObj = PrivateKey.fromHex(transferKeyHex, network);
