@@ -388,18 +388,14 @@ export function LoginModal() {
                       )}
                     </div>
                   </div>
-                  {credential && detectedCredentialType && !(detectedCredentialType === 'key' && (keyValidationStatus === 'valid' || keyValidationStatus === 'invalid')) && (
+                  {credential && detectedCredentialType && !(detectedCredentialType === 'key' && resolvedIdentity) && (
                     <p className={`mt-1 text-sm ${
                       detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup
                         ? 'text-red-600 dark:text-red-400'
                         : 'text-gray-500 dark:text-gray-400'
                     }`}>
                       {detectedCredentialType === 'key' ? (
-                        !resolvedIdentity
-                          ? 'Detected as private key - waiting for identity...'
-                          : keyValidationStatus === 'validating'
-                          ? 'Validating key...'
-                          : 'Detected as private key'
+                        'Detected as private key - waiting for identity...'
                       ) : !resolvedIdentity ? (
                         credential.length < 16
                           ? `Detected as password (${credential.length}/16 characters) - waiting for identity...`
