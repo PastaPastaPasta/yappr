@@ -1,16 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-// WASM SDK imports with dynamic initialization
-import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
-
-let wasmInitialized = false;
-async function ensureWasmInitialized() {
-  if (!wasmInitialized) {
-    await initWasm();
-    wasmInitialized = true;
-  }
-  return wasmSdk;
-}
+import { IdentityPublicKeyInCreation } from '@dashevo/evo-sdk';
 
 export interface IdentityPublicKey {
   id: number;
@@ -316,9 +306,6 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Ensure WASM module is initialized
-      const wasm = await ensureWasmInitialized();
-
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -342,23 +329,16 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
-      // Create IdentityPublicKeyInCreation using the constructor directly
-      // The constructor takes: (id, purpose, securityLevel, keyType, readOnly, data, signature, contractBounds)
-      // - purpose: can be number (1 = ENCRYPTION) or string ("ENCRYPTION")
-      // - securityLevel: can be number (3 = MEDIUM) or string ("MEDIUM")
-      // - keyType: can be number (0 = ECDSA_SECP256K1) or string ("ECDSA_SECP256K1")
-      // - data: must be Uint8Array (not base64 string)
-      // - signature: null for new keys
-      // - contractBounds: null or ContractBounds object
-
+      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // so the WASM object shares the same linear memory as sdk.identities.update().
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      const newKey = new wasm.IdentityPublicKeyInCreation(
+      const newKey = new IdentityPublicKeyInCreation(
         newKeyId,           // id
-        'ENCRYPTION',       // purpose (string format works)
-        'MEDIUM',           // securityLevel (string format works)
-        'ECDSA_SECP256K1',  // keyType (string format works)
+        'ENCRYPTION',       // purpose
+        'MEDIUM',           // securityLevel
+        'ECDSA_SECP256K1',  // keyType
         false,              // readOnly
         publicKeyBytes,     // data as Uint8Array
         null,               // signature (null for new keys)
@@ -471,9 +451,6 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Ensure WASM module is initialized
-      const wasm = await ensureWasmInitialized();
-
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -497,19 +474,16 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(transferPrivateKey);
 
-      // Create IdentityPublicKeyInCreation
-      // Transfer keys use:
-      // - purpose: 'TRANSFER' (3)
-      // - securityLevel: 'HIGH' (2) - required for credit transfers
-      // - keyType: 'ECDSA_SECP256K1' (0)
+      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // so the WASM object shares the same linear memory as sdk.identities.update().
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=TRANSFER, securityLevel=HIGH, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      const newKey = new wasm.IdentityPublicKeyInCreation(
+      const newKey = new IdentityPublicKeyInCreation(
         newKeyId,           // id
-        'TRANSFER',         // purpose (string format works)
+        'TRANSFER',         // purpose
         'HIGH',             // securityLevel (HIGH for transfer operations)
-        'ECDSA_SECP256K1',  // keyType (string format works)
+        'ECDSA_SECP256K1',  // keyType
         false,              // readOnly
         publicKeyBytes,     // data as Uint8Array
         null,               // signature (null for new keys)
