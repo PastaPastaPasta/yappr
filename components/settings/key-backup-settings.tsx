@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
@@ -12,9 +12,10 @@ import {
 } from '@/lib/secure-storage'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { CloudArrowUpIcon, TrashIcon, ShieldCheckIcon, CheckCircleIcon, KeyIcon, LockClosedIcon } from '@heroicons/react/24/outline'
+import { CloudArrowUpIcon, TrashIcon, ShieldCheckIcon, CheckCircleIcon, KeyIcon, LockClosedIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 
 interface KeyInfo {
   hasKey: boolean
@@ -28,14 +29,22 @@ export function KeyBackupSettings() {
   const [isLoading, setIsLoading] = useState(true)
   const [isDeleting, setIsDeleting] = useState(false)
   const [backupDate, setBackupDate] = useState<Date | null>(null)
+  const [showAddKeyModal, setShowAddKeyModal] = useState(false)
+  const [encryptionKeyInfo, setEncryptionKeyInfo] = useState<KeyInfo>({ hasKey: false, type: null })
 
-  // Get local key status (memoized to re-compute when user changes)
-  const encryptionKeyInfo = useMemo<KeyInfo>(() => {
-    if (!user) return { hasKey: false, type: null }
+  const refreshEncryptionKeyInfo = useCallback(() => {
+    if (!user) {
+      setEncryptionKeyInfo({ hasKey: false, type: null })
+      return
+    }
     const key = getEncryptionKey(user.identityId)
     const type = getEncryptionKeyType(user.identityId)
-    return { hasKey: !!key, type }
+    setEncryptionKeyInfo({ hasKey: !!key, type })
   }, [user])
+
+  useEffect(() => {
+    refreshEncryptionKeyInfo()
+  }, [refreshEncryptionKeyInfo])
 
   const checkBackupStatus = useCallback(async () => {
     if (!user) {
@@ -201,9 +210,15 @@ export function KeyBackupSettings() {
                     </span>
                   </>
                 ) : (
-                  <span className="text-xs px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded">
-                    Not configured
-                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setShowAddKeyModal(true)}
+                  >
+                    <PlusIcon className="h-3 w-3 mr-1" />
+                    Set Up
+                  </Button>
                 )}
               </div>
             </div>
@@ -299,6 +314,16 @@ export function KeyBackupSettings() {
           </ul>
         </div>
       </CardContent>
+
+      <AddEncryptionKeyModal
+        isOpen={showAddKeyModal}
+        onClose={() => setShowAddKeyModal(false)}
+        onSuccess={() => {
+          setShowAddKeyModal(false)
+          refreshEncryptionKeyInfo()
+        }}
+        context="generic"
+      />
     </Card>
   )
 }
