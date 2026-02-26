@@ -388,27 +388,6 @@ export function LoginModal() {
                       )}
                     </div>
                   </div>
-                  {credential && detectedCredentialType && !(detectedCredentialType === 'key' && resolvedIdentity) && (
-                    <p className={`mt-1 text-sm ${
-                      detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-gray-500 dark:text-gray-400'
-                    }`}>
-                      {detectedCredentialType === 'key' ? (
-                        'Detected as private key - waiting for identity...'
-                      ) : !resolvedIdentity ? (
-                        credential.length < 16
-                          ? `Detected as password (${credential.length}/16 characters) - waiting for identity...`
-                          : 'Detected as password - waiting for identity...'
-                      ) : hasOnchainBackup ? (
-                        credential.length < 16
-                          ? `Password must be at least 16 characters (${credential.length}/16)`
-                          : 'Will use as backup password'
-                      ) : (
-                        'No backup found - please enter your private key'
-                      )}
-                    </p>
-                  )}
                   <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     🔒 Your keys never leave this device. All signing happens locally.
                   </p>
