@@ -1,6 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { IdentityPublicKeyInCreation } from '@dashevo/evo-sdk';
+import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
 
 export interface IdentityPublicKey {
   id: number;
@@ -360,8 +360,20 @@ class IdentityService {
       const identityJson = identity.toJSON();
       console.log('Identity revision before update:', identityJson.revision);
 
-      // Create signer for the identity update using the master key
+      // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
+
+      // Also add the NEW encryption key's private key to the signer.
+      // Dash Platform requires a "key proof" signature from each new key being added,
+      // proving ownership of the private key. The SDK looks up the private key by
+      // Hash160(compressed_public_key) in the signer, so it must contain both:
+      // 1. The master key (to authorize the identity update)
+      // 2. The new key (to generate the key proof)
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+      const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
+      signer.addKey(encryptionPrivateKeyObj);
+      console.log(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
 
       // Update the identity using typed API
       console.log('Calling sdk.identities.update...');
@@ -374,10 +386,8 @@ class IdentityService {
         console.log('sdk.identities.update completed successfully');
       } catch (updateError) {
         console.error('sdk.identities.update failed:', updateError);
-        // Try to extract WasmSdkError properties (they are getters in WASM)
         if (updateError && typeof updateError === 'object') {
           const wasmErr = updateError as Record<string, unknown>;
-          // WasmSdkError has getters: kind, name, message, code, retriable
           console.error('WasmSdkError properties:');
           try {
             console.error('  - kind:', wasmErr.kind);
@@ -388,16 +398,6 @@ class IdentityService {
           } catch (e) {
             console.error('  - Could not read properties:', e);
           }
-          // List all own property names
-          console.error('  - All properties:', Object.getOwnPropertyNames(wasmErr));
-          // List all properties including inherited
-          const allProps: string[] = [];
-          let obj = wasmErr;
-          while (obj && obj !== Object.prototype) {
-            allProps.push(...Object.getOwnPropertyNames(obj));
-            obj = Object.getPrototypeOf(obj);
-          }
-          console.error('  - All props (incl. prototype):', Array.from(new Set(allProps)));
         }
         throw updateError;
       }
@@ -505,8 +505,20 @@ class IdentityService {
       const identityJson = identity.toJSON();
       console.log('Identity revision before update:', identityJson.revision);
 
-      // Create signer for the identity update using the master key
+      // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
+
+      // Also add the NEW transfer key's private key to the signer.
+      // Dash Platform requires a "key proof" signature from each new key being added,
+      // proving ownership of the private key. The SDK looks up the private key by
+      // Hash160(compressed_public_key) in the signer, so it must contain both:
+      // 1. The master key (to authorize the identity update)
+      // 2. The new key (to generate the key proof)
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const transferKeyHex = Array.from(transferPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+      const transferPrivateKeyObj = PrivateKey.fromHex(transferKeyHex, network);
+      signer.addKey(transferPrivateKeyObj);
+      console.log(`Signer now has ${signer.keyCount} keys (master + new transfer key)`);
 
       // Update the identity using typed API
       console.log('Calling sdk.identities.update...');
