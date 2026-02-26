@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
@@ -34,6 +34,8 @@ export function KeyBackupSettings() {
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [encryptionKeyInfo, setEncryptionKeyInfo] = useState<KeyInfo>({ hasKey: false, type: null })
   const [hasKeyOnIdentity, setHasKeyOnIdentity] = useState<boolean | null>(null)
+  // Run token: ensures only the latest invocation of checkBackupStatus updates state
+  const latestRunIdRef = useRef(0)
 
   const refreshEncryptionKeyInfo = useCallback(() => {
     if (!user) {
@@ -55,13 +57,17 @@ export function KeyBackupSettings() {
       return
     }
 
+    const runId = ++latestRunIdRef.current
+
     try {
       const configured = encryptedKeyService.isConfigured()
+      if (runId !== latestRunIdRef.current) return
       setIsConfigured(configured)
 
       if (configured) {
         try {
           const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
+          if (runId !== latestRunIdRef.current) return
           setHasBackup(!!backup)
           if (backup) {
             setBackupDate(new Date(backup.$createdAt))
@@ -78,11 +84,13 @@ export function KeyBackupSettings() {
     try {
       const { identityService } = await import('@/lib/services/identity-service')
       const onChain = await identityService.hasEncryptionKey(user.identityId)
+      if (runId !== latestRunIdRef.current) return
       setHasKeyOnIdentity(onChain)
     } catch (err) {
       console.error('Error checking on-chain encryption key status:', err)
     }
 
+    if (runId !== latestRunIdRef.current) return
     setIsLoading(false)
   }, [user])
 

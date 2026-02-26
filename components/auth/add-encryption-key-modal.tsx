@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, KeyIcon, ExclamationTriangleIcon, CheckCircleIcon, ClipboardIcon, EyeIcon, EyeSlashIcon, ShieldCheckIcon, CheckIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -107,6 +107,13 @@ export function AddEncryptionKeyModal({
   const [isValidatingExistingKey, setIsValidatingExistingKey] = useState(false)
   const [isEnterExistingPath, setIsEnterExistingPath] = useState(false)
 
+  // Track open state in a ref so async callbacks can bail out if the modal closes
+  // while a network call (validateDerivedKeyMatchesIdentity, validateEncryptionKey) is in flight.
+  const isOpenRef = useRef(isOpen)
+  useEffect(() => {
+    isOpenRef.current = isOpen
+  }, [isOpen])
+
   // On modal open: check if user already has an encryption key on their identity.
   // If so, redirect to the enter-existing path instead of the create-new path.
   useEffect(() => {
@@ -144,6 +151,9 @@ export function AddEncryptionKeyModal({
           const derivedKey = deriveEncryptionKey(parsed.privateKey, user.identityId)
           const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId, 1)
 
+          // Modal may have been closed while the network call was in flight
+          if (!isOpenRef.current) return
+
           if (matches) {
             const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
             const derivedKeyWif = privateKeyToWif(derivedKey, network, true)
@@ -179,6 +189,9 @@ export function AddEncryptionKeyModal({
     try {
       const { validateEncryptionKey } = await import('@/lib/crypto/key-validation')
       const validation = await validateEncryptionKey(existingKeyInput.trim(), user.identityId)
+
+      // Modal may have been closed while the network call was in flight
+      if (!isOpenRef.current) return
 
       if (!validation.isValid) {
         setExistingKeyError(validation.error || 'Invalid key')
@@ -435,6 +448,8 @@ export function AddEncryptionKeyModal({
                   <button
                     type="button"
                     onClick={() => setShowExistingKeyInput(!showExistingKeyInput)}
+                    aria-label={showExistingKeyInput ? 'Hide encryption key' : 'Show encryption key'}
+                    title={showExistingKeyInput ? 'Hide encryption key' : 'Show encryption key'}
                     className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1"
                   >
                     {showExistingKeyInput ? (
