@@ -38,21 +38,26 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
   if (data instanceof Uint8Array) return data
   if (Array.isArray(data)) return new Uint8Array(data)
   if (typeof data === 'string') {
+    const isValidSecpPublicKey = (bytes: Uint8Array) =>
+      (bytes.length === 33 || bytes.length === 65) && (bytes[0] === 0x02 || bytes[0] === 0x03 || bytes[0] === 0x04)
+
     // Hex (common for stored keys)
-    if (/^[0-9a-fA-F]+$/.test(data) && data.length % 2 === 0) {
+    if (/^[0-9a-fA-F]+$/.test(data) && (data.length === 66 || data.length === 130)) {
       const bytes = new Uint8Array(data.length / 2)
       for (let i = 0; i < bytes.length; i++) {
         const byte = parseInt(data.substr(i * 2, 2), 16)
         if (Number.isNaN(byte)) return null
         bytes[i] = byte
       }
-      return bytes
+      if (isValidSecpPublicKey(bytes)) return bytes
     }
 
     // Base64
     try {
       const binaryString = atob(data)
-      return Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
+      const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
+      if (isValidSecpPublicKey(bytes)) return bytes
+      return null
     } catch {
       return null
     }
@@ -657,30 +662,18 @@ function CheckoutPage() {
         payload.txid = txid
       }
 
-      // Use cached seller public key when available, otherwise fetch identity
-      let sellerPublicKey = checkoutReadiness.sellerEncryptionPublicKey
+      const readiness = await validateCheckoutReadiness(store)
+      if (!readiness.isReady) {
+        throw new Error(readiness.blockerMessage || 'Checkout is not ready. Please review payment prerequisites.')
+      }
 
+      const sellerPublicKey = readiness.sellerEncryptionPublicKey
       if (!sellerPublicKey) {
-        const sellerIdentity = await identityService.getIdentity(store.ownerId)
-        if (!sellerIdentity) {
-          throw new Error('Could not fetch seller identity')
-        }
-
-        const encryptionKey = sellerIdentity.publicKeys.find(
-          (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-        )
-        if (!encryptionKey?.data) {
-          throw new Error('Seller does not have an encryption key')
-        }
-
-        sellerPublicKey = normalizeKeyData(encryptionKey.data)
-        if (!sellerPublicKey) {
-          throw new Error('Could not parse seller encryption key')
-        }
+        throw new Error('Seller encryption key could not be loaded')
       }
 
       // Get buyer's encryption private key for deterministic ephemeral key derivation
-      const buyerPrivateKey = checkoutReadiness.buyerEncryptionPrivateKey ?? getEncryptionKeyBytes(user.identityId)
+      const buyerPrivateKey = readiness.buyerEncryptionPrivateKey
       if (!buyerPrivateKey) {
         throw new Error('Encryption key not found. Please set up your encryption key in Settings.')
       }
