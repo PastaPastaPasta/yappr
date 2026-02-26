@@ -261,8 +261,9 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       throw new Error('Encrypted key backup feature is not configured');
     }
 
-    // Resolve username to identity ID
-    const identityId = await dpnsService.resolveIdentity(username);
+    // Resolve username to identity ID (skip if already an identity ID)
+    const isIdentityId = /^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(username);
+    const identityId = isIdentityId ? username : await dpnsService.resolveIdentity(username);
     if (!identityId) {
       throw new Error('Username not found');
     }
