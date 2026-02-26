@@ -16,6 +16,7 @@ import { CloudArrowUpIcon, TrashIcon, ShieldCheckIcon, CheckCircleIcon, KeyIcon,
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
+import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 
 interface KeyInfo {
   hasKey: boolean
@@ -24,6 +25,7 @@ interface KeyInfo {
 
 export function KeyBackupSettings() {
   const { user } = useAuth()
+  const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasBackup, setHasBackup] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -31,6 +33,7 @@ export function KeyBackupSettings() {
   const [backupDate, setBackupDate] = useState<Date | null>(null)
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [encryptionKeyInfo, setEncryptionKeyInfo] = useState<KeyInfo>({ hasKey: false, type: null })
+  const [hasKeyOnIdentity, setHasKeyOnIdentity] = useState<boolean | null>(null)
 
   const refreshEncryptionKeyInfo = useCallback(() => {
     if (!user) {
@@ -62,6 +65,15 @@ export function KeyBackupSettings() {
         if (backup) {
           setBackupDate(new Date(backup.$createdAt))
         }
+      }
+
+      // Check on-chain identity state for the encryption key (independent of session)
+      try {
+        const { identityService } = await import('@/lib/services/identity-service')
+        const onChain = await identityService.hasEncryptionKey(user.identityId)
+        setHasKeyOnIdentity(onChain)
+      } catch (err) {
+        console.error('Error checking on-chain encryption key status:', err)
       }
     } catch (error) {
       console.error('Error checking backup status:', error)
@@ -209,6 +221,16 @@ export function KeyBackupSettings() {
                       Active
                     </span>
                   </>
+                ) : hasKeyOnIdentity ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => openEncryptionKeyModal('generic', refreshEncryptionKeyInfo)}
+                  >
+                    <KeyIcon className="h-3 w-3 mr-1" />
+                    Enter Key
+                  </Button>
                 ) : (
                   <Button
                     variant="outline"
