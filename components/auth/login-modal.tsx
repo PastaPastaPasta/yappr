@@ -338,15 +338,19 @@ export function LoginModal() {
                         </svg>
                       )}
                       {!isLookingUp && lookupError && (
-                        <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <svg className="h-5 w-5 text-red-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </TooltipTrigger>
+                            <TooltipContent>{lookupError}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                   </div>
-                  {lookupError && (
-                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{lookupError}</p>
-                  )}
                 </div>
 
                 {/* Password or Private Key Input */}
