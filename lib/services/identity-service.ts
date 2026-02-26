@@ -1,16 +1,6 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-// WASM SDK imports with dynamic initialization
-import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
-
-let wasmInitialized = false;
-async function ensureWasmInitialized() {
-  if (!wasmInitialized) {
-    await initWasm();
-    wasmInitialized = true;
-  }
-  return wasmSdk;
-}
+import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
 
 export interface IdentityPublicKey {
   id: number;
@@ -313,9 +303,6 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Ensure WASM module is initialized
-      const wasm = await ensureWasmInitialized();
-
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -339,13 +326,13 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
-      // Create IdentityPublicKeyInCreation using v3.1 options object
-
+      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // so the WASM object shares the same linear memory as sdk.identities.update().
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
       // v3.1: IdentityPublicKeyInCreation takes an options object
-      const newKey = new wasm.IdentityPublicKeyInCreation({
+      const newKey = new IdentityPublicKeyInCreation({
         keyId: newKeyId,
         purpose: 'ENCRYPTION',
         securityLevel: 'MEDIUM',
@@ -369,8 +356,23 @@ class IdentityService {
       const identityJson = identity.toJSON();
       console.log('Identity revision before update:', identityJson.revision);
 
-      // Create signer for the identity update using the master key
+      // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
+
+      // Also add the NEW encryption key's private key to the signer.
+      // Dash Platform requires a "key proof" signature from each new key being added,
+      // proving ownership of the private key. The SDK looks up the private key by
+      // Hash160(compressed_public_key) in the signer, so it must contain both:
+      // 1. The master key (to authorize the identity update)
+      // 2. The new key (to generate the key proof)
+      if (encryptionPrivateKey.length !== 32) {
+        return { success: false, error: `Invalid encryption private key: expected 32 bytes, got ${encryptionPrivateKey.length}` };
+      }
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+      const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
+      signer.addKey(encryptionPrivateKeyObj);
+      console.log(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
 
       // Update the identity using typed API
       console.log('Calling sdk.identities.update...');
@@ -383,10 +385,8 @@ class IdentityService {
         console.log('sdk.identities.update completed successfully');
       } catch (updateError) {
         console.error('sdk.identities.update failed:', updateError);
-        // Try to extract WasmSdkError properties (they are getters in WASM)
         if (updateError && typeof updateError === 'object') {
           const wasmErr = updateError as Record<string, unknown>;
-          // WasmSdkError has getters: kind, name, message, code, retriable
           console.error('WasmSdkError properties:');
           try {
             console.error('  - kind:', wasmErr.kind);
@@ -397,16 +397,6 @@ class IdentityService {
           } catch (e) {
             console.error('  - Could not read properties:', e);
           }
-          // List all own property names
-          console.error('  - All properties:', Object.getOwnPropertyNames(wasmErr));
-          // List all properties including inherited
-          const allProps: string[] = [];
-          let obj = wasmErr;
-          while (obj && obj !== Object.prototype) {
-            allProps.push(...Object.getOwnPropertyNames(obj));
-            obj = Object.getPrototypeOf(obj);
-          }
-          console.error('  - All props (incl. prototype):', Array.from(new Set(allProps)));
         }
         throw updateError;
       }
@@ -460,9 +450,6 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Ensure WASM module is initialized
-      const wasm = await ensureWasmInitialized();
-
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -486,16 +473,13 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(transferPrivateKey);
 
-      // Create IdentityPublicKeyInCreation
-      // Transfer keys use:
-      // - purpose: 'TRANSFER' (3)
-      // - securityLevel: 'HIGH' (2) - required for credit transfers
-      // - keyType: 'ECDSA_SECP256K1' (0)
+      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // so the WASM object shares the same linear memory as sdk.identities.update().
       console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=TRANSFER, securityLevel=HIGH, keyType=ECDSA_SECP256K1`);
       console.log(`Public key bytes length: ${publicKeyBytes.length}`);
 
       // v3.1: IdentityPublicKeyInCreation takes an options object
-      const newKey = new wasm.IdentityPublicKeyInCreation({
+      const newKey = new IdentityPublicKeyInCreation({
         keyId: newKeyId,
         purpose: 'TRANSFER',
         securityLevel: 'HIGH',
@@ -519,8 +503,23 @@ class IdentityService {
       const identityJson = identity.toJSON();
       console.log('Identity revision before update:', identityJson.revision);
 
-      // Create signer for the identity update using the master key
+      // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
+
+      // Also add the NEW transfer key's private key to the signer.
+      // Dash Platform requires a "key proof" signature from each new key being added,
+      // proving ownership of the private key. The SDK looks up the private key by
+      // Hash160(compressed_public_key) in the signer, so it must contain both:
+      // 1. The master key (to authorize the identity update)
+      // 2. The new key (to generate the key proof)
+      if (transferPrivateKey.length !== 32) {
+        return { success: false, error: `Invalid transfer private key: expected 32 bytes, got ${transferPrivateKey.length}` };
+      }
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const transferKeyHex = Array.from(transferPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+      const transferPrivateKeyObj = PrivateKey.fromHex(transferKeyHex, network);
+      signer.addKey(transferPrivateKeyObj);
+      console.log(`Signer now has ${signer.keyCount} keys (master + new transfer key)`);
 
       // Update the identity using typed API
       console.log('Calling sdk.identities.update...');
