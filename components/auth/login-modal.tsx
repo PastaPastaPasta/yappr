@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Eye, EyeOff } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -372,28 +373,32 @@ export function LoginModal() {
                         </svg>
                       )}
                       {detectedCredentialType === 'key' && keyValidationStatus === 'invalid' && (
-                        <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <svg className="h-5 w-5 text-red-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {keyValidationResult?.error || 'Invalid private key'}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                   </div>
-                  {credential && detectedCredentialType && (
+                  {credential && detectedCredentialType && !(detectedCredentialType === 'key' && (keyValidationStatus === 'valid' || keyValidationStatus === 'invalid')) && (
                     <p className={`mt-1 text-sm ${
-                      (detectedCredentialType === 'key' && keyValidationStatus === 'invalid') ||
-                      (detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup)
+                      detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup
                         ? 'text-red-600 dark:text-red-400'
                         : 'text-gray-500 dark:text-gray-400'
                     }`}>
                       {detectedCredentialType === 'key' ? (
                         !resolvedIdentity
                           ? 'Detected as private key - waiting for identity...'
-                          : keyValidationStatus === 'valid'
-                          ? 'Valid private key for this identity'
                           : keyValidationStatus === 'validating'
                           ? 'Validating key...'
-                          : keyValidationStatus === 'invalid' && keyValidationResult?.error
-                          ? keyValidationResult.error
                           : 'Detected as private key'
                       ) : !resolvedIdentity ? (
                         credential.length < 16
