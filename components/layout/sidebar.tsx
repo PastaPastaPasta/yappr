@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type MouseEvent } from 'react'
 import {
   HomeIcon,
   EnvelopeIcon,
@@ -63,6 +63,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
 }
 
 const NOTIFICATION_POLL_INTERVAL = 30000 // 30 seconds
+const CREDITS_PER_DASH = 100000000000
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -87,7 +88,8 @@ export function Sidebar() {
     // Reset display name at start to avoid stale values
     setDisplayName(null)
 
-    if (!user?.identityId || user.dpnsUsername) {
+    const identityId = user?.identityId
+    if (!identityId || user.dpnsUsername) {
       return
     }
 
@@ -96,7 +98,7 @@ export function Sidebar() {
     async function fetchDisplayName() {
       try {
         const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-        const profile = await unifiedProfileService.getProfile(user!.identityId)
+        const profile = await unifiedProfileService.getProfile(identityId)
         if (mounted) {
           setDisplayName(profile?.displayName ?? null)
         }
@@ -108,7 +110,7 @@ export function Sidebar() {
       }
     }
 
-    fetchDisplayName()
+    void fetchDisplayName()
 
     return () => {
       mounted = false
@@ -123,12 +125,16 @@ export function Sidebar() {
     let timeoutId: NodeJS.Timeout | null = null
     let cancelled = false
 
+    function scheduleNextPoll() {
+      timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
+    }
+
     async function fetchAndSchedule(isInitial: boolean): Promise<void> {
       if (cancelled) return
 
       // Skip poll if page is hidden (but still schedule next poll)
       if (!isInitial && document.hidden) {
-        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
+        scheduleNextPoll()
         return
       }
 
@@ -164,11 +170,11 @@ export function Sidebar() {
       }
 
       if (!cancelled) {
-        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
+        scheduleNextPoll()
       }
     }
 
-    fetchAndSchedule(true)
+    void fetchAndSchedule(true)
 
     return () => {
       cancelled = true
@@ -178,9 +184,14 @@ export function Sidebar() {
   
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
-  
-  // Format identity ID for display (show first 6 and last 4 chars)
-  const formatIdentityId = (id: string) => truncateId(id, 6, 4)
+  const formattedDashBalance = `${((user?.balance ?? 0) / CREDITS_PER_DASH).toFixed(4)} DASH`
+
+  const handleRefreshBalance = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    setIsRefreshingBalance(true)
+    await refreshBalance()
+    setIsRefreshingBalance(false)
+  }
 
   return (
     <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
@@ -270,7 +281,7 @@ export function Sidebar() {
                     <p className="text-sm font-semibold truncate">
                       {user.dpnsUsername ? `@${user.dpnsUsername}` : (displayName || 'Identity')}
                     </p>
-                    <p className="text-sm text-gray-500 truncate">{formatIdentityId(user.identityId)}</p>
+                    <p className="text-sm text-gray-500 truncate">{truncateId(user.identityId, 6, 4)}</p>
                   </div>
                   <EllipsisHorizontalIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
                 </div>
@@ -290,22 +301,10 @@ export function Sidebar() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-xs text-gray-500">Balance</div>
-                      <div className="font-mono">
-                        {(() => {
-                          const balance = user.balance || 0;
-                          // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
-                          const dashBalance = balance / 100000000000;
-                          return `${dashBalance.toFixed(4)} DASH`;
-                        })()}
-                      </div>
+                      <div className="font-mono">{formattedDashBalance}</div>
                     </div>
                     <button
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        setIsRefreshingBalance(true)
-                        await refreshBalance()
-                        setIsRefreshingBalance(false)
-                      }}
+                      onClick={handleRefreshBalance}
                       disabled={isRefreshingBalance}
                       className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                       title="Refresh balance"
