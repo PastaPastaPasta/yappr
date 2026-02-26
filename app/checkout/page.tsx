@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -27,6 +27,7 @@ import { identityService } from '@/lib/services/identity-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
+import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
 
 /**
@@ -37,6 +38,18 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
   if (data instanceof Uint8Array) return data
   if (Array.isArray(data)) return new Uint8Array(data)
   if (typeof data === 'string') {
+    // Hex (common for stored keys)
+    if (/^[0-9a-fA-F]+$/.test(data) && data.length % 2 === 0) {
+      const bytes = new Uint8Array(data.length / 2)
+      for (let i = 0; i < bytes.length; i++) {
+        const byte = parseInt(data.substr(i * 2, 2), 16)
+        if (Number.isNaN(byte)) return null
+        bytes[i] = byte
+      }
+      return bytes
+    }
+
+    // Base64
     try {
       const binaryString = atob(data)
       return Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
@@ -47,6 +60,33 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
   return null
 }
 
+type CheckoutReadinessBlocker =
+  | 'no-payment-methods'
+  | 'missing-buyer-key'
+  | 'missing-seller-key'
+  | 'invalid-seller-key'
+
+type CheckoutReadinessState = {
+  isReady: boolean
+  blocker: CheckoutReadinessBlocker | null
+  blockerMessage: string | null
+  sellerEncryptionPublicKey: Uint8Array | null
+  buyerEncryptionPrivateKey: Uint8Array | null
+}
+
+function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): string | null {
+  if (!blocker) return null
+
+  const messages: Record<CheckoutReadinessBlocker, string> = {
+    'no-payment-methods': 'This store has not configured any payment methods.',
+    'missing-buyer-key': 'Add your encryption key to continue to payment.',
+    'missing-seller-key': 'This store has not published an active encryption key.',
+    'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner."
+  }
+
+  return messages[blocker]
+}
+
 function CheckoutPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -54,6 +94,7 @@ function CheckoutPage() {
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
 
   const [store, setStore] = useState<Store | null>(null)
   const [cartItems, setCartItems] = useState<CartItem[]>([])
@@ -100,6 +141,130 @@ function CheckoutPage() {
   const [showAddressModal, setShowAddressModal] = useState(false)
   const [userHasEncryptionKey, setUserHasEncryptionKey] = useState(false)
   const [userEncryptionPubKey, setUserEncryptionPubKey] = useState<Uint8Array | null>(null)
+  const [checkoutReadiness, setCheckoutReadiness] = useState<CheckoutReadinessState>({
+    isReady: false,
+    blocker: null,
+    blockerMessage: null,
+    sellerEncryptionPublicKey: null,
+    buyerEncryptionPrivateKey: null
+  })
+
+  const validateCheckoutReadiness = useCallback(async (storeToValidate: Store | null): Promise<CheckoutReadinessState> => {
+    const currentStore = storeToValidate
+    if (!currentStore) {
+      const state: CheckoutReadinessState = {
+        isReady: false,
+        blocker: 'no-payment-methods',
+        blockerMessage: getCheckoutReadinessMessage('no-payment-methods'),
+        sellerEncryptionPublicKey: null,
+        buyerEncryptionPrivateKey: null
+      }
+      setCheckoutReadiness(state)
+      return state
+    }
+
+    if (!currentStore.paymentUris || currentStore.paymentUris.length === 0) {
+      const state: CheckoutReadinessState = {
+        isReady: false,
+        blocker: 'no-payment-methods',
+        blockerMessage: getCheckoutReadinessMessage('no-payment-methods'),
+        sellerEncryptionPublicKey: null,
+        buyerEncryptionPrivateKey: null
+      }
+      setCheckoutReadiness(state)
+      return state
+    }
+
+    if (!user?.identityId) {
+      const state: CheckoutReadinessState = {
+        isReady: false,
+        blocker: 'missing-buyer-key',
+        blockerMessage: getCheckoutReadinessMessage('missing-buyer-key'),
+        sellerEncryptionPublicKey: null,
+        buyerEncryptionPrivateKey: null
+      }
+      setCheckoutReadiness(state)
+      return state
+    }
+
+    const buyerPrivateKey = getEncryptionKeyBytes(user.identityId)
+    if (!buyerPrivateKey) {
+      const state: CheckoutReadinessState = {
+        isReady: false,
+        blocker: 'missing-buyer-key',
+        blockerMessage: getCheckoutReadinessMessage('missing-buyer-key'),
+        sellerEncryptionPublicKey: null,
+        buyerEncryptionPrivateKey: null
+      }
+      setCheckoutReadiness(state)
+      return state
+    }
+
+    try {
+      const sellerIdentity = await identityService.getIdentity(currentStore.ownerId)
+      if (!sellerIdentity) {
+        const state: CheckoutReadinessState = {
+          isReady: false,
+          blocker: 'missing-seller-key',
+          blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
+          sellerEncryptionPublicKey: null,
+          buyerEncryptionPrivateKey: buyerPrivateKey
+        }
+        setCheckoutReadiness(state)
+        return state
+      }
+
+      const encryptionKey = sellerIdentity.publicKeys.find(
+        (key) => key.purpose === 1 && key.type === 0 && !key.disabledAt
+      )
+
+      if (!encryptionKey?.data) {
+        const state: CheckoutReadinessState = {
+          isReady: false,
+          blocker: 'missing-seller-key',
+          blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
+          sellerEncryptionPublicKey: null,
+          buyerEncryptionPrivateKey: buyerPrivateKey
+        }
+        setCheckoutReadiness(state)
+        return state
+      }
+
+      const sellerEncryptionPublicKey = normalizeKeyData(encryptionKey.data)
+      if (!sellerEncryptionPublicKey) {
+        const state: CheckoutReadinessState = {
+          isReady: false,
+          blocker: 'invalid-seller-key',
+          blockerMessage: getCheckoutReadinessMessage('invalid-seller-key'),
+          sellerEncryptionPublicKey: null,
+          buyerEncryptionPrivateKey: buyerPrivateKey
+        }
+        setCheckoutReadiness(state)
+        return state
+      }
+
+      const state: CheckoutReadinessState = {
+        isReady: true,
+        blocker: null,
+        blockerMessage: null,
+        sellerEncryptionPublicKey,
+        buyerEncryptionPrivateKey: buyerPrivateKey
+      }
+      setCheckoutReadiness(state)
+      return state
+    } catch (err) {
+      const state: CheckoutReadinessState = {
+        isReady: false,
+        blocker: 'missing-seller-key',
+        blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
+        sellerEncryptionPublicKey: null,
+        buyerEncryptionPrivateKey: buyerPrivateKey
+      }
+      setCheckoutReadiness(state)
+      console.error('Failed to validate checkout readiness:', err)
+      return state
+    }
+  }, [user?.identityId])
 
   // Load store and cart items
   useEffect(() => {
@@ -134,6 +299,8 @@ function CheckoutPage() {
         if (storeData.paymentUris && storeData.paymentUris.length > 0) {
           setSelectedPaymentUri(storeData.paymentUris[0])
         }
+
+        await validateCheckoutReadiness(storeData)
       } catch (error) {
         console.error('Failed to load checkout data:', error)
         router.push('/cart')
@@ -143,7 +310,7 @@ function CheckoutPage() {
     }
 
     loadData().catch(console.error)
-  }, [sdkReady, storeId, router])
+  }, [sdkReady, storeId, router, validateCheckoutReadiness])
 
   // Load saved addresses
   useEffect(() => {
@@ -419,8 +586,35 @@ function CheckoutPage() {
     setStep('policies')
   }
 
-  const handlePoliciesSubmit = () => {
-    setStep('payment')
+  const promptForEncryptionKeyThenContinue = useCallback(() => {
+    openEncryptionKeyModal('generic', () => {
+      void validateCheckoutReadiness(store).then((readiness) => {
+        if (readiness.isReady) {
+          setStep('payment')
+          return
+        }
+        setError(readiness.blockerMessage)
+      })
+    })
+  }, [openEncryptionKeyModal, validateCheckoutReadiness, store])
+
+  const handlePoliciesSubmit = async () => {
+    setError(null)
+    const readiness = await validateCheckoutReadiness(store)
+    if (readiness.isReady) {
+      setStep('payment')
+      return
+    }
+
+    if (readiness.blocker === 'missing-buyer-key') {
+      setError(readiness.blockerMessage)
+      promptForEncryptionKeyThenContinue()
+      return
+    }
+
+    if (readiness.blockerMessage) {
+      setError(readiness.blockerMessage)
+    }
   }
 
   const handlePaymentSubmit = () => {
@@ -463,26 +657,30 @@ function CheckoutPage() {
         payload.txid = txid
       }
 
-      // Fetch seller's encryption public key
-      const sellerIdentity = await identityService.getIdentity(store.ownerId)
-      if (!sellerIdentity) {
-        throw new Error('Could not fetch seller identity')
-      }
+      // Use cached seller public key when available, otherwise fetch identity
+      let sellerPublicKey = checkoutReadiness.sellerEncryptionPublicKey
 
-      const encryptionKey = sellerIdentity.publicKeys.find(
-        (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-      )
-      if (!encryptionKey?.data) {
-        throw new Error('Seller does not have an encryption key')
-      }
-
-      const sellerPublicKey = normalizeKeyData(encryptionKey.data)
       if (!sellerPublicKey) {
-        throw new Error('Could not parse seller encryption key')
+        const sellerIdentity = await identityService.getIdentity(store.ownerId)
+        if (!sellerIdentity) {
+          throw new Error('Could not fetch seller identity')
+        }
+
+        const encryptionKey = sellerIdentity.publicKeys.find(
+          (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
+        )
+        if (!encryptionKey?.data) {
+          throw new Error('Seller does not have an encryption key')
+        }
+
+        sellerPublicKey = normalizeKeyData(encryptionKey.data)
+        if (!sellerPublicKey) {
+          throw new Error('Could not parse seller encryption key')
+        }
       }
 
       // Get buyer's encryption private key for deterministic ephemeral key derivation
-      const buyerPrivateKey = getEncryptionKeyBytes(user.identityId)
+      const buyerPrivateKey = checkoutReadiness.buyerEncryptionPrivateKey ?? getEncryptionKeyBytes(user.identityId)
       if (!buyerPrivateKey) {
         throw new Error('Encryption key not found. Please set up your encryption key in Settings.')
       }
@@ -683,7 +881,7 @@ function CheckoutPage() {
           )}
 
           {/* Payment Step */}
-          {step === 'payment' && (
+          {step === 'payment' && checkoutReadiness.isReady && (
             <PaymentSelector
               paymentUris={store?.paymentUris || []}
               selected={selectedPaymentUri}
@@ -694,6 +892,30 @@ function CheckoutPage() {
               orderTotal={total}
               orderCurrency={currency}
             />
+          )}
+          {step === 'payment' && !checkoutReadiness.isReady && (
+            <div className="p-4 space-y-4">
+              <div className="p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
+                <p className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">
+                  Cannot proceed to payment yet
+                </p>
+                <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                  {checkoutReadiness.blockerMessage || 'Checkout is blocked due to missing prerequisites.'}
+                </p>
+              </div>
+              {checkoutReadiness.blocker === 'missing-buyer-key' && (
+                <Button onClick={promptForEncryptionKeyThenContinue} className="w-full">
+                  Add Encryption Key
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => setStep('policies')}
+                className="w-full"
+              >
+                Back to Policies
+              </Button>
+            </div>
           )}
 
           {/* Review Step */}
