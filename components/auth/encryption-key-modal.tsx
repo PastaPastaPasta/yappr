@@ -11,6 +11,7 @@ import { useEncryptionKeyModal, getEncryptionKeyActionDescription } from '@/hook
 import { useAuth } from '@/contexts/auth-context'
 import { AddEncryptionKeyModal } from './add-encryption-key-modal'
 import { LostEncryptionKeyModal } from './lost-encryption-key-modal'
+import { identityService } from '@/lib/services/identity-service'
 import toast from 'react-hot-toast'
 
 type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
@@ -59,6 +60,16 @@ export function EncryptionKeyModal() {
     setAutoRecoveryMessage('Checking for backup...')
 
     try {
+      // If identity has no active encryption key configured yet, launch add-key flow directly.
+      const hasIdentityEncryptionKey = await identityService.hasEncryptionKey(user.identityId)
+      if (!hasIdentityEncryptionKey) {
+        if (!isModalActiveRef.current) return
+        setAutoRecoveryStatus('failed')
+        setAutoRecoveryMessage('')
+        setShowAddKeyModal(true)
+        return
+      }
+
       // Get auth key from secure storage
       const { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
       const authKeyWif = getPrivateKey(user.identityId)
@@ -285,7 +296,7 @@ export function EncryptionKeyModal() {
                     )}
 
                     {/* Manual entry state (idle or failed) */}
-                    {(autoRecoveryStatus === 'idle' || autoRecoveryStatus === 'failed') && (
+                    {(autoRecoveryStatus === 'idle' || autoRecoveryStatus === 'failed') && !showAddKeyModal && (
                       <>
                         <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
                           <KeyIcon className="h-6 w-6 text-yappr-500" />
