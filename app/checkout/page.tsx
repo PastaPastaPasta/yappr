@@ -39,7 +39,8 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
   if (Array.isArray(data)) return new Uint8Array(data)
   if (typeof data === 'string') {
     const isValidSecpPublicKey = (bytes: Uint8Array) =>
-      (bytes.length === 33 || bytes.length === 65) && (bytes[0] === 0x02 || bytes[0] === 0x03 || bytes[0] === 0x04)
+      (bytes.length === 33 && (bytes[0] === 0x02 || bytes[0] === 0x03)) ||
+      (bytes.length === 65 && bytes[0] === 0x04)
 
     // Hex (common for stored keys)
     if (/^[0-9a-fA-F]+$/.test(data) && (data.length === 66 || data.length === 130)) {
@@ -593,13 +594,19 @@ function CheckoutPage() {
 
   const promptForEncryptionKeyThenContinue = useCallback(() => {
     openEncryptionKeyModal('generic', () => {
-      void validateCheckoutReadiness(store).then((readiness) => {
-        if (readiness.isReady) {
-          setStep('payment')
-          return
-        }
-        setError(readiness.blockerMessage)
-      })
+      validateCheckoutReadiness(store)
+        .then((readiness) => {
+          if (readiness.isReady) {
+            setError(null)
+            setStep('payment')
+            return
+          }
+          setError(readiness.blockerMessage)
+        })
+        .catch((err) => {
+          console.error('Failed to revalidate checkout readiness:', err)
+          setError(err instanceof Error ? err.message : 'Failed to verify checkout readiness.')
+        })
     })
   }, [openEncryptionKeyModal, validateCheckoutReadiness, store])
 
