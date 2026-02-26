@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Eye, EyeOff } from 'lucide-react'
@@ -66,13 +66,22 @@ export function LoginModal() {
   const [isShaking, setIsShaking] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
 
+  const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const setErrorWithShake = (msg: string | null) => {
     setError(msg)
     if (msg) {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
       setIsShaking(true)
-      setTimeout(() => setIsShaking(false), 500)
+      shakeTimerRef.current = setTimeout(() => setIsShaking(false), 500)
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+    }
+  }, [])
 
   const { login, loginWithPassword } = useAuth()
   const openBackupModal = useKeyBackupModal((state) => state.open)
@@ -341,9 +350,11 @@ export function LoginModal() {
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <svg className="h-5 w-5 text-red-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
+                              <button type="button" aria-label={lookupError} className="flex items-center text-red-500 cursor-help">
+                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
                             </TooltipTrigger>
                             <TooltipContent>{lookupError}</TooltipContent>
                           </Tooltip>
@@ -395,9 +406,11 @@ export function LoginModal() {
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <svg className="h-5 w-5 text-red-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
+                                  <button type="button" aria-label={keyValidationResult?.error ?? 'Invalid private key'} className="flex items-center text-red-500 cursor-help">
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
                                 </TooltipTrigger>
                                 <TooltipContent>
                                   {keyValidationResult?.error || 'Invalid private key'}
