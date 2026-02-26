@@ -111,21 +111,24 @@ export function AddEncryptionKeyModal({
   // If so, redirect to the enter-existing path instead of the create-new path.
   useEffect(() => {
     if (!isOpen || !user) return
+    let cancelled = false
     setStep('checking')
     import('@/lib/services/identity-service').then(({ identityService }) =>
       identityService.hasEncryptionKey(user.identityId)
     ).then(hasKey => {
-      setStep(hasKey ? 'existing-key' : 'intro')
+      if (!cancelled) setStep(hasKey ? 'existing-key' : 'intro')
     }).catch(() => {
       // If check fails, default to the normal create flow
-      setStep('intro')
+      if (!cancelled) setStep('intro')
     })
+    return () => { cancelled = true }
   }, [isOpen, user])
 
   // Attempt auto-derivation then fall back to manual entry for an existing on-chain key
   const enterExistingKey = useCallback(async () => {
     if (!user) return
 
+    setExistingKeyError(null)
     setIsValidatingExistingKey(true)
 
     try {

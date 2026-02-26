@@ -60,26 +60,30 @@ export function KeyBackupSettings() {
       setIsConfigured(configured)
 
       if (configured) {
-        const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
-        setHasBackup(!!backup)
-        if (backup) {
-          setBackupDate(new Date(backup.$createdAt))
+        try {
+          const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
+          setHasBackup(!!backup)
+          if (backup) {
+            setBackupDate(new Date(backup.$createdAt))
+          }
+        } catch (err) {
+          console.error('Error checking backup status:', err)
         }
       }
-
-      // Check on-chain identity state for the encryption key (independent of session)
-      try {
-        const { identityService } = await import('@/lib/services/identity-service')
-        const onChain = await identityService.hasEncryptionKey(user.identityId)
-        setHasKeyOnIdentity(onChain)
-      } catch (err) {
-        console.error('Error checking on-chain encryption key status:', err)
-      }
     } catch (error) {
-      console.error('Error checking backup status:', error)
-    } finally {
-      setIsLoading(false)
+      console.error('Error checking backup configuration:', error)
     }
+
+    // Check on-chain identity state for the encryption key (independent of session and backup)
+    try {
+      const { identityService } = await import('@/lib/services/identity-service')
+      const onChain = await identityService.hasEncryptionKey(user.identityId)
+      setHasKeyOnIdentity(onChain)
+    } catch (err) {
+      console.error('Error checking on-chain encryption key status:', err)
+    }
+
+    setIsLoading(false)
   }, [user])
 
   useEffect(() => {
