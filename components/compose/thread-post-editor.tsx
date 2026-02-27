@@ -59,9 +59,13 @@ export function ThreadPostEditor({
   // Auto-resize textarea
   const adjustHeight = useCallback(() => {
     const textarea = ref.current
-    if (textarea) {
+    if (!textarea) return
+    if (isActive) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${isActive ? Math.max(80, textarea.scrollHeight) : textarea.scrollHeight}px`
+      textarea.style.height = `${Math.max(80, textarea.scrollHeight)}px`
+    } else {
+      // When inactive, let CSS handle sizing naturally
+      textarea.style.height = 'auto'
     }
   }, [ref, isActive])
 
@@ -212,7 +216,7 @@ export function ThreadPostEditor({
           </div>
         )}
 
-        <div className={`pr-5 ${!isOnly || isPosted ? 'pl-8' : 'pl-5'} ${isActive ? 'py-4' : 'py-2'}`}>
+        <div className={`pr-5 ${!isOnly || isPosted ? 'pl-8' : 'pl-5'} ${isActive ? 'py-4' : 'py-3'}`}>
           {/* Posted status badge */}
           {isPosted && (
             <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
@@ -328,7 +332,8 @@ export function ThreadPostEditor({
                     ? "What's on your mind?"
                     : 'Continue your thread...'
                 }
-                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : ''}`}
+                rows={isActive ? undefined : 1}
+                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : 'overflow-hidden'}`}
                 style={{ height: 'auto' }}
               />
               <MentionAutocomplete
