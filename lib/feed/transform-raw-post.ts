@@ -1,8 +1,53 @@
 import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 
-function createPlaceholderPostId(): string {
-  return Math.random().toString(36).slice(2, 11);
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+function normalizeIdentifier(value: unknown, fallback = 'unknown'): string {
+  let candidate = '';
+
+  if (typeof value === 'string') {
+    candidate = value.trim();
+  } else if (typeof value === 'number' || typeof value === 'bigint') {
+    candidate = String(value);
+  }
+
+  if (!candidate) return fallback;
+  if (!IDENTIFIER_PATTERN.test(candidate)) return fallback;
+  return candidate;
+}
+
+function getFirstValidIdentifier(...candidates: unknown[]): string | null {
+  for (const candidate of candidates) {
+    const normalized = normalizeIdentifier(candidate, '');
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function hashString(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function createPlaceholderPostId(doc: Record<string, unknown>, data: Record<string, unknown>): string {
+  const seedParts = [
+    typeof doc.$createdAt === 'number' ? doc.$createdAt : '',
+    typeof doc.createdAt === 'number' ? doc.createdAt : '',
+    typeof doc.$ownerId === 'string' ? doc.$ownerId : '',
+    typeof doc.ownerId === 'string' ? doc.ownerId : '',
+    typeof data.content === 'string' ? data.content : '',
+    typeof data.quotedPostId === 'string' ? data.quotedPostId : '',
+  ];
+
+  const seed = seedParts.join('|');
+  return `post_${hashString(seed).slice(0, 12)}`;
 }
 
 export function getFeedItemTimestamp(post: Post): number {
@@ -30,7 +75,7 @@ export function sortFeedByTimestamp(posts: Post[]): Post[] {
 export function transformRawPost(doc: Record<string, unknown>): Post {
   const data = (doc.data || doc) as Record<string, unknown>;
   const existingAuthor = (doc.author || {}) as Record<string, unknown>;
-  const authorId = (existingAuthor.id || doc.$ownerId || doc.ownerId || 'unknown') as string;
+  const authorId = getFirstValidIdentifier(existingAuthor.id, doc.$ownerId, doc.ownerId) || 'unknown';
 
   const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
   const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) || undefined : undefined;
@@ -47,8 +92,10 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     ? createdAtValue
     : new Date((createdAtValue as number | string | undefined) || Date.now());
 
+  const resolvedId = getFirstValidIdentifier(doc.$id, doc.id);
+
   return {
-    id: (doc.$id || doc.id || createPlaceholderPostId()) as string,
+    id: resolvedId || createPlaceholderPostId(doc, data),
     content: (data.content || '') as string,
     author: {
       id: authorId,

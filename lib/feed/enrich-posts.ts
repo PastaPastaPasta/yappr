@@ -4,8 +4,10 @@ import { postService, unifiedProfileService } from '@/lib/services';
 import { repostService } from '@/lib/services/repost-service';
 
 export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Promise<Post[]> {
+  const enrichedPosts = postsToEnrich.map((post) => ({ ...post }));
+
   try {
-    const postIds = postsToEnrich.map((post) => post.id);
+    const postIds = enrichedPosts.map((post) => post.id);
     if (postIds.length > 0) {
       const reposts = await repostService.getRepostsByPostIds(postIds);
 
@@ -36,7 +38,7 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
         })
       );
 
-      for (const post of postsToEnrich) {
+      for (const post of enrichedPosts) {
         const repost = repostMap.get(post.id);
         if (repost && repost.$ownerId !== post.author.id) {
           const repostTimestamp = new Date(repost.$createdAt);
@@ -57,7 +59,7 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
   }
 
   try {
-    const quotedPostIds = postsToEnrich
+    const quotedPostIds = enrichedPosts
       .filter((post) => post.quotedPostId)
       .map((post) => post.quotedPostId as string);
 
@@ -65,7 +67,7 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
       const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds);
       const quotedPostMap = new Map(quotedPosts.map((post) => [post.id, post]));
 
-      for (const post of postsToEnrich) {
+      for (const post of enrichedPosts) {
         if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
           post.quotedPost = quotedPostMap.get(post.quotedPostId);
         }
@@ -75,5 +77,5 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
     logger.error('Feed: Error fetching quoted posts:', error);
   }
 
-  return postsToEnrich;
+  return enrichedPosts;
 }

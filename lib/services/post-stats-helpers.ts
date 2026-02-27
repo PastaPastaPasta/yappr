@@ -98,6 +98,10 @@ export async function fetchBatchUserInteractions(
     result.set(id, { liked: false, reposted: false, bookmarked: false });
   });
 
+  if (postIds.length === 0) {
+    return result;
+  }
+
   try {
     const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
       import('./like-service'),
@@ -139,6 +143,10 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
   postIds.forEach((id) => {
     result.set(id, { postId: id, likes: 0, reposts: 0, replies: 0, views: 0 });
   });
+
+  if (postIds.length === 0) {
+    return result;
+  }
 
   try {
     const [{ likeService }, { repostService }, { replyService }] = await Promise.all([

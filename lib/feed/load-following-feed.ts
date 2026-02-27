@@ -91,22 +91,26 @@ export async function loadFollowingFeed(options: {
 
       if (followedIds.length > 0) {
         const allReposts: Array<{ postId: string; reposterId: string; $createdAt: number }> = [];
+        const REPOST_BATCH_SIZE = 20;
 
-        await Promise.all(
-          followedIds.slice(0, 20).map(async (followedId) => {
-            try {
-              const userReposts = await repostService.getUserReposts(followedId);
-              allReposts.push(
-                ...userReposts.map((repost) => ({
-                  ...(repost as { postId: string; $createdAt: number }),
-                  reposterId: followedId,
-                }))
-              );
-            } catch {
-              // Ignore individual failures to keep feed rendering resilient.
-            }
-          })
-        );
+        for (let index = 0; index < followedIds.length; index += REPOST_BATCH_SIZE) {
+          const batch = followedIds.slice(index, index + REPOST_BATCH_SIZE);
+          await Promise.all(
+            batch.map(async (followedId) => {
+              try {
+                const userReposts = await repostService.getUserReposts(followedId);
+                allReposts.push(
+                  ...userReposts.map((repost) => ({
+                    ...(repost as { postId: string; $createdAt: number }),
+                    reposterId: followedId,
+                  }))
+                );
+              } catch {
+                // Ignore individual failures to keep feed rendering resilient.
+              }
+            })
+          );
+        }
 
         if (allReposts.length > 0) {
           const existingPostIds = new Set(posts.map((post) => post.id));

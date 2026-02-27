@@ -5,11 +5,12 @@ import { useAuth } from '@/contexts/auth-context';
 import { useAppStore } from '@/lib/store';
 import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal';
 import { UserAvatar } from '@/components/ui/avatar-image';
+import { Button } from '@/components/ui/button';
 
 export function FeedComposeBox() {
   const [isHydrated, setIsHydrated] = useState(false);
   const { user } = useAuth();
-  const { setComposeOpen } = useAppStore();
+  const setComposeOpen = useAppStore((state) => state.setComposeOpen);
   const { open: openLoginPrompt } = useLoginPromptModal();
 
   useEffect(() => {
@@ -27,21 +28,26 @@ export function FeedComposeBox() {
               <div className="w-full h-full bg-gray-300 dark:bg-gray-700 animate-pulse rounded-full" />
             )}
           </div>
-          <button
+          <Button
+            type="button"
+            variant="ghost"
             onClick={() => setComposeOpen(true)}
-            className="flex-1 text-left px-4 py-3 bg-gray-50 dark:bg-gray-950 rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+            className="flex-1 justify-start h-auto text-left px-4 py-3 bg-gray-50 dark:bg-gray-950 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
           >
             What&apos;s happening?
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="flex items-center justify-center">
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => openLoginPrompt()}
-            className="text-yappr-500 hover:text-yappr-600 font-medium py-1"
+            className="h-auto px-0 text-yappr-500 hover:text-yappr-600 font-medium py-1"
           >
             Login to share your thoughts
-          </button>
+          </Button>
         </div>
       )}
     </div>

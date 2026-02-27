@@ -1,10 +1,36 @@
 import { logger } from '@/lib/logger';
-import type { DocumentsQuery } from '@dashevo/wasm-sdk';
 import type { DocumentResult, QueryOptions } from './document-service';
+import { queryRawDocuments } from './document-service';
 import type { Post } from '../types';
 import type { PostStats } from './post-service';
-import { normalizeSDKResponse, type DocumentWhereClause } from './sdk-helpers';
+import { type DocumentWhereClause } from './sdk-helpers';
 import { retryAsync } from '../retry-utils';
+
+function normalizeIdentifier(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return null;
+}
+
+function extractFollowingIds(following: Array<Record<string, unknown>>): string[] {
+  const ids = following
+    .map((item) =>
+      normalizeIdentifier(
+        item.followingId ??
+          item.following ??
+          item.followedId ??
+          item.id
+      )
+    )
+    .filter((id): id is string => Boolean(id));
+
+  return Array.from(new Set(ids));
+}
 
 export async function fetchFollowingFeed(
   userId: string,
@@ -23,14 +49,11 @@ export async function fetchFollowingFeed(
   try {
     const { followService } = await import('./follow-service');
     const following = await followService.getFollowing(userId);
-    const followingIds = following.map((item) => item.followingId);
+    const followingIds = extractFollowingIds(following as unknown as Array<Record<string, unknown>>);
 
     if (followingIds.length === 0) {
       return { documents: [], nextCursor: undefined, prevCursor: undefined };
     }
-
-    const { getEvoSdk } = await import('./evo-sdk-service');
-    const sdk = await getEvoSdk();
 
     const now = new Date();
     const windowEndMs = options.timeWindowEnd?.getTime() || now.getTime();
@@ -39,16 +62,13 @@ export async function fetchFollowingFeed(
     let windowStartMs = options.timeWindowStart?.getTime() || (windowEndMs - windowHours * 60 * 60 * 1000);
 
     const executeQuery = async (whereClause: DocumentWhereClause[]): Promise<Post[]> => {
-      const queryParams: DocumentsQuery = {
+      const documents = await queryRawDocuments({
         dataContractId: contractId,
         documentTypeName: 'post',
         where: whereClause,
         orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
         limit: 100,
-      };
-
-      const response = await sdk.documents.query(queryParams);
-      const documents = normalizeSDKResponse(response);
+      });
       return documents.map((doc) => transformDocument(doc));
     };
 
@@ -124,14 +144,12 @@ export async function fetchFollowingFeed(
 export async function fetchUniqueAuthorCount(contractId: string): Promise<number> {
   const result = await retryAsync(
     async () => {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
       const uniqueAuthors = new Set<string>();
       let startAfter: string | undefined = undefined;
       const PAGE_SIZE = 100;
 
       while (true) {
-        const queryParams: DocumentsQuery = {
+        const documents = await queryRawDocuments({
           dataContractId: contractId,
           documentTypeName: 'post',
           where: [
@@ -141,10 +159,7 @@ export async function fetchUniqueAuthorCount(contractId: string): Promise<number
           orderBy: [['language', 'asc'], ['$createdAt', 'asc']],
           limit: PAGE_SIZE,
           startAfter,
-        };
-
-        const response = await sdk.documents.query(queryParams);
-        const documents = normalizeSDKResponse(response);
+        });
 
         for (const doc of documents) {
           if (doc.$ownerId) {
@@ -211,15 +226,13 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
   const authorCounts = new Map<string, number>();
 
   try {
-    const { getEvoSdk } = await import('./evo-sdk-service');
-    const sdk = await getEvoSdk();
     let startAfter: string | undefined = undefined;
     const PAGE_SIZE = 100;
     let totalProcessed = 0;
     const MAX_POSTS = 10_000;
 
     while (totalProcessed < MAX_POSTS) {
-      const queryParams: DocumentsQuery = {
+      const documents = await queryRawDocuments({
         dataContractId: contractId,
         documentTypeName: 'post',
         where: [
@@ -229,10 +242,7 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
         orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
         limit: PAGE_SIZE,
         startAfter,
-      };
-
-      const response = await sdk.documents.query(queryParams);
-      const documents = normalizeSDKResponse(response);
+      });
 
       for (const doc of documents) {
         if (doc.$ownerId) {
@@ -266,10 +276,7 @@ export async function fetchQuotePosts(
   const limit = options.limit || 50;
 
   try {
-    const { getEvoSdk } = await import('./evo-sdk-service');
-    const sdk = await getEvoSdk();
-
-    const response = await sdk.documents.query({
+    const documents = await queryRawDocuments({
       dataContractId: contractId,
       documentTypeName: 'post',
       where: [
@@ -279,8 +286,6 @@ export async function fetchQuotePosts(
       orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
       limit: 100,
     });
-
-    const documents = normalizeSDKResponse(response);
 
     return documents
       .map((doc) => transformDocument(doc))
@@ -299,12 +304,9 @@ export async function fetchQuotesOfMyPosts(
   since?: Date
 ): Promise<Post[]> {
   try {
-    const { getEvoSdk } = await import('./evo-sdk-service');
-    const sdk = await getEvoSdk();
-
     const sinceTimestamp = since?.getTime() || 0;
 
-    const response = await sdk.documents.query({
+    const documents = await queryRawDocuments({
       dataContractId: contractId,
       documentTypeName: 'post',
       where: [
@@ -314,8 +316,6 @@ export async function fetchQuotesOfMyPosts(
       orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'asc']],
       limit: 100,
     });
-
-    const documents = normalizeSDKResponse(response);
 
     return documents
       .map((doc) => transformDocument(doc))

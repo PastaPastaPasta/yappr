@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { logger } from '@/lib/logger';
 import { Sidebar } from '@/components/layout/sidebar';
 import { RightSidebar } from '@/components/layout/right-sidebar';
 import { ComposeModal } from '@/components/compose/compose-modal';
@@ -18,11 +19,15 @@ function FeedPage() {
   const feedLanguage = useSettingsStore((state) => state.feedLanguage);
 
   const [activeTab, setActiveTab] = useState<FeedTab>(() => {
-    if (typeof window !== 'undefined') {
-      const savedTab = localStorage.getItem('feed-tab');
-      if (savedTab === 'forYou' || savedTab === 'following') {
-        return savedTab;
+    try {
+      if (typeof window !== 'undefined') {
+        const savedTab = localStorage.getItem('feed-tab');
+        if (savedTab === 'forYou' || savedTab === 'following') {
+          return savedTab;
+        }
       }
+    } catch {
+      return 'forYou';
     }
     return 'forYou';
   });
@@ -43,7 +48,11 @@ function FeedPage() {
 
   const handleTabChange = (tab: FeedTab) => {
     setActiveTab(tab);
-    localStorage.setItem('feed-tab', tab);
+    try {
+      localStorage.setItem('feed-tab', tab);
+    } catch {
+      // Ignore storage write failures (privacy mode/blocked storage).
+    }
   };
 
   return (
@@ -55,7 +64,9 @@ function FeedPage() {
           <FeedHeader
             activeTab={activeTab}
             onTabChange={handleTabChange}
-            onRefresh={() => void refresh()}
+            onRefresh={() => {
+              refresh().catch((error) => logger.error('Feed refresh failed', error));
+            }}
             isLoading={isLoading}
             potatoMode={potatoMode}
           />
@@ -74,8 +85,12 @@ function FeedPage() {
               isLoadingMore={isLoadingMore}
               pendingNewPosts={pendingNewPosts}
               onShowNewPosts={showNewPosts}
-              onLoadMore={() => void loadMore()}
-              onRetry={() => void refresh()}
+              onLoadMore={() => {
+                loadMore().catch((error) => logger.error('Feed loadMore failed', error));
+              }}
+              onRetry={() => {
+                refresh().catch((error) => logger.error('Feed retry refresh failed', error));
+              }}
               onPostDelete={handlePostDelete}
               getPostEnrichment={getPostEnrichment}
             />

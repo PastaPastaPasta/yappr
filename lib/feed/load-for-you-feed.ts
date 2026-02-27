@@ -48,8 +48,12 @@ export async function loadForYouFeed(options: {
   const forYouHasMore = firstBatchRaw.length === 20;
 
   enrichPostsWithRepostsAndQuotes(firstBatchPosts)
-    .then(() => {
-      options.setData((current) => (current ? [...current] : current));
+    .then((enrichedPosts) => {
+      options.setData((current) => {
+        if (!current) return current;
+        const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
+        return current.map((post) => enrichedById.get(post.id) || post);
+      });
     })
     .catch((error) => {
       logger.error('Feed: Error enriching first batch:', error);
@@ -92,8 +96,12 @@ export async function loadForYouFeed(options: {
         const bgPosts = bgRawPosts.map((doc) => transformRawPost(doc as Record<string, unknown>));
 
         enrichPostsWithRepostsAndQuotes(bgPosts)
-          .then(() => {
-            options.setData((current) => (current ? [...current] : current));
+          .then((enrichedPosts) => {
+            options.setData((current) => {
+              if (!current) return current;
+              const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
+              return current.map((post) => enrichedById.get(post.id) || post);
+            });
           })
           .catch((error) => {
             logger.error('Feed: Error enriching background batch:', error);

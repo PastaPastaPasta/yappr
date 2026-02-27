@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { queryDocuments, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -16,6 +16,55 @@ export interface DocumentResult<T> {
   documents: T[];
   nextCursor?: string;
   prevCursor?: string;
+}
+
+/**
+ * Query raw documents through the shared document-service path.
+ * This keeps SDK query behavior centralized in one layer.
+ */
+export async function queryRawDocuments(options: QueryDocumentsOptions): Promise<Record<string, unknown>[]> {
+  const sdk = await getEvoSdk();
+  return queryDocuments(sdk, options);
+}
+
+/**
+ * Query posts by owner IDs newer than a timestamp.
+ */
+export async function queryPostsByOwnersSince(
+  ownerIds: string[],
+  sinceTimestamp: number,
+  limit = 50,
+  contractId = YAPPR_CONTRACT_ID
+): Promise<Record<string, unknown>[]> {
+  if (ownerIds.length === 0) return [];
+
+  return queryRawDocuments({
+    dataContractId: contractId,
+    documentTypeName: 'post',
+    where: [
+      ['$ownerId', 'in', ownerIds],
+      ['$createdAt', '>', sinceTimestamp],
+    ],
+    orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
+    limit,
+  });
+}
+
+/**
+ * Query all posts newer than a timestamp.
+ */
+export async function queryPostsSince(
+  sinceTimestamp: number,
+  limit = 50,
+  contractId = YAPPR_CONTRACT_ID
+): Promise<Record<string, unknown>[]> {
+  return queryRawDocuments({
+    dataContractId: contractId,
+    documentTypeName: 'post',
+    where: [['$createdAt', '>', sinceTimestamp]],
+    orderBy: [['$createdAt', 'desc']],
+    limit,
+  });
 }
 
 export abstract class BaseDocumentService<T> {

@@ -8,9 +8,8 @@ import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
-import { followService, getEvoSdk } from '@/lib/services';
-import { normalizeSDKResponse } from '@/lib/services/sdk-helpers';
-import { YAPPR_CONTRACT_ID } from '@/lib/constants';
+import { followService } from '@/lib/services';
+import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service';
 
 export type FeedTab = 'forYou' | 'following';
 
@@ -37,6 +36,32 @@ interface UseFeedDataResult {
   refresh: () => Promise<void>;
   handlePostDelete: (postId: string) => void;
   getPostEnrichment: ReturnType<typeof useProgressiveEnrichment>['getPostEnrichment'];
+}
+
+function normalizeRelationId(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return null;
+}
+
+function extractFollowedIds(following: Array<Record<string, unknown>>): string[] {
+  const ids = following
+    .map((followed) =>
+      normalizeRelationId(
+        followed.followingId ??
+          followed.followedId ??
+          followed.following ??
+          followed.$id
+      )
+    )
+    .filter((id): id is string => Boolean(id));
+
+  return Array.from(new Set(ids));
 }
 
 export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): UseFeedDataResult {
@@ -238,36 +263,13 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
       if (activeTab === 'following' && user?.identityId) {
         const following = await followService.getFollowing(user.identityId);
-        const followingIds = following.map((followed) => followed.followingId);
+        const followingIds = extractFollowedIds(following as unknown as Array<Record<string, unknown>>);
 
         if (followingIds.length > 0) {
-          const sdk = await getEvoSdk();
-
-          const response = await sdk.documents.query({
-            dataContractId: YAPPR_CONTRACT_ID,
-            documentTypeName: 'post',
-            where: [
-              ['$ownerId', 'in', followingIds],
-              ['$createdAt', '>', newestPostTimestamp],
-            ],
-            orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-            limit: 50,
-          });
-
-          newPosts = normalizeSDKResponse(response);
+          newPosts = await queryPostsByOwnersSince(followingIds, newestPostTimestamp, 50);
         }
       } else {
-        const sdk = await getEvoSdk();
-
-        const response = await sdk.documents.query({
-          dataContractId: YAPPR_CONTRACT_ID,
-          documentTypeName: 'post',
-          where: [['$createdAt', '>', newestPostTimestamp]],
-          orderBy: [['$createdAt', 'desc']],
-          limit: 50,
-        });
-
-        newPosts = normalizeSDKResponse(response);
+        newPosts = await queryPostsSince(newestPostTimestamp, 50);
       }
 
       if (newPosts.length === 0) return;
@@ -345,8 +347,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     setNewestPostTimestamp(null);
 
     loadPosts().catch((error) => logger.error('Failed to load posts:', error));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, loadPosts, resetEnrichment]);
 
   const handlePostDelete = useCallback(
     (postId: string) => {

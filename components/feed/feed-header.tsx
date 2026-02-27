@@ -20,6 +20,7 @@ export function FeedHeader({ activeTab, onTabChange, onRefresh, isLoading, potat
         <button
           onClick={onRefresh}
           disabled={isLoading}
+          aria-label="Refresh feed"
           className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
         >
           <ArrowPathIcon className={cn('h-5 w-5 text-gray-500', isLoading && 'animate-spin')} />

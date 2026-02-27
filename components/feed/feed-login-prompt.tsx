@@ -22,7 +22,7 @@ export function FeedLoginPrompt() {
       <p className="text-gray-500 dark:text-gray-400 text-center max-w-sm mb-6">
         Log in to view your personalized following feed and see updates from accounts you care about.
       </p>
-      <Button onClick={() => openLoginPrompt('view_following')} className="px-6">
+      <Button onClick={() => openLoginPrompt()} className="px-6">
         Log in
       </Button>
     </div>
