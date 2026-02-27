@@ -1,5 +1,5 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Post, User, PostQueryOptions } from '../types';
+import { Post, User, PostQueryOptions } from '../../types';
 import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';

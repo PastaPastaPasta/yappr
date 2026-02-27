@@ -2,7 +2,7 @@ import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
-import { User, ParsedPaymentUri, SocialLink } from '../types';
+import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 
 // Approved payment URI schemes (whitelist)

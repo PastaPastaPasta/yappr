@@ -42,9 +42,8 @@ export type {
   DirectMessageDocument,
   ConversationInviteDocument,
   ReadReceiptDocument,
-  ParsedPaymentUri,
-  SocialLink,
 } from '../types';
+export type { ParsedPaymentUri, SocialLink } from '../../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
 export type { TipResult } from './tip-service';
 export type { NotificationResult } from './notification-service';

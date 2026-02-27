@@ -15,7 +15,7 @@ import type {
   SocialLink,
   LegacyStoreContactMethods,
   ParsedPaymentUri
-} from '../types';
+} from '../../types';
 
 /**
  * Convert legacy contact methods format to SocialLink array.

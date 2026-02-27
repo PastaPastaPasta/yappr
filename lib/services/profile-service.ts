@@ -1,6 +1,6 @@
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import type { DocumentWhereClause, DocumentOrderByClause } from './sdk-helpers';
-import { User } from '../types';
+import { User } from '../../types';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { getDefaultAvatarUrl } from '../mock-data';

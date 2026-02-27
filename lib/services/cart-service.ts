@@ -5,7 +5,7 @@
  * No on-chain storage - purely browser-based.
  */
 
-import type { Cart, CartItem, StoreItem } from '../types';
+import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 
 const CART_STORAGE_KEY = 'yappr_cart';
