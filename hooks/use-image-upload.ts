@@ -1,6 +1,5 @@
 'use client'
 
-import { logger } from '@/lib/logger';
 import { useState, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { getStorachaProvider, getPinataProvider, isUploadException, getUploadErrorMessage } from '@/lib/upload'
@@ -85,7 +84,7 @@ async function tryConnectProvider(identityId: string): Promise<UploadProvider | 
  * const handleUpload = async (file: File) => {
  *   try {
  *     const result = await upload(file)
- *     logger.info('Uploaded:', result.url) // ipfs://CID
+ *     // Use result.url (ipfs://CID) here, e.g. logger.info('Uploaded:', result.url)
  *   } catch (err) {
  *     // Error is also available in error state
  *   }
