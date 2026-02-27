@@ -18,7 +18,7 @@ import type {
   SavedAddressDocument,
   ShippingAddress,
   BuyerContact
-} from '../types';
+} from '../../types';
 
 // AAD context for address encryption
 const AAD_SHIPPING = 'yappr/shipping/v1';

@@ -17,7 +17,7 @@ import type {
   ShippingPricingConfig,
   SubtotalMultiplier,
   ShippingAddress
-} from '../types';
+} from '../../types';
 import { gramsToUnit } from '../utils/weight';
 
 class ShippingZoneService extends BaseDocumentService<ShippingZone> {

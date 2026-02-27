@@ -4,7 +4,7 @@ import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
 import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { Notification, User, Post } from '../types';
+import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 
 // Constants for notification queries
