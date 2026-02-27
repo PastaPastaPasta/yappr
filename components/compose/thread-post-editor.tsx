@@ -61,9 +61,10 @@ export function ThreadPostEditor({
     const textarea = ref.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${Math.max(80, textarea.scrollHeight)}px`
+      const minHeight = isActive ? 80 : 24
+      textarea.style.height = `${Math.max(minHeight, textarea.scrollHeight)}px`
     }
-  }, [ref])
+  }, [ref, isActive])
 
   useEffect(() => {
     adjustHeight()
@@ -212,7 +213,7 @@ export function ThreadPostEditor({
           </div>
         )}
 
-        <div className="p-4 pl-8 pr-5">
+        <div className="p-4 px-5">
           {/* Posted status badge */}
           {isPosted && (
             <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
