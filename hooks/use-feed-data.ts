@@ -68,6 +68,14 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
   const { user } = useAuth();
 
   const postsState = useAsyncState<Post[]>(null);
+  const {
+    data: posts,
+    loading: isLoading,
+    error,
+    setData,
+    setLoading,
+    setError,
+  } = postsState;
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [lastPostId, setLastPostId] = useState<string | null>(null);
@@ -87,7 +95,6 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
   const loadPosts = useCallback(
     async (forceRefresh = false, pagination?: FeedLoadPagination) => {
-      const { setLoading, setError, setData } = postsState;
       const isPaginating = Boolean(pagination?.startAfter || pagination?.timeWindow);
 
       if (!isPaginating) {
@@ -220,16 +227,16 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         logger.info('Feed: Falling back to empty state due to error:', errorMessage);
 
-        postsState.setData([]);
+        setData([]);
 
         if (errorMessage.includes('Contract ID not configured') || errorMessage.includes('Not logged in')) {
-          postsState.setError(errorMessage);
+          setError(errorMessage);
         }
       } finally {
-        postsState.setLoading(false);
+        setLoading(false);
       }
     },
-    [activeTab, enrichProgressively, feedLanguage, postsState, user?.identityId]
+    [activeTab, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
   );
 
   const loadMore = useCallback(async () => {
@@ -254,7 +261,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
   }, [activeTab, followingNextWindow, hasMore, isLoadingMore, lastPostId, loadPosts]);
 
   const checkForNewPosts = useCallback(async () => {
-    if (!newestPostTimestamp || postsState.loading) return;
+    if (!newestPostTimestamp || isLoading) return;
 
     try {
       logger.info('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
@@ -280,7 +287,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
       sortFeedByTimestamp(transformedPosts);
 
       const existingIds = new Set([
-        ...(postsState.data || []).map((item) => item.id),
+        ...(posts || []).map((item) => item.id),
         ...pendingNewPosts.map((item) => item.id),
       ]);
 
@@ -293,14 +300,14 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     } catch (error) {
       logger.error('Feed: Error checking for new posts:', error);
     }
-  }, [activeTab, newestPostTimestamp, pendingNewPosts, postsState.data, postsState.loading, user?.identityId]);
+  }, [activeTab, isLoading, newestPostTimestamp, pendingNewPosts, posts, user?.identityId]);
 
   const showNewPosts = useCallback(() => {
     if (pendingNewPosts.length === 0) return;
 
     const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getFeedItemTimestamp));
 
-    postsState.setData((currentItems) => {
+    setData((currentItems) => {
       const existing = currentItems || [];
       return [...pendingNewPosts, ...existing];
     });
@@ -308,7 +315,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     enrichProgressively(pendingNewPosts);
     setNewestPostTimestamp(newestPendingTimestamp);
     setPendingNewPosts([]);
-  }, [enrichProgressively, pendingNewPosts, postsState]);
+  }, [enrichProgressively, pendingNewPosts, setData]);
 
   const refresh = useCallback(async () => {
     resetEnrichment();
@@ -339,7 +346,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
   useEffect(() => {
     resetEnrichment();
-    postsState.setData(null);
+    setData(null);
     setLastPostId(null);
     setFollowingNextWindow(null);
     setHasMore(true);
@@ -351,30 +358,30 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
   const handlePostDelete = useCallback(
     (postId: string) => {
-      postsState.setData((prevData) => {
+      setData((prevData) => {
         if (!prevData) return prevData;
         return prevData.filter((item) => item.id !== postId);
       });
     },
-    [postsState]
+    [setData]
   );
 
   const filteredPosts = useMemo(() => {
-    if (!postsState.data) return null;
+    if (!posts) return null;
 
-    return postsState.data.filter((post) => {
+    return posts.filter((post) => {
       if (enrichmentState.blockStatus.size > 0 && enrichmentState.blockStatus.get(post.author.id)) {
         return false;
       }
       return true;
     });
-  }, [activeTab, enrichmentState.blockStatus, postsState.data]);
+  }, [activeTab, enrichmentState.blockStatus, posts]);
 
   return {
-    posts: postsState.data,
+    posts,
     filteredPosts,
-    isLoading: postsState.loading,
-    error: postsState.error,
+    isLoading,
+    error,
     hasMore,
     isLoadingMore,
     pendingNewPosts,
