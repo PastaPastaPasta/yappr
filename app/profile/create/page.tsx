@@ -95,6 +95,21 @@ function CreateProfilePage() {
       return
     }
 
+    const normalizedWebsite = formData.website.trim()
+
+    if (normalizedWebsite) {
+      try {
+        const url = new URL(normalizedWebsite)
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          toast.error('Website must use http or https')
+          return
+        }
+      } catch {
+        toast.error('Invalid website URL')
+        return
+      }
+    }
+
     // Check if private key is in secure storage
     const storedPrivateKey = user ? getPrivateKey(user.identityId) : null
     if (!storedPrivateKey && !privateKey) {
@@ -134,7 +149,7 @@ function CreateProfilePage() {
         displayName: formData.displayName,
         bio: formData.bio || undefined,
         location: formData.location || undefined,
-        website: formData.website || undefined,
+        website: normalizedWebsite || undefined,
         pronouns: formData.pronouns || undefined,
         nsfw: formData.nsfw || undefined,
         avatar: avatarData,
