@@ -97,6 +97,7 @@ export function ComposeModal() {
   } | null>(null)
   const [showStorageProviderModal, setShowStorageProviderModal] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const { upload, isUploading, progress, isProviderConnected, checkProvider } = useImageUpload()
 
   // Get visibility from first post (visibility only applies to first post)
@@ -1031,7 +1032,7 @@ export function ComposeModal() {
                     {replyingTo && <ReplyContext author={replyingTo.author} />}
 
                     {/* Main content area */}
-                    <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                    <div ref={scrollContainerRef} className="px-5 py-4 max-h-[60vh] overflow-y-auto">
                       {/* Full-width editors and content */}
                       <div className="space-y-4">
 
@@ -1209,7 +1210,12 @@ export function ComposeModal() {
                             <motion.button
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
-                              onClick={addThreadPost}
+                              onClick={() => {
+                                addThreadPost()
+                                requestAnimationFrame(() => {
+                                  scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' })
+                                })
+                              }}
                               className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
                             >
                               <PlusIcon className="w-5 h-5" />
