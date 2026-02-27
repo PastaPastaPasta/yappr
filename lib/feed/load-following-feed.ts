@@ -113,8 +113,19 @@ export async function loadFollowingFeed(options: {
         }
 
         if (allReposts.length > 0) {
+          const latestRepostByPostId = new Map<string, { postId: string; reposterId: string; $createdAt: number }>();
+          for (const repost of allReposts) {
+            const existing = latestRepostByPostId.get(repost.postId);
+            if (!existing || repost.$createdAt > existing.$createdAt) {
+              latestRepostByPostId.set(repost.postId, repost);
+            }
+          }
+
+          const canonicalReposts = Array.from(latestRepostByPostId.values()).sort(
+            (a, b) => b.$createdAt - a.$createdAt || a.postId.localeCompare(b.postId)
+          );
           const existingPostIds = new Set(posts.map((post) => post.id));
-          const repostPostIds = Array.from(new Set(allReposts.map((repost) => repost.postId))).filter(
+          const repostPostIds = Array.from(new Set(canonicalReposts.map((repost) => repost.postId))).filter(
             (postId) => !existingPostIds.has(postId)
           );
 
@@ -122,7 +133,7 @@ export async function loadFollowingFeed(options: {
             const repostedPosts = await postService.fetchPostsOrReplies(repostPostIds);
             const repostedPostMap = new Map(repostedPosts.map((post) => [post.id, post]));
 
-            const reposterIds = Array.from(new Set(allReposts.map((repost) => repost.reposterId)));
+            const reposterIds = Array.from(new Set(canonicalReposts.map((repost) => repost.reposterId)));
             const reposterProfiles = new Map<string, { displayName?: string; username?: string }>();
 
             await Promise.all(
@@ -141,7 +152,7 @@ export async function loadFollowingFeed(options: {
               })
             );
 
-            for (const repost of allReposts) {
+            for (const repost of canonicalReposts) {
               const originalPost = repostedPostMap.get(repost.postId);
               if (originalPost && !existingPostIds.has(repost.postId)) {
                 existingPostIds.add(repost.postId);

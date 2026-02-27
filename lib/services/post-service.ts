@@ -561,9 +561,7 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Get posts that quote a specific post.
-   * NOTE: The contract lacks a quotedPostId index, so this uses client-side
-   * filtering of recent posts. Uses languageTimeline index to scan.
-   * For production, a contract migration adding the index would improve efficiency.
+   * Uses quotedPostAndOwner index via quotedPostId lookup.
    */
   async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
     return fetchQuotePosts(

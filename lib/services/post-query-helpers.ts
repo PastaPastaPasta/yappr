@@ -88,11 +88,23 @@ export async function fetchFollowingFeed(
 
     if (posts.length === 100 && !options.timeWindowEnd) {
       let currentWindowMs = windowHours * 60 * 60 * 1000;
-      while (posts.length === 100) {
-        currentWindowMs /= 2;
+      const maxShrinkIterations = 24;
+      const minWindowMs = 60 * 1000; // 1 minute floor to prevent unbounded shrink loops
+      let shrinkIterations = 0;
+
+      while (posts.length === 100 && currentWindowMs > minWindowMs && shrinkIterations < maxShrinkIterations) {
+        currentWindowMs = Math.max(Math.floor(currentWindowMs / 2), minWindowMs);
         windowStartMs = windowEndMs - currentWindowMs;
         posts = await executeQuery(buildWhere(windowStartMs));
         actualWindowHours = currentWindowMs / (60 * 60 * 1000);
+        shrinkIterations++;
+      }
+
+      if (posts.length === 100) {
+        logger.warn('Following feed window reached shrink guard with full page of results', {
+          shrinkIterations,
+          currentWindowMs,
+        });
       }
     } else if (posts.length === 0 && !options.timeWindowEnd) {
       let currentWindowMs = windowHours * 60 * 60 * 1000;
@@ -279,17 +291,16 @@ export async function fetchQuotePosts(
     const documents = await queryRawDocuments({
       dataContractId: contractId,
       documentTypeName: 'post',
-      where: [
-        ['language', '==', 'en'],
-        ['$createdAt', '>', 0],
-      ],
-      orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
-      limit: 100,
+      // Use `in` for identifier byte-array fields; `==` can fail to match.
+      where: [['quotedPostId', 'in', [quotedPostId]]],
+      orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
+      limit,
     });
 
     return documents
       .map((doc) => transformDocument(doc))
       .filter((post) => post.quotedPostId === quotedPostId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit);
   } catch (error) {
     logger.error('Error getting quote posts:', error);

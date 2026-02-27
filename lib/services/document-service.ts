@@ -56,13 +56,22 @@ export async function queryPostsByOwnersSince(
 export async function queryPostsSince(
   sinceTimestamp: number,
   limit = 50,
+  language = 'en',
   contractId = YAPPR_CONTRACT_ID
 ): Promise<Record<string, unknown>[]> {
+  const where: DocumentWhereClause[] = [['$createdAt', '>', sinceTimestamp]];
+  const orderBy: DocumentOrderByClause[] = [['$createdAt', 'desc']];
+
+  if (language) {
+    where.unshift(['language', '==', language]);
+    orderBy.unshift(['language', 'asc']);
+  }
+
   return queryRawDocuments({
     dataContractId: contractId,
     documentTypeName: 'post',
-    where: [['$createdAt', '>', sinceTimestamp]],
-    orderBy: [['$createdAt', 'desc']],
+    where,
+    orderBy,
     limit,
   });
 }

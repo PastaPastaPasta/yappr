@@ -126,7 +126,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
             if (cached.length > 0) {
               setLastPostId(cached[cached.length - 1].id);
               setHasMore(cached.length >= 20);
+              const newestTimestamp = Math.max(...cached.map(getFeedItemTimestamp));
+              setNewestPostTimestamp(newestTimestamp);
             }
+            setPendingNewPosts([]);
 
             enrichProgressively(cached);
             return;
@@ -276,7 +279,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           newPosts = await queryPostsByOwnersSince(followingIds, newestPostTimestamp, 50);
         }
       } else {
-        newPosts = await queryPostsSince(newestPostTimestamp, 50);
+        newPosts = await queryPostsSince(newestPostTimestamp, 50, feedLanguage || 'en');
       }
 
       if (newPosts.length === 0) return;
@@ -300,7 +303,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     } catch (error) {
       logger.error('Feed: Error checking for new posts:', error);
     }
-  }, [activeTab, isLoading, newestPostTimestamp, pendingNewPosts, posts, user?.identityId]);
+  }, [activeTab, feedLanguage, isLoading, newestPostTimestamp, pendingNewPosts, posts, user?.identityId]);
 
   const showNewPosts = useCallback(() => {
     if (pendingNewPosts.length === 0) return;
