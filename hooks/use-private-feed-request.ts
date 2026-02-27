@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import {
@@ -184,7 +185,7 @@ export function usePrivateFeedRequest({
                     encryptionPublicKey[i] = binary.charCodeAt(i)
                   }
                 } catch {
-                  console.error('Failed to decode encryption key as base64:', keyStr.substring(0, 20) + '...')
+                  logger.error('Failed to decode encryption key as base64:', keyStr.substring(0, 20) + '...')
                 }
               }
             } else if (encryptionKey.data instanceof Uint8Array) {
@@ -209,7 +210,7 @@ export function usePrivateFeedRequest({
       if (!isFollowing) {
         const followResult = await followService.followUser(currentUserId, ownerId)
         if (!followResult.success) {
-          console.warn('Auto-follow failed:', followResult.error)
+          logger.warn('Auto-follow failed:', followResult.error)
           // Continue anyway - the request might still work
         }
       }
@@ -227,7 +228,7 @@ export function usePrivateFeedRequest({
         scheduleStatusReset('none', 2000)
       }
     } catch (error) {
-      console.error('Error requesting access:', error)
+      logger.error('Error requesting access:', error)
       updateStatus('error')
       toast.error('Failed to request access')
       // Reset to none after error so user can retry
@@ -283,7 +284,7 @@ export function usePrivateFeedRequest({
       if (!isFollowing) {
         const followResult = await followService.followUser(currentUserId, ownerId)
         if (!followResult.success) {
-          console.warn('Auto-follow failed:', followResult.error)
+          logger.warn('Auto-follow failed:', followResult.error)
         }
       }
 
@@ -299,7 +300,7 @@ export function usePrivateFeedRequest({
         scheduleStatusReset('none', 2000)
       }
     } catch (error) {
-      console.error('Error requesting access after key addition:', error)
+      logger.error('Error requesting access after key addition:', error)
       updateStatus('error')
       toast.error('Failed to request access')
       scheduleStatusReset('none', 2000)
@@ -332,7 +333,7 @@ export function usePrivateFeedRequest({
         toast.error(result.error || 'Failed to cancel request')
       }
     } catch (error) {
-      console.error('Error canceling request:', error)
+      logger.error('Error canceling request:', error)
       toast.error('Failed to cancel request')
     } finally {
       setIsProcessing(false)

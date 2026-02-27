@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { parsePrivateKey, privateKeyToWif, isLikelyWif } from '@/lib/crypto/wif'
 
 /**
@@ -72,7 +73,7 @@ class SecureStorage {
     try {
       storage.setItem(this.prefix + key, JSON.stringify(value))
     } catch (e) {
-      console.error('SecureStorage: Failed to store value:', e)
+      logger.error('SecureStorage: Failed to store value:', e)
     }
   }
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -66,7 +67,7 @@ function FollowersPage() {
         return
       }
 
-      console.log('Followers: Loading followers list for:', userIdToLoad)
+      logger.info('Followers: Loading followers list for:', userIdToLoad)
 
       // If viewing another user, fetch their username for the header
       if (targetUserId && targetUserId !== user?.identityId) {
@@ -74,7 +75,7 @@ function FollowersPage() {
           const username = await dpnsService.resolveUsername(targetUserId)
           setTargetUserName(username || `User ${targetUserId.slice(-6)}`)
         } catch (error) {
-          console.error('Failed to resolve target user name:', error)
+          logger.error('Failed to resolve target user name:', error)
           setTargetUserName(`User ${targetUserId.slice(-6)}`)
         }
       }
@@ -85,7 +86,7 @@ function FollowersPage() {
       if (!forceRefresh) {
         const cached = cacheManager.get<Follower[]>('followers', cacheKey)
         if (cached) {
-          console.log('Followers: Using cached data')
+          logger.info('Followers: Using cached data')
           setData(cached)
           setLoading(false)
           return
@@ -95,7 +96,7 @@ function FollowersPage() {
       // Use followService to get followers list
       const follows = await followService.getFollowers(userIdToLoad)
       
-      console.log('Followers: Raw follows from platform:', follows)
+      logger.info('Followers: Raw follows from platform:', follows)
 
       // Get unique identity IDs from followers
       const identityIds = follows
@@ -116,7 +117,7 @@ function FollowersPage() {
             const username = await dpnsService.resolveUsername(id)
             return { id, username }
           } catch (error) {
-            console.error(`Failed to resolve DPNS for ${id}:`, error)
+            logger.error(`Failed to resolve DPNS for ${id}:`, error)
             return { id, username: null }
           }
         })),
@@ -131,7 +132,7 @@ function FollowersPage() {
             }
             return { id, usernames }
           } catch (error) {
-            console.error(`Failed to get all usernames for ${id}:`, error)
+            logger.error(`Failed to get all usernames for ${id}:`, error)
             return { id, usernames: [] }
           }
         })),
@@ -143,7 +144,7 @@ function FollowersPage() {
             const count = await followService.countFollowers(id)
             return { id, count }
           } catch (error) {
-            console.error(`Failed to get follower count for ${id}:`, error)
+            logger.error(`Failed to get follower count for ${id}:`, error)
             return { id, count: 0 }
           }
         })),
@@ -153,7 +154,7 @@ function FollowersPage() {
             const count = await followService.countFollowing(id)
             return { id, count }
           } catch (error) {
-            console.error(`Failed to get following count for ${id}:`, error)
+            logger.error(`Failed to get following count for ${id}:`, error)
             return { id, count: 0 }
           }
         }))
@@ -179,7 +180,7 @@ function FollowersPage() {
       const followers = follows.map(follow => {
         const followerId = follow.$ownerId
         if (!followerId) {
-          console.warn('Follow document missing ownerId:', follow)
+          logger.warn('Follow document missing ownerId:', follow)
           return null
         }
 
@@ -205,10 +206,10 @@ function FollowersPage() {
       cacheManager.set('followers', cacheKey, followers)
 
       setData(followers)
-      console.log(`Followers: Successfully loaded ${followers.length} followers`)
+      logger.info(`Followers: Successfully loaded ${followers.length} followers`)
 
     } catch (error) {
-      console.error('Followers: Failed to load followers list:', error)
+      logger.error('Followers: Failed to load followers list:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       setError(errorMessage)
     } finally {
@@ -217,7 +218,7 @@ function FollowersPage() {
   }, [setLoading, setError, setData, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
-    loadFollowers().catch(err => console.error('Failed to load followers:', err))
+    loadFollowers().catch(err => logger.error('Failed to load followers:', err))
   }, [loadFollowers])
 
   const handleFollow = async (userId: string) => {
@@ -227,7 +228,7 @@ function FollowersPage() {
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      console.log('Following user:', userId)
+      logger.info('Following user:', userId)
       const result = await followService.followUser(authedUser.identityId, userId)
 
       if (result.success) {
@@ -239,11 +240,11 @@ function FollowersPage() {
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Following!')
       } else {
-        console.error('Failed to follow user:', result.error)
+        logger.error('Failed to follow user:', result.error)
         toast.error('Failed to follow user')
       }
     } catch (error) {
-      console.error('Error following user:', error)
+      logger.error('Error following user:', error)
       toast.error('Failed to follow user')
     } finally {
       setActionInProgress(prev => {
@@ -261,7 +262,7 @@ function FollowersPage() {
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      console.log('Unfollowing user:', userId)
+      logger.info('Unfollowing user:', userId)
       const result = await followService.unfollowUser(authedUser.identityId, userId)
 
       if (result.success) {
@@ -273,11 +274,11 @@ function FollowersPage() {
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Unfollowed')
       } else {
-        console.error('Failed to unfollow user:', result.error)
+        logger.error('Failed to unfollow user:', result.error)
         toast.error('Failed to unfollow user')
       }
     } catch (error) {
-      console.error('Error unfollowing user:', error)
+      logger.error('Error unfollowing user:', error)
       toast.error('Failed to unfollow user')
     } finally {
       setActionInProgress(prev => {
@@ -397,7 +398,7 @@ function FollowersPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(follower.id).catch(console.error)
+                                        navigator.clipboard.writeText(follower.id).catch((error) => logger.error(error))
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

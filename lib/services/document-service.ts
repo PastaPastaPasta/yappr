@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
@@ -35,7 +36,7 @@ export abstract class BaseDocumentService<T> {
     try {
       const sdk = await getEvoSdk();
 
-      console.log(`Querying ${this.documentType} documents:`, {
+      logger.info(`Querying ${this.documentType} documents:`, {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         ...options
@@ -51,7 +52,7 @@ export abstract class BaseDocumentService<T> {
         startAt: options.startAt,
       });
 
-      console.log(`${this.documentType} query returned ${rawDocuments.length} documents`);
+      logger.info(`${this.documentType} query returned ${rawDocuments.length} documents`);
 
       const documents = rawDocuments.map(doc => this.transformDocument(doc));
 
@@ -61,7 +62,7 @@ export abstract class BaseDocumentService<T> {
         prevCursor: undefined
       };
     } catch (error) {
-      console.error(`Error querying ${this.documentType} documents:`, error);
+      logger.error(`Error querying ${this.documentType} documents:`, error);
       throw error;
     }
   }
@@ -101,7 +102,7 @@ export abstract class BaseDocumentService<T> {
 
       return transformed;
     } catch (error) {
-      console.error(`Error getting ${this.documentType} document:`, error);
+      logger.error(`Error getting ${this.documentType} document:`, error);
       return null;
     }
   }
@@ -111,7 +112,7 @@ export abstract class BaseDocumentService<T> {
    */
   async create(ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
-      console.log(`Creating ${this.documentType} document:`, data);
+      logger.info(`Creating ${this.documentType} document:`, data);
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -129,7 +130,7 @@ export abstract class BaseDocumentService<T> {
 
       return this.transformDocument(result.document);
     } catch (error) {
-      console.error(`Error creating ${this.documentType} document:`, error);
+      logger.error(`Error creating ${this.documentType} document:`, error);
       throw error;
     }
   }
@@ -139,7 +140,7 @@ export abstract class BaseDocumentService<T> {
    */
   async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
-      console.log(`Updating ${this.documentType} document ${documentId}:`, data);
+      logger.info(`Updating ${this.documentType} document ${documentId}:`, data);
 
       // Clear cache to ensure we get fresh revision from network
       this.cache.delete(documentId);
@@ -150,7 +151,7 @@ export abstract class BaseDocumentService<T> {
         throw new Error('Document not found');
       }
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
-      console.log(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
+      logger.info(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
 
       const result = await stateTransitionService.updateDocument(
         this.contractId,
@@ -170,7 +171,7 @@ export abstract class BaseDocumentService<T> {
 
       return this.transformDocument(result.document);
     } catch (error) {
-      console.error(`Error updating ${this.documentType} document:`, error);
+      logger.error(`Error updating ${this.documentType} document:`, error);
       throw error;
     }
   }
@@ -180,7 +181,7 @@ export abstract class BaseDocumentService<T> {
    */
   async delete(documentId: string, ownerId: string): Promise<boolean> {
     try {
-      console.log(`Deleting ${this.documentType} document ${documentId}`);
+      logger.info(`Deleting ${this.documentType} document ${documentId}`);
 
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
@@ -198,7 +199,7 @@ export abstract class BaseDocumentService<T> {
 
       return true;
     } catch (error) {
-      console.error(`Error deleting ${this.documentType} document:`, error);
+      logger.error(`Error deleting ${this.documentType} document:`, error);
       return false;
     }
   }

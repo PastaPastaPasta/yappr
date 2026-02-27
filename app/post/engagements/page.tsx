@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -107,7 +108,7 @@ function EngagementsPageContent() {
       const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
-      console.error('Failed to load likes:', error)
+      logger.error('Failed to load likes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load likes')
     } finally {
       setLoading(false)
@@ -134,7 +135,7 @@ function EngagementsPageContent() {
       const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
-      console.error('Failed to load reposts:', error)
+      logger.error('Failed to load reposts:', error)
       setError(error instanceof Error ? error.message : 'Failed to load reposts')
     } finally {
       setLoading(false)
@@ -179,7 +180,7 @@ function EngagementsPageContent() {
 
       setData(users)
     } catch (error) {
-      console.error('Failed to load quotes:', error)
+      logger.error('Failed to load quotes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load quotes')
     } finally {
       setLoading(false)
@@ -193,17 +194,17 @@ function EngagementsPageContent() {
     switch (activeTab) {
       case 'likes':
         if (likesState.data === null) {
-          loadLikes().catch(err => console.error('Failed to load likes:', err))
+          loadLikes().catch(err => logger.error('Failed to load likes:', err))
         }
         break
       case 'reposts':
         if (repostsState.data === null) {
-          loadReposts().catch(err => console.error('Failed to load reposts:', err))
+          loadReposts().catch(err => logger.error('Failed to load reposts:', err))
         }
         break
       case 'quotes':
         if (quotesState.data === null) {
-          loadQuotes().catch(err => console.error('Failed to load quotes:', err))
+          loadQuotes().catch(err => logger.error('Failed to load quotes:', err))
         }
         break
     }
@@ -231,7 +232,7 @@ function EngagementsPageContent() {
         toast.error('Failed to follow user')
       }
     } catch (error) {
-      console.error('Error following user:', error)
+      logger.error('Error following user:', error)
       toast.error('Failed to follow user')
     } finally {
       setActionInProgress(prev => {
@@ -263,7 +264,7 @@ function EngagementsPageContent() {
         toast.error('Failed to unfollow user')
       }
     } catch (error) {
-      console.error('Error unfollowing user:', error)
+      logger.error('Error unfollowing user:', error)
       toast.error('Failed to unfollow user')
     } finally {
       setActionInProgress(prev => {
@@ -409,7 +410,7 @@ function EngagementsPageContent() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(engagement.id).catch(console.error)
+                                        navigator.clipboard.writeText(engagement.id).catch((error) => logger.error(error))
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

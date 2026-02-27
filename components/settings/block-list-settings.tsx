@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -101,7 +102,7 @@ export function BlockListSettings() {
 
       setFollowedUsers(users)
     } catch (error) {
-      console.error('Error loading block list settings:', error)
+      logger.error('Error loading block list settings:', error)
       toast.error('Failed to load block lists')
     } finally {
       setIsLoading(false)
@@ -109,7 +110,7 @@ export function BlockListSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadData().catch(err => console.error('Failed to load block list data:', err))
+    loadData().catch(err => logger.error('Failed to load block list data:', err))
   }, [loadData])
 
   const handleToggle = async (targetUserId: string, currentlyFollowing: boolean) => {
@@ -150,7 +151,7 @@ export function BlockListSettings() {
           u.id === targetUserId ? { ...u, isFollowingBlocks: currentlyFollowing } : u
         )
       )
-      console.error('Error toggling block follow:', error)
+      logger.error('Error toggling block follow:', error)
       toast.error('Failed to update block list')
     } finally {
       setTogglingId(null)

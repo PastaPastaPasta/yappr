@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
@@ -81,7 +82,7 @@ class DpnsService {
         return `${data.label}.${data.normalizedParentDomainName}`;
       });
     } catch (error) {
-      console.error('DPNS: Error fetching all usernames:', error);
+      logger.error('DPNS: Error fetching all usernames:', error);
       return [];
     }
   }
@@ -194,7 +195,7 @@ class DpnsService {
             const sortedUsernames = await this.sortUsernamesByContested(usernames);
             bestUsername = sortedUsernames[0];
           } catch (err) {
-            console.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
+            logger.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
             // Fallback: sort by length then alphabetically (skip contested check)
             const sorted = [...usernames].sort((a, b) => {
               if (a.length !== b.length) return a.length - b.length;
@@ -207,7 +208,7 @@ class DpnsService {
         this._cacheEntry(bestUsername, identityId);
       }
     } catch (error) {
-      console.error('DPNS: Batch resolution error:', error);
+      logger.error('DPNS: Batch resolution error:', error);
     }
 
     return results;
@@ -239,7 +240,7 @@ class DpnsService {
       this._cacheEntry(bestUsername, identityId);
       return bestUsername;
     } catch (error) {
-      console.error('DPNS: Error resolving username:', error);
+      logger.error('DPNS: Error resolving username:', error);
       return null;
     }
   }
@@ -271,7 +272,7 @@ class DpnsService {
           }
         }
       } catch (error) {
-        console.warn('DPNS: Native resolver failed, falling back to document query:', error);
+        logger.warn('DPNS: Native resolver failed, falling back to document query:', error);
       }
 
       // Fallback: Query DPNS documents directly
@@ -305,7 +306,7 @@ class DpnsService {
 
       return null;
     } catch (error) {
-      console.error('DPNS: Error resolving identity:', error);
+      logger.error('DPNS: Error resolving identity:', error);
       return null;
     }
   }
@@ -329,7 +330,7 @@ class DpnsService {
       const identity = await this.resolveIdentity(normalizedUsername);
       return identity === null;
     } catch (error) {
-      console.error('DPNS: Error checking username availability:', error);
+      logger.error('DPNS: Error checking username availability:', error);
       // If error, assume not available to be safe
       return false;
     }
@@ -372,7 +373,7 @@ class DpnsService {
         };
       });
     } catch (error) {
-      console.error('DPNS: Error searching usernames with details:', error);
+      logger.error('DPNS: Error searching usernames with details:', error);
       return [];
     }
   }
@@ -429,27 +430,27 @@ class DpnsService {
     const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
 
     if (!match) {
-      console.error('DPNS: Private key does not match any key on this identity');
+      logger.error('DPNS: Private key does not match any key on this identity');
       return null;
     }
 
-    console.log(`DPNS: Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
+    logger.info(`DPNS: Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
 
     // Check if the matched key is suitable for DPNS operations
     // Must be AUTHENTICATION purpose
     if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-      console.error(`DPNS: Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
+      logger.error(`DPNS: Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
       return null;
     }
 
     // Must be CRITICAL (1) or HIGH (2) - NOT MASTER (0) and not below required level
     if (match.securityLevel < SecurityLevel.CRITICAL) {
-      console.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for DPNS operations (only CRITICAL or HIGH)`);
+      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for DPNS operations (only CRITICAL or HIGH)`);
       return null;
     }
 
     if (match.securityLevel > requiredSecurityLevel) {
-      console.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
+      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
       return null;
     }
 
@@ -479,7 +480,7 @@ class DpnsService {
       // Check if it's contested
       const isContested = await sdk.dpns.isContestedUsername(label);
       if (isContested) {
-        console.warn(`Username ${label} is contested and will require masternode voting`);
+        logger.warn(`Username ${label} is contested and will require masternode voting`);
       }
 
       // Check availability
@@ -504,7 +505,7 @@ class DpnsService {
         throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      console.log(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      logger.info(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
       // Create signer and identity key for the state transition
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
@@ -513,7 +514,7 @@ class DpnsService {
       );
 
       // Register the name
-      console.log(`Registering DPNS name: ${label}`);
+      logger.info(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
         identity,
@@ -527,7 +528,7 @@ class DpnsService {
 
       return { success: true };
     } catch (error) {
-      console.error('Error registering username:', error);
+      logger.error('Error registering username:', error);
       throw error;
     }
   }

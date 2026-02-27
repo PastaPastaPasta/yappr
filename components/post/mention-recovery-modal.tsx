@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useCallback, useState, useEffect } from 'react'
 import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -42,7 +43,7 @@ export function MentionRecoveryModal() {
         }
       })
       .catch(err => {
-        console.error('Failed to resolve username:', err)
+        logger.error('Failed to resolve username:', err)
         if (!cancelled) {
           setResolvedIdentityId(null)
         }
@@ -86,7 +87,7 @@ export function MentionRecoveryModal() {
         setError('Failed to register mention. Please try again.')
       }
     } catch (err) {
-      console.error('Error registering mention:', err)
+      logger.error('Error registering mention:', err)
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setRegistering(false)

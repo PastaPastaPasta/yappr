@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
@@ -56,7 +57,7 @@ function savePendingSTBytes(documentId: string, bytes: Uint8Array): void {
     };
     localStorage.setItem(key, JSON.stringify(entry));
   } catch (err) {
-    console.warn('Failed to save pending ST bytes:', err);
+    logger.warn('Failed to save pending ST bytes:', err);
   }
 }
 
@@ -208,24 +209,24 @@ class StateTransitionService {
     const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
 
     if (!match) {
-      console.error('Private key does not match any key on this identity');
+      logger.error('Private key does not match any key on this identity');
       return null;
     }
 
-    console.log(`Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
+    logger.info(`Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
 
     if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-      console.error(`Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
+      logger.error(`Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
       return null;
     }
 
     if (match.securityLevel < SecurityLevel.CRITICAL) {
-      console.error(`Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for document operations (only CRITICAL or HIGH)`);
+      logger.error(`Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for document operations (only CRITICAL or HIGH)`);
       return null;
     }
 
     if (match.securityLevel > requiredSecurityLevel) {
-      console.error(`Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
+      logger.error(`Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
       return null;
     }
 
@@ -292,7 +293,7 @@ class StateTransitionService {
       const wasm = sdk.wasm;
       const privateKeyWif = await this.getPrivateKey(ownerId);
 
-      console.log(`Creating ${documentType} document with data:`, documentData);
+      logger.info(`Creating ${documentType} document with data:`, documentData);
 
       // Validate signing key
       const identity = await sdk.identities.fetch(ownerId);
@@ -306,7 +307,7 @@ class StateTransitionService {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      logger.info(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
       // Build the Document
       const document = await documentBuilderService.buildDocumentForCreate(
@@ -316,29 +317,29 @@ class StateTransitionService {
         documentData
       );
       const documentId = documentBuilderService.getDocumentId(document);
-      console.log(`Built document, ID: ${documentId}`);
+      logger.info(`Built document, ID: ${documentId}`);
 
       // --- Check for a cached ST from a previous timed-out attempt ---
       const cachedBytes = loadPendingSTBytes(documentId);
       if (cachedBytes) {
-        console.log(`Found cached ST bytes for ${documentId} — checking Platform...`);
+        logger.info(`Found cached ST bytes for ${documentId} — checking Platform...`);
 
         // First check if it already landed
         const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
         if (existingDoc) {
-          console.log(`Document ${documentId} already confirmed on Platform`);
+          logger.info(`Document ${documentId} already confirmed on Platform`);
           clearPendingSTBytes(documentId);
           return { success: true, transactionHash: documentId, document: existingDoc };
         }
 
         // Not confirmed yet — rebroadcast the same ST
-        console.log(`Rebroadcasting cached ST for ${documentId}...`);
+        logger.info(`Rebroadcasting cached ST for ${documentId}...`);
         try {
           const cachedST = StateTransition.fromBytes(cachedBytes);
           // v3.1: Use StateTransitionsFacade instead of direct wasm access
           await sdk.stateTransitions.broadcastStateTransition(cachedST);
           const result = await sdk.stateTransitions.waitForResponse(cachedST);
-          console.log(`Rebroadcast succeeded for ${documentId}`, result);
+          logger.info(`Rebroadcast succeeded for ${documentId}`, result);
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
@@ -364,7 +365,7 @@ class StateTransitionService {
             }
           }
           // Genuine failure on rebroadcast — clear cache and fall through to create fresh
-          console.warn('Rebroadcast failed, will create fresh ST:', extractErrorMessage(rebroadcastErr));
+          logger.warn('Rebroadcast failed, will create fresh ST:', extractErrorMessage(rebroadcastErr));
           clearPendingSTBytes(documentId);
         }
       }
@@ -372,7 +373,7 @@ class StateTransitionService {
       // --- Check if document already on Platform (e.g., from a previous session) ---
       const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
       if (existingDoc) {
-        console.log(`Document ${documentId} already exists on Platform — skipping creation`);
+        logger.info(`Document ${documentId} already exists on Platform — skipping creation`);
         return { success: true, transactionHash: documentId, document: existingDoc };
       }
 
@@ -387,7 +388,7 @@ class StateTransitionService {
       const rawNonce = currentNonce ?? BigInt(0);
       const sequenceNumber = rawNonce & SEQUENCE_MASK;
       const newNonce = sequenceNumber + BigInt(1);
-      console.log(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
+      logger.info(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
       // v3.1: DocumentCreateTransition takes an options object
       const createTransition = new DocumentCreateTransition({
@@ -413,7 +414,7 @@ class StateTransitionService {
       // Sign the state transition
       const privateKey = PrivateKey.fromWIF(privateKeyWif);
       stateTransition.sign(privateKey, identityKey);
-      console.log('StateTransition built and signed');
+      logger.info('StateTransition built and signed');
 
       // Cache the signed ST bytes BEFORE broadcasting
       const stBytes = stateTransition.toBytes();
@@ -423,12 +424,12 @@ class StateTransitionService {
         // toBytes() might return ArrayBuffer or similar
         savePendingSTBytes(documentId, new Uint8Array(stBytes));
       }
-      console.log(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
+      logger.info(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
 
       // Broadcast via StateTransitionsFacade (v3.1)
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
-        console.log('Broadcast succeeded, waiting for confirmation...');
+        logger.info('Broadcast succeeded, waiting for confirmation...');
       } catch (broadcastErr) {
         if (isAlreadyExistsError(broadcastErr)) {
           // Race condition: another broadcast landed first
@@ -445,7 +446,7 @@ class StateTransitionService {
       // SDK v3.1 returns typed StateTransitionProofResultType and auto-retries on deadline exceeded
       try {
         await sdk.stateTransitions.waitForResponse(stateTransition);
-        console.log(`Document ${documentId} confirmed`);
+        logger.info(`Document ${documentId} confirmed`);
         clearPendingSTBytes(documentId);
         // Refresh the SDK's internal nonce cache since we manually managed the nonce.
         // Without this, subsequent operations using the high-level API (e.g. delete)
@@ -453,11 +454,11 @@ class StateTransitionService {
         try {
           await wasm.refreshIdentityNonce(new Identifier(ownerId));
         } catch (refreshErr) {
-          console.warn('Failed to refresh nonce cache:', refreshErr);
+          logger.warn('Failed to refresh nonce cache:', refreshErr);
         }
       } catch (waitErr) {
         if (isTimeoutError(waitErr)) {
-          console.warn(`waitForResponse timed out for ${documentId} — ST bytes cached for retry`);
+          logger.warn(`waitForResponse timed out for ${documentId} — ST bytes cached for retry`);
           // Check Platform in case it landed despite timeout
           const doc = await this.checkDocumentExists(contractId, documentType, documentId);
           if (doc) {
@@ -494,7 +495,7 @@ class StateTransitionService {
         document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
       };
     } catch (error) {
-      console.error('Error creating document:', error);
+      logger.error('Error creating document:', error);
       return {
         success: false,
         error: extractErrorMessage(error)
@@ -517,7 +518,7 @@ class StateTransitionService {
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
 
-      console.log(`Updating ${documentType} document ${documentId}...`);
+      logger.info(`Updating ${documentType} document ${documentId}...`);
 
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
@@ -530,7 +531,7 @@ class StateTransitionService {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      logger.info(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
       const newRevision = revision + 1;
       const document = await documentBuilderService.buildDocumentForReplace(
@@ -541,7 +542,7 @@ class StateTransitionService {
         documentData,
         newRevision
       );
-      console.log('Built document for replacement');
+      logger.info('Built document for replacement');
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
@@ -549,7 +550,7 @@ class StateTransitionService {
       );
 
       await sdk.documents.replace({ document, identityKey: signingKey, signer });
-      console.log('Document update submitted successfully');
+      logger.info('Document update submitted successfully');
 
       return {
         success: true,
@@ -563,7 +564,7 @@ class StateTransitionService {
         }
       };
     } catch (error) {
-      console.error('Error updating document:', error);
+      logger.error('Error updating document:', error);
       return {
         success: false,
         error: extractErrorMessage(error)
@@ -584,7 +585,7 @@ class StateTransitionService {
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
 
-      console.log(`Deleting ${documentType} document ${documentId}...`);
+      logger.info(`Deleting ${documentType} document ${documentId}...`);
 
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
@@ -597,7 +598,7 @@ class StateTransitionService {
         throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      console.log(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      logger.info(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
       const documentForDelete = documentBuilderService.buildDocumentForDelete(
         contractId,
@@ -605,7 +606,7 @@ class StateTransitionService {
         documentId,
         ownerId
       );
-      console.log('Built document identifier for deletion');
+      logger.info('Built document identifier for deletion');
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKey,
@@ -613,14 +614,14 @@ class StateTransitionService {
       );
 
       await sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
-      console.log('Document deletion submitted successfully');
+      logger.info('Document deletion submitted successfully');
 
       return {
         success: true,
         transactionHash: documentId
       };
     } catch (error) {
-      console.error('Error deleting document:', error);
+      logger.error('Error deleting document:', error);
       return {
         success: false,
         error: extractErrorMessage(error)
@@ -643,7 +644,7 @@ class StateTransitionService {
     try {
       const sdk = await getEvoSdk();
 
-      console.log(`Waiting for transaction confirmation: ${transactionHash}`);
+      logger.info(`Waiting for transaction confirmation: ${transactionHash}`);
       onProgress?.(1, 0);
 
       try {
@@ -658,14 +659,14 @@ class StateTransitionService {
         ]);
 
         if (result) {
-          console.log('Transaction confirmed:', result);
+          logger.info('Transaction confirmed:', result);
           return { success: true, result };
         }
       } catch (waitError) {
-        console.log('waitForStateTransitionResult timed out (expected):', waitError);
+        logger.info('waitForStateTransitionResult timed out (expected):', waitError);
       }
 
-      console.log('Transaction broadcast successfully. Assuming confirmation due to known DAPI timeout issue.');
+      logger.info('Transaction broadcast successfully. Assuming confirmation due to known DAPI timeout issue.');
       return {
         success: true,
         result: {
@@ -675,7 +676,7 @@ class StateTransitionService {
         }
       };
     } catch (error) {
-      console.error('Error waiting for confirmation:', error);
+      logger.error('Error waiting for confirmation:', error);
       return {
         success: false,
         error: extractErrorMessage(error)
@@ -699,10 +700,10 @@ class StateTransitionService {
       return result;
     }
 
-    console.log('Waiting for transaction confirmation...');
+    logger.info('Waiting for transaction confirmation...');
     const confirmation = await this.waitForConfirmation(result.transactionHash, {
       onProgress: (attempt, elapsed) => {
-        console.log(`Confirmation attempt ${attempt}, elapsed: ${Math.round(elapsed / 1000)}s`);
+        logger.info(`Confirmation attempt ${attempt}, elapsed: ${Math.round(elapsed / 1000)}s`);
       }
     });
 

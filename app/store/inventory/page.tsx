@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -88,14 +89,14 @@ function InventoryPage() {
         // Load all items for inventory management
         await loadAllItems(currentStoreId)
       } catch (error) {
-        console.error('Failed to load inventory:', error)
+        logger.error('Failed to load inventory:', error)
         toast.error('Failed to load inventory')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadData().catch(console.error)
+    loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, user?.identityId, router, loadAllItems])
 
   const handleEditItem = useCallback((item: StoreItem) => {
@@ -242,7 +243,7 @@ function InventoryPage() {
       toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to inventory`)
       // Reload all items
       if (store?.id) {
-        loadAllItems(store.id).catch(console.error)
+        loadAllItems(store.id).catch((error) => logger.error(error))
       }
     }
   }, [store?.id, loadAllItems])

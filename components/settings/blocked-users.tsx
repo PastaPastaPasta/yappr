@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
@@ -40,7 +41,7 @@ export function BlockedUsersSettings() {
 
       setBlockedUsers(usersWithDetails)
     } catch (error) {
-      console.error('Error loading blocked users:', error)
+      logger.error('Error loading blocked users:', error)
       toast.error('Failed to load blocked users')
     } finally {
       setIsLoading(false)
@@ -48,7 +49,7 @@ export function BlockedUsersSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadBlockedUsers().catch(err => console.error('Failed to load blocked users:', err))
+    loadBlockedUsers().catch(err => logger.error('Failed to load blocked users:', err))
   }, [loadBlockedUsers])
 
   const handleUnblock = async (blockedUserId: string) => {
@@ -69,7 +70,7 @@ export function BlockedUsersSettings() {
         throw new Error(result.error || 'Failed to unblock user')
       }
     } catch (error) {
-      console.error('Error unblocking user:', error)
+      logger.error('Error unblocking user:', error)
       toast.error('Failed to unblock user')
     } finally {
       setUnblockingId(null)

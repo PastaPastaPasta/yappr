@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -65,7 +66,7 @@ export function ResetPrivateFeedDialog({
         )
         setPrivatePostCount(privatePosts.length)
       } catch (err) {
-        console.error('Error loading stats:', err)
+        logger.error('Error loading stats:', err)
         setFollowerCount(0)
         setPrivatePostCount(0)
       } finally {
@@ -73,7 +74,7 @@ export function ResetPrivateFeedDialog({
       }
     }
 
-    loadStats().catch((err) => console.error('Failed to load stats:', err))
+    loadStats().catch((err) => logger.error('Failed to load stats:', err))
   }, [open, user])
 
   // Reset form when dialog closes
@@ -123,7 +124,7 @@ export function ResetPrivateFeedDialog({
         toast.error(result.error || 'Failed to reset private feed')
       }
     } catch (err) {
-      console.error('Error resetting private feed:', err)
+      logger.error('Error resetting private feed:', err)
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred'
       setError(errorMessage)
       toast.error('Failed to reset private feed')

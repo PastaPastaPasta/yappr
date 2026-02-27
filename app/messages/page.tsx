@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -72,13 +73,13 @@ function MessagesPage() {
         const convos = await directMessageService.getConversations(user.identityId)
         setConversations(convos)
       } catch (error) {
-        console.error('Failed to load conversations:', error)
+        logger.error('Failed to load conversations:', error)
         toast.error('Failed to load conversations')
       } finally {
         setIsLoading(false)
       }
     }
-    loadConversations().catch(err => console.error('Failed to load conversations:', err))
+    loadConversations().catch(err => logger.error('Failed to load conversations:', err))
   }, [user])
 
   // Handle auto-starting a conversation from URL parameter
@@ -132,14 +133,14 @@ function MessagesPage() {
         setSelectedConversation(newConv)
         setMessages([])
       } catch (error) {
-        console.error('Failed to start conversation from URL:', error)
+        logger.error('Failed to start conversation from URL:', error)
         toast.error('Failed to start conversation')
       } finally {
         setIsResolvingUser(false)
       }
     }
 
-    handleStartConversation().catch(err => console.error('Failed to handle start conversation:', err))
+    handleStartConversation().catch(err => logger.error('Failed to handle start conversation:', err))
   }, [pendingStartConversation, user, isLoading, conversations])
 
   // Load messages when conversation is selected
@@ -175,13 +176,13 @@ function MessagesPage() {
             : conv
         ))
       } catch (error) {
-        console.error('Failed to load messages:', error)
+        logger.error('Failed to load messages:', error)
         toast.error('Failed to load messages')
       } finally {
         setIsLoadingMessages(false)
       }
     }
-    loadMessages().catch(err => console.error('Failed to load messages:', err))
+    loadMessages().catch(err => logger.error('Failed to load messages:', err))
   }, [selectedConversation, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
@@ -247,7 +248,7 @@ function MessagesPage() {
           })
         }
       } catch (error) {
-        console.debug('Message poll error:', error)
+        logger.debug('Message poll error:', error)
       }
 
       // Schedule next poll AFTER this one completes
@@ -310,7 +311,7 @@ function MessagesPage() {
           try {
             profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
           } catch (error) {
-            console.error('Failed to fetch profiles for search:', error)
+            logger.error('Failed to fetch profiles for search:', error)
           }
         }
 
@@ -342,7 +343,7 @@ function MessagesPage() {
 
         setUserSearchResults(results)
       } catch (error) {
-        console.error('User search failed:', error)
+        logger.error('User search failed:', error)
         setUserSearchResults([])
       } finally {
         if (currentSearchId === searchIdRef.current) {
@@ -393,7 +394,7 @@ function MessagesPage() {
         toast.error(result.error || 'Failed to send message')
       }
     } catch (error) {
-      console.error('Failed to send message:', error)
+      logger.error('Failed to send message:', error)
       toast.error('Failed to send message')
     } finally {
       setIsSending(false)
@@ -428,7 +429,7 @@ function MessagesPage() {
           // Try to resolve username for this identity
           participantUsername = await dpnsService.resolveUsername(participantId) || undefined
         } catch (err) {
-          console.error('Error verifying identity:', err)
+          logger.error('Error verifying identity:', err)
           toast.error('Could not verify identity. Please check the ID.')
           return
         }
@@ -489,7 +490,7 @@ function MessagesPage() {
       setNewConversationInput('')
       setMessages([]) // Clear messages for new conversation
     } catch (error) {
-      console.error('Failed to start conversation:', error)
+      logger.error('Failed to start conversation:', error)
       toast.error('Failed to start conversation')
     } finally {
       setIsResolvingUser(false)
@@ -534,7 +535,7 @@ function MessagesPage() {
       setUserSearchResults([])
       setMessages([])
     } catch (error) {
-      console.error('Failed to start conversation:', error)
+      logger.error('Failed to start conversation:', error)
       toast.error('Failed to start conversation')
     } finally {
       setIsResolvingUser(false)
@@ -744,7 +745,7 @@ function MessagesPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  sendMessage().catch(err => console.error('Failed to send message:', err))
+                  sendMessage().catch(err => logger.error('Failed to send message:', err))
                 }}
                 className="flex items-center gap-2"
               >
@@ -846,7 +847,7 @@ function MessagesPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                startNewConversation().catch(err => console.error('Failed to start conversation:', err))
+                startNewConversation().catch(err => logger.error('Failed to start conversation:', err))
               }}
             >
               <div className="mb-4">

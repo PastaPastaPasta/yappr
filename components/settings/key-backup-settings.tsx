@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
@@ -73,11 +74,11 @@ export function KeyBackupSettings() {
             setBackupDate(new Date(backup.$createdAt))
           }
         } catch (err) {
-          console.error('Error checking backup status:', err)
+          logger.error('Error checking backup status:', err)
         }
       }
     } catch (error) {
-      console.error('Error checking backup configuration:', error)
+      logger.error('Error checking backup configuration:', error)
     }
 
     // Check on-chain identity state for the encryption key (independent of session and backup)
@@ -87,7 +88,7 @@ export function KeyBackupSettings() {
       if (runId !== latestRunIdRef.current) return
       setHasKeyOnIdentity(onChain)
     } catch (err) {
-      console.error('Error checking on-chain encryption key status:', err)
+      logger.error('Error checking on-chain encryption key status:', err)
     }
 
     if (runId !== latestRunIdRef.current) return
@@ -95,7 +96,7 @@ export function KeyBackupSettings() {
   }, [user])
 
   useEffect(() => {
-    checkBackupStatus().catch(err => console.error('Failed to check backup status:', err))
+    checkBackupStatus().catch(err => logger.error('Failed to check backup status:', err))
   }, [checkBackupStatus])
 
   const handleCreateBackup = async () => {
@@ -132,7 +133,7 @@ export function KeyBackupSettings() {
         toast.error('Failed to delete backup')
       }
     } catch (error) {
-      console.error('Error deleting backup:', error)
+      logger.error('Error deleting backup:', error)
       toast.error('Failed to delete backup')
     } finally {
       setIsDeleting(false)
@@ -144,7 +145,7 @@ export function KeyBackupSettings() {
     const unsubscribe = useKeyBackupModal.subscribe((state, prevState) => {
       if (prevState.isOpen && !state.isOpen) {
         // Modal just closed, refresh backup status
-        checkBackupStatus().catch(err => console.error('Failed to check backup status:', err))
+        checkBackupStatus().catch(err => logger.error('Failed to check backup status:', err))
       }
     })
     return unsubscribe

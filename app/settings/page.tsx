@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -130,11 +131,11 @@ function SettingsPage() {
           }
         }
       } catch (error) {
-        console.error('Failed to fetch profile creation date:', error)
+        logger.error('Failed to fetch profile creation date:', error)
       }
     }
 
-    fetchProfileCreatedAt().catch(err => console.error('Failed to fetch profile created at:', err))
+    fetchProfileCreatedAt().catch(err => logger.error('Failed to fetch profile created at:', err))
   }, [user?.identityId])
 
   // Fetch DPNS usernames
@@ -154,11 +155,11 @@ function SettingsPage() {
           setDpnsUsernames([])
         }
       } catch (error) {
-        console.error('Failed to fetch DPNS usernames:', error)
+        logger.error('Failed to fetch DPNS usernames:', error)
       }
     }
 
-    fetchUsernames().catch(err => console.error('Failed to fetch usernames:', err))
+    fetchUsernames().catch(err => logger.error('Failed to fetch usernames:', err))
   }, [user?.identityId])
 
   // Refresh DPNS usernames after registration
@@ -177,7 +178,7 @@ function SettingsPage() {
         setDpnsUsernames([])
       }
     } catch (error) {
-      console.error('Failed to refresh usernames:', error)
+      logger.error('Failed to refresh usernames:', error)
     }
   }
 
@@ -770,7 +771,7 @@ function SettingsPage() {
         isOpen={isUsernameModalOpen}
         onClose={() => {
           setIsUsernameModalOpen(false)
-          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+          refreshUsernames().catch(err => logger.error('Failed to refresh usernames:', err))
         }}
         hasExistingUsernames={dpnsUsernames.length > 0}
       />

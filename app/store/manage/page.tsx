@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -108,35 +109,35 @@ function StoreManagePage() {
         if (itemsResult.status === 'fulfilled') {
           setItems(itemsResult.value.items)
         } else {
-          console.error('Failed to load items:', itemsResult.reason)
+          logger.error('Failed to load items:', itemsResult.reason)
         }
 
         if (zonesResult.status === 'fulfilled') {
           setZones(zonesResult.value)
         } else {
-          console.error('Failed to load zones:', zonesResult.reason)
+          logger.error('Failed to load zones:', zonesResult.reason)
         }
 
         if (ordersResult.status === 'fulfilled') {
           setPendingOrdersCount(ordersResult.value.orders.length)
         } else {
-          console.error('Failed to load orders:', ordersResult.reason)
+          logger.error('Failed to load orders:', ordersResult.reason)
         }
 
         if (encKeyResult.status === 'fulfilled') {
           setHasEncryptionKey(encKeyResult.value)
         } else {
-          console.error('Failed to check encryption key:', encKeyResult.reason)
+          logger.error('Failed to check encryption key:', encKeyResult.reason)
           setHasEncryptionKey(false)
         }
       } catch (error) {
-        console.error('Failed to load store data:', error)
+        logger.error('Failed to load store data:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadData().catch(console.error)
+    loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, user?.identityId, router])
 
   const handleDeleteItem = async () => {
@@ -148,7 +149,7 @@ function StoreManagePage() {
       setItems(items.filter(i => i.id !== deleteItemId))
       setDeleteItemId(null)
     } catch (error) {
-      console.error('Failed to delete item:', error)
+      logger.error('Failed to delete item:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -163,7 +164,7 @@ function StoreManagePage() {
       setZones(zones.filter(z => z.id !== deleteZoneId))
       setDeleteZoneId(null)
     } catch (error) {
-      console.error('Failed to delete zone:', error)
+      logger.error('Failed to delete zone:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -184,7 +185,7 @@ function StoreManagePage() {
       setZones([...zones, newZone])
       setShowZoneModal(false)
     } catch (err) {
-      console.error('Failed to create shipping zone:', err)
+      logger.error('Failed to create shipping zone:', err)
       toast.error('Failed to create shipping zone')
     }
   }
@@ -204,7 +205,7 @@ function StoreManagePage() {
       setZones(zones.map(z => z.id === editingZone.id ? updatedZone : z))
       setEditingZone(null)
     } catch (err) {
-      console.error('Failed to update shipping zone:', err)
+      logger.error('Failed to update shipping zone:', err)
       toast.error('Failed to update shipping zone')
     }
   }
@@ -229,7 +230,7 @@ function StoreManagePage() {
       setStore(updatedStore)
       setShowPaymentModal(false)
     } catch (error) {
-      console.error('Failed to add payment method:', error)
+      logger.error('Failed to add payment method:', error)
       toast.error('Failed to add payment method')
     }
   }
@@ -246,7 +247,7 @@ function StoreManagePage() {
       setStore(updatedStore)
       setDeletePaymentIndex(null)
     } catch (error) {
-      console.error('Failed to remove payment method:', error)
+      logger.error('Failed to remove payment method:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -608,7 +609,7 @@ function StoreManagePage() {
                             })
                             setStore(updated)
                           } catch (error) {
-                            console.error('Failed to update status:', error)
+                            logger.error('Failed to update status:', error)
                           }
                         }}
                         className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
@@ -718,7 +719,7 @@ function StoreManagePage() {
             if (store?.id) {
               storeItemService.getByStore(store.id, { limit: 100 })
                 .then(result => setItems(result.items))
-                .catch(console.error)
+                .catch((error) => logger.error(error))
             }
           }
         }}

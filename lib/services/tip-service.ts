@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { signerService, KeyPurpose } from './signer-service';
@@ -71,17 +72,17 @@ class TipService {
     const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
 
     if (!match) {
-      console.error('Transfer private key does not match any transfer key on this identity');
+      logger.error('Transfer private key does not match any transfer key on this identity');
       return null;
     }
 
     // If a specific key ID was requested, verify it matches
     if (specificKeyId !== undefined && match.keyId !== specificKeyId) {
-      console.error(`Requested key ID ${specificKeyId} but private key matches key ID ${match.keyId}`);
+      logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${match.keyId}`);
       return null;
     }
 
-    console.log(`Matched transfer key: id=${match.keyId}`);
+    logger.info(`Matched transfer key: id=${match.keyId}`);
     return transferKeys.find(k => k.keyId === match.keyId) || null;
   }
 
@@ -137,30 +138,30 @@ class TipService {
       const sdk = await getEvoSdk();
 
       // Log transfer details for debugging
-      console.log('=== Credit Transfer Debug ===');
-      console.log(`Sender ID: ${senderId}`);
-      console.log(`Recipient ID: ${recipientId}`);
-      console.log(`Amount: ${amountCredits} credits`);
-      console.log(`Key ID: ${keyId !== undefined ? keyId : 'auto-detect'}`);
-      console.log(`Private key length: ${transferKeyWif.trim().length}`);
-      console.log(`Private key starts with: ${transferKeyWif.trim().substring(0, 4)}...`);
+      logger.info('=== Credit Transfer Debug ===');
+      logger.info(`Sender ID: ${senderId}`);
+      logger.info(`Recipient ID: ${recipientId}`);
+      logger.info(`Amount: ${amountCredits} credits`);
+      logger.info(`Key ID: ${keyId !== undefined ? keyId : 'auto-detect'}`);
+      logger.info(`Private key length: ${transferKeyWif.trim().length}`);
+      logger.info(`Private key starts with: ${transferKeyWif.trim().substring(0, 4)}...`);
 
       // Fetch sender identity to see available keys
       try {
         const identity = await sdk.identities.fetch(senderId);
         if (identity) {
           const identityJson = identity.toJSON();
-          console.log('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
+          logger.info('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
 
           // Try to derive public key from the provided private key and compare
           try {
             const keyPair = await wallet.keyPairFromWif(transferKeyWif.trim());
-            console.log('Derived key pair from WIF:', keyPair);
+            logger.info('Derived key pair from WIF:', keyPair);
 
             // Find transfer keys (purpose 3) on the identity
             interface IdentityPublicKey { id: number; purpose: number; data?: string }
             const transferKeys = identityJson.publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
-            console.log('Transfer keys on identity:', transferKeys);
+            logger.info('Transfer keys on identity:', transferKeys);
 
             if (keyPair?.publicKey) {
               // public_key is a hex string, convert to base64 for comparison
@@ -173,22 +174,22 @@ class TipService {
               };
               const pubKeyBytes = hexToBytes(keyPair.publicKey);
               const pubKeyBase64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
-              console.log('Derived public key (hex):', keyPair.publicKey);
-              console.log('Derived public key (base64):', pubKeyBase64);
+              logger.info('Derived public key (hex):', keyPair.publicKey);
+              logger.info('Derived public key (base64):', pubKeyBase64);
 
               // Compare with key 3's public key
               const key3 = identityJson.publicKeys.find((k: IdentityPublicKey) => k.id === 3);
               if (key3) {
-                console.log('Key 3 public key (from identity):', key3.data);
-                console.log('Keys match:', pubKeyBase64 === key3.data);
+                logger.info('Key 3 public key (from identity):', key3.data);
+                logger.info('Keys match:', pubKeyBase64 === key3.data);
               }
             }
           } catch (keyError) {
-            console.log('Error deriving key pair:', keyError);
+            logger.info('Error deriving key pair:', keyError);
           }
         }
       } catch (e) {
-        console.log('Could not fetch identity for debugging:', e);
+        logger.info('Could not fetch identity for debugging:', e);
       }
 
       // Fetch sender identity WASM object
@@ -213,7 +214,7 @@ class TipService {
       }
 
       // Log transfer details
-      console.log('Transfer args:', JSON.stringify({
+      logger.info('Transfer args:', JSON.stringify({
         senderId,
         recipientId,
         amount: amountCredits.toString(),
@@ -226,7 +227,7 @@ class TipService {
         transferKey
       );
 
-      console.log('Calling sdk.identities.creditTransfer...');
+      logger.info('Calling sdk.identities.creditTransfer...');
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
       const result = await sdk.identities.creditTransfer({
@@ -240,7 +241,7 @@ class TipService {
       // Clear sender's balance cache so it refreshes
       identityService.clearCache(senderId);
 
-      console.log('Tip transfer result:', result);
+      logger.info('Tip transfer result:', result);
 
       // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
@@ -255,7 +256,7 @@ class TipService {
       };
 
     } catch (error) {
-      console.error('Tip transfer error:', error);
+      logger.error('Tip transfer error:', error);
       // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
       const errorMessage = (error instanceof Error ? error.message : null) ||
         ((error as { message?: string })?.message) ||
@@ -329,10 +330,10 @@ class TipService {
       const { replyService } = await import('./reply-service');
       await replyService.createReply(senderId, content, postId, postOwnerId);
 
-      console.log('Tip reply created successfully');
+      logger.info('Tip reply created successfully');
     } catch (error) {
       // Log but don't fail the tip - the credit transfer already succeeded
-      console.error('Failed to create tip post:', error);
+      logger.error('Failed to create tip post:', error);
     }
   }
 
@@ -398,7 +399,7 @@ class TipService {
   async getTransitionAmount(transitionId: string): Promise<number | null> {
     // For now, return null - amount display is optional
     // In the future, we could look up the transition to get the actual amount
-    console.log('getTransitionAmount not yet implemented for:', transitionId);
+    logger.info('getTransitionAmount not yet implemented for:', transitionId);
     return null;
   }
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useMemo, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -102,14 +103,14 @@ function AddItemPage() {
           setCombinationStocks(stocks)
         }
       } catch (err) {
-        console.error('Failed to load item:', err)
+        logger.error('Failed to load item:', err)
         setError('Failed to load item data')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadItem().catch((err) => console.error('Failed to load item:', err))
+    loadItem().catch((err) => logger.error('Failed to load item:', err))
   }, [sdkReady, isEditMode, itemId])
 
   // Generate all combinations from axes
@@ -213,7 +214,7 @@ function AddItemPage() {
 
       router.push('/store/manage')
     } catch (err) {
-      console.error(`Failed to ${isEditMode ? 'update' : 'create'} item:`, err)
+      logger.error(`Failed to ${isEditMode ? 'update' : 'create'} item:`, err)
       setError(`Failed to ${isEditMode ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)

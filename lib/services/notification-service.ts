@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
@@ -77,7 +78,7 @@ class NotificationService {
         createdAt: doc.$createdAt
       }));
     } catch (error) {
-      console.error('Error fetching new followers:', error);
+      logger.error('Error fetching new followers:', error);
       return [];
     }
   }
@@ -120,7 +121,7 @@ class NotificationService {
         createdAt: doc.$createdAt
       }));
     } catch (error) {
-      console.error('Error fetching private feed request notifications:', error);
+      logger.error('Error fetching private feed request notifications:', error);
       return [];
     }
   }
@@ -144,7 +145,7 @@ class NotificationService {
           createdAt: like.$createdAt
         }));
     } catch (error) {
-      console.error('Error fetching like notifications:', error);
+      logger.error('Error fetching like notifications:', error);
       return [];
     }
   }
@@ -168,7 +169,7 @@ class NotificationService {
           createdAt: repost.$createdAt
         }));
     } catch (error) {
-      console.error('Error fetching repost notifications:', error);
+      logger.error('Error fetching repost notifications:', error);
       return [];
     }
   }
@@ -194,7 +195,7 @@ class NotificationService {
           createdAt: reply.createdAt.getTime()
         }));
     } catch (error) {
-      console.error('Error fetching reply notifications:', error);
+      logger.error('Error fetching reply notifications:', error);
       return [];
     }
   }
@@ -234,7 +235,7 @@ class NotificationService {
         };
       });
     } catch (error) {
-      console.error('Error fetching new mentions:', error);
+      logger.error('Error fetching new mentions:', error);
       return [];
     }
   }
@@ -283,7 +284,7 @@ class NotificationService {
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         const fetchTypes = ['usernames', 'profiles', 'avatars', 'posts'];
-        console.error(`Failed to fetch ${fetchTypes[index]} for notification enrichment:`, result.reason);
+        logger.error(`Failed to fetch ${fetchTypes[index]} for notification enrichment:`, result.reason);
       }
     });
 
@@ -467,7 +468,7 @@ class NotificationService {
         }
       }
     } catch (error) {
-      console.error('Error fetching posts by IDs:', error);
+      logger.error('Error fetching posts by IDs:', error);
     }
 
     return result;

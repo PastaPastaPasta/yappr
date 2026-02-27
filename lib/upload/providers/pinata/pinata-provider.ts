@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 /**
  * Pinata Upload Provider
  *
@@ -79,12 +80,12 @@ export class PinataProvider implements UploadProvider {
       })
 
       // Validate credentials by testing the connection
-      console.log('[Pinata] Testing connection...')
+      logger.info('[Pinata] Testing connection...')
       try {
         await this.client.testAuthentication()
-        console.log('[Pinata] Authentication successful')
+        logger.info('[Pinata] Authentication successful')
       } catch (error) {
-        console.error('[Pinata] Authentication failed:', error)
+        logger.error('[Pinata] Authentication failed:', error)
         throw new UploadException(
           UploadErrorCode.CREDENTIAL_ERROR,
           'Invalid API key. Please check your JWT and try again.',
@@ -99,7 +100,7 @@ export class PinataProvider implements UploadProvider {
       this.connectedJwt = jwt
       this.connectedGateway = gateway || null
       this.status = 'connected'
-      console.log('[Pinata] Setup complete, status:', this.status)
+      logger.info('[Pinata] Setup complete, status:', this.status)
     } catch (error) {
       this.status = 'error'
       this.client = null
@@ -237,7 +238,7 @@ export class PinataProvider implements UploadProvider {
       options?.onProgress?.(0)
 
       // Upload the file using public upload
-      console.log('[Pinata] Uploading file:', file.name, file.size)
+      logger.info('[Pinata] Uploading file:', file.name, file.size)
       options?.onProgress?.(25)
 
       const result = await this.client.upload.public.file(file)
@@ -245,7 +246,7 @@ export class PinataProvider implements UploadProvider {
       // Report completion
       options?.onProgress?.(100)
 
-      console.log('[Pinata] Upload complete:', result.cid)
+      logger.info('[Pinata] Upload complete:', result.cid)
 
       return {
         cid: result.cid,
@@ -254,7 +255,7 @@ export class PinataProvider implements UploadProvider {
         url: `ipfs://${result.cid}`
       }
     } catch (error) {
-      console.error('[Pinata] Upload error:', error)
+      logger.error('[Pinata] Upload error:', error)
 
       const errorMsg = error instanceof Error ? error.message : String(error)
 

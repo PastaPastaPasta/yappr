@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -38,7 +39,7 @@ export function KeyBackupModal() {
   // Benchmark on mount to get device speed
   useEffect(() => {
     if (isOpen && iterationsPerMs === null) {
-      runBenchmark().catch(err => console.error('Failed to run benchmark:', err))
+      runBenchmark().catch(err => logger.error('Failed to run benchmark:', err))
     }
   }, [isOpen, iterationsPerMs])
 
@@ -52,7 +53,7 @@ export function KeyBackupModal() {
       setIterations(result.iterations)
       setEstimatedTime(result.estimatedMs / 1000)
     } catch (error) {
-      console.error('Benchmark failed:', error)
+      logger.error('Benchmark failed:', error)
       // Use minimum iterations as fallback
       setIterations(MIN_KDF_ITERATIONS)
       setEstimatedTime(2)

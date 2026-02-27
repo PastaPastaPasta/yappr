@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -69,7 +70,7 @@ export function PrivateFeedFollowRequests() {
 
       setRequests(requestsWithDetails)
     } catch (error) {
-      console.error('Error loading follow requests:', error)
+      logger.error('Error loading follow requests:', error)
       toast.error('Failed to load follow requests')
     } finally {
       setIsLoading(false)
@@ -77,7 +78,7 @@ export function PrivateFeedFollowRequests() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadRequests().catch(err => console.error('Failed to load follow requests:', err))
+    loadRequests().catch(err => logger.error('Failed to load follow requests:', err))
   }, [loadRequests])
 
   const handleApprove = async (request: FollowRequestUser) => {
@@ -110,7 +111,7 @@ export function PrivateFeedFollowRequests() {
             }
             return bytes
           } catch {
-            console.warn('Invalid base64 encoding for key data')
+            logger.warn('Invalid base64 encoding for key data')
             return null
           }
         }
@@ -182,7 +183,7 @@ export function PrivateFeedFollowRequests() {
         throw new Error(result.error || 'Failed to approve follower')
       }
     } catch (error) {
-      console.error('Error approving follower:', error)
+      logger.error('Error approving follower:', error)
       toast.error('Failed to approve follower')
     } finally {
       setProcessingId(null)

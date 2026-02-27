@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
@@ -94,7 +95,7 @@ class DirectMessageService {
         )
 
         if (!inviteResult.success) {
-          console.warn('Failed to create conversation invite:', inviteResult.error)
+          logger.warn('Failed to create conversation invite:', inviteResult.error)
           // Continue anyway - message is more important
         }
       }
@@ -133,7 +134,7 @@ class DirectMessageService {
         }
       }
     } catch (error) {
-      console.error('Error sending message:', error)
+      logger.error('Error sending message:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to send message'
@@ -274,7 +275,7 @@ class DirectMessageService {
             updatedAt: latestDoc ? new Date(latestDoc.$createdAt as number) : new Date()
           })
         } catch (err) {
-          console.error(`Error processing conversation ${convId}:`, err)
+          logger.error(`Error processing conversation ${convId}:`, err)
         }
       }
 
@@ -283,7 +284,7 @@ class DirectMessageService {
         b.updatedAt.getTime() - a.updatedAt.getTime()
       )
     } catch (error) {
-      console.error('Error getting conversations:', error)
+      logger.error('Error getting conversations:', error)
       return []
     }
   }
@@ -314,7 +315,7 @@ class DirectMessageService {
           const msg = await this.decryptMessage(doc, userId, otherPartyId || '')
           if (msg) messages.push(msg)
         } catch (err) {
-          console.error('Error decrypting message:', err)
+          logger.error('Error decrypting message:', err)
           messages.push({
             id: doc.$id as string,
             senderId: doc.$ownerId as string,
@@ -328,7 +329,7 @@ class DirectMessageService {
 
       return messages
     } catch (error) {
-      console.error('Error getting conversation messages:', error)
+      logger.error('Error getting conversation messages:', error)
       return []
     }
   }
@@ -360,7 +361,7 @@ class DirectMessageService {
       }
       return messages
     } catch (error) {
-      console.error('Error polling messages:', error)
+      logger.error('Error polling messages:', error)
       return []
     }
   }
@@ -396,7 +397,7 @@ class DirectMessageService {
 
       return this.extractDocuments(response)
     } catch (error) {
-      console.error('Error getting raw messages:', error)
+      logger.error('Error getting raw messages:', error)
       return []
     }
   }
@@ -431,7 +432,7 @@ class DirectMessageService {
         )
       }
     } catch (error) {
-      console.error('Error marking as read:', error)
+      logger.error('Error marking as read:', error)
     }
   }
 
@@ -481,7 +482,7 @@ class DirectMessageService {
     )
 
     if (!otherPubKey) {
-      console.warn('Could not get public key for decryption')
+      logger.warn('Could not get public key for decryption')
       return null
     }
 
@@ -570,7 +571,7 @@ class DirectMessageService {
 
       return this.extractPublicKeyBytes(ecdsaKey)
     } catch (error) {
-      console.error('Error getting public key from identity:', error)
+      logger.error('Error getting public key from identity:', error)
       return null
     }
   }

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Shipping Zone Service
  *
@@ -39,7 +40,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
         try {
           postalPatterns = JSON.parse(data.postalPatterns);
         } catch {
-          console.error('Failed to parse postalPatterns:', data.postalPatterns);
+          logger.error('Failed to parse postalPatterns:', data.postalPatterns);
         }
       }
     }
@@ -54,7 +55,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
         try {
           tiers = JSON.parse(data.tiers);
         } catch {
-          console.error('Failed to parse tiers:', data.tiers);
+          logger.error('Failed to parse tiers:', data.tiers);
         }
       }
     }
@@ -212,7 +213,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
           return true;
         }
       } catch {
-        console.error('Invalid postal pattern:', pattern);
+        logger.error('Invalid postal pattern:', pattern);
       }
     }
 
@@ -283,7 +284,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
       const regex = new RegExp(`^(${pattern})$`, 'i');
       return regex.test(country);
     } catch {
-      console.error('Invalid country pattern:', pattern);
+      logger.error('Invalid country pattern:', pattern);
       return false;
     }
   }

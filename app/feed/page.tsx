@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
@@ -155,12 +156,12 @@ function FeedPage() {
       // Don't load posts on Following tab if user is not logged in
       // (the login prompt is shown instead, and posts won't be displayed)
       if (activeTab === 'following' && !user?.identityId) {
-        console.log('Feed: Skipping Following feed load - user not logged in')
+        logger.info('Feed: Skipping Following feed load - user not logged in')
         setLoading(false)
         return
       }
 
-      console.log(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '')
+      logger.info(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '')
 
       const cacheKey = activeTab === 'following'
         ? `feed_following_${user?.identityId}`
@@ -170,7 +171,7 @@ function FeedPage() {
       if (!forceRefresh && !isPaginating) {
         const cached = cacheManager.get<any[]>('feed', cacheKey)
         if (cached) {
-          console.log('Feed: Using cached data')
+          logger.info('Feed: Using cached data')
           setData(cached)
           setLoading(false)
           // Set lastPostId from cached data
@@ -218,7 +219,7 @@ function FeedPage() {
                 windowHours: cursor.windowHours || 24
               }
             } catch (e) {
-              console.warn('Failed to parse following feed cursor:', e)
+              logger.warn('Failed to parse following feed cursor:', e)
             }
           }
 
@@ -226,11 +227,11 @@ function FeedPage() {
           if (result.documents.length === 0 && followingCursor) {
             // Check if we've gone back past Jan 1, 2025
             if (followingCursor.end < MIN_DATE) {
-              console.log('Feed: Reached Jan 1 2025 limit, stopping search')
+              logger.info('Feed: Reached Jan 1 2025 limit, stopping search')
               followingCursor = null // No more to fetch
               break
             }
-            console.log(`Feed: Empty window, auto-retrying from ${followingCursor.end.toISOString()}`)
+            logger.info(`Feed: Empty window, auto-retrying from ${followingCursor.end.toISOString()}`)
             currentWindow = followingCursor
           }
         } while (result.documents.length === 0 && followingCursor)
@@ -289,7 +290,7 @@ function FeedPage() {
             }
           }
         } catch (quoteError) {
-          console.error('Feed: Error fetching quoted posts for following feed:', quoteError)
+          logger.error('Feed: Error fetching quoted posts for following feed:', quoteError)
         }
 
         // Fetch reposts from followed users and add to feed
@@ -356,7 +357,7 @@ function FeedPage() {
             }
           }
         } catch (repostError) {
-          console.error('Feed: Error fetching reposts for following feed:', repostError)
+          logger.error('Feed: Error fetching reposts for following feed:', repostError)
         }
       } else {
         // For You feed - get all posts and reposts
@@ -467,7 +468,7 @@ function FeedPage() {
               }
             }
           } catch (repostError) {
-            console.error('Feed: Error fetching reposts:', repostError)
+            logger.error('Feed: Error fetching reposts:', repostError)
           }
 
           // Fetch quoted posts (may be posts or replies)
@@ -487,14 +488,14 @@ function FeedPage() {
               }
             }
           } catch (quoteError) {
-            console.error('Feed: Error fetching quoted posts:', quoteError)
+            logger.error('Feed: Error fetching quoted posts:', quoteError)
           }
 
           return postsToEnrich
         }
 
         // FIRST FETCH: Get initial batch and display immediately
-        console.log('Feed: Loading posts', currentStartAfter ? `starting after ${currentStartAfter}` : '', '(iteration 1)')
+        logger.info('Feed: Loading posts', currentStartAfter ? `starting after ${currentStartAfter}` : '', '(iteration 1)')
         const firstBatchRaw = await dashClient.queryPosts({
           limit: 20,
           forceRefresh,
@@ -503,7 +504,7 @@ function FeedPage() {
         })
 
         if (firstBatchRaw.length === 0) {
-          console.log('Feed: No posts available')
+          logger.info('Feed: No posts available')
           posts = []
           forYouNextCursor = null
           forYouHasMore = false
@@ -512,7 +513,7 @@ function FeedPage() {
           const firstBatchPosts = firstBatchRaw.map(transformRawPost)
           const firstBatchCursor = firstBatchRaw[firstBatchRaw.length - 1].$id || firstBatchRaw[firstBatchRaw.length - 1].id
 
-          console.log(`Feed: First batch has ${firstBatchPosts.length} posts`)
+          logger.info(`Feed: First batch has ${firstBatchPosts.length} posts`)
 
           // Set initial posts IMMEDIATELY (before any enrichment)
           posts = firstBatchPosts
@@ -524,12 +525,12 @@ function FeedPage() {
             // Force a re-render to show repost/quote data
             setData((current: Post[] | null) => current ? [...current] : null)
           }).catch(err => {
-            console.error('Feed: Error enriching first batch:', err)
+            logger.error('Feed: Error enriching first batch:', err)
           })
 
           // If we need more posts, fetch them in background (non-blocking)
           if (firstBatchPosts.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
-            console.log(`Feed: Only ${firstBatchPosts.length} posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`)
+            logger.info(`Feed: Only ${firstBatchPosts.length} posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`)
 
             // Start background fetch (don't await - let it run async)
             const fetchMoreInBackground = async () => {
@@ -540,7 +541,7 @@ function FeedPage() {
 
               while (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS && bgLastBatchSize === 20) {
                 bgFetchIteration++
-                console.log(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`)
+                logger.info(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`)
 
                 const bgRawPosts = await dashClient.queryPosts({
                   limit: 20,
@@ -552,7 +553,7 @@ function FeedPage() {
                 bgLastBatchSize = bgRawPosts.length
 
                 if (bgRawPosts.length === 0) {
-                  console.log('Feed: No more posts available (background)')
+                  logger.info('Feed: No more posts available (background)')
                   setHasMore(false)
                   break
                 }
@@ -565,7 +566,7 @@ function FeedPage() {
                   // Force re-render to show repost/quote data
                   setData((current: Post[] | null) => current ? [...current] : null)
                 }).catch(err => {
-                  console.error('Feed: Error enriching background batch:', err)
+                  logger.error('Feed: Error enriching background batch:', err)
                 })
                 allPostCount += bgPosts.length
 
@@ -590,7 +591,7 @@ function FeedPage() {
                     return getTime(b) - getTime(a)
                   })
 
-                  console.log(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`)
+                  logger.info(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`)
                   return allItems
                 })
 
@@ -601,18 +602,18 @@ function FeedPage() {
                 setLastPostId(bgCurrentStartAfter)
 
                 if (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
-                  console.log(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
+                  logger.info(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`)
                 }
               }
 
               // Update has more based on final state
               setHasMore(bgLastBatchSize === 20)
-              console.log(`Feed: Background fetch complete. Total posts: ${allPostCount}`)
+              logger.info(`Feed: Background fetch complete. Total posts: ${allPostCount}`)
             }
 
             // Fire and forget - don't block initial render
             fetchMoreInBackground().catch(err => {
-              console.error('Feed: Background fetch error:', err)
+              logger.error('Feed: Background fetch error:', err)
             })
           }
         }
@@ -640,7 +641,7 @@ function FeedPage() {
 
         // For following feed: empty window doesn't mean done, just skip to next window
         if (sortedPosts.length === 0) {
-          console.log('Feed: No posts in this time window, cursor points to next window')
+          logger.info('Feed: No posts in this time window, cursor points to next window')
           if (!isPaginating) {
             setData([])
           }
@@ -649,7 +650,7 @@ function FeedPage() {
       } else {
         // For You feed: empty means done
         if (sortedPosts.length === 0) {
-          console.log('Feed: No posts found on platform')
+          logger.info('Feed: No posts found on platform')
           if (!isPaginating) {
             setData([])
           }
@@ -673,7 +674,7 @@ function FeedPage() {
           const existingIds = new Set((currentItems || []).map(item => item.id))
           const newItems = sortedPosts.filter(item => !existingIds.has(item.id))
           const allItems = [...(currentItems || []), ...newItems]
-          console.log(`Feed: Appended ${newItems.length} new items (${sortedPosts.length - newItems.length} duplicates filtered)`)
+          logger.info(`Feed: Appended ${newItems.length} new items (${sortedPosts.length - newItems.length} duplicates filtered)`)
           return allItems
         })
       } else {
@@ -703,11 +704,11 @@ function FeedPage() {
       }
 
     } catch (error) {
-      console.error('Feed: Failed to load posts from platform:', error)
+      logger.error('Feed: Failed to load posts from platform:', error)
 
       // Show specific error message but fall back gracefully
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      console.log('Feed: Falling back to empty state due to error:', errorMessage)
+      logger.info('Feed: Falling back to empty state due to error:', errorMessage)
 
       // Set empty data instead of showing error to user
       setData([])
@@ -751,7 +752,7 @@ function FeedPage() {
     if (!newestPostTimestamp || postsState.loading) return
 
     try {
-      console.log('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString())
+      logger.info('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString())
 
       let newPosts: any[] = []
 
@@ -801,7 +802,7 @@ function FeedPage() {
       }
 
       if (newPosts.length > 0) {
-        console.log(`Feed: Found ${newPosts.length} new posts`)
+        logger.info(`Feed: Found ${newPosts.length} new posts`)
 
         // Transform the documents to our UI format
         const { identifierToBase58 } = await import('@/lib/services/sdk-helpers')
@@ -859,12 +860,12 @@ function FeedPage() {
         const uniqueNewPosts = transformedPosts.filter((p: any) => !existingIds.has(p.id))
 
         if (uniqueNewPosts.length > 0) {
-          console.log(`Feed: ${uniqueNewPosts.length} unique new posts to show`)
+          logger.info(`Feed: ${uniqueNewPosts.length} unique new posts to show`)
           setPendingNewPosts(prev => [...uniqueNewPosts, ...prev])
         }
       }
     } catch (error) {
-      console.error('Feed: Error checking for new posts:', error)
+      logger.error('Feed: Error checking for new posts:', error)
     }
   }, [newestPostTimestamp, activeTab, user?.identityId, postsState.loading, postsState.data, pendingNewPosts])
 
@@ -903,7 +904,7 @@ function FeedPage() {
     if (!newestPostTimestamp) return
 
     const intervalId = setInterval(() => {
-      checkForNewPosts().catch(err => console.error('Failed to check for new posts:', err))
+      checkForNewPosts().catch(err => logger.error('Failed to check for new posts:', err))
     }, 15000) // 15 seconds
 
     return () => clearInterval(intervalId)
@@ -914,7 +915,7 @@ function FeedPage() {
     const handlePostCreated = () => {
       // Reset enrichment tracking so new data gets enriched
       resetEnrichment()
-      loadPosts(true).catch(err => console.error('Failed to load posts:', err)) // Force refresh when new post is created
+      loadPosts(true).catch(err => logger.error('Failed to load posts:', err)) // Force refresh when new post is created
     }
 
     window.addEventListener('post-created', handlePostCreated)
@@ -935,7 +936,7 @@ function FeedPage() {
     // Clear auto-refresh state on tab switch
     setPendingNewPosts([])
     setNewestPostTimestamp(null)
-    loadPosts().catch(err => console.error('Failed to load posts:', err))
+    loadPosts().catch(err => logger.error('Failed to load posts:', err))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab])
 
@@ -973,7 +974,7 @@ function FeedPage() {
             <button
               onClick={() => {
                 resetEnrichment()
-                loadPosts(true).catch(err => console.error('Failed to load posts:', err))
+                loadPosts(true).catch(err => logger.error('Failed to load posts:', err))
               }}
               disabled={postsState.loading}
               className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"

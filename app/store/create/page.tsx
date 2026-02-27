@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
@@ -82,14 +83,14 @@ function CreateStorePage() {
           setExistingPaymentUris(store.paymentUris)
         }
       } catch (err) {
-        console.error('Failed to load store:', err)
+        logger.error('Failed to load store:', err)
         setError('Failed to load store data')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadStore().catch((err) => console.error('Failed to load store:', err))
+    loadStore().catch((err) => logger.error('Failed to load store:', err))
   }, [sdkReady, isEditMode, storeId, user?.identityId])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -135,7 +136,7 @@ function CreateStorePage() {
         router.push('/store')
       }
     } catch (err) {
-      console.error(`Failed to ${isEditMode ? 'update' : 'create'} store:`, err)
+      logger.error(`Failed to ${isEditMode ? 'update' : 'create'} store:`, err)
       setError(err instanceof Error ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} store`)
     } finally {
       setIsSubmitting(false)

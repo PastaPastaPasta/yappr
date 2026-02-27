@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useCallback } from 'react'
 import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -51,7 +52,7 @@ export function HashtagRecoveryModal() {
         setError('Failed to register hashtag. Please try again.')
       }
     } catch (err) {
-      console.error('Error registering hashtag:', err)
+      logger.error('Error registering hashtag:', err)
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setRegistering(false)

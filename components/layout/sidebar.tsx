@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState, useEffect } from 'react'
@@ -101,14 +102,14 @@ export function Sidebar() {
           setDisplayName(profile?.displayName ?? null)
         }
       } catch (error) {
-        console.error('Failed to fetch display name:', error)
+        logger.error('Failed to fetch display name:', error)
         if (mounted) {
           setDisplayName(null)
         }
       }
     }
 
-    fetchDisplayName().catch((err) => console.error('Failed to fetch display name:', err))
+    fetchDisplayName().catch((err) => logger.error('Failed to fetch display name:', err))
 
     return () => {
       mounted = false
@@ -155,7 +156,7 @@ export function Sidebar() {
         }
         store.setLastFetchTimestamp(result.latestTimestamp)
       } catch (error) {
-        console.error('Notification fetch error:', error)
+        logger.error('Notification fetch error:', error)
       } finally {
         if (isInitial && !cancelled) {
           store.setLoading(false)
@@ -168,7 +169,7 @@ export function Sidebar() {
       }
     }
 
-    fetchAndSchedule(true).catch((err) => console.error('Notification fetch failed:', err))
+    fetchAndSchedule(true).catch((err) => logger.error('Notification fetch failed:', err))
 
     return () => {
       cancelled = true

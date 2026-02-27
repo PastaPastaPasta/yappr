@@ -273,10 +273,6 @@ yappr/
 │
 ├── next.config.js         # Next.js configuration (static export, WASM)
 ├── tailwind.config.js     # Tailwind CSS configuration
-├── register-contract.js   # Register contract on Dash Platform
-├── register-contract-with-nonce.js # Register contract with specific nonce
-├── register-hashtag-contract.js    # Register hashtag contract
-├── test-dpns-resolve.js   # Test DPNS name resolution
 └── TODO-MAINNET.md        # Pre-mainnet task tracking
 ```
 
@@ -364,22 +360,6 @@ Documents use `$ownerId` (automatic platform field) for ownership. Do not includ
 | `/privacy` | Privacy policy |
 | `/terms` | Terms of service |
 | `/cookies` | Cookie policy |
-
-## Platform Scripts
-
-```bash
-# Register a contract on Dash Platform
-node register-contract.js
-
-# Register contract with specific nonce
-node register-contract-with-nonce.js
-
-# Register hashtag tracking contract
-node register-hashtag-contract.js
-
-# Test DPNS name resolution
-node test-dpns-resolve.js
-```
 
 ## Architecture Notes
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -267,7 +268,7 @@ function CheckoutPage() {
         buyerEncryptionPrivateKey: buyerPrivateKey
       }
       setCheckoutReadiness(state)
-      console.error('Failed to validate checkout readiness:', err)
+      logger.error('Failed to validate checkout readiness:', err)
       return state
     }
   }, [user?.identityId])
@@ -308,14 +309,14 @@ function CheckoutPage() {
 
         await validateCheckoutReadiness(storeData)
       } catch (error) {
-        console.error('Failed to load checkout data:', error)
+        logger.error('Failed to load checkout data:', error)
         router.push('/cart')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadData().catch(console.error)
+    loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, router, validateCheckoutReadiness])
 
   // Load saved addresses
@@ -353,11 +354,11 @@ function CheckoutPage() {
           setBuyerContact(defaultAddr.contact)
         }
       } catch (error) {
-        console.error('Failed to load saved addresses:', error)
+        logger.error('Failed to load saved addresses:', error)
       }
     }
 
-    loadSavedAddresses().catch(console.error)
+    loadSavedAddresses().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
   // Calculate shipping when address changes
@@ -392,7 +393,7 @@ function CheckoutPage() {
         setMatchedZone(zone)
         setShippingCost(cost)
       } catch (error) {
-        console.error('Failed to calculate shipping:', error)
+        logger.error('Failed to calculate shipping:', error)
         // If zones failed to load, allow checkout anyway
         setZonesLoadFailed(true)
         setMatchedZone(null)
@@ -400,7 +401,7 @@ function CheckoutPage() {
       }
     }
 
-    calculateShipping().catch(console.error)
+    calculateShipping().catch((error) => logger.error(error))
   }, [sdkReady, storeId, shippingAddress, cartItems])
 
   const subtotal = useMemo(() => {
@@ -475,7 +476,7 @@ function CheckoutPage() {
       setShowSavePrompt(false)
       setStep('shipping')
     } catch (error) {
-      console.error('Failed to save address:', error)
+      logger.error('Failed to save address:', error)
       // Continue anyway
       setShowSavePrompt(false)
       setStep('shipping')
@@ -512,7 +513,7 @@ function CheckoutPage() {
 
       setSavedAddresses((prev) => [...prev, newAddress])
     } catch (err) {
-      console.error('Failed to add address:', err)
+      logger.error('Failed to add address:', err)
       setError('Failed to save address. Please try again.')
     }
   }
@@ -541,7 +542,7 @@ function CheckoutPage() {
         )
       }
     } catch (err) {
-      console.error('Failed to update address:', err)
+      logger.error('Failed to update address:', err)
       setError('Failed to update address. Please try again.')
     }
   }
@@ -561,7 +562,7 @@ function CheckoutPage() {
         setSelectedSavedAddressId(null)
       }
     } catch (err) {
-      console.error('Failed to delete address:', err)
+      logger.error('Failed to delete address:', err)
       setError('Failed to delete address. Please try again.')
     }
   }
@@ -578,7 +579,7 @@ function CheckoutPage() {
         prev.map((a) => ({ ...a, isDefault: a.id === id }))
       )
     } catch (err) {
-      console.error('Failed to set default address:', err)
+      logger.error('Failed to set default address:', err)
       setError('Failed to set default address. Please try again.')
     }
   }
@@ -604,7 +605,7 @@ function CheckoutPage() {
           setError(readiness.blockerMessage)
         })
         .catch((err) => {
-          console.error('Failed to revalidate checkout readiness:', err)
+          logger.error('Failed to revalidate checkout readiness:', err)
           setError(err instanceof Error ? err.message : 'Failed to verify checkout readiness.')
         })
     })
@@ -711,7 +712,7 @@ function CheckoutPage() {
 
       setOrderCreated(true)
     } catch (err) {
-      console.error('Failed to create order:', err)
+      logger.error('Failed to create order:', err)
       setError(err instanceof Error ? err.message : 'Failed to create order')
     } finally {
       setIsSubmitting(false)

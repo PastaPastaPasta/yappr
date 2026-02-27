@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { EvoSDK } from '@dashevo/evo-sdk';
 import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '../constants';
 
@@ -54,18 +55,18 @@ class EvoSdkService {
     }
 
     try {
-      console.log('EvoSdkService: Creating EvoSDK instance...');
+      logger.info('EvoSdkService: Creating EvoSDK instance...');
 
       // Create SDK with trusted mode based on network
       if (this.config.network === 'testnet') {
-        console.log('EvoSdkService: Building testnet SDK in trusted mode...');
+        logger.info('EvoSdkService: Building testnet SDK in trusted mode...');
         this.sdk = EvoSDK.testnetTrusted({
           settings: {
             timeoutMs: 8000,
           }
         });
       } else {
-        console.log('EvoSdkService: Building mainnet SDK in trusted mode...');
+        logger.info('EvoSdkService: Building mainnet SDK in trusted mode...');
         this.sdk = EvoSDK.mainnetTrusted({
           settings: {
             timeoutMs: 8000,
@@ -73,18 +74,18 @@ class EvoSdkService {
         });
       }
 
-      console.log('EvoSdkService: Connecting to network...');
+      logger.info('EvoSdkService: Connecting to network...');
       await this.sdk.connect();
-      console.log('EvoSdkService: Connected successfully');
+      logger.info('EvoSdkService: Connected successfully');
 
       this._isInitialized = true;
-      console.log('EvoSdkService: SDK initialized successfully');
+      logger.info('EvoSdkService: SDK initialized successfully');
 
       // Preload contracts to avoid repeated fetches
       await this._preloadContracts();
     } catch (error) {
-      console.error('EvoSdkService: Failed to initialize SDK:', error);
-      console.error('EvoSdkService: Error details:', {
+      logger.error('EvoSdkService: Failed to initialize SDK:', error);
+      logger.error('EvoSdkService: Error details:', {
         message: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined
       });
@@ -103,7 +104,7 @@ class EvoSdkService {
       return;
     }
 
-    console.log('EvoSdkService: Preloading contracts in parallel...');
+    logger.info('EvoSdkService: Preloading contracts in parallel...');
 
     // Build list of contracts to fetch
     const contractsToFetch: Array<{ id: string; name: string }> = [
@@ -130,9 +131,9 @@ class EvoSdkService {
       const result = results[i];
       const contract = contractsToFetch[i];
       if (result.status === 'fulfilled') {
-        console.log(`EvoSdkService: ${contract.name} contract cached`);
+        logger.info(`EvoSdkService: ${contract.name} contract cached`);
       } else {
-        console.log(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
+        logger.info(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
       }
     }
   }
@@ -188,7 +189,7 @@ class EvoSdkService {
    */
   async handleConnectionError(error: unknown): Promise<boolean> {
     if (this.isNoAvailableAddressesError(error)) {
-      console.log('EvoSdkService: Detected "no available addresses" error, attempting to reconnect...');
+      logger.info('EvoSdkService: Detected "no available addresses" error, attempting to reconnect...');
       try {
         const savedConfig = this.config;
         await this.cleanup();
@@ -196,11 +197,11 @@ class EvoSdkService {
           // Wait a bit before reconnecting to avoid immediate rate limiting
           await new Promise(resolve => setTimeout(resolve, 2000));
           await this.initialize(savedConfig);
-          console.log('EvoSdkService: Reconnected successfully');
+          logger.info('EvoSdkService: Reconnected successfully');
           return true;
         }
       } catch (reconnectError) {
-        console.error('EvoSdkService: Failed to reconnect:', reconnectError);
+        logger.error('EvoSdkService: Failed to reconnect:', reconnectError);
       }
     }
     return false;

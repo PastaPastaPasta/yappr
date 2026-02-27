@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -39,7 +40,7 @@ function SearchPageContent() {
 
   useEffect(() => {
     const currentSearchId = ++searchIdRef.current
-    console.log(`Search: Starting search #${currentSearchId} for query: "${query}"`)
+    logger.info(`Search: Starting search #${currentSearchId} for query: "${query}"`)
 
     const performSearch = async () => {
       const trimmedQuery = query.trim()
@@ -53,7 +54,7 @@ function SearchPageContent() {
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        console.log('Search: Query too short, need at least 3 characters')
+        logger.info('Search: Query too short, need at least 3 characters')
         setUsers([])
         setHashtags([])
         setIsLoading(false)
@@ -71,14 +72,14 @@ function SearchPageContent() {
 
         // Only update state if this is still the current search
         if (currentSearchId !== searchIdRef.current) {
-          console.log(`Search: Ignoring stale results for search #${currentSearchId}`)
+          logger.info(`Search: Ignoring stale results for search #${currentSearchId}`)
           return
         }
 
         setUsers(userResults)
         setHashtags(hashtagResults)
       } catch (error) {
-        console.error('Search failed:', error)
+        logger.error('Search failed:', error)
       } finally {
         if (currentSearchId === searchIdRef.current) {
           setIsLoading(false)
@@ -86,30 +87,30 @@ function SearchPageContent() {
       }
     }
 
-    performSearch().catch(err => console.error('Search failed:', err))
+    performSearch().catch(err => logger.error('Search failed:', err))
   }, [query])
 
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
     try {
       const trimmedQuery = searchQuery.trim()
-      console.log(`Search: searchUsers called with: "${trimmedQuery}"`)
+      logger.info(`Search: searchUsers called with: "${trimmedQuery}"`)
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        console.log('Search: Query too short, need at least 3 characters')
+        logger.info('Search: Query too short, need at least 3 characters')
         return []
       }
 
       // Search DPNS usernames by prefix
       const dpnsResults = await dpnsService.searchUsernamesWithDetails(trimmedQuery, 10)
-      console.log(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
+      logger.info(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
 
       // If prefix search returns nothing, try exact name resolution as fallback
       if (dpnsResults.length === 0) {
-        console.log(`Search: Trying exact name resolution for "${trimmedQuery}"`)
+        logger.info(`Search: Trying exact name resolution for "${trimmedQuery}"`)
         const exactIdentity = await dpnsService.resolveIdentity(trimmedQuery)
         if (exactIdentity) {
-          console.log(`Search: Found exact match for "${trimmedQuery}"`)
+          logger.info(`Search: Found exact match for "${trimmedQuery}"`)
           dpnsResults.push({
             username: `${trimmedQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
             ownerId: exactIdentity
@@ -130,7 +131,7 @@ function SearchPageContent() {
         try {
           profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
         } catch (error) {
-          console.error('Failed to fetch profiles:', error)
+          logger.error('Failed to fetch profiles:', error)
         }
       }
 
@@ -166,7 +167,7 @@ function SearchPageContent() {
 
       return results
     } catch (error) {
-      console.error('User search failed:', error)
+      logger.error('User search failed:', error)
       return []
     }
   }
@@ -204,7 +205,7 @@ function SearchPageContent() {
 
       return results
     } catch (error) {
-      console.error('Hashtag search failed:', error)
+      logger.error('Hashtag search failed:', error)
       return []
     }
   }

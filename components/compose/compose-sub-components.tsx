@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
@@ -488,7 +489,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         setState({ status: 'locked' })
       }
     } catch (error) {
-      console.error('Error decrypting quoted post preview:', error)
+      logger.error('Error decrypting quoted post preview:', error)
       if (currentRequestId === requestIdRef.current) {
         setState({ status: 'error' })
       }
@@ -504,7 +505,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
   useEffect(() => {
     if (isPrivate && state.status === 'idle') {
-      attemptDecryption().catch(err => console.error('Failed to decrypt:', err))
+      attemptDecryption().catch(err => logger.error('Failed to decrypt:', err))
     }
   }, [isPrivate, state.status, attemptDecryption])
 

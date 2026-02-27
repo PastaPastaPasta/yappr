@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { dpnsService, unifiedProfileService } from '@/lib/services'
@@ -206,7 +207,7 @@ export function MentionAutocomplete({
           try {
             profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
           } catch (error) {
-            console.error('Failed to fetch profiles for autocomplete:', error)
+            logger.error('Failed to fetch profiles for autocomplete:', error)
           }
         }
 
@@ -238,7 +239,7 @@ export function MentionAutocomplete({
 
         setSuggestions(results)
       } catch (error) {
-        console.error('Mention autocomplete search failed:', error)
+        logger.error('Mention autocomplete search failed:', error)
         setSuggestions([])
       } finally {
         if (searchId === searchIdRef.current) {

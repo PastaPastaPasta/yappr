@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { transformDocumentWithField, stringToIdentifierBytes } from './sdk-helpers';
@@ -27,7 +28,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
       // Check if already bookmarked
       const existing = await this.getBookmark(postId, ownerId);
       if (existing) {
-        console.log('Post already bookmarked');
+        logger.info('Post already bookmarked');
         return true;
       }
 
@@ -41,7 +42,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error bookmarking post:', error);
+      logger.error('Error bookmarking post:', error);
       return false;
     }
   }
@@ -53,7 +54,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     try {
       const bookmark = await this.getBookmark(postId, ownerId);
       if (!bookmark) {
-        console.log('Post not bookmarked');
+        logger.info('Post not bookmarked');
         return true;
       }
 
@@ -67,7 +68,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error removing bookmark:', error);
+      logger.error('Error removing bookmark:', error);
       return false;
     }
   }
@@ -95,7 +96,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
-      console.error('Error getting bookmark:', error);
+      logger.error('Error getting bookmark:', error);
       return null;
     }
   }
@@ -124,7 +125,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting user bookmarks:', error);
+      logger.error('Error getting user bookmarks:', error);
       return [];
     }
   }
@@ -161,7 +162,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return result.documents;
     } catch (error) {
-      console.error('Error getting user bookmarks for posts:', error);
+      logger.error('Error getting user bookmarks for posts:', error);
       return [];
     }
   }

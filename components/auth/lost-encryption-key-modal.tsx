@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
@@ -57,7 +58,7 @@ export function LostEncryptionKeyModal({
         const followedOwners = privateFeedKeyStore.getFollowedFeedOwners()
         setFollowedPrivateFeeds(followedOwners)
       } catch (error) {
-        console.error('Error checking private feed status:', error)
+        logger.error('Error checking private feed status:', error)
         setHasPrivateFeed(false)
         setFollowedPrivateFeeds([])
       } finally {
@@ -65,7 +66,7 @@ export function LostEncryptionKeyModal({
       }
     }
 
-    checkStatus().catch(console.error)
+    checkStatus().catch((error) => logger.error(error))
   }, [isOpen, user])
 
   const handleClose = useCallback(() => {

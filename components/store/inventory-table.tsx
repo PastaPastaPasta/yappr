@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import React, { useState, useCallback, useMemo } from 'react'
 import {
   PencilIcon,
@@ -176,7 +177,7 @@ export function InventoryTable({
         await storeItemService.delete(itemId, ownerId)
         onItemDeleted(itemId)
       } catch (err) {
-        console.error(`Failed to delete item ${itemId}:`, err)
+        logger.error(`Failed to delete item ${itemId}:`, err)
       }
     }
 
@@ -260,7 +261,7 @@ export function InventoryTable({
 
       onStockUpdate?.(editingStock.itemId, newStock ?? Infinity, editingStock.variantKey)
     } catch (err) {
-      console.error('Failed to update stock:', err)
+      logger.error('Failed to update stock:', err)
     }
 
     setEditingStock(null)
@@ -274,7 +275,7 @@ export function InventoryTable({
       await storeItemService.delete(deleteItemId, ownerId)
       onItemDeleted(deleteItemId)
     } catch (err) {
-      console.error('Failed to delete item:', err)
+      logger.error('Failed to delete item:', err)
     } finally {
       setIsDeleting(false)
       setDeleteItemId(null)
@@ -294,9 +295,9 @@ export function InventoryTable({
           type="number"
           value={editingStock.value}
           onChange={(e) => setEditingStock({ ...editingStock, value: e.target.value })}
-          onBlur={() => { handleStockSave().catch((err) => console.error('Failed to save stock:', err)) }}
+          onBlur={() => { handleStockSave().catch((err) => logger.error('Failed to save stock:', err)) }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') handleStockSave().catch((err) => console.error('Failed to save stock:', err))
+            if (e.key === 'Enter') handleStockSave().catch((err) => logger.error('Failed to save stock:', err))
             if (e.key === 'Escape') setEditingStock(null)
           }}
           placeholder="Unlimited"
@@ -614,7 +615,7 @@ export function InventoryTable({
       <ConfirmDialog
         isOpen={showBulkDeleteDialog}
         onClose={() => setShowBulkDeleteDialog(false)}
-        onConfirm={() => { handleBulkDelete().catch((err) => console.error('Bulk delete failed:', err)) }}
+        onConfirm={() => { handleBulkDelete().catch((err) => logger.error('Bulk delete failed:', err)) }}
         title="Delete Selected Items"
         message={bulkDeleteMessage}
         confirmText={bulkDeleteProgress ? `Deleting ${bulkDeleteProgress.current}/${bulkDeleteProgress.total}...` : `Delete ${activeSelectedCount} Items`}

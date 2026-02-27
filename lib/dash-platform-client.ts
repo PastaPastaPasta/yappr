@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 // Import the centralized SDK service
 import { evoSdkService } from './services/evo-sdk-service'
 import { YAPPR_CONTRACT_ID } from './constants'
@@ -36,7 +37,7 @@ export class DashPlatformClient {
       const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
       const contractId = YAPPR_CONTRACT_ID
       
-      console.log('DashPlatformClient: Initializing via WasmSdkService for network:', network)
+      logger.info('DashPlatformClient: Initializing via WasmSdkService for network:', network)
       
       // Initialize the WASM SDK service if not already done
       await evoSdkService.initialize({ network, contractId })
@@ -44,9 +45,9 @@ export class DashPlatformClient {
       // Get the SDK instance
       this.sdk = await evoSdkService.getSdk()
       
-      console.log('DashPlatformClient: WASM SDK initialized successfully via service')
+      logger.info('DashPlatformClient: WASM SDK initialized successfully via service')
     } catch (error) {
-      console.error('DashPlatformClient: Failed to initialize WASM SDK:', error)
+      logger.error('DashPlatformClient: Failed to initialize WASM SDK:', error)
       throw error
     } finally {
       this.isInitializing = false
@@ -59,7 +60,7 @@ export class DashPlatformClient {
    */
   setIdentity(identityId: string) {
     this.identityId = identityId
-    console.log('DashPlatformClient: Identity set to:', identityId)
+    logger.info('DashPlatformClient: Identity set to:', identityId)
   }
   
   /**
@@ -86,10 +87,10 @@ export class DashPlatformClient {
             if (identityId) {
               // Set it for future use
               this.identityId = identityId
-              console.log('DashPlatformClient: Identity restored from session:', identityId)
+              logger.info('DashPlatformClient: Identity restored from session:', identityId)
             }
           } catch (e) {
-            console.error('Failed to parse session data:', e)
+            logger.error('Failed to parse session data:', e)
           }
         }
       }
@@ -102,7 +103,7 @@ export class DashPlatformClient {
     try {
       await this.ensureInitialized()
 
-      console.log('Creating post for identity:', identityId)
+      logger.info('Creating post for identity:', identityId)
 
       // Use the post service which goes through the new state-transition-service
       const { postService } = await import('./services/post-service')
@@ -116,7 +117,7 @@ export class DashPlatformClient {
         language: 'en'
       })
 
-      console.log('Post created successfully!')
+      logger.info('Post created successfully!')
 
       // Invalidate posts cache since we created a new post
       this.postsCache.clear()
@@ -124,7 +125,7 @@ export class DashPlatformClient {
       return post
 
     } catch (error) {
-      console.error('Failed to create post:', error)
+      logger.error('Failed to create post:', error)
       throw error
     }
   }
@@ -136,7 +137,7 @@ export class DashPlatformClient {
     try {
       await this.ensureInitialized()
       
-      console.log('Fetching profile for identity:', identityId)
+      logger.info('Fetching profile for identity:', identityId)
       
       // Query profile document for this identity
       const query = {
@@ -156,7 +157,7 @@ export class DashPlatformClient {
         limit: query.limit
       })
       
-      console.log('Profile query response:', profileResponse)
+      logger.info('Profile query response:', profileResponse)
 
       // Convert Map response (v3 SDK) to array
       let profiles: unknown[] = []
@@ -171,7 +172,7 @@ export class DashPlatformClient {
         profiles = profileResponse
       }
 
-      console.log('Profiles found:', profiles)
+      logger.info('Profiles found:', profiles)
 
       if (profiles.length > 0) {
         return profiles[0]
@@ -179,7 +180,7 @@ export class DashPlatformClient {
       
       return null
     } catch (error) {
-      console.error('Failed to fetch profile:', error)
+      logger.error('Failed to fetch profile:', error)
       // Return null if profile doesn't exist
       return null
     }
@@ -209,7 +210,7 @@ export class DashPlatformClient {
       // Check if there's already a pending query for this exact request
       const pendingQuery = this.pendingQueries.get(cacheKey)
       if (!options?.forceRefresh && pendingQuery) {
-        console.log('DashPlatformClient: Returning pending query result')
+        logger.info('DashPlatformClient: Returning pending query result')
         return await pendingQuery
       }
       
@@ -217,7 +218,7 @@ export class DashPlatformClient {
       if (!options?.forceRefresh) {
         const cached = this.postsCache.get(cacheKey)
         if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-          console.log('DashPlatformClient: Returning cached posts')
+          logger.info('DashPlatformClient: Returning cached posts')
           return cached.posts
         }
       }
@@ -226,7 +227,7 @@ export class DashPlatformClient {
       
       const contractId = YAPPR_CONTRACT_ID
       
-      console.log('DashPlatformClient: Querying posts from contract:', contractId)
+      logger.info('DashPlatformClient: Querying posts from contract:', contractId)
       
       // Create the query promise and store it to prevent duplicates
       const queryPromise = this._executePostsQuery(contractId, options, cacheKey)
@@ -247,7 +248,7 @@ export class DashPlatformClient {
       } else if (error instanceof Error) {
         errorMessage = error.message
       }
-      console.error('DashPlatformClient: Failed to query posts:', errorMessage, {
+      logger.error('DashPlatformClient: Failed to query posts:', errorMessage, {
         code: error?.code,
         kind: error?.kind
       })
@@ -290,7 +291,7 @@ export class DashPlatformClient {
           startAfter: options?.startAfter || undefined
         })
         
-        console.log('DashPlatformClient: Posts query response received')
+        logger.info('DashPlatformClient: Posts query response received')
 
         // Convert Map response (v3 SDK) to array
         let posts: unknown[] = []
@@ -305,7 +306,7 @@ export class DashPlatformClient {
           posts = postsResponse
         }
 
-        console.log(`DashPlatformClient: Found ${posts.length} posts`)
+        logger.info(`DashPlatformClient: Found ${posts.length} posts`)
         
         // Cache the results
         this.postsCache.set(cacheKey, {
@@ -339,7 +340,7 @@ export class DashPlatformClient {
           }
         }
 
-        console.log('DashPlatformClient: Document query failed:', {
+        logger.info('DashPlatformClient: Document query failed:', {
           message: errorMessage,
           code: errorCode,
           kind: errorKind,
@@ -357,7 +358,7 @@ export class DashPlatformClient {
         const isCodeNotFound = errorCode === 'NOT_FOUND' || errorCode === 'not_found'
 
         if (isContractError || isNotFoundError || isKindNotFound || isCodeNotFound) {
-          console.log('DashPlatformClient: Expected error (contract/not found), returning empty posts array')
+          logger.info('DashPlatformClient: Expected error (contract/not found), returning empty posts array')
           return []
         }
 
@@ -372,7 +373,7 @@ export class DashPlatformClient {
       } else if (error instanceof Error) {
         errorMessage = error.message
       }
-      console.error('DashPlatformClient: _executePostsQuery failed:', errorMessage, {
+      logger.error('DashPlatformClient: _executePostsQuery failed:', errorMessage, {
         code: error?.code,
         kind: error?.kind
       })
@@ -386,7 +387,7 @@ export class DashPlatformClient {
   clearPostsCache() {
     this.postsCache.clear()
     this.pendingQueries.clear()
-    console.log('DashPlatformClient: Posts cache and pending queries cleared')
+    logger.info('DashPlatformClient: Posts cache and pending queries cleared')
   }
   
   /**

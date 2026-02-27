@@ -1,5 +1,6 @@
 'use client';
 
+import { logger } from '@/lib/logger';
 /**
  * PrivateFeedService
  *
@@ -103,7 +104,7 @@ class PrivateFeedService {
       const state = await this.getPrivateFeedState(ownerId);
       return state !== null;
     } catch (error) {
-      console.error('Error checking private feed status:', error);
+      logger.error('Error checking private feed status:', error);
       return false;
     }
   }
@@ -136,7 +137,7 @@ class PrivateFeedService {
         encryptedSeed: this.normalizeBytes(doc.encryptedSeed),
       };
     } catch (error) {
-      console.error('Error fetching private feed state:', error);
+      logger.error('Error fetching private feed state:', error);
       return null;
     }
   }
@@ -164,7 +165,7 @@ class PrivateFeedService {
 
       return documents[0].epoch as number;
     } catch (error) {
-      console.error('Error fetching latest epoch:', error);
+      logger.error('Error fetching latest epoch:', error);
       return 1;
     }
   }
@@ -200,7 +201,7 @@ class PrivateFeedService {
 
       return documents;
     } catch (error) {
-      console.error('Error fetching rekey documents:', error);
+      logger.error('Error fetching rekey documents:', error);
       return [];
     }
   }
@@ -288,7 +289,7 @@ class PrivateFeedService {
         encryptedSeed: Array.from(encryptedSeed), // Convert to array for platform
       };
 
-      console.log('Creating PrivateFeedState document:', {
+      logger.info('Creating PrivateFeedState document:', {
         treeCapacity: TREE_CAPACITY,
         maxEpoch: MAX_EPOCH,
         encryptedSeedLength: encryptedSeed.length,
@@ -311,10 +312,10 @@ class PrivateFeedService {
       // Store CEK[1] for immediate use
       privateFeedKeyStore.storeCachedCEK(ownerId, 1, cek1);
 
-      console.log('Private feed enabled successfully');
+      logger.info('Private feed enabled successfully');
       return { success: true };
     } catch (error) {
-      console.error('Error enabling private feed:', error);
+      logger.error('Error enabling private feed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -377,7 +378,7 @@ class PrivateFeedService {
           if (!feedSeed) {
             return { success: false, error: 'Feed seed not available after recovery' };
           }
-          console.log('Automatic recovery completed, continuing with approval');
+          logger.info('Automatic recovery completed, continuing with approval');
         } else {
           return {
             success: false,
@@ -481,7 +482,7 @@ class PrivateFeedService {
         encryptedPayload: Array.from(encryptedPayload),
       };
 
-      console.log('Creating PrivateFeedGrant document:', {
+      logger.info('Creating PrivateFeedGrant document:', {
         recipientId: requesterId,
         leafIndex,
         epoch: localEpoch,
@@ -511,10 +512,10 @@ class PrivateFeedService {
       // (we can't sign documents owned by the recipient). Followers discover approvals
       // by polling their grants via getMyGrants() or checking followRequest status.
 
-      console.log(`Approved follower ${requesterId} with leaf index ${leafIndex}`);
+      logger.info(`Approved follower ${requesterId} with leaf index ${leafIndex}`);
       return { success: true };
     } catch (error) {
-      console.error('Error approving follower:', error);
+      logger.error('Error approving follower:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -571,7 +572,7 @@ class PrivateFeedService {
           if (!feedSeed) {
             return { success: false, error: 'Feed seed not available after recovery' };
           }
-          console.log('Automatic recovery completed, continuing with revocation');
+          logger.info('Automatic recovery completed, continuing with revocation');
         } else {
           return {
             success: false,
@@ -752,7 +753,7 @@ class PrivateFeedService {
         encryptedCEK: Array.from(encryptedCEK),
       };
 
-      console.log('Creating PrivateFeedRekey document:', {
+      logger.info('Creating PrivateFeedRekey document:', {
         epoch: newEpoch,
         revokedLeaf: leafIndex,
         packetsCount: packets.length,
@@ -784,7 +785,7 @@ class PrivateFeedService {
       // Note: We'll do this after grant deletion for consistency
 
       // 15. Delete PrivateFeedGrant document
-      console.log(`Deleting grant document: ${grantId}`);
+      logger.info(`Deleting grant document: ${grantId}`);
 
       const deleteResult = await stateTransitionService.deleteDocument(
         this.contractId,
@@ -796,7 +797,7 @@ class PrivateFeedService {
       if (!deleteResult.success) {
         // Grant deletion failed but rekey exists - user is cryptographically revoked
         // This is acceptable per SPEC §8.5, log error and schedule retry
-        console.error('Failed to delete grant:', deleteResult.error);
+        logger.error('Failed to delete grant:', deleteResult.error);
         // Still return success since the cryptographic revocation is complete
       }
 
@@ -814,10 +815,10 @@ class PrivateFeedService {
       // (we can't sign documents owned by the recipient). Revoked followers discover
       // revocation when their grant stops working or via grant expiry checks.
 
-      console.log(`Revoked follower ${followerId} (leaf ${leafIndex}), new epoch: ${newEpoch}`);
+      logger.info(`Revoked follower ${followerId} (leaf ${leafIndex}), new epoch: ${newEpoch}`);
       return { success: true };
     } catch (error) {
-      console.error('Error revoking follower:', error);
+      logger.error('Error revoking follower:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -856,7 +857,7 @@ class PrivateFeedService {
 
       return documents;
     } catch (error) {
-      console.error('Error fetching private followers:', error);
+      logger.error('Error fetching private followers:', error);
       return [];
     }
   }
@@ -932,7 +933,7 @@ class PrivateFeedService {
 
       // 3. Delete all existing PrivateFeedGrant documents
       // These are now useless since they're encrypted to old seed's epoch keys
-      console.log('Deleting existing grants...');
+      logger.info('Deleting existing grants...');
       const sdk = await getEvoSdk();
       const { documents: grantDocs } = await paginateFetchAll<{ $id: string }>(
         sdk,
@@ -948,7 +949,7 @@ class PrivateFeedService {
         { maxResults: 1024 }
       );
 
-      console.log(`Found ${grantDocs.length} grants to delete`);
+      logger.info(`Found ${grantDocs.length} grants to delete`);
 
       // Delete grants one by one (unfortunately no batch delete in SDK)
       let deletedCount = 0;
@@ -963,18 +964,18 @@ class PrivateFeedService {
           if (deleteResult.success) {
             deletedCount++;
           } else {
-            console.warn(`Failed to delete grant ${grant.$id}:`, deleteResult.error);
+            logger.warn(`Failed to delete grant ${grant.$id}:`, deleteResult.error);
           }
         } catch (deleteError) {
-          console.warn(`Error deleting grant ${grant.$id}:`, deleteError);
+          logger.warn(`Error deleting grant ${grant.$id}:`, deleteError);
           // Continue with other grants even if one fails
         }
       }
-      console.log(`Deleted ${deletedCount}/${grantDocs.length} grants`);
+      logger.info(`Deleted ${deletedCount}/${grantDocs.length} grants`);
 
       // 4. Delete all existing PrivateFeedRekey documents
       // These reference the old epoch chain and would cause conflicts/confusion
-      console.log('Deleting existing rekey documents...');
+      logger.info('Deleting existing rekey documents...');
       const { documents: rekeyDocs } = await paginateFetchAll<{ $id: string }>(
         sdk,
         (startAfter) => ({
@@ -989,7 +990,7 @@ class PrivateFeedService {
         { maxResults: 2000 } // maxEpoch is typically 2000
       );
 
-      console.log(`Found ${rekeyDocs.length} rekey documents to delete`);
+      logger.info(`Found ${rekeyDocs.length} rekey documents to delete`);
 
       let deletedRekeyCount = 0;
       for (const rekey of rekeyDocs) {
@@ -1003,14 +1004,14 @@ class PrivateFeedService {
           if (deleteResult.success) {
             deletedRekeyCount++;
           } else {
-            console.warn(`Failed to delete rekey ${rekey.$id}:`, deleteResult.error);
+            logger.warn(`Failed to delete rekey ${rekey.$id}:`, deleteResult.error);
           }
         } catch (deleteError) {
-          console.warn(`Error deleting rekey ${rekey.$id}:`, deleteError);
+          logger.warn(`Error deleting rekey ${rekey.$id}:`, deleteError);
           // Continue with other rekeys even if one fails
         }
       }
-      console.log(`Deleted ${deletedRekeyCount}/${rekeyDocs.length} rekey documents`);
+      logger.info(`Deleted ${deletedRekeyCount}/${rekeyDocs.length} rekey documents`);
 
       // 5. Generate new feed seed (SPEC §8.1 step 1)
       const newFeedSeed = privateFeedCryptoService.generateFeedSeed();
@@ -1059,7 +1060,7 @@ class PrivateFeedService {
         encryptedSeed: Array.from(newEncryptedSeed),
       };
 
-      console.log('Resetting PrivateFeedState document:', {
+      logger.info('Resetting PrivateFeedState document:', {
         documentId,
         revision,
         encryptedSeedLength: newEncryptedSeed.length,
@@ -1085,10 +1086,10 @@ class PrivateFeedService {
       // Store CEK[1] for immediate use
       privateFeedKeyStore.storeCachedCEK(ownerId, 1, cek1);
 
-      console.log('Private feed reset successfully');
+      logger.info('Private feed reset successfully');
       return { success: true };
     } catch (error) {
-      console.error('Error resetting private feed:', error);
+      logger.error('Error resetting private feed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -1133,7 +1134,7 @@ class PrivateFeedService {
     encryptionPrivateKey: Uint8Array
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      console.log('Starting owner recovery for:', ownerId);
+      logger.info('Starting owner recovery for:', ownerId);
 
       // 1. Fetch PrivateFeedState document
       const feedState = await this.getPrivateFeedState(ownerId);
@@ -1153,7 +1154,7 @@ class PrivateFeedService {
           aad
         );
       } catch (decryptError) {
-        console.error('Failed to decrypt feed seed:', decryptError);
+        logger.error('Failed to decrypt feed seed:', decryptError);
         return { success: false, error: 'Failed to decrypt feed seed - invalid encryption key' };
       }
 
@@ -1168,7 +1169,7 @@ class PrivateFeedService {
 
       // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch)
       const rekeyDocs = await this.getRekeyDocuments(ownerId);
-      console.log(`Found ${rekeyDocs.length} rekey documents`);
+      logger.info(`Found ${rekeyDocs.length} rekey documents`);
 
       // 5. Build revokedLeaves list from rekey docs (in epoch order)
       const revokedLeaves: number[] = [];
@@ -1180,11 +1181,11 @@ class PrivateFeedService {
       const currentEpoch = rekeyDocs.length > 0
         ? rekeyDocs[rekeyDocs.length - 1].epoch
         : 1;
-      console.log(`Current epoch: ${currentEpoch}, revoked leaves: ${revokedLeaves.length}`);
+      logger.info(`Current epoch: ${currentEpoch}, revoked leaves: ${revokedLeaves.length}`);
 
       // 7. Fetch ALL PrivateFeedGrant documents
       const grants = await this.getPrivateFollowers(ownerId);
-      console.log(`Found ${grants.length} active grants`);
+      logger.info(`Found ${grants.length} active grants`);
 
       // 8. Build recipientId → leafIndex mapping
       const recipientMap: Record<string, number> = {};
@@ -1201,7 +1202,7 @@ class PrivateFeedService {
           availableLeaves.push(i);
         }
       }
-      console.log(`Available leaves: ${availableLeaves.length}`);
+      logger.info(`Available leaves: ${availableLeaves.length}`);
 
       // 10. Clear existing owner state and initialize with recovered data
       privateFeedKeyStore.clearOwnerKeys();
@@ -1226,10 +1227,10 @@ class PrivateFeedService {
       const currentCEK = epochChain[currentEpoch];
       privateFeedKeyStore.storeCachedCEK(ownerId, currentEpoch, currentCEK);
 
-      console.log('Owner recovery completed successfully');
+      logger.info('Owner recovery completed successfully');
       return { success: true };
     } catch (error) {
-      console.error('Error during owner recovery:', error);
+      logger.error('Error during owner recovery:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error during recovery',
@@ -1257,7 +1258,7 @@ class PrivateFeedService {
 
       if (!hasLocalKeys) {
         // No local keys - need full recovery
-        console.log('No local keys found, running full owner recovery');
+        logger.info('No local keys found, running full owner recovery');
         return await this.recoverOwnerState(ownerId, encryptionPrivateKey);
       }
 
@@ -1267,14 +1268,14 @@ class PrivateFeedService {
 
       if (chainEpoch > localEpoch) {
         // Local state is behind - need recovery
-        console.log(`Local epoch ${localEpoch} < chain epoch ${chainEpoch}, running recovery`);
+        logger.info(`Local epoch ${localEpoch} < chain epoch ${chainEpoch}, running recovery`);
         return await this.recoverOwnerState(ownerId, encryptionPrivateKey);
       }
 
       // Already synced
       return { success: true };
     } catch (error) {
-      console.error('Error during sync check:', error);
+      logger.error('Error during sync check:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Sync check failed',
@@ -1311,7 +1312,7 @@ class PrivateFeedService {
         }
       }
     }
-    console.warn('Unable to normalize bytes:', value);
+    logger.warn('Unable to normalize bytes:', value);
     return new Uint8Array(0);
   }
 }
@@ -1369,14 +1370,14 @@ export async function prepareOwnerEncryption(
     const hasLocalKeys = privateFeedKeyStore.hasFeedSeed();
 
     if (!hasLocalKeys) {
-      console.log('No local private feed keys found, need full recovery');
+      logger.info('No local private feed keys found, need full recovery');
 
       if (encryptionPrivateKey) {
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Recovery failed: ${recoveryResult.error}` };
         }
-        console.log('Full recovery completed, continuing with encryption');
+        logger.info('Full recovery completed, continuing with encryption');
       } else {
         return {
           success: false,
@@ -1390,14 +1391,14 @@ export async function prepareOwnerEncryption(
     const localEpoch = privateFeedKeyStore.getCurrentEpoch();
 
     if (chainEpoch > localEpoch) {
-      console.log(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
+      logger.info(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
 
       if (encryptionPrivateKey) {
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Sync failed: ${recoveryResult.error}` };
         }
-        console.log('Automatic recovery completed, continuing with encryption');
+        logger.info('Automatic recovery completed, continuing with encryption');
       } else {
         return {
           success: false,
@@ -1446,7 +1447,7 @@ export async function prepareOwnerEncryption(
       currentEpoch
     );
 
-    console.log('Prepared owner encryption:', {
+    logger.info('Prepared owner encryption:', {
       hasTeaser: !!teaser,
       encryptedContentLength: encrypted.ciphertext.length,
       epoch: currentEpoch,
@@ -1463,7 +1464,7 @@ export async function prepareOwnerEncryption(
       },
     };
   } catch (error) {
-    console.error('Error preparing owner encryption:', error);
+    logger.error('Error preparing owner encryption:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -1527,7 +1528,7 @@ export async function prepareInheritedEncryption(
       source.epoch
     );
 
-    console.log('Prepared inherited encryption:', {
+    logger.info('Prepared inherited encryption:', {
       feedOwnerId: source.ownerId,
       epoch: source.epoch,
       encryptedContentLength: encrypted.ciphertext.length,
@@ -1542,7 +1543,7 @@ export async function prepareInheritedEncryption(
       },
     };
   } catch (error) {
-    console.error('Error preparing inherited encryption:', error);
+    logger.error('Error preparing inherited encryption:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

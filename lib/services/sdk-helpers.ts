@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * SDK helper utilities for working with the v3 EvoSDK
  *
@@ -149,7 +150,7 @@ export function base58ArrayToBytes(values: string[]): Uint8Array[] {
       }
     }
 
-    console.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
+    logger.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
   }
   return result;
 }
@@ -444,7 +445,7 @@ export function transformDocumentWithField<T extends BaseDocumentFields>(
 
   const convertedValue = rawFieldValue ? identifierToBase58(rawFieldValue) : '';
   if (rawFieldValue && !convertedValue) {
-    console.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
+    logger.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
   }
 
   return {

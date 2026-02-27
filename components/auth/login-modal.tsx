@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -162,7 +163,7 @@ export function LoginModal() {
           setHasOnchainBackup(false)
         }
       } catch (err) {
-        console.error('Identity lookup error:', err)
+        logger.error('Identity lookup error:', err)
         setLookupError('Failed to lookup identity')
       } finally {
         setIsLookingUp(false)
@@ -208,7 +209,7 @@ export function LoginModal() {
         setKeyValidationResult(result)
         setKeyValidationStatus(result.isValid ? 'valid' : 'invalid')
       } catch (err) {
-        console.error('Key validation error:', err)
+        logger.error('Key validation error:', err)
         setKeyValidationStatus('invalid')
         setKeyValidationResult({
           isValid: false,

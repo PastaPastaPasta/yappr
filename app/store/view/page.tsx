@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -156,17 +157,17 @@ function StoreDetailContent() {
               setOwnerUsername(ownerUname)
             }
           } catch (ownerErr) {
-            console.error('Failed to load store owner info:', ownerErr)
+            logger.error('Failed to load store owner info:', ownerErr)
           }
         }
       } catch (error) {
-        console.error('Failed to load store:', error)
+        logger.error('Failed to load store:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadStore().catch(console.error)
+    loadStore().catch((error) => logger.error(error))
   }, [sdkReady, storeId])
 
   // Restore scroll position after cache-restored items render
@@ -197,7 +198,7 @@ function StoreDetailContent() {
         setLastCursor(moreData.items[moreData.items.length - 1].id)
       }
     } catch (error) {
-      console.error('Failed to load more items:', error)
+      logger.error('Failed to load more items:', error)
     } finally {
       setIsLoadingMore(false)
     }

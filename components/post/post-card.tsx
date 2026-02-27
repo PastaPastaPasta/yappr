@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -227,7 +228,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      navigator.clipboard.writeText(post.author.id).catch(console.error)
+                      navigator.clipboard.writeText(post.author.id).catch((error) => logger.error(error))
                       toast.success('Identity ID copied')
                     }}
                     className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
@@ -359,7 +360,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       // Rollback on error
       setLiked(wasLiked)
       setLikes(prevLikes)
-      console.error('Like error:', error)
+      logger.error('Like error:', error)
       toast.error('Failed to update like. Please try again.')
     } finally {
       setLikeLoading(false)
@@ -392,7 +393,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       // Rollback on error
       setReposted(wasReposted)
       setReposts(prevReposts)
-      console.error('Repost error:', error)
+      logger.error('Repost error:', error)
       toast.error('Failed to update repost. Please try again.')
     } finally {
       setRepostLoading(false)
@@ -428,7 +429,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     } catch (error) {
       // Rollback on error
       setBookmarked(wasBookmarked)
-      console.error('Bookmark error:', error)
+      logger.error('Bookmark error:', error)
       toast.error('Failed to update bookmark. Please try again.')
     } finally {
       setBookmarkLoading(false)
@@ -448,7 +449,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleShare = () => {
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`).catch(console.error)
+    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`).catch((error) => logger.error(error))
     toast.success('Link copied to clipboard')
   }
 
@@ -626,7 +627,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); toggleFollow().catch(console.error); }}
+                    onClick={(e) => { e.stopPropagation(); toggleFollow().catch((error) => logger.error(error)); }}
                     disabled={followLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
                   >
@@ -651,7 +652,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     </DropdownMenu.Item>
                   )}
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
+                    onClick={(e) => { e.stopPropagation(); toggleBlock().catch((error) => logger.error(error)); }}
                     disabled={blockLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
                   >
@@ -810,7 +811,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     onClick={(e) => e.stopPropagation()}
                   >
                     <DropdownMenu.Item
-                      onClick={(e) => { e.stopPropagation(); handleRepost().catch(console.error); }}
+                      onClick={(e) => { e.stopPropagation(); handleRepost().catch((error) => logger.error(error)); }}
                       className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
                     >
                       <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
@@ -829,7 +830,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
               <ActionTooltip label="Like">
                 <button
-                  onClick={(e) => { e.stopPropagation(); handleLike().catch(console.error); }}
+                  onClick={(e) => { e.stopPropagation(); handleLike().catch((error) => logger.error(error)); }}
                   disabled={likeLoading}
                   className={cn(
                     'group flex items-center gap-1 p-2 rounded-full transition-colors',
@@ -880,7 +881,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <div className="flex items-center gap-1">
                 <ActionTooltip label="Bookmark">
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
+                    onClick={(e) => { e.stopPropagation(); handleBookmark().catch((error) => logger.error(error)); }}
                     disabled={bookmarkLoading}
                     className={cn(
                       'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',

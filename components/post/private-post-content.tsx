@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, KeyIcon, ArrowPathIcon, ClockIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
@@ -245,7 +246,7 @@ export function PrivatePostContent({
           setState({ status: 'decrypted', content: decryptResult.content })
         } else {
           // Decryption failed after recovery - show error with Retry (Test 5.7)
-          console.error('Decryption failed after recovery:', decryptResult.error)
+          logger.error('Decryption failed after recovery:', decryptResult.error)
           setState({
             status: 'error',
             message: decryptResult.error || 'Decryption failed after key recovery',
@@ -253,14 +254,14 @@ export function PrivatePostContent({
         }
       } else {
         // Recovery failed - could be revoked or corrupted grant
-        console.error('Recovery failed:', result.error)
+        logger.error('Recovery failed:', result.error)
         setState({
           status: 'error',
           message: result.error || 'Failed to recover access keys',
         })
       }
     } catch (error) {
-      console.error('Error recovering follower keys:', error)
+      logger.error('Error recovering follower keys:', error)
       setState({
         status: 'error',
         message: error instanceof Error ? error.message : 'Recovery failed',
@@ -312,7 +313,7 @@ export function PrivatePostContent({
         if (!feedSeed) {
           const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
           if (encryptionPrivateKey) {
-            console.log('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
+            logger.info('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
             setState({ status: 'recovering' })
 
             // Attempt to recover owner state from chain
@@ -323,17 +324,17 @@ export function PrivatePostContent({
             )
 
             if (recoveryResult.success) {
-              console.log('Owner auto-recovery: successfully recovered feed seed')
+              logger.info('Owner auto-recovery: successfully recovered feed seed')
               feedSeed = privateFeedKeyStore.getFeedSeed()
             } else {
-              console.log('Owner auto-recovery failed:', recoveryResult.error)
+              logger.info('Owner auto-recovery failed:', recoveryResult.error)
               // Recovery failed - show locked state with no-keys reason
               setState({ status: 'locked', reason: 'no-keys' })
               return
             }
           } else {
             // Owner doesn't have encryption key - needs to enter it
-            console.log('Owner cannot decrypt: no feed seed and no encryption key')
+            logger.info('Owner cannot decrypt: no feed seed and no encryption key')
             setState({ status: 'locked', reason: 'no-keys' })
             return
           }
@@ -383,7 +384,7 @@ export function PrivatePostContent({
             const { privateFeedService } = await import('@/lib/services')
             followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
           } catch (err) {
-            console.warn('Failed to fetch private follower count:', err)
+            logger.warn('Failed to fetch private follower count:', err)
             // Continue without follower count - it's not critical
           }
         }
@@ -462,7 +463,7 @@ export function PrivatePostContent({
         }
         // BUG-017 fix: Check if we need to trigger key recovery due to missing wrapNonceSalt
         if (result.error?.startsWith('REKEY_RECOVERY_NEEDED:')) {
-          console.log('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
+          logger.info('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
           // Check if we have encryption key in session to auto-recover
           const encryptionKeyBytes = getEncryptionKeyBytes(user.identityId)
           if (encryptionKeyBytes) {
@@ -476,14 +477,14 @@ export function PrivatePostContent({
         }
 
         // Decryption failed - show error state with Retry button (Test 5.7)
-        console.error('Decryption failed:', result.error || 'Unknown error')
+        logger.error('Decryption failed:', result.error || 'Unknown error')
         setState({
           status: 'error',
           message: result.error || 'Decryption failed. Keys may be corrupted or invalid.',
         })
       }
     } catch (error) {
-      console.error('Error decrypting private post:', error)
+      logger.error('Error decrypting private post:', error)
       setState({
         status: 'error',
         message: error instanceof Error ? error.message : 'Decryption failed',
@@ -603,7 +604,7 @@ export function PrivatePostContent({
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  cancelRequest().catch((err) => console.error('Failed to cancel request:', err))
+                  cancelRequest().catch((err) => logger.error('Failed to cancel request:', err))
                   setShowCancelOption(false)
                 }}
                 disabled={isRequestProcessing}
@@ -652,7 +653,7 @@ export function PrivatePostContent({
         <button
           onClick={(e) => {
             e.stopPropagation()
-            requestAccess().catch((err) => console.error('Failed to request access:', err))
+            requestAccess().catch((err) => logger.error('Failed to request access:', err))
           }}
           className="px-3 py-1 bg-yappr-500 hover:bg-yappr-600 text-white rounded-full text-xs font-medium transition-colors"
         >

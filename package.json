@@ -46,6 +46,7 @@
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.4.1",
     "tailwind-merge": "^2.2.1",
+    "tslog": "^4.10.2",
     "zustand": "^4.5.0"
   },
   "devDependencies": {

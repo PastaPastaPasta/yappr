@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, KeyIcon, ExclamationTriangleIcon, CheckCircleIcon, ClipboardIcon, EyeIcon, EyeSlashIcon, ShieldCheckIcon, CheckIcon } from '@heroicons/react/24/outline'
@@ -167,11 +168,11 @@ export function AddEncryptionKeyModal({
             return
           }
         } catch (err) {
-          console.error('Auto-derivation failed, falling back to manual entry:', err)
+          logger.error('Auto-derivation failed, falling back to manual entry:', err)
         }
       }
     } catch (err) {
-      console.error('Error in enterExistingKey:', err)
+      logger.error('Error in enterExistingKey:', err)
     }
 
     // Auto-derivation unavailable or failed — show manual entry form
@@ -207,7 +208,7 @@ export function AddEncryptionKeyModal({
       setStep('success')
       if (onSuccess) onSuccess()
     } catch (err) {
-      console.error('Error validating existing key:', err)
+      logger.error('Error validating existing key:', err)
       setExistingKeyError(err instanceof Error ? err.message : 'Failed to validate key')
       setIsValidatingExistingKey(false)
     }
@@ -239,7 +240,7 @@ export function AddEncryptionKeyModal({
       setPrivateKeyWif(encryptionKeyWif)
       setStep('generate')
     } catch (err) {
-      console.error('Error deriving encryption key:', err)
+      logger.error('Error deriving encryption key:', err)
       setError(err instanceof Error ? err.message : 'Failed to derive encryption key')
       setStep('error')
     }
@@ -252,7 +253,7 @@ export function AddEncryptionKeyModal({
       setHasCopied(true)
       toast.success('Private key copied to clipboard')
     } catch (err) {
-      console.error('Failed to copy:', err)
+      logger.error('Failed to copy:', err)
       toast.error('Failed to copy to clipboard')
     }
   }, [privateKeyWif])
@@ -293,7 +294,7 @@ export function AddEncryptionKeyModal({
         setStep('error')
       }
     } catch (err) {
-      console.error('Error adding encryption key:', err)
+      logger.error('Error adding encryption key:', err)
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
       setStep('error')
     }
@@ -326,7 +327,7 @@ export function AddEncryptionKeyModal({
       setIsValidatingKey(false)
       await addKeyToIdentity()
     } catch (err) {
-      console.error('Error validating key:', err)
+      logger.error('Error validating key:', err)
       setKeyValidationError(err instanceof Error ? err.message : 'Failed to validate key')
       setIsValidatingKey(false)
     }

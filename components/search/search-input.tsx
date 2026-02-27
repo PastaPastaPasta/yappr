@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, KeyboardEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
@@ -99,7 +100,7 @@ export function SearchInput() {
               try {
                 profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
               } catch (error) {
-                console.error('Failed to fetch profiles:', error)
+                logger.error('Failed to fetch profiles:', error)
               }
             }
 
@@ -143,7 +144,7 @@ export function SearchInput() {
           setSelectedIndex(0)
         }
       } catch (error) {
-        console.error('Search failed:', error)
+        logger.error('Search failed:', error)
         if (searchId === searchIdRef.current) {
           setResults([])
         }

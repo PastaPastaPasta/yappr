@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -77,13 +78,13 @@ function CreateProfilePage() {
         // New profile - default seed to user ID
         setAvatarSeed(user.identityId)
       } catch (error) {
-        console.error('Error checking profile status:', error)
+        logger.error('Error checking profile status:', error)
       } finally {
         setIsCheckingProfile(false)
       }
     }
 
-    checkExistingProfile().catch(err => console.error('Failed to check profile:', err))
+    checkExistingProfile().catch(err => logger.error('Failed to check profile:', err))
   }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -116,7 +117,7 @@ function CreateProfilePage() {
         throw new Error('User not authenticated')
       }
 
-      console.log('Creating profile with data:', formData)
+      logger.info('Creating profile with data:', formData)
 
       // Build avatar data - either custom URL or generated DiceBear settings
       let avatarData: string | undefined
@@ -147,7 +148,7 @@ function CreateProfilePage() {
       // Redirect to feed
       router.push('/feed')
     } catch (error: unknown) {
-      console.error('Failed to create profile:', error)
+      logger.error('Failed to create profile:', error)
 
       const errorMessage = extractErrorMessage(error)
 
@@ -185,7 +186,7 @@ function CreateProfilePage() {
             return
           }
         } catch (checkError) {
-          console.error('Error checking for profile:', checkError)
+          logger.error('Error checking for profile:', checkError)
         }
 
         // Profile doesn't exist - show helpful timeout error
