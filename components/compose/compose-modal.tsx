@@ -616,7 +616,8 @@ export function ComposeModal() {
               const reply = await replyService.createReply(authedUser.identityId, postContent, parentId, parentOwnerId, {
                 encryption: encryptionOptions,
               })
-              return { postId: reply.id, document: reply, isReply: true }
+              const confirmed = (reply as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
+              return { postId: reply.id, document: reply, isReply: true, confirmed }
             } else {
               // Create a top-level post
               const { postService } = await import('@/lib/services')
@@ -625,7 +626,8 @@ export function ComposeModal() {
                 quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
                 encryption: encryptionOptions,
               })
-              return { postId: post.id, document: post, isReply: false }
+              const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
+              return { postId: post.id, document: post, isReply: false, confirmed }
             }
           } catch (error) {
             // Check if this is a sync required error - handle it specially
@@ -749,13 +751,21 @@ export function ComposeModal() {
               if (wasReply) {
                 window.dispatchEvent(
                   new CustomEvent('reply-created', {
-                    detail: { reply: eventData?.document },
+                    detail: {
+                      reply: eventData?.document,
+                      replyId: eventData?.postId,
+                      confirmed: eventData?.confirmed !== false,
+                    },
                   })
                 )
               } else {
                 window.dispatchEvent(
                   new CustomEvent('post-created', {
-                    detail: { post: eventData?.document },
+                    detail: {
+                      post: eventData?.document,
+                      postId: eventData?.postId,
+                      confirmed: eventData?.confirmed !== false,
+                    },
                   })
                 )
               }

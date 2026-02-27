@@ -1,5 +1,5 @@
 import { logger } from '@/lib/logger';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useAsyncState } from '@/components/ui/loading-state';
 import { Post } from '@/lib/types';
@@ -8,10 +8,17 @@ import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
-import { followService } from '@/lib/services';
+import { followService, postService } from '@/lib/services';
 import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service';
 
 export type FeedTab = 'forYou' | 'following';
+type FeedPost = Post & { _syncPending?: boolean };
+
+interface PostCreatedEventDetail {
+  post?: unknown;
+  postId?: string;
+  confirmed?: boolean;
+}
 
 interface UseFeedDataOptions {
   activeTab: FeedTab;
@@ -64,6 +71,21 @@ function extractFollowedIds(following: Array<Record<string, unknown>>): string[]
   return Array.from(new Set(ids));
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object') {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function normalizePostId(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  return null;
+}
+
 export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): UseFeedDataResult {
   const { user } = useAuth();
 
@@ -82,6 +104,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
   const [followingNextWindow, setFollowingNextWindow] = useState<FollowingFeedWindow | null>(null);
   const [pendingNewPosts, setPendingNewPosts] = useState<Post[]>([]);
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null);
+  const reconcilingPostIdsRef = useRef<Set<string>>(new Set());
 
   const {
     enrichProgressively,
@@ -92,6 +115,100 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     currentUserId: user?.identityId,
     skipFollowStatus: activeTab === 'following',
   });
+
+  const normalizeCreatedPost = useCallback(
+    (rawPost: unknown, fallbackPostId?: string, confirmed = true): FeedPost | null => {
+      const postRecord = asRecord(rawPost) || {};
+      const resolvedPostId =
+        normalizePostId(postRecord.id) ||
+        normalizePostId(postRecord.$id) ||
+        normalizePostId(postRecord.postId) ||
+        normalizePostId(fallbackPostId);
+
+      if (!resolvedPostId) return null;
+
+      const transformed = transformRawPost({
+        ...postRecord,
+        id: postRecord.id || resolvedPostId,
+        $id: postRecord.$id || resolvedPostId,
+      }) as FeedPost;
+
+      const authorRecord = asRecord(postRecord.author);
+      if (authorRecord) {
+        transformed.author = {
+          ...transformed.author,
+          username: typeof authorRecord.username === 'string' ? authorRecord.username : transformed.author.username,
+          displayName:
+            typeof authorRecord.displayName === 'string' ? authorRecord.displayName : transformed.author.displayName,
+          avatar: typeof authorRecord.avatar === 'string' ? authorRecord.avatar : transformed.author.avatar,
+          followers: typeof authorRecord.followers === 'number' ? authorRecord.followers : transformed.author.followers,
+          following: typeof authorRecord.following === 'number' ? authorRecord.following : transformed.author.following,
+          verified: typeof authorRecord.verified === 'boolean' ? authorRecord.verified : transformed.author.verified,
+          hasDpns: typeof authorRecord.hasDpns === 'boolean' ? authorRecord.hasDpns : transformed.author.hasDpns,
+        };
+      }
+
+      if (transformed.author.id === 'unknown' && user?.identityId) {
+        transformed.author = { ...transformed.author, id: user.identityId };
+      }
+
+      transformed._syncPending = !confirmed;
+      return transformed;
+    },
+    [user?.identityId]
+  );
+
+  const reconcileCreatedPost = useCallback(
+    async (postId: string): Promise<void> => {
+      if (!postId || reconcilingPostIdsRef.current.has(postId)) return;
+
+      reconcilingPostIdsRef.current.add(postId);
+
+      try {
+        const delaysMs = [250, 500, 1000, 2000, 4000];
+
+        for (let i = 0; i < delaysMs.length; i++) {
+          const canonicalPost = await postService.getPostById(postId);
+
+          if (canonicalPost) {
+            setData((currentItems) => {
+              const existing = currentItems || [];
+              let found = false;
+              const merged = existing.map((item) => {
+                if (item.id !== postId) return item;
+                found = true;
+                return {
+                  ...item,
+                  ...canonicalPost,
+                  _syncPending: false,
+                } as FeedPost;
+              });
+
+              if (!found) {
+                merged.unshift({ ...canonicalPost, _syncPending: false } as FeedPost);
+              }
+
+              return sortFeedByTimestamp(merged);
+            });
+
+            enrichProgressively([canonicalPost]);
+            cacheManager.clear('feed');
+            setNewestPostTimestamp((prev) => Math.max(prev || 0, getFeedItemTimestamp(canonicalPost)));
+            return;
+          }
+
+          if (i < delaysMs.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, delaysMs[i]));
+          }
+        }
+      } catch (error) {
+        logger.error('Feed: Failed to reconcile created post:', error);
+      } finally {
+        reconcilingPostIdsRef.current.delete(postId);
+      }
+    },
+    [enrichProgressively, setData]
+  );
 
   const loadPosts = useCallback(
     async (forceRefresh = false, pagination?: FeedLoadPagination) => {
@@ -268,6 +385,8 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
     try {
       logger.info('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
+      const OVERLAP_MS = 2000;
+      const sinceTimestamp = Math.max(0, newestPostTimestamp - OVERLAP_MS);
 
       let newPosts: Array<Record<string, unknown>> = [];
 
@@ -276,10 +395,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         const followingIds = extractFollowedIds(following as unknown as Array<Record<string, unknown>>);
 
         if (followingIds.length > 0) {
-          newPosts = await queryPostsByOwnersSince(followingIds, newestPostTimestamp, 50);
+          newPosts = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50);
         }
       } else {
-        newPosts = await queryPostsSince(newestPostTimestamp, 50, feedLanguage || 'en');
+        newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
       }
 
       if (newPosts.length === 0) return;
@@ -336,16 +455,42 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
   }, [checkForNewPosts, newestPostTimestamp]);
 
   useEffect(() => {
-    const handlePostCreated = () => {
-      resetEnrichment();
-      loadPosts(true).catch((error) => logger.error('Failed to load posts:', error));
+    const handlePostCreated = (event: Event) => {
+      const customEvent = event as CustomEvent<PostCreatedEventDetail>;
+      const detail = customEvent.detail || {};
+      const createdPost = normalizeCreatedPost(detail.post, detail.postId, detail.confirmed !== false);
+
+      if (!createdPost) {
+        resetEnrichment();
+        loadPosts(true).catch((error) => logger.error('Failed to load posts:', error));
+        return;
+      }
+
+      cacheManager.clear('feed');
+
+      setData((currentItems) => {
+        const existing = currentItems || [];
+        const existingIds = new Set(existing.map((item) => item.id));
+        const merged = existingIds.has(createdPost.id)
+          ? existing.map((item) => (item.id === createdPost.id ? ({ ...item, ...createdPost } as FeedPost) : item))
+          : ([createdPost, ...existing] as FeedPost[]);
+
+        return sortFeedByTimestamp(merged);
+      });
+
+      enrichProgressively([createdPost]);
+      setNewestPostTimestamp((prev) => Math.max(prev || 0, getFeedItemTimestamp(createdPost)));
+
+      reconcileCreatedPost(createdPost.id).catch((error) =>
+        logger.error('Failed to reconcile created post:', error)
+      );
     };
 
-    window.addEventListener('post-created', handlePostCreated);
+    window.addEventListener('post-created', handlePostCreated as EventListener);
     return () => {
-      window.removeEventListener('post-created', handlePostCreated);
+      window.removeEventListener('post-created', handlePostCreated as EventListener);
     };
-  }, [loadPosts, resetEnrichment]);
+  }, [enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
 
   useEffect(() => {
     resetEnrichment();
@@ -357,7 +502,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     setNewestPostTimestamp(null);
 
     loadPosts().catch((error) => logger.error('Failed to load posts:', error));
-  }, [activeTab, loadPosts, resetEnrichment]);
+  }, [activeTab, loadPosts, resetEnrichment, setData]);
 
   const handlePostDelete = useCallback(
     (postId: string) => {
@@ -378,7 +523,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
       }
       return true;
     });
-  }, [activeTab, enrichmentState.blockStatus, posts]);
+  }, [enrichmentState.blockStatus, posts]);
 
   return {
     posts,
