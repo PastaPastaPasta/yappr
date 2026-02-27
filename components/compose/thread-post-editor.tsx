@@ -60,12 +60,11 @@ export function ThreadPostEditor({
   const adjustHeight = useCallback(() => {
     const textarea = ref.current
     if (!textarea) return
+    textarea.style.height = 'auto'
     if (isActive) {
-      textarea.style.height = 'auto'
       textarea.style.height = `${Math.max(80, textarea.scrollHeight)}px`
     } else {
-      // When inactive, let CSS handle sizing naturally
-      textarea.style.height = 'auto'
+      textarea.style.height = `${textarea.scrollHeight}px`
     }
   }, [ref, isActive])
 
@@ -332,9 +331,7 @@ export function ThreadPostEditor({
                     ? "What's on your mind?"
                     : 'Continue your thread...'
                 }
-                rows={isActive ? undefined : 1}
-                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : 'overflow-hidden'}`}
-                style={{ height: 'auto' }}
+                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : ''}`}
               />
               <MentionAutocomplete
                 textareaRef={ref}
