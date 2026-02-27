@@ -212,7 +212,7 @@ export function ThreadPostEditor({
           </div>
         )}
 
-        <div className="p-4 px-5">
+        <div className="p-4 pl-8 pr-5">
           {/* Posted status badge */}
           {isPosted && (
             <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
@@ -328,7 +328,7 @@ export function ThreadPostEditor({
                     ? "What's on your mind?"
                     : 'Continue your thread...'
                 }
-                className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : 'min-h-[24px]'}`}
                 style={{ height: 'auto' }}
               />
               <MentionAutocomplete
@@ -356,8 +356,8 @@ export function ThreadPostEditor({
             </div>
           )}
 
-          {/* Footer with formatting hints and character count - hide for posted */}
-          {!isPosted && (
+          {/* Footer with formatting hints and character count - only show when active and not posted */}
+          {isActive && !isPosted && (
             <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-2 text-xs text-gray-400">
                 <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
