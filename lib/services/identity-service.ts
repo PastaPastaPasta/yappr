@@ -26,6 +26,37 @@ export interface IdentityBalance {
   total: number;
 }
 
+function safeStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+
+  try {
+    return JSON.stringify(
+      value,
+      (_key, current) => {
+        if (typeof current === 'bigint') {
+          return `${current.toString()}n`;
+        }
+
+        if (typeof current === 'object' && current !== null) {
+          if (seen.has(current)) {
+            return '[Circular]';
+          }
+          seen.add(current);
+        }
+
+        return current;
+      },
+      2
+    );
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return '[Unserializable value]';
+    }
+  }
+}
+
 class IdentityService {
   private identityCache: Map<string, { data: IdentityInfo; timestamp: number }> = new Map();
   private balanceCache: Map<string, { data: IdentityBalance; timestamp: number }> = new Map();
@@ -56,7 +87,7 @@ class IdentityService {
       // identity_fetch returns an object with a toJSON method
       const identity = identityResponse.toJSON();
       
-      logger.info('Raw identity response:', JSON.stringify(identity, null, 2));
+      logger.info('Raw identity response:', safeStringify(identity));
       logger.info('Public keys from identity:', identity.publicKeys);
 
       // Normalize public keys to ensure all fields are present
@@ -419,7 +450,7 @@ class IdentityService {
         // Check for WASM error properties
         const wasmError = error as { code?: string; data?: unknown; kind?: string | number };
         if (wasmError.code) logger.error('Error code:', wasmError.code);
-        if (wasmError.data) logger.error('Error data:', JSON.stringify(wasmError.data, null, 2));
+        if (wasmError.data) logger.error('Error data:', safeStringify(wasmError.data));
         if (wasmError.kind !== undefined) logger.error('Error kind:', wasmError.kind);
         // Log all enumerable properties
         logger.error('Error properties:', Object.keys(error));
@@ -564,7 +595,7 @@ class IdentityService {
         logger.error('Error name:', error.name);
         const wasmError = error as { code?: string; data?: unknown; kind?: string | number };
         if (wasmError.code) logger.error('Error code:', wasmError.code);
-        if (wasmError.data) logger.error('Error data:', JSON.stringify(wasmError.data, null, 2));
+        if (wasmError.data) logger.error('Error data:', safeStringify(wasmError.data));
         if (wasmError.kind !== undefined) logger.error('Error kind:', wasmError.kind);
       }
       return {
