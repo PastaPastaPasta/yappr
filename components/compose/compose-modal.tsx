@@ -30,7 +30,6 @@ import {
   PostingProgressBar,
   QuotedPostPreview,
   ReplyContext,
-  getModalTitle,
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
@@ -952,40 +951,53 @@ export function ComposeModal() {
                     </Dialog.Description>
 
                     {/* Header */}
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
                       <div className="flex items-center gap-3">
                         <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
                           <XMarkIcon className="h-5 w-5" />
                         </IconButton>
-                        <div className="flex items-center gap-2">
-                          <h2 className="font-semibold text-gray-900 dark:text-gray-100">
-                            {getModalTitle(!!replyingTo, !!quotingPost, threadPosts.length)}
-                          </h2>
-                          {/* Preview toggle */}
-                          <button
-                            onClick={() => setShowPreview(!showPreview)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                              showPreview
-                                ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400'
-                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                            }`}
-                          >
-                            {showPreview ? (
-                              <>
-                                <EyeSlashIcon className="w-3.5 h-3.5" />
-                                Edit
-                              </>
-                            ) : (
-                              <>
-                                <EyeIcon className="w-3.5 h-3.5" />
-                                Preview
-                              </>
-                            )}
-                          </button>
-                        </div>
+                        {user && (
+                          <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />
+                        )}
+                        {!(replyingTo && isPrivatePost(replyingTo)) && (
+                          <VisibilitySelector
+                            visibility={visibility}
+                            onVisibilityChange={(v) => {
+                              if (firstPost) {
+                                updateThreadPostVisibility(firstPost.id, v)
+                              }
+                            }}
+                            hasPrivateFeed={hasPrivateFeed}
+                            privateFeedLoading={privateFeedLoading}
+                            privateFollowerCount={privateFollowerCount}
+                            disabled={isPosting}
+                            onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
+                          />
+                        )}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
+                        {/* Preview toggle */}
+                        <button
+                          onClick={() => setShowPreview(!showPreview)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                            showPreview
+                              ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400'
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {showPreview ? (
+                            <>
+                              <EyeSlashIcon className="w-3.5 h-3.5" />
+                              Edit
+                            </>
+                          ) : (
+                            <>
+                              <EyeIcon className="w-3.5 h-3.5" />
+                              Preview
+                            </>
+                          )}
+                        </button>
                         {/* Post button - prominent primary action */}
                         <Button
                           onClick={handlePost}
@@ -1020,28 +1032,6 @@ export function ComposeModal() {
 
                     {/* Main content area */}
                     <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
-                      {/* Avatar + Visibility row */}
-                      <div className="flex items-center gap-3 mb-5">
-                        {user && (
-                          <UserAvatar userId={user.identityId} size="md" alt="Your avatar" />
-                        )}
-                        {!(replyingTo && isPrivatePost(replyingTo)) && (
-                          <VisibilitySelector
-                            visibility={visibility}
-                            onVisibilityChange={(v) => {
-                              if (firstPost) {
-                                updateThreadPostVisibility(firstPost.id, v)
-                              }
-                            }}
-                            hasPrivateFeed={hasPrivateFeed}
-                            privateFeedLoading={privateFeedLoading}
-                            privateFollowerCount={privateFollowerCount}
-                            disabled={isPosting}
-                            onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
-                          />
-                        )}
-                      </div>
-
                       {/* Full-width editors and content */}
                       <div className="space-y-4">
 
