@@ -95,6 +95,19 @@ function CreateProfilePage() {
       return
     }
 
+    if (formData.website) {
+      try {
+        const url = new URL(formData.website)
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          toast.error('Website must use http or https')
+          return
+        }
+      } catch {
+        toast.error('Invalid website URL')
+        return
+      }
+    }
+
     // Check if private key is in secure storage
     const storedPrivateKey = user ? getPrivateKey(user.identityId) : null
     if (!storedPrivateKey && !privateKey) {
