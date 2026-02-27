@@ -9,7 +9,6 @@ import {
   EyeIcon,
   EyeSlashIcon,
   ExclamationTriangleIcon,
-  PhotoIcon,
 } from '@heroicons/react/24/outline'
 import { useAppStore, useSettingsStore, PostVisibility } from '@/lib/store'
 import type { Post } from '@/lib/types'
@@ -19,7 +18,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
-import { usePlatformDetection } from '@/hooks/use-platform-detection'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
@@ -70,7 +68,6 @@ export function ComposeModal() {
 
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
-  const isMac = usePlatformDetection()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
@@ -279,8 +276,6 @@ export function ComposeModal() {
   const imageUrl = attachedImage?.uploadResult?.url
   const imageUrlExtraLength = imageUrl ? imageUrl.length + 2 : 0 // include \n\n separator
   const firstUnpostedPostId = unpostedPostsWithContent[0]?.id
-  const totalCharacters = threadPosts.reduce((sum, p) => sum + p.content.length, 0) +
-    (unpostedPostsWithContent.length > 0 ? imageUrlExtraLength : 0)
   const hasValidContent = unpostedPostsWithContent.length > 0
 
   // For private-with-teaser, also check teaser limit
@@ -957,7 +952,7 @@ export function ComposeModal() {
                     </Dialog.Description>
 
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
                       <div className="flex items-center gap-3">
                         <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
                           <XMarkIcon className="h-5 w-5" />
@@ -1024,36 +1019,31 @@ export function ComposeModal() {
                     {replyingTo && <ReplyContext author={replyingTo.author} />}
 
                     {/* Main content area */}
-                    <div className="p-4 max-h-[60vh] overflow-y-auto">
-                      <div className="flex gap-3">
-                        {/* User avatar */}
+                    <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                      {/* Avatar + Visibility row */}
+                      <div className="flex items-center gap-3 mb-5">
                         {user && (
-                          <div className="flex-shrink-0">
-                            <UserAvatar userId={user.identityId} size="lg" alt="Your avatar" />
-                          </div>
+                          <UserAvatar userId={user.identityId} size="md" alt="Your avatar" />
                         )}
+                        {!(replyingTo && isPrivatePost(replyingTo)) && (
+                          <VisibilitySelector
+                            visibility={visibility}
+                            onVisibilityChange={(v) => {
+                              if (firstPost) {
+                                updateThreadPostVisibility(firstPost.id, v)
+                              }
+                            }}
+                            hasPrivateFeed={hasPrivateFeed}
+                            privateFeedLoading={privateFeedLoading}
+                            privateFollowerCount={privateFollowerCount}
+                            disabled={isPosting}
+                            onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
+                          />
+                        )}
+                      </div>
 
-                        {/* Thread posts */}
-                        <div className="flex-1 space-y-4">
-                          {/* Visibility selector - show for new posts or replies to public posts
-                              Hide when replying to private posts (inherits parent encryption per PRD §5.5) */}
-                          {!(replyingTo && isPrivatePost(replyingTo)) && (
-                            <div className="flex items-center gap-3 mb-2">
-                              <VisibilitySelector
-                                visibility={visibility}
-                                onVisibilityChange={(v) => {
-                                  if (firstPost) {
-                                    updateThreadPostVisibility(firstPost.id, v)
-                                  }
-                                }}
-                                hasPrivateFeed={hasPrivateFeed}
-                                privateFeedLoading={privateFeedLoading}
-                                privateFollowerCount={privateFollowerCount}
-                                disabled={isPosting}
-                                onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
-                              />
-                            </div>
-                          )}
+                      {/* Full-width editors and content */}
+                      <div className="space-y-4">
 
                           {/* Inherited encryption banner for replies to private posts (PRD §5.5) */}
                           {inheritedEncryption && !isPrivatePostVisibility && (
@@ -1189,6 +1179,13 @@ export function ComposeModal() {
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
                                 extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
+                                {...(post.id === firstUnpostedPostId ? {
+                                  onImageClick: handleImageButtonClick,
+                                  canAttachImage,
+                                  imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
+                                  fileInputRef,
+                                  onFileSelect: handleFileSelect,
+                                } : {})}
                               />
                             ))}
                           </AnimatePresence>
@@ -1233,65 +1230,9 @@ export function ComposeModal() {
 
                           {/* Quoted post preview */}
                           {quotingPost && <QuotedPostPreview post={quotingPost} />}
-                        </div>
                       </div>
                     </div>
 
-                    {/* Footer - with image button and keyboard hint */}
-                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
-                      <div className="flex items-center justify-between">
-                        {/* Left side: Image button + indicators */}
-                        <div className="flex items-center gap-3">
-                          {/* Image attachment button */}
-                          <button
-                            type="button"
-                            onClick={handleImageButtonClick}
-                            disabled={!canAttachImage}
-                            className={`p-1.5 rounded-md transition-colors ${
-                              canAttachImage
-                                ? 'text-gray-500 hover:text-yappr-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                                : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
-                            }`}
-                            title={attachedImage ? 'Only one image per post' : 'Attach image'}
-                          >
-                            <PhotoIcon className="w-5 h-5" />
-                          </button>
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileSelect}
-                            className="hidden"
-                          />
-
-                          {/* Private post indicator */}
-                          {isPrivatePostVisibility && (
-                            <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                              <LockClosedIcon className="w-3 h-3" />
-                              <span>
-                                {privateFollowerCount > 0
-                                  ? `Visible to ${privateFollowerCount} private follower${privateFollowerCount !== 1 ? 's' : ''}`
-                                  : 'Only visible to you (no followers yet)'}
-                              </span>
-                            </div>
-                          )}
-                          {/* Inherited encryption indicator */}
-                          {inheritedEncryption && !isPrivatePostVisibility && (
-                            <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
-                              <LinkIcon className="w-3 h-3" />
-                              <span>Reply inherits parent&apos;s encryption</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Right side: keyboard hint */}
-                        <span className="text-xs text-gray-400">
-                          {threadPosts.length > 1
-                            ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`
-                            : `${isMac ? '⌘' : 'Ctrl'}+Enter to post`}
-                        </span>
-                      </div>
-                    </div>
                   </motion.div>
                 </Dialog.Content>
               </motion.div>

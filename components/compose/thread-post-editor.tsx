@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { TrashIcon } from '@heroicons/react/24/outline'
+import { TrashIcon, PhotoIcon } from '@heroicons/react/24/outline'
 import type { ThreadPost } from '@/lib/store'
 import { MarkdownContent } from '@/components/ui/markdown-content'
 import { FormatButton, CharacterCounter } from './compose-sub-components'
@@ -22,6 +22,12 @@ interface ThreadPostEditorProps {
   onContentChange: (content: string) => void
   textareaRef?: React.RefObject<HTMLTextAreaElement>
   extraCharacters?: number
+  /** Image attachment controls - only shown on the first unposted post */
+  onImageClick?: () => void
+  canAttachImage?: boolean
+  imageTitle?: string
+  fileInputRef?: React.RefObject<HTMLInputElement>
+  onFileSelect?: (e: React.ChangeEvent<HTMLInputElement>) => void
 }
 
 export function ThreadPostEditor({
@@ -35,6 +41,11 @@ export function ThreadPostEditor({
   onContentChange,
   textareaRef,
   extraCharacters = 0,
+  onImageClick,
+  canAttachImage,
+  imageTitle,
+  fileInputRef,
+  onFileSelect,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -244,6 +255,29 @@ export function ThreadPostEditor({
                 <span className="text-sm">#</span>
               </FormatButton>
               <EmojiPicker onEmojiSelect={handleInsertEmoji} />
+
+              {/* Image attachment button */}
+              {onImageClick && (
+                <>
+                  <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
+                  <FormatButton
+                    onClick={onImageClick}
+                    title={imageTitle || 'Attach image'}
+                    disabled={!canAttachImage}
+                  >
+                    <PhotoIcon className="w-4 h-4" />
+                  </FormatButton>
+                  {fileInputRef && onFileSelect && (
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={onFileSelect}
+                      className="hidden"
+                    />
+                  )}
+                </>
+              )}
 
               {/* Remove button for thread posts */}
               {!isOnly && (
