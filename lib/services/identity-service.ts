@@ -115,7 +115,7 @@ class IdentityService {
       let confirmedBalance = 0;
       if (balanceResponse !== undefined && balanceResponse !== null) {
         if (balanceResponse > BigInt(Number.MAX_SAFE_INTEGER)) {
-          console.warn(`Balance ${balanceResponse} credits exceeds Number.MAX_SAFE_INTEGER; precision may be lost`);
+          logger.warn(`Balance ${balanceResponse} credits exceeds Number.MAX_SAFE_INTEGER; precision may be lost`);
         }
         confirmedBalance = Number(balanceResponse);
       }
