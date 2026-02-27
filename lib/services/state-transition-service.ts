@@ -20,6 +20,8 @@ export interface StateTransitionResult {
   success: boolean;
   transactionHash?: string;
   document?: Record<string, unknown>;
+  /** Whether the document is confirmed query-visible on Platform. */
+  confirmed?: boolean;
   error?: string;
 }
 
@@ -329,7 +331,7 @@ class StateTransitionService {
         if (existingDoc) {
           logger.info(`Document ${documentId} already confirmed on Platform`);
           clearPendingSTBytes(documentId);
-          return { success: true, transactionHash: documentId, document: existingDoc };
+          return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };
         }
 
         // Not confirmed yet — rebroadcast the same ST
@@ -345,7 +347,8 @@ class StateTransitionService {
           return {
             success: true,
             transactionHash: documentId,
-            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+            confirmed: true
           };
         } catch (rebroadcastErr) {
           if (isAlreadyExistsError(rebroadcastErr)) {
@@ -353,7 +356,7 @@ class StateTransitionService {
             const doc = await this.checkDocumentExists(contractId, documentType, documentId);
             if (doc) {
               clearPendingSTBytes(documentId);
-              return { success: true, transactionHash: documentId, document: doc };
+              return { success: true, transactionHash: documentId, document: doc, confirmed: true };
             }
           }
           if (isTimeoutError(rebroadcastErr)) {
@@ -361,7 +364,7 @@ class StateTransitionService {
             const doc = await this.checkDocumentExists(contractId, documentType, documentId);
             if (doc) {
               clearPendingSTBytes(documentId);
-              return { success: true, transactionHash: documentId, document: doc };
+              return { success: true, transactionHash: documentId, document: doc, confirmed: true };
             }
           }
           // Genuine failure on rebroadcast — clear cache and fall through to create fresh
@@ -374,7 +377,7 @@ class StateTransitionService {
       const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
       if (existingDoc) {
         logger.info(`Document ${documentId} already exists on Platform — skipping creation`);
-        return { success: true, transactionHash: documentId, document: existingDoc };
+        return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };
       }
 
       // --- Build the StateTransition manually ---
@@ -436,7 +439,7 @@ class StateTransitionService {
           const doc = await this.checkDocumentExists(contractId, documentType, documentId);
           if (doc) {
             clearPendingSTBytes(documentId);
-            return { success: true, transactionHash: documentId, document: doc };
+            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
           }
         }
         throw broadcastErr;
@@ -463,7 +466,7 @@ class StateTransitionService {
           const doc = await this.checkDocumentExists(contractId, documentType, documentId);
           if (doc) {
             clearPendingSTBytes(documentId);
-            return { success: true, transactionHash: documentId, document: doc };
+            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
           }
           // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
           // since broadcast succeeded and the ST is valid
@@ -471,16 +474,19 @@ class StateTransitionService {
           return {
             success: true,
             transactionHash: documentId,
-            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+            confirmed: false
           };
         }
         if (isAlreadyExistsError(waitErr)) {
+          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
             success: true,
             transactionHash: documentId,
-            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+            document: doc || { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+            confirmed: Boolean(doc)
           };
         }
         throw waitErr;
@@ -492,7 +498,8 @@ class StateTransitionService {
       return {
         success: true,
         transactionHash: documentId,
-        document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData }
+        document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+        confirmed: true
       };
     } catch (error) {
       logger.error('Error creating document:', error);

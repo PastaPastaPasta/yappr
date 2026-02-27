@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
@@ -20,6 +20,16 @@ import { cacheManager } from '@/lib/cache-manager'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { identifierToBase58 } from '@/lib/services/sdk-helpers'
 import { Button } from '@/components/ui/button'
+
+type FeedPost = Post & {
+  _syncPending?: boolean
+}
+
+interface PostCreatedEventDetail {
+  post?: unknown
+  postId?: string
+  confirmed?: boolean
+}
 
 /**
  * Helper to normalize byte arrays from SDK (may be base64 string, hex string, Uint8Array, or regular array)
@@ -114,6 +124,7 @@ function FeedPage() {
   // State for auto-refresh: pending new posts and the timestamp of the newest displayed post
   const [pendingNewPosts, setPendingNewPosts] = useState<Post[]>([])
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null)
+  const reconcilingPostIdsRef = useRef<Set<string>>(new Set())
   // Initialize tab from localStorage synchronously to avoid double-loading
   const [activeTab, setActiveTab] = useState<'forYou' | 'following'>(() => {
     // Only access localStorage on client side
@@ -136,6 +147,116 @@ function FeedPage() {
   useEffect(() => {
     setIsHydrated(true)
   }, [])
+
+  const normalizeCreatedPost = useCallback((rawPost: unknown, fallbackPostId?: string, confirmed: boolean = true): FeedPost | null => {
+    const post = (rawPost || {}) as Record<string, unknown>
+
+    const id = (
+      post.id ||
+      post.$id ||
+      (post as Record<string, unknown>).postId ||
+      fallbackPostId
+    ) as string | undefined
+
+    if (!id) return null
+
+    const author = (post.author || {}) as Record<string, unknown>
+    const ownerId = (author.id || post.$ownerId || post.ownerId || user?.identityId || 'unknown') as string
+
+    const rawCreatedAt = post.createdAt || post.$createdAt
+    const createdAt = rawCreatedAt instanceof Date
+      ? rawCreatedAt
+      : typeof rawCreatedAt === 'number' || typeof rawCreatedAt === 'string'
+        ? new Date(rawCreatedAt)
+        : new Date()
+
+    const safeCreatedAt = Number.isNaN(createdAt.getTime()) ? new Date() : createdAt
+
+    return {
+      id,
+      author: {
+        id: ownerId,
+        username: (author.username as string) || '',
+        displayName: (author.displayName as string) || '',
+        avatar: (author.avatar as string) || '',
+        followers: typeof author.followers === 'number' ? author.followers : 0,
+        following: typeof author.following === 'number' ? author.following : 0,
+        verified: Boolean(author.verified),
+        joinedAt: author.joinedAt ? new Date(author.joinedAt as string | number | Date) : new Date(),
+        hasDpns: author.hasDpns as boolean | undefined
+      },
+      content: (post.content as string) || '',
+      createdAt: safeCreatedAt,
+      likes: typeof post.likes === 'number' ? post.likes : 0,
+      reposts: typeof post.reposts === 'number' ? post.reposts : 0,
+      replies: typeof post.replies === 'number' ? post.replies : 0,
+      views: typeof post.views === 'number' ? post.views : 0,
+      liked: typeof post.liked === 'boolean' ? post.liked : false,
+      reposted: typeof post.reposted === 'boolean' ? post.reposted : false,
+      bookmarked: typeof post.bookmarked === 'boolean' ? post.bookmarked : false,
+      media: Array.isArray(post.media) ? (post.media as Post['media']) : undefined,
+      quotedPostId: post.quotedPostId as string | undefined,
+      quotedPostOwnerId: post.quotedPostOwnerId as string | undefined,
+      encryptedContent: normalizeBytes(post.encryptedContent),
+      epoch: typeof post.epoch === 'number' ? post.epoch : undefined,
+      nonce: normalizeBytes(post.nonce),
+      _syncPending: !confirmed
+    }
+  }, [user?.identityId])
+
+  const reconcileCreatedPost = useCallback(async (postId: string): Promise<void> => {
+    if (!postId || reconcilingPostIdsRef.current.has(postId)) return
+
+    reconcilingPostIdsRef.current.add(postId)
+
+    try {
+      const { postService } = await import('@/lib/services')
+      const delaysMs = [250, 500, 1000, 2000, 4000]
+
+      for (let i = 0; i < delaysMs.length; i++) {
+        const canonicalPost = await postService.getPostById(postId)
+
+        if (canonicalPost) {
+          postsState.setData((currentItems: FeedPost[] | null) => {
+            if (!currentItems) return currentItems
+
+            let found = false
+            const updatedItems = currentItems.map((item) => {
+              if (item.id !== postId) return item
+              found = true
+              return {
+                ...item,
+                ...canonicalPost,
+                _syncPending: false
+              }
+            })
+
+            return found ? updatedItems : [{ ...canonicalPost, _syncPending: false }, ...updatedItems]
+          })
+
+          enrichProgressively([canonicalPost])
+          cacheManager.clear('feed')
+
+          const canonicalTimestamp = canonicalPost.createdAt instanceof Date
+            ? canonicalPost.createdAt.getTime()
+            : new Date(canonicalPost.createdAt).getTime()
+
+          if (!Number.isNaN(canonicalTimestamp)) {
+            setNewestPostTimestamp((prev) => Math.max(prev || 0, canonicalTimestamp))
+          }
+          return
+        }
+
+        if (i < delaysMs.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, delaysMs[i]))
+        }
+      }
+    } catch (error) {
+      logger.error('Feed: Failed to reconcile created post:', error)
+    } finally {
+      reconcilingPostIdsRef.current.delete(postId)
+    }
+  }, [enrichProgressively, postsState])
 
   // Load posts function - using real WASM SDK with updated version
   const loadPosts = useCallback(async (
@@ -753,6 +874,8 @@ function FeedPage() {
 
     try {
       logger.info('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString())
+      const OVERLAP_MS = 2000
+      const sinceTimestamp = Math.max(0, newestPostTimestamp - OVERLAP_MS)
 
       let newPosts: any[] = []
 
@@ -773,7 +896,7 @@ function FeedPage() {
             documentTypeName: 'post',
             where: [
               ['$ownerId', 'in', followingIds],
-              ['$createdAt', '>', newestPostTimestamp]
+              ['$createdAt', '>=', sinceTimestamp]
             ],
             orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
             limit: 50
@@ -792,7 +915,7 @@ function FeedPage() {
         const response = await sdk.documents.query({
           dataContractId: YAPPR_CONTRACT_ID,
           documentTypeName: 'post',
-          where: [['$createdAt', '>', newestPostTimestamp]],
+          where: [['$createdAt', '>=', sinceTimestamp]],
           orderBy: [['$createdAt', 'desc']],
           limit: 50
         } as any)
@@ -912,18 +1035,51 @@ function FeedPage() {
 
   // Listen for new posts created
   useEffect(() => {
-    const handlePostCreated = () => {
-      // Reset enrichment tracking so new data gets enriched
-      resetEnrichment()
-      loadPosts(true).catch(err => logger.error('Failed to load posts:', err)) // Force refresh when new post is created
+    const handlePostCreated = (event: Event) => {
+      const customEvent = event as CustomEvent<PostCreatedEventDetail>
+      const detail = customEvent.detail || {}
+      const createdPost = normalizeCreatedPost(detail.post, detail.postId, detail.confirmed !== false)
+
+      if (!createdPost) {
+        // Fallback to a forced refresh if event payload is malformed.
+        resetEnrichment()
+        loadPosts(true).catch(err => logger.error('Failed to load posts:', err))
+        return
+      }
+
+      // Invalidate feed cache so stale snapshots don't hide newly created posts.
+      cacheManager.clear('feed')
+
+      // Insert immediately for instant feedback.
+      postsState.setData((currentItems: FeedPost[] | null) => {
+        const existing = currentItems || []
+        const existingIds = new Set(existing.map((item) => item.id))
+
+        const merged = existingIds.has(createdPost.id)
+          ? existing.map((item) => item.id === createdPost.id ? { ...item, ...createdPost } : item)
+          : [createdPost, ...existing]
+
+        merged.sort((a, b) => {
+          const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime()
+          const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime()
+          return bTime - aTime
+        })
+        return merged
+      })
+
+      enrichProgressively([createdPost])
+      setNewestPostTimestamp((prev) => Math.max(prev || 0, createdPost.createdAt.getTime()))
+
+      // Reconcile by document ID to handle eventual-consistency delays.
+      reconcileCreatedPost(createdPost.id).catch(err => logger.error('Failed to reconcile created post:', err))
     }
 
-    window.addEventListener('post-created', handlePostCreated)
+    window.addEventListener('post-created', handlePostCreated as EventListener)
 
     return () => {
-      window.removeEventListener('post-created', handlePostCreated)
+      window.removeEventListener('post-created', handlePostCreated as EventListener)
     }
-  }, [loadPosts, resetEnrichment])
+  }, [enrichProgressively, loadPosts, normalizeCreatedPost, postsState, reconcileCreatedPost, resetEnrichment])
 
   // Load posts on mount and when tab changes
   // This single effect handles both initial load and tab switches to avoid race conditions
