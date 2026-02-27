@@ -87,7 +87,7 @@ function validateHandle(platform: string, handle: string): string | null {
       }
       break
     case 'other':
-      if (trimmed.startsWith('http')) {
+      if (/^https?:\/\//i.test(trimmed)) {
         try {
           const url = new URL(trimmed)
           if (!['http:', 'https:'].includes(url.protocol)) {

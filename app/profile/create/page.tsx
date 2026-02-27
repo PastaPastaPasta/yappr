@@ -95,9 +95,11 @@ function CreateProfilePage() {
       return
     }
 
-    if (formData.website) {
+    const normalizedWebsite = formData.website.trim()
+
+    if (normalizedWebsite) {
       try {
-        const url = new URL(formData.website)
+        const url = new URL(normalizedWebsite)
         if (!['http:', 'https:'].includes(url.protocol)) {
           toast.error('Website must use http or https')
           return
@@ -147,7 +149,7 @@ function CreateProfilePage() {
         displayName: formData.displayName,
         bio: formData.bio || undefined,
         location: formData.location || undefined,
-        website: formData.website || undefined,
+        website: normalizedWebsite || undefined,
         pronouns: formData.pronouns || undefined,
         nsfw: formData.nsfw || undefined,
         avatar: avatarData,

@@ -67,7 +67,10 @@ interface ProfileData {
 }
 
 function getSocialLinkUrl(platform: string, handle: string): string | null {
-  const cleanHandle = encodeURIComponent(handle.replace(/^@/, ''))
+  const trimmedHandle = handle.trim()
+  if (!trimmedHandle) return null
+
+  const cleanHandle = encodeURIComponent(trimmedHandle.replace(/^@/, ''))
 
   switch (platform) {
     case 'twitter':
@@ -86,23 +89,23 @@ function getSocialLinkUrl(platform: string, handle: string): string | null {
     case 'linkedin':
       return `https://linkedin.com/in/${cleanHandle}`
     case 'email': {
-      const emailOnly = handle.split('?')[0]
+      const emailOnly = trimmedHandle.split('?')[0]
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOnly)) return null
       return `mailto:${encodeURIComponent(emailOnly)}`
     }
     case 'mastodon': {
-      const match = handle.match(/^@?([^@]+)@([a-zA-Z0-9.-]+)$/)
+      const match = trimmedHandle.match(/^@?([^@]+)@([a-zA-Z0-9.-]+)$/)
       if (match) {
         return `https://${match[2]}/@${encodeURIComponent(match[1])}`
       }
       return null
     }
     case 'other':
-      if (handle.startsWith('http://') || handle.startsWith('https://')) {
+      if (trimmedHandle.startsWith('http://') || trimmedHandle.startsWith('https://')) {
         try {
-          const url = new URL(handle)
+          const url = new URL(trimmedHandle)
           if (['http:', 'https:'].includes(url.protocol)) {
-            return handle
+            return trimmedHandle
           }
         } catch {
           return null
@@ -111,6 +114,15 @@ function getSocialLinkUrl(platform: string, handle: string): string | null {
       return null
     default:
       return null
+  }
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return ['http:', 'https:'].includes(url.protocol)
+  } catch {
+    return false
   }
 }
 
@@ -1456,7 +1468,7 @@ function UserProfileContent() {
                         {profile.location}
                       </span>
                     )}
-                    {profile?.website && (profile.website.startsWith('http://') || profile.website.startsWith('https://')) && (
+                    {profile?.website && isValidHttpUrl(profile.website) && (
                       <a
                         href={profile.website}
                         target="_blank"
