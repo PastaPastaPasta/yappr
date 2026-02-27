@@ -213,7 +213,7 @@ export function ThreadPostEditor({
           </div>
         )}
 
-        <div className="p-4 px-5">
+        <div className={`p-4 pr-5 ${!isOnly || isPosted ? 'pl-8' : 'pl-5'}`}>
           {/* Posted status badge */}
           {isPosted && (
             <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
