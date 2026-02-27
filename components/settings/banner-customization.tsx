@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useImageUpload } from '@/hooks/use-image-upload'
@@ -62,13 +63,13 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
         setBannerUrl(url)
         setOriginalUrl(url)
       } catch (error) {
-        console.error('Failed to load banner:', error)
+        logger.error('Failed to load banner:', error)
       } finally {
         setLoading(false)
       }
     }
 
-    loadBanner().catch(console.error)
+    loadBanner().catch((error) => logger.error(error))
   }, [user?.identityId, initialBannerUrl])
 
   // Track image loading for IPFS URLs
@@ -144,7 +145,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
       toast.success('Banner saved!')
       onSave?.(bannerUrl)
     } catch (error) {
-      console.error('Failed to save banner:', error)
+      logger.error('Failed to save banner:', error)
       toast.error('Failed to save banner')
     } finally {
       setSaving(false)

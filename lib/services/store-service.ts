@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Store Service
  *
@@ -50,7 +51,7 @@ function parseContactMethods(value: unknown): SocialLink[] | undefined {
       if (Array.isArray(parsed)) return parsed as SocialLink[];
       return convertLegacyContactMethods(parsed as LegacyStoreContactMethods);
     } catch {
-      console.error('Failed to parse contactMethods:', value);
+      logger.error('Failed to parse contactMethods:', value);
     }
   }
 

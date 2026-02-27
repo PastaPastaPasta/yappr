@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 /**
  * On-chain key encryption utilities for encrypted key backup feature.
  *
@@ -384,7 +385,7 @@ export async function decryptBackupPayload(
       }
     }
     // Parsed as JSON but not a valid ExtendedBackupPayload - unexpected format
-    console.warn('Unexpected backup payload format:', typeof parsed, Object.keys(parsed as object))
+    logger.warn('Unexpected backup payload format:', typeof parsed, Object.keys(parsed as object))
     throw new Error('Unexpected backup payload format')
   } catch (e) {
     // If JSON.parse failed, it's v1 format (plain WIF key)

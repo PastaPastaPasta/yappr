@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AnimatePresence } from 'framer-motion'
@@ -62,7 +63,7 @@ export default function CartPage() {
       setIsLoading(false)
     }
 
-    loadStores().catch(console.error)
+    loadStores().catch((error) => logger.error(error))
   }, [sdkReady, cart.items])
 
   // Group items by store

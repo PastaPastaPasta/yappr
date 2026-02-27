@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, User, PostQueryOptions } from '../types';
 import { dpnsService } from './dpns-service';
@@ -165,7 +166,7 @@ class PostService extends BaseDocumentService<Post> {
         } as User & { hasDpns: boolean }
       };
     } catch (error) {
-      console.error('Error enriching post:', error);
+      logger.error('Error enriching post:', error);
       return post;
     }
   }
@@ -261,7 +262,7 @@ class PostService extends BaseDocumentService<Post> {
         };
       });
     } catch (error) {
-      console.error('Error batch enriching posts:', error);
+      logger.error('Error batch enriching posts:', error);
       return posts;
     }
   }
@@ -293,7 +294,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return result.success;
     } catch (error) {
-      console.error('Error deleting post:', error);
+      logger.error('Error deleting post:', error);
       return false;
     }
   }
@@ -542,7 +543,7 @@ class PostService extends BaseDocumentService<Post> {
         prevCursor: undefined
       };
     } catch (error) {
-      console.error('Error getting following feed:', error);
+      logger.error('Error getting following feed:', error);
       return { documents: [], nextCursor: undefined, prevCursor: undefined };
     }
   }
@@ -584,7 +585,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return post;
     } catch (error) {
-      console.error('Error getting post by ID:', error);
+      logger.error('Error getting post by ID:', error);
       return null;
     }
   }
@@ -602,7 +603,7 @@ class PostService extends BaseDocumentService<Post> {
         post.author = author;
       }
     } catch (error) {
-      console.error('Error resolving post author:', error);
+      logger.error('Error resolving post author:', error);
     }
   }
 
@@ -632,7 +633,7 @@ class PostService extends BaseDocumentService<Post> {
 
         return count;
       } catch (error) {
-        console.error('Error counting user posts:', error);
+        logger.error('Error counting user posts:', error);
         return 0;
       }
     });
@@ -671,7 +672,7 @@ class PostService extends BaseDocumentService<Post> {
 
         return count;
       } catch (error) {
-        console.error('Error counting all posts:', error);
+        logger.error('Error counting all posts:', error);
         return 0;
       }
     });
@@ -725,7 +726,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return stats;
     } catch (error) {
-      console.error('Error getting post stats:', error);
+      logger.error('Error getting post stats:', error);
       return { postId, likes: 0, reposts: 0, replies: 0, views: 0 };
     }
   }
@@ -782,7 +783,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return { liked, reposted, bookmarked };
     } catch (error) {
-      console.error('Error getting user interactions:', error);
+      logger.error('Error getting user interactions:', error);
       return { liked: false, reposted: false, bookmarked: false };
     }
   }
@@ -857,7 +858,7 @@ class PostService extends BaseDocumentService<Post> {
         });
       });
     } catch (error) {
-      console.error('Error getting batch user interactions:', error);
+      logger.error('Error getting batch user interactions:', error);
     }
 
     return result;
@@ -917,7 +918,7 @@ class PostService extends BaseDocumentService<Post> {
         if (stats) stats.replies = count;
       });
     } catch (error) {
-      console.error('Error getting batch post stats:', error);
+      logger.error('Error getting batch post stats:', error);
     }
 
     return result;
@@ -988,7 +989,7 @@ class PostService extends BaseDocumentService<Post> {
       );
 
       if (!result.success || result.data === undefined) {
-        console.error('Error counting unique authors after retries:', result.error);
+        logger.error('Error counting unique authors after retries:', result.error);
         throw result.error || new Error('Failed to count unique authors');
       }
 
@@ -1026,7 +1027,7 @@ class PostService extends BaseDocumentService<Post> {
       // Enrich posts with full data (stats, authors, interactions)
       return this.enrichPostsBatch(topPosts);
     } catch (error) {
-      console.error('Error getting top posts by likes:', error);
+      logger.error('Error getting top posts by likes:', error);
       return [];
     }
   }
@@ -1090,7 +1091,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return authorCounts;
     } catch (error) {
-      console.error('Error getting author post counts:', error);
+      logger.error('Error getting author post counts:', error);
       return authorCounts;
     }
   }
@@ -1130,7 +1131,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return quotePosts.slice(0, limit);
     } catch (error) {
-      console.error('Error getting quote posts:', error);
+      logger.error('Error getting quote posts:', error);
       return [];
     }
   }
@@ -1169,7 +1170,7 @@ class PostService extends BaseDocumentService<Post> {
         .map((doc) => this.transformDocument(doc))
         .filter((post) => post.content && post.content.trim() !== '');
     } catch (error) {
-      console.error('Error getting quotes of my posts:', error);
+      logger.error('Error getting quotes of my posts:', error);
       return [];
     }
   }
@@ -1197,7 +1198,7 @@ class PostService extends BaseDocumentService<Post> {
 
       return posts;
     } catch (error) {
-      console.error('Error getting posts by IDs:', error);
+      logger.error('Error getting posts by IDs:', error);
       return [];
     }
   }

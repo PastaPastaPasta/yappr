@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
@@ -127,7 +128,7 @@ export function PrivateQuotedPostContent({
         setState({ status: 'locked' })
       }
     } catch (error) {
-      console.error('Error decrypting quoted private post:', error)
+      logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
     }
   }, [quotedPost, user])
@@ -141,7 +142,7 @@ export function PrivateQuotedPostContent({
   // Attempt decryption on mount
   useEffect(() => {
     if (state.status === 'idle') {
-      attemptDecryption().catch((err) => console.error('Decryption failed:', err))
+      attemptDecryption().catch((err) => logger.error('Decryption failed:', err))
     }
   }, [state.status, attemptDecryption])
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -290,7 +291,7 @@ function UserProfileContent() {
               setIsPrivateFollower(accessStatus === 'approved' || accessStatus === 'approved-no-keys')
             } catch (accessErr) {
               // Access status check is non-critical
-              console.error('Failed to check private feed access status:', accessErr)
+              logger.error('Failed to check private feed access status:', accessErr)
               setIsPrivateFollower(false)
             }
           } else {
@@ -299,7 +300,7 @@ function UserProfileContent() {
           }
         } catch (e) {
           // Private feed check is non-critical
-          console.error('Failed to check private feed status:', e)
+          logger.error('Failed to check private feed status:', e)
           setHasPrivateFeed(false)
           setIsPrivateFollower(false)
         }
@@ -311,7 +312,7 @@ function UserProfileContent() {
           setUserStore(store)
         } catch (e) {
           // Store check is non-critical
-          console.error('Failed to check store status:', e)
+          logger.error('Failed to check store status:', e)
           setUserStore(null)
         }
 
@@ -382,7 +383,7 @@ function UserProfileContent() {
             })
           }
         } catch (repostError) {
-          console.error('Failed to fetch user reposts:', repostError)
+          logger.error('Failed to fetch user reposts:', repostError)
           // Continue without reposts - non-critical
         }
 
@@ -403,7 +404,7 @@ function UserProfileContent() {
             }
           }
         } catch (quoteError) {
-          console.error('Failed to fetch quoted posts:', quoteError)
+          logger.error('Failed to fetch quoted posts:', quoteError)
           // Continue without quoted posts - non-critical
         }
 
@@ -456,13 +457,13 @@ function UserProfileContent() {
         }
 
       } catch (error) {
-        console.error('Failed to load profile:', error)
+        logger.error('Failed to load profile:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadProfileData().catch(err => console.error('Failed to load profile:', err))
+    loadProfileData().catch(err => logger.error('Failed to load profile:', err))
   // currentUser is intentionally not a dependency - we only want to reload on userId change
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
@@ -485,11 +486,11 @@ function UserProfileContent() {
         router.push('/profile/create')
       } catch (error) {
         // Network error checking identity - don't take drastic action
-        console.error('Failed to verify identity for profile check:', error)
+        logger.error('Failed to verify identity for profile check:', error)
       }
     }
 
-    checkIdentityAndRedirect().catch(err => console.error('Identity check failed:', err))
+    checkIdentityAndRedirect().catch(err => logger.error('Identity check failed:', err))
   }, [profileDocumentMissing, isOwnProfile, currentUser?.identityId, isLoading, logout, router])
 
   // Define handleStartEdit before the useEffect that uses it
@@ -611,7 +612,7 @@ function UserProfileContent() {
             }
           }
         } catch (repostError) {
-          console.error('Failed to fetch more reposts:', repostError)
+          logger.error('Failed to fetch more reposts:', repostError)
           // Continue without reposts - non-critical
         }
       }
@@ -633,7 +634,7 @@ function UserProfileContent() {
           }
         }
       } catch (quoteError) {
-        console.error('Failed to fetch quoted posts:', quoteError)
+        logger.error('Failed to fetch quoted posts:', quoteError)
       }
 
       // Append to existing posts and sort
@@ -673,7 +674,7 @@ function UserProfileContent() {
         setHasMoreReposts(newRepostDocs.length >= 50)
       }
     } catch (error) {
-      console.error('Failed to load more posts:', error)
+      logger.error('Failed to load more posts:', error)
     } finally {
       setIsLoadingMore(false)
     }
@@ -710,7 +711,7 @@ function UserProfileContent() {
             }
           }
         } catch (error) {
-          console.error('Failed to fetch post:', postId, error)
+          logger.error('Failed to fetch post:', postId, error)
         }
       }
 
@@ -723,7 +724,7 @@ function UserProfileContent() {
       setMentions(enrichedPosts)
       setMentionCount(enrichedPosts.length)
     } catch (error) {
-      console.error('Failed to load mentions:', error)
+      logger.error('Failed to load mentions:', error)
       setMentions([])
     } finally {
       setMentionsLoading(false)
@@ -771,7 +772,7 @@ function UserProfileContent() {
       // Enrich with progressive data (author info, etc.)
       enrichProgressively(replyPosts)
     } catch (error) {
-      console.error('Failed to load user replies:', error)
+      logger.error('Failed to load user replies:', error)
       setUserReplies([])
     } finally {
       setRepliesLoading(false)
@@ -782,14 +783,14 @@ function UserProfileContent() {
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded) {
-      loadMentions().catch(err => console.error('Failed to load mentions:', err))
+      loadMentions().catch(err => logger.error('Failed to load mentions:', err))
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
   // Load user replies when filter is selected
   useEffect(() => {
     if (postFilter === 'replies' && !repliesLoaded) {
-      loadUserReplies().catch(err => console.error('Failed to load user replies:', err))
+      loadUserReplies().catch(err => logger.error('Failed to load user replies:', err))
     }
   }, [postFilter, repliesLoaded, loadUserReplies])
 
@@ -840,7 +841,7 @@ function UserProfileContent() {
         }
       }
     } catch (error) {
-      console.error('Follow error:', error)
+      logger.error('Follow error:', error)
       toast.error('Failed to update follow status')
     } finally {
       setFollowLoading(false)
@@ -891,7 +892,7 @@ function UserProfileContent() {
         setHasDpns(false)
       }
     } catch (e) {
-      console.error('Failed to refresh usernames:', e)
+      logger.error('Failed to refresh usernames:', e)
       // On error, reset to safe state
       setAllUsernames([])
       setUsername('')
@@ -935,7 +936,7 @@ function UserProfileContent() {
       setIsEditingProfile(false)
       toast.success('Profile updated!')
     } catch (error) {
-      console.error('Failed to update profile:', error)
+      logger.error('Failed to update profile:', error)
       toast.error('Failed to update profile')
     } finally {
       setIsSaving(false)
@@ -1059,7 +1060,7 @@ function UserProfileContent() {
                         <button
                           onClick={() => {
                             const profileUrl = `${window.location.origin}/user?id=${userId}`
-                            navigator.clipboard.writeText(profileUrl).catch(console.error)
+                            navigator.clipboard.writeText(profileUrl).catch((error) => logger.error(error))
                             toast.success('Profile link copied!')
                           }}
                           className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -1295,7 +1296,7 @@ function UserProfileContent() {
                               <button
                                 onClick={() => {
                                   if (userId) {
-                                    navigator.clipboard.writeText(userId).catch(console.error)
+                                    navigator.clipboard.writeText(userId).catch((error) => logger.error(error))
                                     toast.success('Identity ID copied')
                                   }
                                 }}
@@ -1752,7 +1753,7 @@ function UserProfileContent() {
         isOpen={isUsernameModalOpen}
         onClose={() => {
           setIsUsernameModalOpen(false)
-          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+          refreshUsernames().catch(err => logger.error('Failed to refresh usernames:', err))
         }}
         hasExistingUsernames={hasDpns}
       />

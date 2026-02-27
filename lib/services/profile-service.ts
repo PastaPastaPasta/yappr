@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import type { DocumentWhereClause, DocumentOrderByClause } from './sdk-helpers';
 import { User } from '../types';
@@ -64,12 +65,12 @@ class ProfileService extends BaseDocumentService<User> {
         queryParams.startAt = options.startAt;
       }
 
-      console.log(`Querying ${this.documentType} documents:`, queryParams);
+      logger.info(`Querying ${this.documentType} documents:`, queryParams);
 
       // Use EvoSDK documents facade
       const response = await sdk.documents.query(queryParams);
 
-      console.log(`${this.documentType} query result:`, response);
+      logger.info(`${this.documentType} query result:`, response);
 
       // Handle Map response (v3 SDK)
       if (response instanceof Map) {
@@ -125,7 +126,7 @@ class ProfileService extends BaseDocumentService<User> {
         prevCursor: resultObj?.prevCursor
       };
     } catch (error) {
-      console.error(`Error querying ${this.documentType} documents:`, error);
+      logger.error(`Error querying ${this.documentType} documents:`, error);
       throw error;
     }
   }
@@ -135,7 +136,7 @@ class ProfileService extends BaseDocumentService<User> {
    * SDK v3: System fields use $ prefix
    */
   protected transformDocument(doc: Record<string, unknown>, options?: Record<string, unknown>): User {
-    console.log('ProfileService: transformDocument input:', doc);
+    logger.info('ProfileService: transformDocument input:', doc);
     const profileDoc = doc as unknown as ProfileDocument;
     const cachedUsername = options?.cachedUsername as string | undefined;
 
@@ -165,7 +166,7 @@ class ProfileService extends BaseDocumentService<User> {
 
     // Queue async operations to enrich the user
     // Skip username resolution if we already have a cached username
-    this.enrichUser(user, !!cachedUsername).catch(err => console.error('Failed to enrich user:', err));
+    this.enrichUser(user, !!cachedUsername).catch(err => logger.error('Failed to enrich user:', err));
 
     return user;
   }
@@ -188,7 +189,7 @@ class ProfileService extends BaseDocumentService<User> {
       user.followers = stats.followers;
       user.following = stats.following;
     } catch (error) {
-      console.error('Error enriching user:', error);
+      logger.error('Error enriching user:', error);
     }
   }
 
@@ -197,12 +198,12 @@ class ProfileService extends BaseDocumentService<User> {
    */
   async getProfile(ownerId: string, cachedUsername?: string): Promise<User | null> {
     try {
-      console.log('ProfileService: Getting profile for owner ID:', ownerId);
+      logger.info('ProfileService: Getting profile for owner ID:', ownerId);
 
       // Check cache first
       const cached = cacheManager.get<User>(this.PROFILE_CACHE, ownerId);
       if (cached) {
-        console.log('ProfileService: Returning cached profile for:', ownerId);
+        logger.info('ProfileService: Returning cached profile for:', ownerId);
         // Update username if provided
         if (cachedUsername && cached.username !== cachedUsername) {
           cached.username = cachedUsername;
@@ -219,12 +220,12 @@ class ProfileService extends BaseDocumentService<User> {
         limit: 1
       });
 
-      console.log('ProfileService: Query result:', result);
-      console.log('ProfileService: Documents found:', result.documents.length);
+      logger.info('ProfileService: Query result:', result);
+      logger.info('ProfileService: Documents found:', result.documents.length);
 
       if (result.documents.length > 0) {
         const profile = result.documents[0];
-        console.log('ProfileService: Returning profile:', profile);
+        logger.info('ProfileService: Returning profile:', profile);
 
         // Cache the result with profile and user tags
         cacheManager.set(this.PROFILE_CACHE, ownerId, profile, {
@@ -235,10 +236,10 @@ class ProfileService extends BaseDocumentService<User> {
         return profile;
       }
 
-      console.log('ProfileService: No profile found for owner ID:', ownerId);
+      logger.info('ProfileService: No profile found for owner ID:', ownerId);
       return null;
     } catch (error) {
-      console.error('ProfileService: Error getting profile:', error);
+      logger.error('ProfileService: Error getting profile:', error);
       return null;
     } finally {
       // Clear cached username
@@ -265,7 +266,7 @@ class ProfileService extends BaseDocumentService<User> {
 
       return profile;
     } catch (error) {
-      console.error('ProfileService: Error getting profile with username:', error);
+      logger.error('ProfileService: Error getting profile with username:', error);
       return this.getProfile(ownerId);
     }
   }
@@ -354,7 +355,7 @@ class ProfileService extends BaseDocumentService<User> {
 
       return null;
     } catch (error) {
-      console.error('Error updating profile:', error);
+      logger.error('Error updating profile:', error);
       throw error;
     }
   }
@@ -382,7 +383,7 @@ class ProfileService extends BaseDocumentService<User> {
 
       return username;
     } catch (error) {
-      console.error('Error resolving username:', error);
+      logger.error('Error resolving username:', error);
       return null;
     }
   }
@@ -430,11 +431,11 @@ class ProfileService extends BaseDocumentService<User> {
       });
 
       if (validIds.length === 0) {
-        console.log('ProfileService: No valid identity IDs to query');
+        logger.info('ProfileService: No valid identity IDs to query');
         return [];
       }
 
-      console.log('ProfileService: Getting profiles for', validIds.length, 'identity IDs');
+      logger.info('ProfileService: Getting profiles for', validIds.length, 'identity IDs');
 
       const sdk = await getEvoSdk();
 
@@ -456,23 +457,23 @@ class ProfileService extends BaseDocumentService<User> {
             const d = doc as { toJSON?: () => unknown };
             return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as ProfileDocument;
           });
-        console.log(`ProfileService: Found ${documents.length} profiles`);
+        logger.info(`ProfileService: Found ${documents.length} profiles`);
         return documents;
       }
 
       // Handle array response
       const respWithDocs = response as { documents?: ProfileDocument[] };
       if (Array.isArray(response)) {
-        console.log(`ProfileService: Found ${(response as ProfileDocument[]).length} profiles`);
+        logger.info(`ProfileService: Found ${(response as ProfileDocument[]).length} profiles`);
         return response as ProfileDocument[];
       } else if (respWithDocs?.documents) {
-        console.log(`ProfileService: Found ${respWithDocs.documents.length} profiles`);
+        logger.info(`ProfileService: Found ${respWithDocs.documents.length} profiles`);
         return respWithDocs.documents;
       }
 
       return [];
     } catch (error) {
-      console.error('ProfileService: Error getting profiles by identity IDs:', error);
+      logger.error('ProfileService: Error getting profiles by identity IDs:', error);
       return [];
     }
   }

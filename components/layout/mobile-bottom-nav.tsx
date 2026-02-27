@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -148,7 +149,7 @@ export function MobileBottomNav() {
                 <button
                   onClick={() => {
                     setMoreMenuOpen(false)
-                    logout().catch((err) => console.error('Logout failed:', err))
+                    logout().catch((err) => logger.error('Logout failed:', err))
                   }}
                   className="flex items-center gap-3 w-full p-3 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                 >

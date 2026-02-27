@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { identityService } from './identity-service'
 import {
   findMatchingKeyIndex,
@@ -92,7 +93,7 @@ function convertPublicKeys(sdkPublicKeys: SDKPublicKey[]): IdentityPublicKeyInfo
 
     const data = extractPublicKeyBytes(rawData)
     if (!data) {
-      console.warn('Could not extract public key bytes for key:', key.id)
+      logger.warn('Could not extract public key bytes for key:', key.id)
       continue
     }
 

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { dpnsService } from './dpns-service';
@@ -78,7 +79,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       const backup = await this.getBackupByIdentityId(identityId);
       return backup !== null;
     } catch (error) {
-      console.error('Error checking backup existence:', error);
+      logger.error('Error checking backup existence:', error);
       return false;
     }
   }
@@ -98,7 +99,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       }
       return this.hasBackup(identityId);
     } catch (error) {
-      console.error('Error checking backup by username:', error);
+      logger.error('Error checking backup by username:', error);
       return false;
     }
   }
@@ -119,7 +120,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
       return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
-      console.error('Error getting backup by identity:', error);
+      logger.error('Error getting backup by identity:', error);
       return null;
     }
   }
@@ -139,7 +140,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       }
       return this.getBackupByIdentityId(identityId);
     } catch (error) {
-      console.error('Error getting backup by username:', error);
+      logger.error('Error getting backup by username:', error);
       return null;
     }
   }
@@ -219,7 +220,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
         documentId: result.document?.$id as string | undefined
       };
     } catch (error) {
-      console.error('Error creating backup:', error);
+      logger.error('Error creating backup:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to create backup'
@@ -243,7 +244,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
       return await this.delete(backup.$id, identityId);
     } catch (error) {
-      console.error('Error deleting backup:', error);
+      logger.error('Error deleting backup:', error);
       return false;
     }
   }

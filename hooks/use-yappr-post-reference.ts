@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useEffect, useMemo, useState } from 'react'
 import type { Post, Reply } from '@/lib/types'
 import { extractYapprPostId } from './use-link-preview'
@@ -66,7 +67,7 @@ async function fetchReferencedPost(postId: string): Promise<Post | null> {
       referenceCache.set(postId, convertedReply)
       return convertedReply
     } catch (error) {
-      console.error('useYapprPostReference: Failed to resolve linked post:', error)
+      logger.error('useYapprPostReference: Failed to resolve linked post:', error)
       return null
     } finally {
       pendingReferences.delete(postId)
@@ -120,7 +121,7 @@ export function useYapprPostReference(
       setResolved(true)
     }).catch((error) => {
       if (cancelled) return
-      console.error('useYapprPostReference: Failed to apply linked post state:', error)
+      logger.error('useYapprPostReference: Failed to apply linked post state:', error)
       setPost(null)
       setLoading(false)
       setResolved(true)

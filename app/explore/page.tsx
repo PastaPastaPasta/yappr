@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon } from '@heroicons/react/24/outline'
@@ -47,13 +48,13 @@ export default function ExplorePage() {
         })
         setTrendingHashtags(trending)
       } catch (error) {
-        console.error('Failed to load trending hashtags:', error)
+        logger.error('Failed to load trending hashtags:', error)
       } finally {
         setIsLoadingTrends(false)
       }
     }
 
-    loadTrendingHashtags().catch(err => console.error('Failed to load trending hashtags:', err))
+    loadTrendingHashtags().catch(err => logger.error('Failed to load trending hashtags:', err))
   }, [])
 
   // Search posts when query changes
@@ -111,7 +112,7 @@ export default function ExplorePage() {
 
         setSearchResults(filtered)
       } catch (error) {
-        console.error('Search failed:', error)
+        logger.error('Search failed:', error)
       } finally {
         setIsSearching(false)
       }

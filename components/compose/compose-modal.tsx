@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useRef, useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
@@ -151,13 +152,13 @@ export function ComposeModal() {
             }
           }
         } catch (error) {
-          console.error('Failed to check private feed status:', error)
+          logger.error('Failed to check private feed status:', error)
           setHasPrivateFeed(false)
         } finally {
           setPrivateFeedLoading(false)
         }
       }
-      checkPrivateFeed().catch(err => console.error('Failed to check private feed:', err))
+      checkPrivateFeed().catch(err => logger.error('Failed to check private feed:', err))
     }
   }, [isComposeOpen, user])
 
@@ -183,7 +184,7 @@ export function ComposeModal() {
         setInheritedEncryption(null)
       }
     } catch (error) {
-      console.error('Failed to check inherited encryption:', error)
+      logger.error('Failed to check inherited encryption:', error)
       // Error fetching encryption source for private post - block posting
       if (isPrivatePost(postToCheck)) {
         setInheritedEncryptionError(true)
@@ -219,7 +220,7 @@ export function ComposeModal() {
             setInheritedEncryption(null)
           }
         } catch (error) {
-          console.error('Failed to check inherited encryption:', error)
+          logger.error('Failed to check inherited encryption:', error)
           if (cancelled) return
           if (isPrivatePost(replyingTo)) {
             setInheritedEncryptionError(true)
@@ -231,7 +232,7 @@ export function ComposeModal() {
           }
         }
       }
-      doCheck().catch((err) => console.error('Failed to check inherited encryption:', err))
+      doCheck().catch((err) => logger.error('Failed to check inherited encryption:', err))
 
       // Cleanup: mark as cancelled if replyingTo changes
       return () => {
@@ -258,7 +259,7 @@ export function ComposeModal() {
   // Check upload provider status when modal opens
   useEffect(() => {
     if (isComposeOpen) {
-      checkProvider().catch(err => console.error('Failed to check upload provider:', err))
+      checkProvider().catch(err => logger.error('Failed to check upload provider:', err))
     }
   }, [isComposeOpen, checkProvider])
 
@@ -369,7 +370,7 @@ export function ComposeModal() {
         toast.error(result.error || 'Failed to enable private feed')
       }
     } catch (error) {
-      console.error('Error enabling private feed:', error)
+      logger.error('Error enabling private feed:', error)
       toast.error('Failed to enable private feed')
     } finally {
       setPendingVisibility(null)
@@ -415,7 +416,7 @@ export function ComposeModal() {
         setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
       })
       .catch((err) => {
-        console.error('Failed to upload image:', err)
+        logger.error('Failed to upload image:', err)
         toast.error('Failed to upload image')
       })
   }, [upload])
@@ -482,7 +483,7 @@ export function ComposeModal() {
         setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
       })
       .catch((err) => {
-        console.error('Failed to upload image:', err)
+        logger.error('Failed to upload image:', err)
         toast.error('Failed to upload image')
       })
   }, [attachedImage, isProviderConnected, upload])
@@ -515,7 +516,7 @@ export function ComposeModal() {
         setAttachedImage(prev => prev ? { ...prev, uploadResult: result } : null)
         imageUrl = result.url // ipfs://CID
       } catch (err) {
-        console.error('Failed to upload image:', err)
+        logger.error('Failed to upload image:', err)
         toast.error('Failed to upload image')
         setIsPosting(false)
         setPostingProgress(null)
@@ -579,7 +580,7 @@ export function ComposeModal() {
             : `Creating post ${i + 1} of ${postsToCreate.length}...`
         })
 
-        console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
+        logger.info(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
         // Determine encryption options
         let encryptionOptions: import('@/lib/services/post-service').EncryptionOptions | undefined
@@ -699,7 +700,7 @@ export function ComposeModal() {
               hashtagService.createPostHashtags(postId, authedUser.identityId, hashtags)
                 .then((results) => {
                   const successCount = results.filter((r) => r).length
-                  console.log(`Post ${i + 1}: Created ${successCount}/${hashtags.length} hashtag documents`)
+                  logger.info(`Post ${i + 1}: Created ${successCount}/${hashtags.length} hashtag documents`)
 
                   results.forEach((success, tagIndex) => {
                     if (success) {
@@ -712,7 +713,7 @@ export function ComposeModal() {
                   })
                 })
                 .catch((err) => {
-                  console.error(`Post ${i + 1}: Failed to create hashtag documents:`, err)
+                  logger.error(`Post ${i + 1}: Failed to create hashtag documents:`, err)
                 })
             }
 
@@ -728,7 +729,7 @@ export function ComposeModal() {
               mentionService.createPostMentionsFromUsernames(postId, authedUser.identityId, mentions)
                 .then((results) => {
                   const successCount = results.filter((r) => r).length
-                  console.log(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
+                  logger.info(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
 
                   // Dispatch event for each successful mention to trigger cache invalidation
                   results.forEach((success, mentionIndex) => {
@@ -742,7 +743,7 @@ export function ComposeModal() {
                   })
                 })
                 .catch((err) => {
-                  console.error(`Post ${i + 1}: Failed to create mention documents:`, err)
+                  logger.error(`Post ${i + 1}: Failed to create mention documents:`, err)
                 })
             }
 
@@ -775,7 +776,7 @@ export function ComposeModal() {
           // tried to verify on Platform. If we still get here, it couldn't confirm.
           // Retrying is safe — idempotency checks will prevent double-posting.
           if (isTimeoutError(result.error)) {
-            console.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
+            logger.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
             timeoutPosts.push({ index: i, threadPostId })
             continue
           }
@@ -894,7 +895,7 @@ export function ComposeModal() {
         throw failureError || new Error('Post creation failed')
       }
     } catch (error) {
-      console.error('Failed to create post:', error)
+      logger.error('Failed to create post:', error)
       toast.error(categorizeError(error))
     } finally {
       setIsPosting(false)
@@ -919,7 +920,7 @@ export function ComposeModal() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
-      handlePost().catch(err => console.error('Failed to post:', err))
+      handlePost().catch(err => logger.error('Failed to post:', err))
     }
   }
 

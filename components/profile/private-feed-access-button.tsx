@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { LockClosedIcon, LockOpenIcon, CheckIcon, XMarkIcon, ClockIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -70,13 +71,13 @@ export function PrivateFeedAccessButton({
       const accessStatus = await privateFeedFollowerService.getAccessStatus(ownerId, currentUserId)
       setStatus(accessStatus)
     } catch (error) {
-      console.error('Error loading private feed status:', error)
+      logger.error('Error loading private feed status:', error)
       setStatus('no-private-feed')
     }
   }, [ownerId, currentUserId, isFollowing])
 
   useEffect(() => {
-    loadStatus().catch(err => console.error('Failed to load status:', err))
+    loadStatus().catch(err => logger.error('Failed to load status:', err))
 
     // Cleanup: clear any pending timeouts on unmount
     return () => {
@@ -95,7 +96,7 @@ export function PrivateFeedAccessButton({
       clearTimeout(timeoutRef.current)
     }
     timeoutRef.current = setTimeout(() => {
-      loadStatus().catch(console.error)
+      loadStatus().catch((error) => logger.error(error))
     }, 1000)
   }
 
@@ -123,7 +124,7 @@ export function PrivateFeedAccessButton({
         toast.error(result.error || 'Failed to cancel request')
       }
     } catch (error) {
-      console.error('Error canceling request:', error)
+      logger.error('Error canceling request:', error)
       toast.error('Failed to cancel request')
     } finally {
       setIsProcessing(false)
@@ -138,7 +139,7 @@ export function PrivateFeedAccessButton({
       clearTimeout(timeoutRef.current)
     }
     timeoutRef.current = setTimeout(() => {
-      loadStatus().catch(console.error)
+      loadStatus().catch((error) => logger.error(error))
     }, 1000)
   }, [onKeyAdded, loadStatus])
 

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Insight API Service for Dash transaction detection
  * Polls Insight API for UTXOs at a specified address
@@ -104,7 +105,7 @@ export async function waitForUtxo(
         }
       } catch (error) {
         // Continue polling on network errors
-        console.warn('Insight API poll error:', error)
+        logger.warn('Insight API poll error:', error)
       }
 
       // Schedule next poll
@@ -113,7 +114,7 @@ export async function waitForUtxo(
 
     // Start polling
     poll().catch((error) => {
-      console.error('Unexpected error in UTXO polling:', error)
+      logger.error('Unexpected error in UTXO polling:', error)
       resolve({ success: false, timedOut: false, error: 'Polling failed unexpectedly' })
     })
   })

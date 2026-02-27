@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -127,7 +128,7 @@ export function EncryptionKeyModal() {
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('Auto-recovery not available. Please enter your key manually.')
     } catch (err) {
-      console.error('Auto-recovery error:', err)
+      logger.error('Auto-recovery error:', err)
       if (!isModalActiveRef.current) return
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
@@ -137,7 +138,7 @@ export function EncryptionKeyModal() {
   // Trigger auto-recovery when modal opens
   useEffect(() => {
     if (isOpen && user && autoRecoveryStatus === 'idle') {
-      attemptAutoRecovery().catch((err) => console.error('Auto-recovery failed:', err))
+      attemptAutoRecovery().catch((err) => logger.error('Auto-recovery failed:', err))
     }
   }, [isOpen, user, autoRecoveryStatus, attemptAutoRecovery])
 
@@ -192,7 +193,7 @@ export function EncryptionKeyModal() {
         onSuccess()
       }
     } catch (err) {
-      console.error('Error validating encryption key:', err)
+      logger.error('Error validating encryption key:', err)
       setError(err instanceof Error ? err.message : 'Failed to validate key')
     } finally {
       setIsValidating(false)

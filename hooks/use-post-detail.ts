@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, Reply, ReplyThread } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
@@ -239,7 +240,7 @@ export function usePostDetail({
           }
         }
       } catch (err) {
-        console.error('usePostDetail: Failed to fetch quoted posts for reply chain:', err)
+        logger.error('usePostDetail: Failed to fetch quoted posts for reply chain:', err)
       }
     }
 
@@ -248,7 +249,7 @@ export function usePostDetail({
       try {
         await enrich(chain)
       } catch (err) {
-        console.error('usePostDetail: Failed to enrich reply chain:', err)
+        logger.error('usePostDetail: Failed to enrich reply chain:', err)
       }
     }
 
@@ -310,11 +311,11 @@ export function usePostDetail({
 
       // Enrich the main post without blocking replies or UI
       enrich([loadedPost]).catch((err) => {
-        console.error('usePostDetail: Failed to enrich main post:', err)
+        logger.error('usePostDetail: Failed to enrich main post:', err)
       })
     } catch (err) {
       if (!isCurrent()) return
-      console.error('usePostDetail: Failed to load post:', err)
+      logger.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
       // Only clear state if we don't have navigation data to show
       if (!usedNavigationDataRef.current) {
@@ -410,7 +411,7 @@ export function usePostDetail({
             quotedPost = quotedPosts[0]
           }
         } catch (quoteError) {
-          console.error('Failed to fetch quoted post:', quoteError)
+          logger.error('Failed to fetch quoted post:', quoteError)
         }
       }
 
@@ -425,7 +426,7 @@ export function usePostDetail({
       })
     } catch (err) {
       if (!isCurrent()) return
-      console.error('usePostDetail: Failed to load replies:', err)
+      logger.error('usePostDetail: Failed to load replies:', err)
       setError(err instanceof Error ? err.message : 'Failed to load replies')
     } finally {
       if (isCurrent()) {

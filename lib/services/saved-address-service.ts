@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Saved Address Service
  *
@@ -135,12 +136,12 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
 
       // Validate version
       if (payload.version !== PAYLOAD_VERSION) {
-        console.warn(`Unknown saved address payload version: ${payload.version}`);
+        logger.warn(`Unknown saved address payload version: ${payload.version}`);
       }
 
       return payload.addresses || [];
     } catch (error) {
-      console.error('Failed to decrypt saved addresses:', error);
+      logger.error('Failed to decrypt saved addresses:', error);
       throw new Error('Failed to decrypt saved addresses. Your encryption key may have changed.');
     }
   }

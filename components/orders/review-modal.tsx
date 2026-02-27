@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -56,7 +57,7 @@ export function ReviewModal({
       handleClose()
       onSuccess()
     } catch (error) {
-      console.error('Failed to submit review:', error)
+      logger.error('Failed to submit review:', error)
       toast.error('Failed to submit review. Please try again.')
     } finally {
       setIsSubmitting(false)

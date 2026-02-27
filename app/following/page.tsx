@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -33,7 +34,7 @@ const dpns_convert_to_homograph_safe = (input: string): string => {
     return WasmSdk.dpnsConvertToHomographSafe(input)
   } catch (e) {
     // SDK may not be initialized yet, return original input as fallback
-    console.warn('WASM SDK not initialized for homograph conversion, using original input')
+    logger.warn('WASM SDK not initialized for homograph conversion, using original input')
     return input
   }
 }
@@ -89,7 +90,7 @@ function FollowingPage() {
         return
       }
 
-      console.log('Following: Loading following list for:', userIdToLoad)
+      logger.info('Following: Loading following list for:', userIdToLoad)
 
       // If viewing another user, fetch their username for the header
       if (targetUserId && targetUserId !== user?.identityId) {
@@ -97,7 +98,7 @@ function FollowingPage() {
           const username = await dpnsService.resolveUsername(targetUserId)
           setTargetUserName(username || `User ${targetUserId.slice(-6)}`)
         } catch (error) {
-          console.error('Failed to resolve target user name:', error)
+          logger.error('Failed to resolve target user name:', error)
           setTargetUserName(`User ${targetUserId.slice(-6)}`)
         }
       }
@@ -108,7 +109,7 @@ function FollowingPage() {
       if (!forceRefresh) {
         const cached = cacheManager.get<FollowingUser[]>('following', cacheKey)
         if (cached) {
-          console.log('Following: Using cached data')
+          logger.info('Following: Using cached data')
           setData(cached)
           setLoading(false)
           return
@@ -118,7 +119,7 @@ function FollowingPage() {
       // Use followService to get following list
       const follows = await followService.getFollowing(userIdToLoad)
       
-      console.log('Following: Raw follows from platform:', follows)
+      logger.info('Following: Raw follows from platform:', follows)
 
       // Get unique identity IDs from follows
       const identityIds = follows
@@ -144,7 +145,7 @@ function FollowingPage() {
             }
             return { id, usernames }
           } catch (error) {
-            console.error(`Failed to get all usernames for ${id}:`, error)
+            logger.error(`Failed to get all usernames for ${id}:`, error)
             return { id, usernames: [] }
           }
         })),
@@ -158,7 +159,7 @@ function FollowingPage() {
             const count = await followService.countFollowers(id)
             return { id, count }
           } catch (error) {
-            console.error(`Failed to get follower count for ${id}:`, error)
+            logger.error(`Failed to get follower count for ${id}:`, error)
             return { id, count: 0 }
           }
         })),
@@ -168,7 +169,7 @@ function FollowingPage() {
             const count = await followService.countFollowing(id)
             return { id, count }
           } catch (error) {
-            console.error(`Failed to get following count for ${id}:`, error)
+            logger.error(`Failed to get following count for ${id}:`, error)
             return { id, count: 0 }
           }
         }))
@@ -191,7 +192,7 @@ function FollowingPage() {
       const followingUsers = follows.map((follow: any) => {
         const followingId = follow.followingId
         if (!followingId) {
-          console.warn('Follow document missing followingId:', follow)
+          logger.warn('Follow document missing followingId:', follow)
           return null
         }
         
@@ -219,10 +220,10 @@ function FollowingPage() {
       cacheManager.set('following', cacheKey, followingUsers)
 
       setData(followingUsers)
-      console.log(`Following: Successfully loaded ${followingUsers.length} following`)
+      logger.info(`Following: Successfully loaded ${followingUsers.length} following`)
 
     } catch (error) {
-      console.error('Following: Failed to load following list:', error)
+      logger.error('Following: Failed to load following list:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       setError(errorMessage)
     } finally {
@@ -231,7 +232,7 @@ function FollowingPage() {
   }, [setLoading, setError, setData, user?.identityId, targetUserId])
 
   useEffect(() => {
-    loadFollowing().catch(err => console.error('Failed to load following:', err))
+    loadFollowing().catch(err => logger.error('Failed to load following:', err))
   }, [loadFollowing])
 
   const handleUnfollow = async (userId: string) => {
@@ -242,7 +243,7 @@ function FollowingPage() {
     setFollowingInProgress(prev => new Set(prev).add(userId))
 
     try {
-      console.log('Unfollowing user:', userId)
+      logger.info('Unfollowing user:', userId)
 
       const result = await followService.unfollowUser(authedUser.identityId, userId)
 
@@ -259,11 +260,11 @@ function FollowingPage() {
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Unfollowed')
       } else {
-        console.error('Failed to unfollow user:', result.error)
+        logger.error('Failed to unfollow user:', result.error)
         toast.error('Failed to unfollow user')
       }
     } catch (error) {
-      console.error('Error unfollowing user:', error)
+      logger.error('Error unfollowing user:', error)
       toast.error('Failed to unfollow user')
     } finally {
       setFollowingInProgress(prev => {
@@ -282,7 +283,7 @@ function FollowingPage() {
     setFollowingInProgress(prev => new Set(prev).add(userId))
 
     try {
-      console.log('Following user:', userId)
+      logger.info('Following user:', userId)
 
       // Create follow document
       const result = await followService.followUser(authedUser.identityId, userId)
@@ -296,11 +297,11 @@ function FollowingPage() {
         // Force refresh the following list to show the new follow
         await loadFollowing(true)
       } else {
-        console.error('Failed to follow user:', result.error)
+        logger.error('Failed to follow user:', result.error)
         // You could show an error toast here
       }
     } catch (error) {
-      console.error('Error following user:', error)
+      logger.error('Error following user:', error)
     } finally {
       // Remove from in-progress set
       setFollowingInProgress(prev => {
@@ -333,13 +334,13 @@ function FollowingPage() {
     try {
       // Convert search query to homograph-safe characters
       const homographSafeQuery = dpns_convert_to_homograph_safe(searchQuery.trim())
-      console.log('Searching for DPNS names starting with:', searchQuery, '-> homograph-safe:', homographSafeQuery)
+      logger.info('Searching for DPNS names starting with:', searchQuery, '-> homograph-safe:', homographSafeQuery)
       
       // Search for usernames with details
       const searchResults = await dpnsService.searchUsernamesWithDetails(homographSafeQuery, 20)
       
       if (searchResults.length > 0) {
-        console.log('Found DPNS search results:', searchResults)
+        logger.info('Found DPNS search results:', searchResults)
         
         // Get all unique identity IDs from search results
         const uniqueIdentityIds = Array.from(new Set(searchResults.map(r => r.ownerId).filter(id => id)))
@@ -374,9 +375,9 @@ function FollowingPage() {
             profiles = profilesResult
             followerCounts = followerCountsResult
             followingCounts = followingCountsResult
-            console.log('Found Yappr profiles:', profiles)
+            logger.info('Found Yappr profiles:', profiles)
           } catch (error) {
-            console.error('Error fetching profiles:', error)
+            logger.error('Error fetching profiles:', error)
           }
         }
 
@@ -424,7 +425,7 @@ function FollowingPage() {
         setSearchError('No users found with that name')
       }
     } catch (error) {
-      console.error('Search error:', error)
+      logger.error('Search error:', error)
       setSearchError('Failed to search for user')
       setSearchResults([])
     } finally {
@@ -436,7 +437,7 @@ function FollowingPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery) {
-        searchUsers().catch(err => console.error('Failed to search users:', err))
+        searchUsers().catch(err => logger.error('Failed to search users:', err))
       }
     }, 500)
 
@@ -715,7 +716,7 @@ function FollowingPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(followingUser.id).catch(console.error)
+                                        navigator.clipboard.writeText(followingUser.id).catch((error) => logger.error(error))
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"

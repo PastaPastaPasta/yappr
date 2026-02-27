@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
@@ -105,7 +106,7 @@ export function useHomepageData(): HomepageData {
         error: null
       })
     } catch (error) {
-      console.error('Error loading platform stats:', error)
+      logger.error('Error loading platform stats:', error)
       setPlatformStats(prev => ({
         ...prev,
         loading: false,
@@ -147,7 +148,7 @@ export function useHomepageData(): HomepageData {
             }
           }
         } catch (quoteError) {
-          console.error('Error fetching quoted posts for featured posts:', quoteError)
+          logger.error('Error fetching quoted posts for featured posts:', quoteError)
           // Don't fail the whole load if quoted posts fail
         }
       }
@@ -160,7 +161,7 @@ export function useHomepageData(): HomepageData {
         error: null
       })
     } catch (error) {
-      console.error('Error loading featured posts:', error)
+      logger.error('Error loading featured posts:', error)
       setFeaturedPosts(prev => ({
         ...prev,
         loading: false,
@@ -236,7 +237,7 @@ export function useHomepageData(): HomepageData {
         error: null
       })
     } catch (error) {
-      console.error('Error loading top users:', error)
+      logger.error('Error loading top users:', error)
       setTopUsers(prev => ({
         ...prev,
         loading: false,

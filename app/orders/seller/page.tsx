@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -42,7 +43,7 @@ async function decryptSellerOrderPayload(
       const jsonStr = decoder.decode(order.encryptedPayload)
       return JSON.parse(jsonStr) as OrderPayload
     } catch (e) {
-      console.error('Failed to decode order payload:', e)
+      logger.error('Failed to decode order payload:', e)
       return null
     }
   }
@@ -57,7 +58,7 @@ async function decryptSellerOrderPayload(
       false // isBuyer = false (seller)
     )
   } catch (e) {
-    console.error('Failed to decrypt order payload:', e)
+    logger.error('Failed to decrypt order payload:', e)
     return null
   }
 }
@@ -134,13 +135,13 @@ function SellerOrdersPage() {
         setOrderStatuses(statusMap)
         setBuyerUsernames(usernameMap)
       } catch (error) {
-        console.error('Failed to load seller orders:', error)
+        logger.error('Failed to load seller orders:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadOrders().catch(console.error)
+    loadOrders().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
   const handleUpdateStatus = async (orderId: string) => {
@@ -162,7 +163,7 @@ function SellerOrdersPage() {
       setTrackingCarrier('')
       setStatusMessage('')
     } catch (error) {
-      console.error('Failed to update status:', error)
+      logger.error('Failed to update status:', error)
     } finally {
       setIsSubmitting(false)
     }

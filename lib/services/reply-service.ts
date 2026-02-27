@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Reply, PostQueryOptions } from '../types';
 import { dpnsService } from './dpns-service';
@@ -119,7 +120,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return result.success;
     } catch (error) {
-      console.error('Error deleting reply:', error);
+      logger.error('Error deleting reply:', error);
       return false;
     }
   }
@@ -277,7 +278,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting replies to my content:', error);
+      logger.error('Error getting replies to my content:', error);
       return [];
     }
   }
@@ -338,7 +339,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return result;
     } catch (error) {
-      console.error('Error getting nested replies:', error);
+      logger.error('Error getting nested replies:', error);
       const result = new Map<string, Reply[]>();
       parentIds.forEach(id => result.set(id, []));
       return result;
@@ -407,7 +408,7 @@ class ReplyService extends BaseDocumentService<Reply> {
         }
       }
     } catch (error) {
-      console.error('Error getting replies batch:', error);
+      logger.error('Error getting replies batch:', error);
     }
 
     return result;
@@ -427,7 +428,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return reply;
     } catch (error) {
-      console.error('Error getting reply by ID:', error);
+      logger.error('Error getting reply by ID:', error);
       return null;
     }
   }
@@ -452,7 +453,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return replies;
     } catch (error) {
-      console.error('Error getting replies by IDs:', error);
+      logger.error('Error getting replies by IDs:', error);
       return [];
     }
   }
@@ -494,7 +495,7 @@ class ReplyService extends BaseDocumentService<Reply> {
         };
       }
     } catch (error) {
-      console.error('Error resolving reply authors:', error);
+      logger.error('Error resolving reply authors:', error);
     }
   }
 }
@@ -516,7 +517,7 @@ export async function getEncryptionSource(
 ): Promise<EncryptionSource | null> {
   const MAX_DEPTH = 100;
   if (depth >= MAX_DEPTH) {
-    console.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
+    logger.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
     return null;
   }
 
@@ -543,7 +544,7 @@ export async function getEncryptionSource(
     const parentReply = await replyService.getReplyById(parentId, { skipEnrichment: true });
 
     if (!parentReply) {
-      console.warn('Parent not found:', parentId);
+      logger.warn('Parent not found:', parentId);
       return null;
     }
 
@@ -565,7 +566,7 @@ export async function getEncryptionSource(
     // Parent reply is not encrypted - no inherited encryption
     return null;
   } catch (error) {
-    console.error('Error getting encryption source:', error);
+    logger.error('Error getting encryption source:', error);
     return null;
   }
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
@@ -201,7 +202,7 @@ export function TipModal() {
         .then(b => setBalance(b.confirmed))
         .catch(() => {})
       // Update global balance in auth context (persists to localStorage)
-      refreshBalance().catch(err => console.error('Failed to refresh balance:', err))
+      refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
 
       // If key was manually entered and not already saved, offer to save
       if (keySource === 'manual' && usedTransferKeyRef.current && !hasTransferKey(user.identityId)) {
@@ -239,7 +240,7 @@ export function TipModal() {
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
     } catch (err) {
-      console.error('Failed to store transfer key:', err)
+      logger.error('Failed to store transfer key:', err)
     }
     usedTransferKeyRef.current = null
     setState('success')

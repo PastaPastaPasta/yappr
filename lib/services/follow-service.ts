@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
@@ -32,7 +33,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     try {
       const existing = await this.getFollow(targetUserId, followerUserId);
       if (existing) {
-        console.log('Already following user');
+        logger.info('Already following user');
         return { success: true };
       }
 
@@ -45,7 +46,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
       return result;
     } catch (error) {
-      console.error('Error following user:', error);
+      logger.error('Error following user:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to follow user'
@@ -60,7 +61,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     try {
       const follow = await this.getFollow(targetUserId, followerUserId);
       if (!follow) {
-        console.log('Not following user');
+        logger.info('Not following user');
         return { success: true };
       }
 
@@ -73,7 +74,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
       return result;
     } catch (error) {
-      console.error('Error unfollowing user:', error);
+      logger.error('Error unfollowing user:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to unfollow user'
@@ -107,7 +108,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
       return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
-      console.error('Error getting follow:', error);
+      logger.error('Error getting follow:', error);
       return null;
     }
   }
@@ -137,7 +138,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting followers:', error);
+      logger.error('Error getting followers:', error);
       return [];
     }
   }
@@ -167,7 +168,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting following:', error);
+      logger.error('Error getting following:', error);
       return [];
     }
   }
@@ -214,7 +215,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         result.set(targetId, followingSet.has(targetId));
       }
     } catch (error) {
-      console.error('Error getting batch follow status:', error);
+      logger.error('Error getting batch follow status:', error);
     }
 
     return result;
@@ -247,7 +248,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         return count;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('Error counting followers:', errorMessage, error);
+        logger.error('Error counting followers:', errorMessage, error);
         return 0;
       }
     });
@@ -280,7 +281,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         return count;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('Error counting following:', errorMessage, error);
+        logger.error('Error counting following:', errorMessage, error);
         return 0;
       }
     });

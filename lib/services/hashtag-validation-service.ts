@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { hashtagService, PostHashtagDocument } from './hashtag-service'
 import { extractAllTags } from '../post-helpers'
 
@@ -166,7 +167,7 @@ class HashtagValidationService {
 
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null
-      this.processBatch().catch(err => console.error('Failed to process hashtag batch:', err))
+      this.processBatch().catch(err => logger.error('Failed to process hashtag batch:', err))
     }, this.BATCH_DELAY)
   }
 
@@ -197,7 +198,7 @@ class HashtagValidationService {
         // Resolve all waiting callers
         request.resolvers.forEach(resolve => resolve(registeredHashtags))
       } catch (error) {
-        console.error(`Failed to fetch hashtags for post ${postId}:`, error)
+        logger.error(`Failed to fetch hashtags for post ${postId}:`, error)
         // On error, return empty set (fail open)
         const emptySet = new Set<string>()
         request.resolvers.forEach(resolve => resolve(emptySet))
@@ -220,7 +221,7 @@ class HashtagValidationService {
       const documents = await hashtagService.getHashtagsForPost(postId)
       return new Set(documents.map((doc: PostHashtagDocument) => doc.hashtag))
     } catch (error) {
-      console.error(`Error fetching hashtags for post ${postId}:`, error)
+      logger.error(`Error fetching hashtags for post ${postId}:`, error)
       // Return empty set on error (fail open - don't show false negatives)
       return new Set()
     }
