@@ -61,8 +61,7 @@ export function ThreadPostEditor({
     const textarea = ref.current
     if (textarea) {
       textarea.style.height = 'auto'
-      const minHeight = isActive ? 80 : 24
-      textarea.style.height = `${Math.max(minHeight, textarea.scrollHeight)}px`
+      textarea.style.height = `${isActive ? Math.max(80, textarea.scrollHeight) : textarea.scrollHeight}px`
     }
   }, [ref, isActive])
 
@@ -213,7 +212,7 @@ export function ThreadPostEditor({
           </div>
         )}
 
-        <div className={`pr-5 ${!isOnly || isPosted ? 'pl-8' : 'pl-5'} ${isActive ? 'py-4' : 'py-3'}`}>
+        <div className={`pr-5 ${!isOnly || isPosted ? 'pl-8' : 'pl-5'} ${isActive ? 'py-4' : 'py-2'}`}>
           {/* Posted status badge */}
           {isPosted && (
             <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
@@ -329,7 +328,7 @@ export function ThreadPostEditor({
                     ? "What's on your mind?"
                     : 'Continue your thread...'
                 }
-                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : 'min-h-[24px]'}`}
+                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : ''}`}
                 style={{ height: 'auto' }}
               />
               <MentionAutocomplete
