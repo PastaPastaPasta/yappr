@@ -109,8 +109,15 @@ class IdentityService {
       console.log(`Fetching balance for: ${identityId}`);
       const balanceResponse = await sdk.identities.balance(identityId);
 
-      // Convert bigint to number, handle undefined
-      const confirmedBalance = balanceResponse ? Number(balanceResponse) : 0;
+      // Convert bigint to number, handle undefined.
+      // Warn if the value exceeds Number.MAX_SAFE_INTEGER to avoid silent truncation.
+      let confirmedBalance = 0;
+      if (balanceResponse !== undefined && balanceResponse !== null) {
+        if (balanceResponse > BigInt(Number.MAX_SAFE_INTEGER)) {
+          console.warn(`Balance ${balanceResponse} credits exceeds Number.MAX_SAFE_INTEGER; precision may be lost`);
+        }
+        confirmedBalance = Number(balanceResponse);
+      }
 
       console.log(`Balance for ${identityId}: ${confirmedBalance} credits`);
 
