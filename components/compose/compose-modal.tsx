@@ -1212,9 +1212,9 @@ export function ComposeModal() {
                               animate={{ opacity: 1 }}
                               onClick={() => {
                                 addThreadPost()
-                                requestAnimationFrame(() => {
+                                setTimeout(() => {
                                   scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' })
-                                })
+                                }, 100)
                               }}
                               className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
                             >
