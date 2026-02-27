@@ -20,7 +20,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
-import { formatTime, formatNumber } from '@/lib/utils'
+import { formatNumber } from '@/lib/utils'
+import { useRelativeTime } from '@/hooks/use-relative-time'
 import { IconButton } from '@/components/ui/icon-button'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
@@ -328,6 +329,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const isTipPost = !!tipInfo
+  const createdAtLabel = useRelativeTime(post.createdAt)
 
   const handleLike = async () => {
     if (hideAvatar) {
@@ -613,7 +615,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <LockClosedIcon className="h-3.5 w-3.5" />
                 </span>
               )}
-              <span className="text-gray-500 text-sm">{formatTime(post.createdAt)}</span>
+              <span className="text-gray-500 text-sm">{createdAtLabel}</span>
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton onClick={(e: React.MouseEvent) => e.stopPropagation()}>

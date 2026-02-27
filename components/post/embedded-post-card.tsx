@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import type { Post } from '@/lib/types'
-import { cn, formatTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { useRelativeTime } from '@/hooks/use-relative-time'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { PostContent } from './post-content'
 import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
@@ -19,6 +20,7 @@ export interface EmbeddedPostSkeletonProps {
 const EMBED_CONTAINER_CLASS = 'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer'
 
 export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps) {
+  const createdAtLabel = useRelativeTime(post.createdAt)
   if (isQuotedPostPrivate(post)) {
     return <PrivateQuotedPostContent quotedPost={post} className={className} />
   }
@@ -42,7 +44,7 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
           </span>
         )}
         <span>·</span>
-        <span>{formatTime(post.createdAt)}</span>
+        <span>{createdAtLabel}</span>
       </div>
       <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed />
     </Link>
