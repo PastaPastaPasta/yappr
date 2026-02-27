@@ -1,15 +1,11 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Post, User, PostQueryOptions } from '../../types';
-import { dpnsService } from './dpns-service';
-import { blockService } from './block-service';
-import { followService } from './follow-service';
-import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentWhereClause } from './sdk-helpers';
-import type { DocumentsQuery } from '@dashevo/wasm-sdk';
-import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
-import { retryAsync } from '../retry-utils';
+import { Post, PostQueryOptions } from '../../types';
+import { identifierToBase58, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { paginateCount } from './pagination-utils';
+import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
+import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
+import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
 
 export interface PostDocument {
   $id: string;
@@ -140,35 +136,11 @@ class PostService extends BaseDocumentService<Post> {
    * Returns a new Post object with enriched data.
    */
   async enrichPostFull(post: Post): Promise<Post> {
-    try {
-      const [stats, interactions, author] = await Promise.all([
-        this.getPostStats(post.id),
-        this.getUserInteractions(post.id),
-        unifiedProfileService.getProfileWithUsername(post.author.id)
-      ]);
-
-      // Determine if author has DPNS username (not a truncated ID)
-      const authorToUse = author || post.author;
-      const hasDpns = authorToUse.username && !authorToUse.username.includes('...');
-
-      return {
-        ...post,
-        likes: stats.likes,
-        reposts: stats.reposts,
-        replies: stats.replies,
-        views: stats.views,
-        liked: interactions.liked,
-        reposted: interactions.reposted,
-        bookmarked: interactions.bookmarked,
-        author: {
-          ...authorToUse,
-          hasDpns
-        } as User & { hasDpns: boolean }
-      };
-    } catch (error) {
-      logger.error('Error enriching post:', error);
-      return post;
-    }
+    return enrichPostFullHelper(
+      post,
+      (postId) => this.getPostStats(postId),
+      (postId) => this.getUserInteractions(postId)
+    );
   }
 
   /**
@@ -177,94 +149,12 @@ class PostService extends BaseDocumentService<Post> {
    * Returns new Post objects with enriched data including _enrichment for N+1 avoidance.
    */
   async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
-    if (posts.length === 0) return posts;
-
-    try {
-      const postIds = posts.map(p => p.id);
-      const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)));
-
-      // Get current user ID for block/follow status
-      const currentUserId = this.getCurrentUserId();
-
-      const [
-        statsMap,
-        interactionsMap,
-        usernameMap,
-        profiles,
-        blockStatusMap,
-        followStatusMap,
-        avatarUrlMap
-      ] = await Promise.all([
-        this.getBatchPostStats(postIds),
-        this.getBatchUserInteractions(postIds),
-        dpnsService.resolveUsernamesBatch(authorIds),
-        unifiedProfileService.getProfilesByIdentityIds(authorIds),
-        // Batch block/follow status (only if user is logged in)
-        currentUserId
-          ? blockService.checkBlockedBatch(currentUserId, authorIds)
-          : Promise.resolve(new Map<string, boolean>()),
-        currentUserId
-          ? followService.getFollowStatusBatch(authorIds, currentUserId)
-          : Promise.resolve(new Map<string, boolean>()),
-        // Batch avatar URLs
-        unifiedProfileService.getAvatarUrlsBatch(authorIds)
-      ]);
-
-      // Seed shared caches so PostCard hooks don't fire individual queries
-      if (currentUserId) {
-        seedBlockStatusCache(currentUserId, blockStatusMap);
-        seedFollowStatusCache(currentUserId, followStatusMap);
-      }
-
-      // Build profile map for quick lookup
-      const profileMap = new Map<string, Record<string, unknown>>();
-      profiles.forEach((profile) => {
-        const profileRec = profile as unknown as Record<string, unknown>;
-        if (profileRec.$ownerId) {
-          profileMap.set(profileRec.$ownerId as string, profileRec);
-        }
-      });
-
-      return posts.map(post => {
-        const stats = statsMap.get(post.id);
-        const interactions = interactionsMap.get(post.id);
-        const username = usernameMap.get(post.author.id);
-        const profile = profileMap.get(post.author.id);
-        const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
-
-        // Get pre-fetched block/follow/avatar data
-        const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
-        const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
-        const authorAvatarUrl = avatarUrlMap.get(post.author.id) ?? '';
-
-        return {
-          ...post,
-          likes: stats?.likes ?? post.likes,
-          reposts: stats?.reposts ?? post.reposts,
-          replies: stats?.replies ?? post.replies,
-          views: stats?.views ?? post.views,
-          liked: interactions?.liked ?? post.liked,
-          reposted: interactions?.reposted ?? post.reposted,
-          bookmarked: interactions?.bookmarked ?? post.bookmarked,
-          author: {
-            ...post.author,
-            username: username || post.author.username,
-            displayName: (profileData?.displayName as string) || post.author.displayName,
-            avatar: authorAvatarUrl || post.author.avatar,
-            hasDpns: Boolean(username)
-          },
-          // Pre-fetched enrichment data to avoid N+1 queries in PostCard
-          _enrichment: {
-            authorIsBlocked,
-            authorIsFollowing,
-            authorAvatarUrl
-          }
-        };
-      });
-    } catch (error) {
-      logger.error('Error batch enriching posts:', error);
-      return posts;
-    }
+    return enrichPostsBatchHelper(
+      posts,
+      (postIds) => this.getBatchPostStats(postIds),
+      (postIds) => this.getBatchUserInteractions(postIds),
+      this.getCurrentUserId()
+    );
   }
 
   /**
@@ -421,131 +311,12 @@ class PostService extends BaseDocumentService<Post> {
       windowHours?: number;    // Suggested window size (adaptive based on density)
     } = {}
   ): Promise<DocumentResult<Post>> {
-    const TARGET_POSTS = 50;
-    const DEFAULT_WINDOW_HOURS = 24;
-    const MIN_WINDOW_HOURS = 1;
-    // No arbitrary max - let it search as far back as needed
-
-    try {
-      // Get list of followed user IDs (up to 100 - platform limit for 'in' clause)
-      const { followService } = await import('./follow-service');
-      const following = await followService.getFollowing(userId);
-
-      const followingIds = following.map(f => f.followingId);
-
-      if (followingIds.length === 0) {
-        return { documents: [], nextCursor: undefined, prevCursor: undefined };
-      }
-
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      const now = new Date();
-
-      // Determine time window
-      const windowEndMs = options.timeWindowEnd?.getTime() || now.getTime();
-      let windowHours = options.windowHours || DEFAULT_WINDOW_HOURS;
-      windowHours = Math.max(MIN_WINDOW_HOURS, windowHours);
-      let windowStartMs = options.timeWindowStart?.getTime()
-        || (windowEndMs - windowHours * 60 * 60 * 1000);
-
-      // Helper to execute query and extract documents
-      const executeQuery = async (whereClause: DocumentWhereClause[]): Promise<Post[]> => {
-        const queryParams: DocumentsQuery = {
-          dataContractId: this.contractId,
-          documentTypeName: 'post',
-          where: whereClause,
-          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-          limit: 100,
-        };
-
-        const response = await sdk.documents.query(queryParams);
-        const documents = normalizeSDKResponse(response);
-        return documents.map(doc => this.transformDocument(doc));
-      };
-
-      // Build compound query using ownerAndTime index
-      const buildWhere = (startMs: number, endMs?: number): DocumentWhereClause[] => {
-        const where: DocumentWhereClause[] = [
-          ['$ownerId', 'in', followingIds],
-          ['$createdAt', '>=', startMs]
-        ];
-        if (endMs) {
-          where.push(['$createdAt', '<', endMs]);
-        }
-        return where;
-      };
-
-      // Initial query
-      let posts = await executeQuery(
-        buildWhere(windowStartMs, options.timeWindowEnd?.getTime())
-      );
-      let actualWindowHours = (windowEndMs - windowStartMs) / (60 * 60 * 1000);
-
-      // Handle different scenarios:
-      // 1. Got 100 results (window may be incomplete) - narrow the window
-      // 2. Got 0 results - expand the window to find posts (initial load only)
-      // 3. Got 1-99 results - good, use these
-
-      if (posts.length === 100 && !options.timeWindowEnd) {
-        // Too many results - binary halve until < 100
-        let currentWindowMs = windowHours * 60 * 60 * 1000;
-        while (posts.length === 100) {
-          currentWindowMs /= 2;
-          windowStartMs = windowEndMs - currentWindowMs;
-          posts = await executeQuery(buildWhere(windowStartMs));
-          actualWindowHours = currentWindowMs / (60 * 60 * 1000);
-        }
-      } else if (posts.length === 0 && !options.timeWindowEnd) {
-        // No posts in initial window - keep doubling until we find some
-        let currentWindowMs = windowHours * 60 * 60 * 1000;
-        const maxExpansions = 20; // Safety limit: 24h * 2^20 = ~2800 years
-        let expansions = 0;
-        while (posts.length === 0 && expansions < maxExpansions) {
-          currentWindowMs *= 2;
-          windowStartMs = windowEndMs - currentWindowMs;
-          posts = await executeQuery(buildWhere(windowStartMs));
-          actualWindowHours = currentWindowMs / (60 * 60 * 1000);
-          expansions++;
-        }
-      }
-
-      // Sort by createdAt descending (newest first)
-      posts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-
-      // Calculate post density and suggested window for next load
-      const postsPerHour = posts.length > 0 ? posts.length / actualWindowHours : 0;
-      let suggestedNextWindowHours: number;
-
-      if (postsPerHour > 0) {
-        // Calculate window size to get ~TARGET_POSTS posts
-        suggestedNextWindowHours = TARGET_POSTS / postsPerHour;
-        suggestedNextWindowHours = Math.max(MIN_WINDOW_HOURS, suggestedNextWindowHours);
-      } else {
-        // No posts found - try a larger window next time
-        suggestedNextWindowHours = actualWindowHours * 2;
-      }
-
-      // Calculate next pagination window (goes backwards in time)
-      const nextWindowEnd = new Date(windowStartMs);
-      const nextWindowStart = new Date(windowStartMs - suggestedNextWindowHours * 60 * 60 * 1000);
-
-      // Only return undefined cursor if we did an exhaustive initial search and found nothing
-      const exhaustedSearch = posts.length === 0 && !options.timeWindowEnd;
-
-      return {
-        documents: posts,
-        nextCursor: exhaustedSearch ? undefined : JSON.stringify({
-          start: nextWindowStart.toISOString(),
-          end: nextWindowEnd.toISOString(),
-          windowHours: suggestedNextWindowHours
-        }),
-        prevCursor: undefined
-      };
-    } catch (error) {
-      logger.error('Error getting following feed:', error);
-      return { documents: [], nextCursor: undefined, prevCursor: undefined };
-    }
+    return fetchFollowingFeed(
+      userId,
+      this.contractId,
+      (doc) => this.transformDocument(doc),
+      options
+    );
   }
 
   /**
@@ -595,16 +366,7 @@ class PostService extends BaseDocumentService<Post> {
    * This prevents the "Unknown User" race condition for single post views.
    */
   private async resolvePostAuthor(post: Post): Promise<void> {
-    if (!post.author?.id || post.author.id === 'unknown') return;
-
-    try {
-      const author = await unifiedProfileService.getProfileWithUsername(post.author.id);
-      if (author) {
-        post.author = author;
-      }
-    } catch (error) {
-      logger.error('Error resolving post author:', error);
-    }
+    return resolvePostAuthorHelper(post);
   }
 
   /**
@@ -696,63 +458,7 @@ class PostService extends BaseDocumentService<Post> {
    * Get post statistics (likes, reposts, replies)
    */
   private async getPostStats(postId: string): Promise<PostStats> {
-    // Check cache
-    const cached = this.statsCache.get(postId);
-    if (cached && Date.now() - cached.timestamp < 60000) { // 60 second cache for stats
-      return cached.data;
-    }
-
-    try {
-      // Parallel queries to reduce latency and rate limit pressure
-      const [likes, reposts, replies] = await Promise.all([
-        this.countLikes(postId),
-        this.countReposts(postId),
-        this.countReplies(postId)
-      ]);
-
-      const stats: PostStats = {
-        postId,
-        likes,
-        reposts,
-        replies,
-        views: 0 // Views would need a separate tracking mechanism
-      };
-
-      // Cache the result
-      this.statsCache.set(postId, {
-        data: stats,
-        timestamp: Date.now()
-      });
-
-      return stats;
-    } catch (error) {
-      logger.error('Error getting post stats:', error);
-      return { postId, likes: 0, reposts: 0, replies: 0, views: 0 };
-    }
-  }
-
-  /**
-   * Count likes for a post
-   */
-  private async countLikes(postId: string): Promise<number> {
-    const { likeService } = await import('./like-service');
-    return likeService.countLikes(postId);
-  }
-
-  /**
-   * Count reposts for a post
-   */
-  private async countReposts(postId: string): Promise<number> {
-    const { repostService } = await import('./repost-service');
-    return repostService.countReposts(postId);
-  }
-
-  /**
-   * Count replies to a post (uses reply-service)
-   */
-  private async countReplies(postId: string): Promise<number> {
-    const { replyService } = await import('./reply-service');
-    return replyService.countReplies(postId);
+    return fetchPostStats(postId, this.statsCache);
   }
 
   /**
@@ -763,29 +469,7 @@ class PostService extends BaseDocumentService<Post> {
     reposted: boolean;
     bookmarked: boolean;
   }> {
-    const currentUserId = this.getCurrentUserId();
-    if (!currentUserId) {
-      return { liked: false, reposted: false, bookmarked: false };
-    }
-
-    try {
-      const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
-        import('./like-service'),
-        import('./repost-service'),
-        import('./bookmark-service')
-      ]);
-
-      const [liked, reposted, bookmarked] = await Promise.all([
-        likeService.isLiked(postId, currentUserId),
-        repostService.isReposted(postId, currentUserId),
-        bookmarkService.isBookmarked(postId, currentUserId)
-      ]);
-
-      return { liked, reposted, bookmarked };
-    } catch (error) {
-      logger.error('Error getting user interactions:', error);
-      return { liked: false, reposted: false, bookmarked: false };
-    }
+    return fetchUserInteractions(postId, this.getCurrentUserId());
   }
 
   /**
@@ -818,50 +502,7 @@ class PostService extends BaseDocumentService<Post> {
 
   /** Internal: Actually fetch user interactions */
   private async fetchBatchUserInteractions(postIds: string[], currentUserId: string): Promise<Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>> {
-    const result = new Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>();
-
-    // Initialize all posts with false
-    postIds.forEach(id => {
-      result.set(id, { liked: false, reposted: false, bookmarked: false });
-    });
-
-    try {
-      const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
-        import('./like-service'),
-        import('./repost-service'),
-        import('./bookmark-service')
-      ]);
-
-      // Fetch interactions for these specific posts, not all user interactions
-      // This scales properly regardless of how many total likes/reposts/bookmarks a user has
-      const [allLikesForPosts, allRepostsForPosts, userBookmarks] = await Promise.all([
-        likeService.getLikesByPostIds(postIds),
-        repostService.getRepostsByPostIds(postIds),
-        bookmarkService.getUserBookmarksForPosts(currentUserId, postIds)
-      ]);
-
-      // Filter likes/reposts to find current user's interactions
-      const likedPostIds = new Set(
-        allLikesForPosts.filter(l => l.$ownerId === currentUserId).map(l => l.postId)
-      );
-      const repostedPostIds = new Set(
-        allRepostsForPosts.filter(r => r.$ownerId === currentUserId).map(r => r.postId)
-      );
-      const bookmarkedPostIds = new Set(userBookmarks.map(b => b.postId));
-
-      // Check each post against the Sets
-      postIds.forEach(postId => {
-        result.set(postId, {
-          liked: likedPostIds.has(postId),
-          reposted: repostedPostIds.has(postId),
-          bookmarked: bookmarkedPostIds.has(postId)
-        });
-      });
-    } catch (error) {
-      logger.error('Error getting batch user interactions:', error);
-    }
-
-    return result;
+    return fetchBatchUserInteractions(postIds, currentUserId);
   }
 
   /**
@@ -879,49 +520,7 @@ class PostService extends BaseDocumentService<Post> {
 
   /** Internal: Actually fetch batch post stats */
   private async fetchBatchPostStats(postIds: string[]): Promise<Map<string, PostStats>> {
-    const result = new Map<string, PostStats>();
-
-    // Initialize all posts with zero stats
-    postIds.forEach(id => {
-      result.set(id, { postId: id, likes: 0, reposts: 0, replies: 0, views: 0 });
-    });
-
-    try {
-      const [{ likeService }, { repostService }, { replyService }] = await Promise.all([
-        import('./like-service'),
-        import('./repost-service'),
-        import('./reply-service')
-      ]);
-
-      // 3 batch queries instead of 3*N queries
-      const [likes, reposts, replyCounts] = await Promise.all([
-        likeService.getLikesByPostIds(postIds),
-        repostService.getRepostsByPostIds(postIds),
-        replyService.countRepliesByParentIds(postIds)
-      ]);
-
-      // Count likes per post
-      for (const like of likes) {
-        const stats = result.get(like.postId);
-        if (stats) stats.likes++;
-      }
-
-      // Count reposts per post
-      for (const repost of reposts) {
-        const stats = result.get(repost.postId);
-        if (stats) stats.reposts++;
-      }
-
-      // Set reply counts
-      replyCounts.forEach((count, postId) => {
-        const stats = result.get(postId);
-        if (stats) stats.replies = count;
-      });
-    } catch (error) {
-      logger.error('Error getting batch post stats:', error);
-    }
-
-    return result;
+    return fetchBatchPostStats(postIds);
   }
 
   /**
@@ -932,69 +531,9 @@ class PostService extends BaseDocumentService<Post> {
    */
   async countUniqueAuthors(): Promise<number> {
     // Use a constant key since this counts all unique authors
-    return this.countUniqueAuthorsDeduplicator.dedupe('all', async () => {
-      const result = await retryAsync(
-        async () => {
-          const { getEvoSdk } = await import('./evo-sdk-service');
-          const sdk = await getEvoSdk();
-          const uniqueAuthors = new Set<string>();
-          let startAfter: string | undefined = undefined;
-          const PAGE_SIZE = 100;
-
-          while (true) {
-            // Use languageTimeline index: [language, $createdAt]
-            const queryParams: DocumentsQuery = {
-              dataContractId: this.contractId,
-              documentTypeName: 'post',
-              where: [
-                ['language', '==', 'en'],
-                ['$createdAt', '>', 0]
-              ],
-              orderBy: [['language', 'asc'], ['$createdAt', 'asc']],
-              limit: PAGE_SIZE,
-              startAfter
-            };
-
-            const response = await sdk.documents.query(queryParams);
-            const documents = normalizeSDKResponse(response);
-
-            // Collect unique author IDs
-            for (const doc of documents) {
-              if (doc.$ownerId) {
-                uniqueAuthors.add(doc.$ownerId as string);
-              }
-            }
-
-            // If we got fewer than PAGE_SIZE, we've reached the end
-            if (documents.length < PAGE_SIZE) {
-              break;
-            }
-
-            // Get the last document's ID for pagination
-            const lastDoc = documents[documents.length - 1];
-            if (!lastDoc.$id) {
-              break;
-            }
-            startAfter = lastDoc.$id as string;
-          }
-
-          return uniqueAuthors.size;
-        },
-        {
-          maxAttempts: 3,
-          initialDelayMs: 1000,
-          maxDelayMs: 5000,
-          backoffMultiplier: 2
-        }
-      );
-
-      if (!result.success || result.data === undefined) {
-        logger.error('Error counting unique authors after retries:', result.error);
-        throw result.error || new Error('Failed to count unique authors');
-      }
-
-      return result.data;
-    });
+    return this.countUniqueAuthorsDeduplicator.dedupe('all', () =>
+      fetchUniqueAuthorCount(this.contractId)
+    );
   }
 
   /**
@@ -1002,34 +541,12 @@ class PostService extends BaseDocumentService<Post> {
    * Fetches recent posts, gets their stats, and sorts by likes
    */
   async getTopPostsByLikes(limit: number = 5): Promise<Post[]> {
-    try {
-      // Fetch recent posts (more than we need to find top liked ones)
-      const result = await this.getTimeline({ limit: 50 });
-      const posts = result.documents;
-
-      if (posts.length === 0) return [];
-
-      // Get stats for all posts in batch
-      const postIds = posts.map(p => p.id);
-      const statsMap = await this.getBatchPostStats(postIds);
-
-      // Sort by likes descending
-      const postsWithLikes = posts.map(post => ({
-        post,
-        likes: statsMap.get(post.id)?.likes || 0
-      }));
-
-      postsWithLikes.sort((a, b) => b.likes - a.likes);
-
-      // Take top N and enrich them
-      const topPosts = postsWithLikes.slice(0, limit).map(p => p.post);
-
-      // Enrich posts with full data (stats, authors, interactions)
-      return this.enrichPostsBatch(topPosts);
-    } catch (error) {
-      logger.error('Error getting top posts by likes:', error);
-      return [];
-    }
+    return fetchTopPostsByLikes(
+      limit,
+      (options) => this.getTimeline(options),
+      (postIds) => this.getBatchPostStats(postIds),
+      (posts) => this.enrichPostsBatch(posts)
+    );
   }
 
   /**
@@ -1039,101 +556,20 @@ class PostService extends BaseDocumentService<Post> {
    * Note: Currently only counts English posts (language='en').
    */
   async getAuthorPostCounts(): Promise<Map<string, number>> {
-    const authorCounts = new Map<string, number>();
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-      let startAfter: string | undefined = undefined;
-      const PAGE_SIZE = 100;
-      let totalProcessed = 0;
-      const MAX_POSTS = 10000; // Limit to prevent excessive queries
-
-      while (totalProcessed < MAX_POSTS) {
-        // Use languageTimeline index: [language, $createdAt]
-        const queryParams: DocumentsQuery = {
-          dataContractId: this.contractId,
-          documentTypeName: 'post',
-          where: [
-            ['language', '==', 'en'],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
-          limit: PAGE_SIZE,
-          startAfter
-        };
-
-        const response = await sdk.documents.query(queryParams);
-        const documents = normalizeSDKResponse(response);
-
-        // Count posts per author
-        for (const doc of documents) {
-          if (doc.$ownerId) {
-            const ownerId = doc.$ownerId as string;
-            authorCounts.set(ownerId, (authorCounts.get(ownerId) || 0) + 1);
-          }
-        }
-
-        totalProcessed += documents.length;
-
-        // If we got fewer than PAGE_SIZE, we've reached the end
-        if (documents.length < PAGE_SIZE) {
-          break;
-        }
-
-        // Get the last document's ID for pagination
-        const lastDoc = documents[documents.length - 1];
-        if (!lastDoc.$id) {
-          break;
-        }
-        startAfter = lastDoc.$id as string;
-      }
-
-      return authorCounts;
-    } catch (error) {
-      logger.error('Error getting author post counts:', error);
-      return authorCounts;
-    }
+    return fetchAuthorPostCounts(this.contractId);
   }
 
   /**
    * Get posts that quote a specific post.
-   * NOTE: The contract lacks a quotedPostId index, so this uses client-side
-   * filtering of recent posts. Uses languageTimeline index to scan.
-   * For production, a contract migration adding the index would improve efficiency.
+   * Uses quotedPostAndOwner index via quotedPostId lookup.
    */
   async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
-    const limit = options.limit || 50;
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      // Scan recent posts using languageTimeline index - without a dedicated index
-      // we have to filter client-side
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [
-          ['language', '==', 'en'],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
-        limit: 100 // Scan recent posts
-      });
-
-      const documents = normalizeSDKResponse(response);
-
-      // Filter for posts that quote the target post and transform
-      const quotePosts = documents
-        .map(doc => this.transformDocument(doc))
-        .filter(post => post.quotedPostId === quotedPostId);
-
-      return quotePosts.slice(0, limit);
-    } catch (error) {
-      logger.error('Error getting quote posts:', error);
-      return [];
-    }
+    return fetchQuotePosts(
+      quotedPostId,
+      this.contractId,
+      (doc) => this.transformDocument(doc),
+      options
+    );
   }
 
   /**
@@ -1145,34 +581,51 @@ class PostService extends BaseDocumentService<Post> {
    * @param since - Only return quotes created after this timestamp (optional)
    */
   async getQuotesOfMyPosts(userId: string, since?: Date): Promise<Post[]> {
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
+    return fetchQuotesOfMyPosts(
+      userId,
+      this.contractId,
+      (doc) => this.transformDocument(doc),
+      since
+    );
+  }
 
-      const sinceTimestamp = since?.getTime() || 0;
+  /**
+   * Fetch content by IDs, trying posts first and then replies for any not found.
+   * Replies are converted to Post format for unified feed rendering.
+   */
+  async fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
+    if (ids.length === 0) return [];
 
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [
-          ['quotedPostOwnerId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        // Match quotedPostOwnerAndTime index: [quotedPostOwnerId: asc, $createdAt: asc]
-        orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'asc']],
-        limit: 100
-      });
+    const { replyService } = await import('./reply-service');
 
-      const documents = normalizeSDKResponse(response);
+    const posts = await this.getPostsByIds(ids);
+    const foundPostIds = new Set(posts.map((post) => post.id));
+    const missingIds = ids.filter((id) => !foundPostIds.has(id));
 
-      // Transform and filter for quote tweets only (non-empty content)
-      return documents
-        .map((doc) => this.transformDocument(doc))
-        .filter((post) => post.content && post.content.trim() !== '');
-    } catch (error) {
-      logger.error('Error getting quotes of my posts:', error);
-      return [];
+    if (missingIds.length === 0) {
+      return posts;
     }
+
+    const replies = await replyService.getRepliesByIds(missingIds);
+    const convertedReplies: Post[] = replies.map((reply) => ({
+      id: reply.id,
+      author: reply.author,
+      content: reply.content,
+      createdAt: reply.createdAt,
+      likes: reply.likes,
+      reposts: reply.reposts,
+      replies: reply.replies,
+      views: reply.views,
+      liked: reply.liked,
+      reposted: reply.reposted,
+      bookmarked: reply.bookmarked,
+      media: reply.media,
+      encryptedContent: reply.encryptedContent,
+      epoch: reply.epoch,
+      nonce: reply.nonce,
+    }));
+
+    return [...posts, ...convertedReplies];
   }
 
   /**
