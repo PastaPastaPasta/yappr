@@ -18,7 +18,7 @@ import type {
   ShippingAddress,
   BuyerContact,
   OrderItem
-} from '../types';
+} from '../../types';
 
 class StoreOrderService extends BaseDocumentService<StoreOrder> {
   constructor() {

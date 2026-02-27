@@ -3,7 +3,7 @@ import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { signerService, KeyPurpose } from './signer-service';
 import { wallet } from '@dashevo/evo-sdk';
-import { TipInfo } from '../types';
+import { TipInfo } from '../../types';
 import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 

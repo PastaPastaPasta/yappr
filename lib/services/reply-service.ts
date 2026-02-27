@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Reply, PostQueryOptions } from '../types';
+import { Reply, PostQueryOptions } from '../../types';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';

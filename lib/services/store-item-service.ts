@@ -16,7 +16,7 @@ import type {
   ItemVariants,
   VariantAxis,
   VariantCombination
-} from '../types';
+} from '../../types';
 
 class StoreItemService extends BaseDocumentService<StoreItem> {
   constructor() {
