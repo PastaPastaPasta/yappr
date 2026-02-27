@@ -1179,7 +1179,7 @@ export function ComposeModal() {
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
                                 extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
-                                {...(post.id === firstUnpostedPostId ? {
+                                {...(post.id === unpostedPosts[0]?.id ? {
                                   onImageClick: handleImageButtonClick,
                                   canAttachImage,
                                   imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
