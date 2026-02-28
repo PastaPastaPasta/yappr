@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService } from '@/lib/services'
@@ -12,6 +11,7 @@ import { getCompressedSize } from '@/lib/utils/compression'
 import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
+import { EditorFooter, SectionDivider, SectionHeading, heroTitleClassName, heroSubtitleClassName } from './editor-primitives'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
@@ -170,7 +170,7 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
 
   return (
     <div className="space-y-6">
-      {/* Title & Subtitle — editorial hero inputs */}
+      {/* Title & Subtitle */}
       <section>
         <Input
           value={title}
@@ -178,7 +178,7 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
           maxLength={128}
           required
           placeholder="Post title"
-          className="!h-auto border-0 bg-transparent px-0 text-2xl font-bold text-white placeholder:text-gray-600 focus:ring-0"
+          className={heroTitleClassName}
         />
         <Textarea
           value={subtitle}
@@ -186,15 +186,15 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
           maxLength={256}
           rows={1}
           placeholder="Add a subtitle..."
-          className="mt-2 resize-none border-0 bg-transparent px-0 text-base text-gray-300 placeholder:text-gray-600 focus:ring-0"
+          className={heroSubtitleClassName}
         />
       </section>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
+      <SectionDivider />
 
       {/* Cover image */}
       <section>
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">Cover image</p>
+        <SectionHeading>Cover image</SectionHeading>
         <ProfileImageUpload
           aspectRatio="banner"
           label=""
@@ -204,11 +204,11 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
         />
       </section>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
+      <SectionDivider />
 
       {/* Labels */}
       <section>
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">Labels</p>
+        <SectionHeading>Labels</SectionHeading>
 
         {(availableLabels.length > 0 || selectedLabels.length > 0) && (
           <div className="mb-3 flex flex-wrap gap-1.5">
@@ -253,23 +253,18 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
         </div>
       </section>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
+      <SectionDivider />
 
-      {/* Editor — the writing canvas */}
+      {/* Editor */}
       <section>
         <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
       </section>
 
-      {/* Settings & Actions — bottom bar */}
-      <div className="space-y-4 rounded-xl border border-gray-800/60 bg-gray-900/30 p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
-            <span className="text-sm text-gray-400">Comments</span>
-          </div>
-          <p className="text-xs tabular-nums text-gray-600">{compressedBytes.toLocaleString()} / {BLOG_POST_SIZE_LIMIT.toLocaleString()} bytes</p>
-        </div>
-
+      <EditorFooter
+        commentsEnabled={commentsEnabled}
+        onCommentsChange={setCommentsEnabled}
+        compressedBytes={compressedBytes}
+      >
         <div className="flex items-center justify-end gap-3">
           <Button variant="ghost" onClick={saveDraft} className="text-gray-400 hover:text-white">
             Save Draft
@@ -278,7 +273,7 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
             {isPublishing ? 'Publishing...' : 'Publish'}
           </Button>
         </div>
-      </div>
+      </EditorFooter>
     </div>
   )
 }

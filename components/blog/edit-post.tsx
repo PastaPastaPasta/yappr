@@ -4,12 +4,12 @@ import { useEffect, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService } from '@/lib/services'
 import type { BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
+import { EditorFooter, SectionDivider, SectionHeading, heroTitleClassName, heroSubtitleClassName } from './editor-primitives'
 import { getCompressedSize } from '@/lib/utils/compression'
 import toast from 'react-hot-toast'
 
@@ -109,7 +109,7 @@ export function EditPost({ postId, ownerId, onSaved }: EditPostProps) {
           maxLength={128}
           required
           placeholder="Post title"
-          className="!h-auto border-0 bg-transparent px-0 text-2xl font-bold text-white placeholder:text-gray-600 focus:ring-0"
+          className={heroTitleClassName}
         />
         <Textarea
           value={subtitle}
@@ -117,15 +117,15 @@ export function EditPost({ postId, ownerId, onSaved }: EditPostProps) {
           maxLength={256}
           rows={1}
           placeholder="Add a subtitle..."
-          className="mt-2 resize-none border-0 bg-transparent px-0 text-base text-gray-300 placeholder:text-gray-600 focus:ring-0"
+          className={heroSubtitleClassName}
         />
       </section>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
+      <SectionDivider />
 
       {/* Cover image */}
       <section>
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">Cover image</p>
+        <SectionHeading>Cover image</SectionHeading>
         <ProfileImageUpload
           aspectRatio="banner"
           label=""
@@ -135,37 +135,32 @@ export function EditPost({ postId, ownerId, onSaved }: EditPostProps) {
         />
       </section>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
+      <SectionDivider />
 
       {/* Labels */}
       <section>
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">Labels</p>
+        <SectionHeading>Labels</SectionHeading>
         <Input value={labels} onChange={(e) => setLabels(e.target.value)} maxLength={256} placeholder="tech, updates" className="h-9 text-sm" />
       </section>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
+      <SectionDivider />
 
       {/* Editor */}
       <section>
         <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
       </section>
 
-      {/* Settings & Actions */}
-      <div className="space-y-4 rounded-xl border border-gray-800/60 bg-gray-900/30 p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
-            <span className="text-sm text-gray-400">Comments</span>
-          </div>
-          <p className="text-xs tabular-nums text-gray-600">{compressedBytes.toLocaleString()} / {BLOG_POST_SIZE_LIMIT.toLocaleString()} bytes</p>
-        </div>
-
+      <EditorFooter
+        commentsEnabled={commentsEnabled}
+        onCommentsChange={setCommentsEnabled}
+        compressedBytes={compressedBytes}
+      >
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={isSaving || !title.trim()}>
             {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
-      </div>
+      </EditorFooter>
     </div>
   )
 }
