@@ -15,9 +15,10 @@ import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
 interface BlogEditorProps {
   initialBlocks?: unknown[]
   onChange: (blocks: unknown[]) => void
+  onBytesChange?: (bytes: number) => void
 }
 
-export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
+export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEditorProps) {
   const editor = useCreateBlockNote({
     schema: blogBlockNoteSchema,
     initialContent: (initialBlocks || undefined) as never,
@@ -27,6 +28,10 @@ export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [bytesUsed, setBytesUsed] = useState(0)
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
+  const reportBytes = useCallback((nextBytes: number) => {
+    setBytesUsed(nextBytes)
+    onBytesChange?.(nextBytes)
+  }, [onBytesChange])
 
   const publishChange = useCallback(() => {
     const blocks = editor.document as unknown[]
@@ -37,9 +42,9 @@ export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
     }
 
     debounceRef.current = setTimeout(() => {
-      setBytesUsed(getCompressedSize(blocks))
+      reportBytes(getCompressedSize(blocks))
     }, 500)
-  }, [editor, onChange])
+  }, [editor, onChange, reportBytes])
 
   const handleImageUpload = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -75,14 +80,14 @@ export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
   }, [clearError, editor, publishChange, upload])
 
   useEffect(() => {
-    setBytesUsed(getCompressedSize(editor.document as unknown[]))
+    reportBytes(getCompressedSize(editor.document as unknown[]))
 
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
       }
     }
-  }, [editor])
+  }, [editor, reportBytes])
 
   return (
     <div className="space-y-3">

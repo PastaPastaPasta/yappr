@@ -138,7 +138,7 @@ export interface BlogPost {
   blogId: string
   title: string
   subtitle?: string
-  content: unknown
+  content: Record<string, unknown>[]
   compressedContent?: Uint8Array
   coverImage?: string
   labels?: string

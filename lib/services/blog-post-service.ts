@@ -1,7 +1,7 @@
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
-import { base58ToBytes, identifierToBase58, normalizeBytes } from './sdk-helpers'
+import { identifierToBase58, normalizeBytes, requireIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
 
@@ -33,14 +33,6 @@ export interface UpdateBlogPostData {
   publishedAt?: number
 }
 
-function requireIdentifierBytes(id: string, fieldName: string): Uint8Array {
-  const bytes = base58ToBytes(id)
-  if (!bytes || bytes.length !== 32) {
-    throw new Error(`Invalid ${fieldName}: expected base58 identifier`)
-  }
-  return bytes
-}
-
 class BlogPostService extends BaseDocumentService<BlogPost> {
   constructor() {
     super('blogPost', YAPPR_BLOG_CONTRACT_ID)
@@ -51,6 +43,17 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const rawBlogId = data.blogId || doc.blogId
     const rawContent = data.content || doc.content
     const contentBytes = rawContent ? normalizeBytes(rawContent) : null
+    let content: Record<string, unknown>[] = []
+    if (contentBytes) {
+      try {
+        const decompressed = decompressContent(contentBytes)
+        if (Array.isArray(decompressed)) {
+          content = decompressed as Record<string, unknown>[]
+        }
+      } catch {
+        // Keep content empty if a stored document is malformed.
+      }
+    }
 
     return {
       id: (doc.$id || doc.id) as string,
@@ -61,7 +64,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       blogId: identifierToBase58(rawBlogId) || '',
       title: (data.title || doc.title || '') as string,
       subtitle: (data.subtitle || doc.subtitle) as string | undefined,
-      content: contentBytes ? decompressContent(contentBytes) : [],
+      content,
       compressedContent: contentBytes || undefined,
       coverImage: (data.coverImage || doc.coverImage) as string | undefined,
       labels: (data.labels || doc.labels) as string | undefined,
@@ -93,17 +96,17 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   }
 
   async updatePost(postId: string, ownerId: string, data: UpdateBlogPostData): Promise<BlogPost> {
-    const payload: Record<string, unknown> = Object.fromEntries(
-      Object.entries({
-        title: data.title,
-        subtitle: data.subtitle,
-        coverImage: data.coverImage,
-        labels: data.labels,
-        commentsEnabled: data.commentsEnabled,
-        slug: data.slug,
-        publishedAt: data.publishedAt,
-      }).filter(([, v]) => v !== undefined)
-    )
+    const payload: Record<string, unknown> = {}
+    if (data.title !== undefined) payload.title = data.title
+    if (data.subtitle !== undefined) payload.subtitle = data.subtitle
+    if (data.coverImage !== undefined) payload.coverImage = data.coverImage
+    if (data.labels !== undefined) payload.labels = data.labels
+    if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
+    if (data.slug !== undefined) payload.slug = data.slug
+    if (data.publishedAt !== undefined) payload.publishedAt = data.publishedAt
+    if (data.title !== undefined && data.slug === undefined) {
+      payload.slug = generateSlug(data.title)
+    }
 
     if (typeof data.content !== 'undefined') {
       const compressed = compressContent(data.content)
@@ -134,7 +137,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const blogIdBytes = requireIdentifierBytes(blogId, 'blogId')
     const queryOptions: QueryOptions = {
       where: [['blogId', '==', blogIdBytes]],
-      orderBy: [['$createdAt', 'desc']],
+      orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']],
       limit: options.limit,
       startAfter: options.startAfter,
     }
@@ -145,7 +148,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   async getPostsByOwner(ownerId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
     const queryOptions: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$createdAt', 'desc']],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
       limit: options.limit,
       startAfter: options.startAfter,
     }
@@ -187,7 +190,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     // Fetch all available posts per blog (no hard cap) so search is comprehensive
     const results = await Promise.all(
       blogIds.map(blogId =>
-        this.getPostsByBlog(blogId).catch(() => [])
+        this.getPostsByBlog(blogId, { limit: 100 }).catch(() => [])
       )
     )
 

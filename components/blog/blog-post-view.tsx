@@ -51,6 +51,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     const jsonLd = generateArticleJsonLd(post, blog, username)
 
     const touchedNodes: HTMLElement[] = []
+    const originalMetaContent = new Map<HTMLMetaElement, string>()
+    const originalScriptContent = new Map<HTMLScriptElement, string | null>()
     const ensureMeta = (selector: string, attr: 'name' | 'property', key: string, content: string) => {
       let node = document.head.querySelector<HTMLMetaElement>(selector)
       if (!node) {
@@ -59,6 +61,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         node.setAttribute('data-blog-seo', 'true')
         document.head.appendChild(node)
         touchedNodes.push(node)
+      } else if (!originalMetaContent.has(node)) {
+        originalMetaContent.set(node, node.content)
       }
       node.content = content
     }
@@ -84,6 +88,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       script.setAttribute('data-blog-jsonld', 'true')
       document.head.appendChild(script)
       touchedNodes.push(script)
+    } else if (!originalScriptContent.has(script)) {
+      originalScriptContent.set(script, script.textContent)
     }
     script.textContent = JSON.stringify(jsonLd)
 
@@ -92,6 +98,12 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       document.title = prevTitle
       touchedNodes.forEach((node) => {
         if (node.parentNode) node.parentNode.removeChild(node)
+      })
+      originalMetaContent.forEach((value, node) => {
+        node.content = value
+      })
+      originalScriptContent.forEach((value, node) => {
+        node.textContent = value
       })
     }
   }, [blog, post, username])

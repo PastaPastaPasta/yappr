@@ -59,7 +59,7 @@ class BlogService extends BaseDocumentService<Blog> {
   async getBlogsByOwner(ownerId: string): Promise<Blog[]> {
     const options: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$createdAt', 'desc']],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
     }
     const result = await this.query(options)
     return result.documents
@@ -73,6 +73,7 @@ class BlogService extends BaseDocumentService<Blog> {
   async getAllBlogs(limit = 100): Promise<Blog[]> {
     const blogs: Blog[] = []
     const pageSize = Math.min(100, limit)
+    let lastCreatedAt: number | null = null
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -82,11 +83,12 @@ class BlogService extends BaseDocumentService<Blog> {
       const result = await this.query({
         orderBy: [['$createdAt', 'desc']],
         limit: Math.min(pageSize, remaining),
-        ...(blogs.length > 0 ? { startAfter: blogs[blogs.length - 1].id } : {}),
+        ...(lastCreatedAt !== null ? { where: [['$createdAt', '<', lastCreatedAt]] } : {}),
       })
 
       if (result.documents.length === 0) break
       blogs.push(...result.documents)
+      lastCreatedAt = result.documents[result.documents.length - 1].createdAt.getTime()
 
       // If we got fewer than requested, no more pages
       if (result.documents.length < Math.min(pageSize, remaining)) break

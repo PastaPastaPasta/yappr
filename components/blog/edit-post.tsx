@@ -1,16 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
-import { getCompressedSize } from '@/lib/utils/compression'
 import { blogPostService } from '@/lib/services'
 import type { BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
+import { getCompressedSize } from '@/lib/utils/compression'
 import toast from 'react-hot-toast'
 
 interface EditPostProps {
@@ -29,8 +29,7 @@ export function EditPost({ postId, ownerId, onSaved }: EditPostProps) {
   const [blocks, setBlocks] = useState<unknown[]>([])
   const [loading, setLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-
-  const compressedBytes = useMemo(() => getCompressedSize(blocks), [blocks])
+  const [compressedBytes, setCompressedBytes] = useState(0)
 
   useEffect(() => {
     const load = async () => {
@@ -59,7 +58,15 @@ export function EditPost({ postId, ownerId, onSaved }: EditPostProps) {
       toast.error('Title is required')
       return
     }
-    if (compressedBytes > BLOG_POST_SIZE_LIMIT) {
+    const estimatedBytes = (() => {
+      try {
+        return getCompressedSize(blocks)
+      } catch {
+        return BLOG_POST_SIZE_LIMIT + 1
+      }
+    })()
+
+    if (estimatedBytes > BLOG_POST_SIZE_LIMIT) {
       toast.error('Post is too large after compression')
       return
     }
@@ -127,7 +134,7 @@ export function EditPost({ postId, ownerId, onSaved }: EditPostProps) {
         <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
       </div>
 
-      <BlogEditor initialBlocks={blocks} onChange={setBlocks} />
+      <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
 
       <p className="text-xs text-gray-500">{compressedBytes} / {BLOG_POST_SIZE_LIMIT} bytes used</p>
 

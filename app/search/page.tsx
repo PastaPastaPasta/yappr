@@ -8,8 +8,8 @@ import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon, DocumentText
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { IpfsImage } from '@/components/ui/ipfs-image'
 import { Spinner } from '@/components/ui/spinner'
+import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { hashtagService } from '@/lib/services/hashtag-service'
@@ -413,55 +413,7 @@ function SearchPageContent() {
                 {blogPosts.length > 0 ? (
                   <div className="divide-y divide-gray-200 dark:divide-gray-800">
                     {blogPosts.map((post, index) => (
-                      <motion.button
-                        type="button"
-                        key={post.id}
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: index * 0.05 }}
-                        onClick={() => handleBlogPostClick(post)}
-                        disabled={!post.authorUsername || !post.slug}
-                        className={`w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left ${post.authorUsername && post.slug ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
-                      >
-                        <div className="flex gap-3">
-                          {post.coverImage && (
-                            <IpfsImage
-                              src={post.coverImage}
-                              alt={post.title}
-                              className="h-16 w-16 rounded-lg object-cover flex-shrink-0"
-                            />
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-gray-900 dark:text-gray-100 line-clamp-1">
-                              {post.title || 'Untitled'}
-                            </p>
-                            {post.subtitle && (
-                              <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 mt-0.5">
-                                {post.subtitle}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                              {post.blogName && <span className="font-medium">{post.blogName}</span>}
-                              {post.blogName && post.authorDisplayName && <span>·</span>}
-                              {post.authorDisplayName && <span>{post.authorDisplayName}</span>}
-                              {(post.blogName || post.authorDisplayName) && <span>·</span>}
-                              <span>{post.createdAt.toLocaleDateString()}</span>
-                            </div>
-                            {post.labels && (
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {post.labels.split(',').slice(0, 3).map((label) => (
-                                  <span
-                                    key={label.trim()}
-                                    className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded"
-                                  >
-                                    {label.trim()}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </motion.button>
+                      <BlogPostCard key={post.id} post={post} onClick={handleBlogPostClick} index={index} />
                     ))}
                   </div>
                 ) : (

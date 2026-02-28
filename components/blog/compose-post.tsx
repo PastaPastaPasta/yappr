@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
-import { getCompressedSize } from '@/lib/utils/compression'
 import { blogPostService } from '@/lib/services'
+import { getCompressedSize } from '@/lib/utils/compression'
 import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
@@ -39,8 +39,8 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
   const [commentsEnabled, setCommentsEnabled] = useState(Boolean(blog.commentsEnabledDefault ?? true))
   const [blocks, setBlocks] = useState<unknown[]>([])
   const [isPublishing, setIsPublishing] = useState(false)
+  const [compressedBytes, setCompressedBytes] = useState(0)
 
-  const compressedBytes = useMemo(() => getCompressedSize(blocks), [blocks])
   const availableLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
   const selectedLabels = useMemo(() => parseLabels(labels), [labels])
 
@@ -80,7 +80,11 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
         commentsEnabled,
         blocks,
       }
-      localStorage.setItem(draftKey, JSON.stringify(draft))
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(draft))
+      } catch {
+        // Local storage can fail in private mode or when quota is exceeded.
+      }
     }, 700)
 
     return () => clearTimeout(timeout)
@@ -89,8 +93,12 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
   const saveDraft = () => {
     if (!draftKey) return
     const draft: DraftData = { title, subtitle, coverImage, labels, commentsEnabled, blocks }
-    localStorage.setItem(draftKey, JSON.stringify(draft))
-    toast.success('Draft saved locally')
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(draft))
+      toast.success('Draft saved locally')
+    } catch {
+      toast.error('Failed to save draft')
+    }
   }
 
   const toggleLabel = (label: string) => {
@@ -114,7 +122,15 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
       toast.error('Title is required')
       return
     }
-    if (compressedBytes > BLOG_POST_SIZE_LIMIT) {
+    const estimatedBytes = (() => {
+      try {
+        return getCompressedSize(blocks)
+      } catch {
+        return BLOG_POST_SIZE_LIMIT + 1
+      }
+    })()
+
+    if (estimatedBytes > BLOG_POST_SIZE_LIMIT) {
       toast.error('Post is too large after compression')
       return
     }
@@ -229,7 +245,7 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
         <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
       </div>
 
-      <BlogEditor initialBlocks={blocks} onChange={setBlocks} />
+      <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
 
       <p className="text-xs text-gray-500">{compressedBytes} / {BLOG_POST_SIZE_LIMIT} bytes used</p>
 

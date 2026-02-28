@@ -9,7 +9,7 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { Spinner } from '@/components/ui/spinner'
-import { IpfsImage } from '@/components/ui/ipfs-image'
+import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
@@ -242,82 +242,6 @@ export default function ExplorePage() {
     }
   }
 
-  function extractExcerpt(content: unknown): string {
-    if (typeof content === 'string') return content.slice(0, 150)
-    if (Array.isArray(content)) {
-      const text = content.map(item => {
-        if (typeof item === 'string') return item
-        if (item && typeof item === 'object') {
-          return Object.values(item as Record<string, unknown>)
-            .filter(v => typeof v === 'string')
-            .join(' ')
-        }
-        return ''
-      }).filter(Boolean).join(' ')
-      return text.replace(/\s+/g, ' ').trim().slice(0, 150)
-    }
-    return ''
-  }
-
-  function BlogPostCard({ post }: { post: BlogPostWithAuthor }) {
-    const excerpt = extractExcerpt(post.content)
-    return (
-      <motion.button
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        onClick={() => handleBlogPostClick(post)}
-        disabled={!post.authorUsername || !post.slug}
-        className="w-full text-left p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors border-b border-gray-200 dark:border-gray-800 disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        <div className="flex gap-3">
-          {post.coverImage && (
-            <IpfsImage
-              src={post.coverImage}
-              alt={post.title}
-              className="h-20 w-20 rounded-lg object-cover flex-shrink-0"
-            />
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
-              {post.blogName && (
-                <span className="font-medium text-yappr-600 dark:text-yappr-400">{post.blogName}</span>
-              )}
-              {post.blogName && post.authorDisplayName && <span>·</span>}
-              {post.authorDisplayName && <span>{post.authorDisplayName}</span>}
-              {(post.blogName || post.authorDisplayName) && <span>·</span>}
-              <span>{post.createdAt.toLocaleDateString()}</span>
-            </div>
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 line-clamp-1">
-              {post.title || 'Untitled'}
-            </p>
-            {post.subtitle && (
-              <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 mt-0.5">
-                {post.subtitle}
-              </p>
-            )}
-            {excerpt && !post.subtitle && (
-              <p className="text-sm text-gray-500 line-clamp-2 mt-0.5">
-                {excerpt}{excerpt.length >= 150 ? '...' : ''}
-              </p>
-            )}
-            {post.labels && (
-              <div className="flex flex-wrap gap-1 mt-1.5">
-                {post.labels.split(',').slice(0, 3).map((label) => (
-                  <span
-                    key={label.trim()}
-                    className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded"
-                  >
-                    {label.trim()}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </motion.button>
-    )
-  }
-
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
@@ -377,7 +301,12 @@ export default function ExplorePage() {
                           </h3>
                         </div>
                         {blogSearchResults.map((post) => (
-                          <BlogPostCard key={post.id} post={post} />
+                          <BlogPostCard
+                            key={post.id}
+                            post={post}
+                            onClick={handleBlogPostClick}
+                            className="border-b border-gray-200 dark:border-gray-800"
+                          />
                         ))}
                       </div>
                     )}
@@ -423,8 +352,14 @@ export default function ExplorePage() {
                       </p>
                     </div>
                     <div>
-                      {recentBlogPosts.map((post) => (
-                        <BlogPostCard key={post.id} post={post} />
+                      {recentBlogPosts.map((post, index) => (
+                        <BlogPostCard
+                          key={post.id}
+                          post={post}
+                          onClick={handleBlogPostClick}
+                          index={index}
+                          className="border-b border-gray-200 dark:border-gray-800"
+                        />
                       ))}
                     </div>
                   </>

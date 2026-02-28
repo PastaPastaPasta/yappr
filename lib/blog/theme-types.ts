@@ -196,7 +196,7 @@ const SAFE_CSS_PROPERTIES = new Set([
   'text-decoration',
 ])
 
-const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|behavior\s*:|binding\s*:)/i
+export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|behavior\s*:|binding\s*:)/i
 
 function normalizeColor(input: unknown, fallback: string): string {
   if (typeof input !== 'string') return fallback

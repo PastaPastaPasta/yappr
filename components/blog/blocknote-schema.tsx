@@ -461,14 +461,12 @@ const simpleTableBlock = createReactBlockSpec(
                   {row.map((cell, colIndex) => (
                     <td key={`cell-${rowIndex}-${colIndex}`} className="border border-gray-700 p-0 align-top">
                       {editable ? (
-                        <div
-                          contentEditable
-                          suppressContentEditableWarning
-                          className="min-h-[36px] min-w-[120px] p-2 text-gray-100 outline-none"
-                          onBlur={(event) => updateCell(rowIndex, colIndex, event.currentTarget.textContent || '')}
-                        >
-                          {cell}
-                        </div>
+                        <input
+                          type="text"
+                          value={cell}
+                          onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
+                          className="h-[36px] w-full min-w-[120px] bg-transparent p-2 text-sm text-gray-100 outline-none"
+                        />
                       ) : (
                         <div className="min-h-[36px] min-w-[120px] bg-black/10 p-2 text-gray-100">{cell}</div>
                       )}

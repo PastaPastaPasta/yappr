@@ -1,19 +1,11 @@
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
-import { base58ToBytes, identifierToBase58 } from './sdk-helpers'
+import { identifierToBase58, requireIdentifierBytes } from './sdk-helpers'
 
 export interface BlogCommentQueryOptions {
   limit?: number
   startAfter?: string
-}
-
-function requireIdentifierBytes(id: string, fieldName: string): Uint8Array {
-  const bytes = base58ToBytes(id)
-  if (!bytes || bytes.length !== 32) {
-    throw new Error(`Invalid ${fieldName}: expected base58 identifier`)
-  }
-  return bytes
 }
 
 class BlogCommentService extends BaseDocumentService<BlogComment> {

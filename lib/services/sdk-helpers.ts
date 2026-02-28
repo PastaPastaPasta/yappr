@@ -109,6 +109,14 @@ export function base58ToBytes(value: string): Uint8Array | null {
   }
 }
 
+export function requireIdentifierBytes(id: string, fieldName: string): Uint8Array {
+  const bytes = base58ToBytes(id)
+  if (!bytes || bytes.length !== 32) {
+    throw new Error(`Invalid ${fieldName}: expected base58 identifier`)
+  }
+  return bytes
+}
+
 /**
  * Convert an array of identifier strings to array of Uint8Array
  * For use in 'in' queries on system identifier fields ($id, $ownerId)

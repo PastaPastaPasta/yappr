@@ -1,4 +1,5 @@
 import type { EmbedBlock, EmbedRenderOptions } from './embed-types'
+import { FORBIDDEN_CSS_PATTERN } from '@/lib/blog/theme-types'
 
 const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io/ipfs/'
 
@@ -18,6 +19,10 @@ function ensureString(value: unknown): string {
 function toRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as Record<string, unknown>
+}
+
+function isSafeCssValue(value: string): boolean {
+  return !FORBIDDEN_CSS_PATTERN.test(value)
 }
 
 function sanitizeUrl(value: string, options?: EmbedRenderOptions): string {
@@ -186,8 +191,8 @@ function renderBlock(block: EmbedBlock, options?: EmbedRenderOptions): string {
     const background = ensureString(props?.background)
     const padding = ensureString(props?.padding) || '24px'
     const content = renderInline(block.content, options) || '&nbsp;'
-    const styleParts = [`padding:${escapeHtml(padding)}`]
-    if (background) {
+    const styleParts = [`padding:${escapeHtml(isSafeCssValue(padding) ? padding : '24px')}`]
+    if (background && isSafeCssValue(background)) {
       styleParts.push(`background:${escapeHtml(background)}`)
     }
     return `<section class="yappr-embed-background-section" style="${styleParts.join(';')}">${content}</section>`
