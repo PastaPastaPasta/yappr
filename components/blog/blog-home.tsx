@@ -3,10 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
-import { Rss } from 'lucide-react'
 import { blogCommentService, blogPostService } from '@/lib/services'
-import { downloadTextFile, extractText, parseLabels } from '@/lib/blog/content-utils'
-import { generateBlogRSS } from '@/lib/blog/rss-utils'
+import { extractText, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
@@ -65,31 +63,6 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
     setPage(1)
   }, [activeLabel])
 
-  useEffect(() => {
-    const baseUrl = window.location.origin
-    const blogUrl = `${baseUrl}/blog?user=${encodeURIComponent(username)}`
-    const href = `${blogUrl}&feed=rss.xml`
-
-    const existing = document.head.querySelector<HTMLLinkElement>('link[data-blog-rss="true"]')
-    const link = existing || document.createElement('link')
-
-    link.setAttribute('data-blog-rss', 'true')
-    link.rel = 'alternate'
-    link.type = 'application/rss+xml'
-    link.title = `${blog.name} RSS`
-    link.href = href
-
-    if (!existing) {
-      document.head.appendChild(link)
-    }
-
-    return () => {
-      if (link.parentNode) {
-        link.parentNode.removeChild(link)
-      }
-    }
-  }, [blog.name, username])
-
   return (
     <BlogThemeProvider
       themeConfig={blog.themeConfig}
@@ -100,10 +73,8 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       labels={blog.labels}
       meta={(
         <div className="flex items-center gap-3">
-          {blog.avatar ? (
+          {blog.avatar && (
             <IpfsImage src={blog.avatar} alt={`${blog.name} avatar`} className="h-9 w-9 rounded-full object-cover" />
-          ) : (
-            <div className="h-9 w-9 rounded-full bg-white/10" />
           )}
           <span>{blog.labels || 'Publishing on Yappr'}</span>
         </div>
@@ -137,18 +108,6 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             {label}
           </button>
         ))}
-        <button
-          type="button"
-          onClick={() => {
-            const baseUrl = window.location.origin
-            const xml = generateBlogRSS(posts, blog, username, baseUrl)
-            downloadTextFile(`${username}-feed.xml`, xml, 'application/rss+xml')
-          }}
-          className="ml-auto inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 text-xs text-[var(--blog-text)]/80 hover:bg-white/10"
-        >
-          <Rss className="h-3.5 w-3.5" />
-          RSS
-        </button>
       </div>
 
       {loading ? (

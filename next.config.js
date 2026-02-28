@@ -72,13 +72,14 @@ const nextConfig = {
             value: [
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: https: blob:",
-              "font-src 'self'",
+              "font-src 'self' https://fonts.gstatic.com",
               "connect-src 'self' https: wss: https://44.240.98.102:1443",
               "worker-src 'self' blob:",
               "child-src 'self' blob:",
-              "frame-src 'self' blob: https://www.youtube-nocookie.com"
+              "media-src 'self' https: blob:",
+              "frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com"
             ].join('; ')
           },
           // CRITICAL: These headers are required for WASM to work
