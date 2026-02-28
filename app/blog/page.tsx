@@ -164,6 +164,7 @@ function BlogPageContent() {
         <BlogSettings
           blog={selectedBlog}
           ownerId={user.identityId}
+          username={user.dpnsUsername || undefined}
           onUpdated={(updated) => setSelectedBlog(updated)}
         />
 

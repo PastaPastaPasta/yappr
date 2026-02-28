@@ -38,7 +38,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
+import type { BlogPost, Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
@@ -64,6 +64,13 @@ interface ProfileData {
   nsfw?: boolean
   bannerUri?: string
   joinedAt?: Date
+}
+
+interface ProfileBlog {
+  id: string
+  name: string
+  description?: string
+  postCount: number
 }
 
 function getSocialLinkUrl(platform: string, handle: string): string | null {
@@ -136,6 +143,10 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
 
   const { postService } = await import('@/lib/services')
   const { replyService } = await import('@/lib/services/reply-service')
+  const { blogPostService } = await import('@/lib/services/blog-post-service')
+  const { blogService } = await import('@/lib/services/blog-service')
+  const { dpnsService } = await import('@/lib/services/dpns-service')
+  const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
   // First try to fetch as posts
   const posts = await postService.getPostsByIds(ids)
@@ -150,6 +161,8 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
 
   // Try to fetch missing IDs as replies
   const replies = await replyService.getRepliesByIds(missingIds)
+  const foundReplyIds = new Set(replies.map(reply => reply.id))
+  const remainingIds = missingIds.filter(id => !foundReplyIds.has(id))
 
   // Convert replies to Post format for display
   const convertedReplies: Post[] = replies.map(reply => ({
@@ -175,7 +188,62 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
     _enrichment: reply._enrichment,
   }))
 
-  return [...posts, ...convertedReplies]
+  if (remainingIds.length === 0) {
+    return [...posts, ...convertedReplies]
+  }
+
+  const blogPostResults = await Promise.allSettled(
+    remainingIds.map(id => blogPostService.getPost(id))
+  )
+  const blogPosts = blogPostResults
+    .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
+    .map(r => r.value)
+    .filter((post): post is BlogPost => Boolean(post))
+
+  const convertedBlogPosts: Post[] = await Promise.all(blogPosts.map(async (blogPost) => {
+    const [blog, username, profile] = await Promise.all([
+      blogService.getBlog(blogPost.blogId).catch(() => null),
+      dpnsService.resolveUsername(blogPost.ownerId).catch(() => null),
+      unifiedProfileService.getProfile(blogPost.ownerId).catch(() => null),
+    ])
+
+    return {
+      id: blogPost.id,
+      author: {
+        id: blogPost.ownerId,
+        username: username || undefined,
+        displayName: profile?.displayName || blog?.name || 'Blog author',
+        avatar: profile?.avatar || blog?.avatar || '',
+        followers: 0,
+        following: 0,
+        verified: false,
+        joinedAt: new Date(0),
+        hasDpns: typeof username === 'string' ? true : undefined,
+      },
+      content: blogPost.subtitle || blogPost.title,
+      createdAt: blogPost.createdAt,
+      likes: 0,
+      reposts: 0,
+      replies: 0,
+      views: 0,
+      liked: false,
+      reposted: false,
+      bookmarked: false,
+      ...( {
+        __isBlogPostQuote: true,
+        title: blogPost.title,
+        subtitle: blogPost.subtitle,
+        coverImage: blogPost.coverImage,
+        slug: blogPost.slug,
+        blogId: blogPost.blogId,
+        blogName: blog?.name,
+        blogUsername: username || undefined,
+        blogContent: blogPost.content,
+      } as Record<string, unknown>),
+    } as Post
+  }))
+
+  return [...posts, ...convertedReplies, ...convertedBlogPosts]
 }
 
 function UserProfileContent() {
@@ -234,13 +302,15 @@ function UserProfileContent() {
   // Tip modal
   const { openForUser: openTipModal } = useTipModal()
 
-  // Tab state for Posts/Mentions
-  const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
+  // Tab state for Posts/Mentions/Blog
+  const [activeTab, setActiveTab] = useState<'posts' | 'mentions' | 'blog'>('posts')
   const [postFilter, setPostFilter] = useState<'posts' | 'replies'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
   const [mentionCount, setMentionCount] = useState<number | null>(null)
+  const [blogs, setBlogs] = useState<ProfileBlog[]>([])
+  const [blogsLoading, setBlogsLoading] = useState(false)
 
   // User replies state (for replies tab)
   const [userReplies, setUserReplies] = useState<Post[]>([])
@@ -374,6 +444,33 @@ function UserProfileContent() {
           // Store check is non-critical
           logger.error('Failed to check store status:', e)
           setUserStore(null)
+        }
+
+        // Check if user has blogs and load counts for Blog tab
+        setBlogsLoading(true)
+        try {
+          const { blogService, blogPostService } = await import('@/lib/services')
+          const ownerBlogs = await blogService.getBlogsByOwner(userId)
+
+          if (ownerBlogs.length > 0) {
+            const blogsWithCounts = await Promise.all(ownerBlogs.map(async (blog) => {
+              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 1000 })
+              return {
+                id: blog.id,
+                name: blog.name,
+                description: blog.description,
+                postCount: blogPosts.length,
+              } as ProfileBlog
+            }))
+            setBlogs(blogsWithCounts)
+          } else {
+            setBlogs([])
+          }
+        } catch (blogError) {
+          logger.error('Failed to load blogs for profile:', blogError)
+          setBlogs([])
+        } finally {
+          setBlogsLoading(false)
         }
 
         // Process posts - postService.getUserPosts() returns already-transformed Post objects
@@ -866,6 +963,8 @@ function UserProfileContent() {
     setHasPrivateFeed(false)
     setIsPrivateFollower(false)
     setUserStore(null)
+    setBlogs([])
+    setBlogsLoading(false)
   }, [userId])
 
   const handleFollow = async () => {
@@ -1641,6 +1740,22 @@ function UserProfileContent() {
                     <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
                   )}
                 </button>
+                {blogs.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('blog')}
+                    className={cn(
+                      'flex-1 py-4 text-center font-medium transition-colors relative',
+                      activeTab === 'blog'
+                        ? 'text-gray-900 dark:text-white'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    )}
+                  >
+                    Blog ({blogs.length})
+                    {activeTab === 'blog' && (
+                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Tab Content */}
@@ -1709,7 +1824,7 @@ function UserProfileContent() {
                     </div>
                   )}
                 </>
-              ) : (
+              ) : activeTab === 'mentions' ? (
                 // Mentions Tab
                 mentionsLoading ? (
                   <div className="p-8 text-center">
@@ -1732,6 +1847,35 @@ function UserProfileContent() {
                     ))}
                   </div>
                 )
+              ) : blogsLoading ? (
+                <div className="p-8 text-center">
+                  <Spinner size="md" className="mx-auto mb-4" />
+                  <p className="text-gray-500">Loading blogs...</p>
+                </div>
+              ) : blogs.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">
+                  <p>No blogs yet</p>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3">
+                  {blogs.map((blog) => (
+                    <button
+                      key={blog.id}
+                      disabled={!username}
+                      onClick={() => {
+                        if (!username) return
+                        router.push(`/blog?user=${encodeURIComponent(username)}`)
+                      }}
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <p className="text-lg font-semibold">{blog.name}</p>
+                      {blog.description && (
+                        <p className="mt-1 text-sm text-gray-500">{blog.description}</p>
+                      )}
+                      <p className="mt-2 text-xs text-gray-500">{blog.postCount} posts</p>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </>

@@ -9,6 +9,7 @@ import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { blogPostService } from '@/lib/services'
+import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
 import { useAuth } from '@/contexts/auth-context'
@@ -34,11 +35,14 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
   const [subtitle, setSubtitle] = useState('')
   const [coverImage, setCoverImage] = useState('')
   const [labels, setLabels] = useState('')
+  const [customLabel, setCustomLabel] = useState('')
   const [commentsEnabled, setCommentsEnabled] = useState(Boolean(blog.commentsEnabledDefault ?? true))
   const [blocks, setBlocks] = useState<unknown[]>([])
   const [isPublishing, setIsPublishing] = useState(false)
 
   const compressedBytes = useMemo(() => getCompressedSize(blocks), [blocks])
+  const availableLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
+  const selectedLabels = useMemo(() => parseLabels(labels), [labels])
 
   const draftKey = useMemo(() => {
     if (!user?.identityId) return ''
@@ -89,6 +93,21 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
     toast.success('Draft saved locally')
   }
 
+  const toggleLabel = (label: string) => {
+    if (selectedLabels.includes(label)) {
+      setLabels(labelsToCsv(selectedLabels.filter((item) => item !== label)))
+      return
+    }
+    setLabels(labelsToCsv([...selectedLabels, label]))
+  }
+
+  const addCustomLabel = () => {
+    const trimmed = customLabel.trim()
+    if (!trimmed) return
+    setLabels(labelsToCsv([...selectedLabels, trimmed]))
+    setCustomLabel('')
+  }
+
   const handlePublish = async () => {
     if (!user?.identityId) return
     if (!title.trim()) {
@@ -121,6 +140,7 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
       setSubtitle('')
       setCoverImage('')
       setLabels('')
+      setCustomLabel('')
       setBlocks([])
       setCommentsEnabled(Boolean(blog.commentsEnabledDefault ?? true))
     } catch {
@@ -152,9 +172,53 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
         onClear={() => setCoverImage('')}
       />
 
-      <div>
+      <div className="space-y-2">
         <label className="mb-1 block text-sm text-gray-300">Labels</label>
-        <Input value={labels} onChange={(e) => setLabels(e.target.value)} maxLength={256} placeholder="tech, updates" />
+
+        {availableLabels.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {availableLabels.map((label) => {
+              const selected = selectedLabels.includes(label)
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => toggleLabel(label)}
+                  aria-pressed={selected}
+                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                    selected
+                      ? 'border-cyan-400/40 bg-cyan-400/20 text-cyan-100'
+                      : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Input
+            value={customLabel}
+            onChange={(e) => setCustomLabel(e.target.value)}
+            maxLength={40}
+            placeholder="Custom label"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                addCustomLabel()
+              }
+            }}
+          />
+          <Button type="button" variant="outline" onClick={addCustomLabel} disabled={!customLabel.trim()}>
+            Add
+          </Button>
+        </div>
+
+        {selectedLabels.length > 0 && (
+          <p className="text-xs text-gray-500">Selected: {selectedLabels.join(', ')}</p>
+        )}
       </div>
 
       <div className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
