@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Yappr Embed Example</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: linear-gradient(145deg, #eef4ff, #f7f9fc);
+      }
+      .container {
+        max-width: 860px;
+        margin: 0 auto;
+      }
+      .controls {
+        margin-bottom: 16px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .demo-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 18px;
+      }
+      button, select {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Yappr Embed Widget Demo</h1>
+      <div class="controls">
+        <label for="theme">Theme:</label>
+        <select id="theme">
+          <option value="auto">Auto</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+        <button id="rerender">Re-render programmatic embed</button>
+      </div>
+
+      <div class="demo-grid">
+        <section>
+          <h2>Declarative</h2>
+          <div
+            id="declarative-embed"
+            data-yappr-post="demo-post"
+            data-yappr-theme="auto"
+            data-yappr-mock="true"
+          ></div>
+        </section>
+
+        <section>
+          <h2>Programmatic</h2>
+          <div id="programmatic-embed"></div>
+        </section>
+      </div>
+    </div>
+
+    <script src="../dist/yappr-embed.min.js"></script>
+    <script>
+      const programmatic = document.getElementById('programmatic-embed');
+      const themeSelect = document.getElementById('theme');
+
+      function renderProgrammatic() {
+        window.YapprEmbed.render(programmatic, {
+          postId: 'demo-post',
+          theme: themeSelect.value,
+          mock: true,
+          showViewOnYappr: true,
+          showPoweredBy: true
+        });
+      }
+
+      renderProgrammatic();
+      document.getElementById('rerender').addEventListener('click', renderProgrammatic);
+      themeSelect.addEventListener('change', () => {
+        const declarative = document.getElementById('declarative-embed');
+        declarative.dataset.yapprTheme = themeSelect.value;
+        window.YapprEmbed.render(declarative, {
+          postId: 'demo-post',
+          theme: themeSelect.value,
+          mock: true
+        });
+      });
+    </script>
+  </body>
+</html>

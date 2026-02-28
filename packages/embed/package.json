@@ -1,0 +1,40 @@
+{
+  "name": "@yappr/embed",
+  "version": "0.1.0",
+  "description": "Standalone Yappr embed widget",
+  "type": "module",
+  "main": "dist/yappr-embed.min.js",
+  "module": "dist/yappr-embed.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "yappr",
+    "embed",
+    "dash",
+    "blog"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "bs58": "^6.0.0",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^12.1.2",
+    "@types/bs58": "^4.0.4",
+    "rollup": "^4.35.0",
+    "tslib": "^2.8.1",
+    "typescript": "^5.8.2"
+  }
+}
