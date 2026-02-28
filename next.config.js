@@ -63,35 +63,54 @@ const nextConfig = {
     return config
   },
   async headers() {
+    const sharedCSPDirectives = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: https: blob:",
+      "font-src 'self'",
+      "connect-src 'self' https: wss: https://44.240.98.102:1443",
+      "worker-src 'self' blob:",
+      "child-src 'self' blob:",
+    ]
+
+    // CRITICAL: These headers are required for WASM to work
+    // Using 'credentialless' instead of 'require-corp' to allow cross-origin images
+    const sharedSecurityHeaders = [
+      { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
+      { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+    ]
+
     return [
       {
+        // Blog pages: permissive CSP for arbitrary embeds and theme fonts
+        source: '/blog',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              ...sharedCSPDirectives,
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+              "font-src 'self' https://fonts.gstatic.com",
+              "media-src 'self' https: blob:",
+              "frame-src 'self' blob: https:",
+            ].join('; ')
+          },
+          ...sharedSecurityHeaders,
+        ]
+      },
+      {
+        // Everything else: restrictive CSP
         source: '/:path*',
         headers: [
           {
             key: 'Content-Security-Policy',
             value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "img-src 'self' data: https: blob:",
-              "font-src 'self' https://fonts.gstatic.com",
-              "connect-src 'self' https: wss: https://44.240.98.102:1443",
-              "worker-src 'self' blob:",
-              "child-src 'self' blob:",
-              "media-src 'self' https: blob:",
-              "frame-src 'self' blob: https:"
+              ...sharedCSPDirectives,
+              "frame-src 'self' blob: https://www.youtube-nocookie.com",
             ].join('; ')
           },
-          // CRITICAL: These headers are required for WASM to work
-          // Using 'credentialless' instead of 'require-corp' to allow cross-origin images
-          {
-            key: 'Cross-Origin-Embedder-Policy',
-            value: 'credentialless'
-          },
-          {
-            key: 'Cross-Origin-Opener-Policy', 
-            value: 'same-origin'
-          }
+          ...sharedSecurityHeaders,
         ]
       }
     ]
