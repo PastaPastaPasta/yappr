@@ -1,4 +1,3 @@
-import { Identifier } from '@dashevo/evo-sdk'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
@@ -58,7 +57,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
 
   async getCommentsByPost(blogPostId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
     const queryOptions: QueryOptions = {
-      where: [['blogPostId', '==', new Identifier(blogPostId)]],
+      where: [['blogPostId', '==', blogPostId]],
       orderBy: [['$createdAt', 'asc']],
       limit: options.limit,
       startAfter: options.startAfter,

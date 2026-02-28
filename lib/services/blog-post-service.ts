@@ -1,4 +1,3 @@
-import { Identifier } from '@dashevo/evo-sdk'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
@@ -126,7 +125,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   async getPostBySlug(blogId: string, slug: string): Promise<BlogPost | null> {
     const result = await this.query({
-      where: [['blogId', '==', new Identifier(blogId)], ['slug', '==', slug]],
+      where: [['blogId', '==', blogId], ['slug', '==', slug]],
       orderBy: [['blogId', 'asc'], ['slug', 'asc']],
       limit: 1,
     })
@@ -135,7 +134,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   async getPostsByBlog(blogId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
     const queryOptions: QueryOptions = {
-      where: [['blogId', '==', new Identifier(blogId)]],
+      where: [['blogId', '==', blogId]],
       orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']],
       limit: options.limit,
       startAfter: options.startAfter,
