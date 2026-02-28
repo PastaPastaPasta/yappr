@@ -81,6 +81,12 @@
   color: #e5e7eb;
 }
 
+/* Compose mode – comfortable writing typography */
+.bn-container [class*="bn-block-content"][data-content-type="paragraph"] {
+  font-size: 17px;
+  line-height: 1.7;
+}
+
 /* Blog theme – transparent BlockNote background */
 .blog-theme-root .bn-container,
 .blog-theme-root .bn-container[data-color-scheme="dark"] {

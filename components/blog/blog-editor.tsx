@@ -6,7 +6,6 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
-import { PhotoIcon } from '@heroicons/react/24/outline'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
@@ -23,7 +22,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     initialContent: (initialBlocks?.length ? initialBlocks : undefined) as never,
   })
 
-  const { upload, isUploading, progress, error, clearError } = useImageUpload()
+  const { upload, isUploading, error, clearError } = useImageUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const reportBytes = useCallback((nextBytes: number) => {
@@ -89,48 +88,37 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
   }, [editor, reportBytes])
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Content</p>
-        <div className="flex items-center gap-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleImageUpload}
-            disabled={isUploading}
-          />
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-full bg-gray-800/60 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-300 disabled:opacity-50"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-          >
-            <PhotoIcon className="h-3.5 w-3.5" />
-            {isUploading ? `${progress}%` : 'Image'}
-          </button>
-        </div>
-      </div>
+    <div>
+      {/* Hidden file input for image uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageUpload}
+        disabled={isUploading}
+      />
 
       {error && (
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="mb-2 text-sm text-red-400">{error}</p>
       )}
 
-      <div className="rounded-xl border border-gray-800/60 bg-gray-900/40 p-3">
-        <BlockNoteView
-          editor={editor}
-          theme="dark"
-          onChange={publishChange}
-          slashMenu={false}
-          formattingToolbar={true}
-        >
-          <SuggestionMenuController
-            triggerCharacter="/"
-            getItems={async (query) => getBlogSlashMenuItems(editor, query)}
-          />
-        </BlockNoteView>
-      </div>
+      {isUploading && (
+        <p className="mb-2 text-xs text-gray-500">Uploading image...</p>
+      )}
+
+      <BlockNoteView
+        editor={editor}
+        theme="dark"
+        onChange={publishChange}
+        slashMenu={false}
+        formattingToolbar={true}
+      >
+        <SuggestionMenuController
+          triggerCharacter="/"
+          getItems={async (query) => getBlogSlashMenuItems(editor, query)}
+        />
+      </BlockNoteView>
     </div>
   )
 }

@@ -161,6 +161,9 @@ function BlogPageContent() {
     }
   }
 
+  const isComposeMode = !usernameParam && selectedBlog !== null && activeTab === 'compose' && !editingPostId
+  const isWideMode = !usernameParam && selectedBlog !== null && (activeTab === 'theme' || isComposeMode)
+
   const renderCenter = () => {
     if (loading) {
       return <p className="p-6 text-sm text-gray-500">Loading blog...</p>
@@ -209,50 +212,52 @@ function BlogPageContent() {
 
     return (
       <div>
-        {/* Blog dashboard header */}
-        <div className="border-b border-gray-800/60 px-5 pb-0 pt-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="min-w-0">
-              <h1 className="truncate text-lg font-semibold text-white">{selectedBlog.name}</h1>
-              {selectedBlog.description && (
-                <p className="mt-0.5 truncate text-sm text-gray-500">{selectedBlog.description}</p>
-              )}
-            </div>
-            <button
-              type="button"
-              className="shrink-0 rounded-full bg-gray-800/60 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-300"
-              onClick={deselectBlog}
-            >
-              All Blogs
-            </button>
-          </div>
-
-          <nav className="flex gap-1" role="tablist">
-            {tabs.map((tab) => (
+        {/* Blog dashboard header — hidden during focused compose */}
+        {!isComposeMode && (
+          <div className="border-b border-gray-800/60 px-5 pb-0 pt-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="min-w-0">
+                <h1 className="truncate text-lg font-semibold text-white">{selectedBlog.name}</h1>
+                {selectedBlog.description && (
+                  <p className="mt-0.5 truncate text-sm text-gray-500">{selectedBlog.description}</p>
+                )}
+              </div>
               <button
-                key={tab.key}
                 type="button"
-                role="tab"
-                aria-selected={activeTab === tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={cn(
-                  'relative px-4 py-2.5 text-sm font-medium transition-colors',
-                  activeTab === tab.key
-                    ? 'text-white'
-                    : 'text-gray-500 hover:text-gray-300'
-                )}
+                className="shrink-0 rounded-full bg-gray-800/60 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-300"
+                onClick={deselectBlog}
               >
-                {tab.label}
-                {activeTab === tab.key && (
-                  <div className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-yappr-500" />
-                )}
+                All Blogs
               </button>
-            ))}
-          </nav>
-        </div>
+            </div>
+
+            <nav className="flex gap-1" role="tablist">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={cn(
+                    'relative px-4 py-2.5 text-sm font-medium transition-colors',
+                    activeTab === tab.key
+                      ? 'text-white'
+                      : 'text-gray-500 hover:text-gray-300'
+                  )}
+                >
+                  {tab.label}
+                  {activeTab === tab.key && (
+                    <div className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-yappr-500" />
+                  )}
+                </button>
+              ))}
+            </nav>
+          </div>
+        )}
 
         {/* Tab content */}
-        <div className="p-5">
+        <div className={isComposeMode ? '' : 'p-5'}>
           {activeTab === 'posts' && (
             <section>
               <div className="mb-4 flex items-center justify-between">
@@ -332,16 +337,16 @@ function BlogPageContent() {
           )}
 
           {activeTab === 'compose' && (
-            <div>
-              <button
-                type="button"
-                className="mb-5 inline-flex items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
-                onClick={navigateToPosts}
-              >
-                <ArrowLeftIcon className="h-3 w-3" />
-                Back to posts
-              </button>
-              {editingPostId ? (
+            editingPostId ? (
+              <div>
+                <button
+                  type="button"
+                  className="mb-5 inline-flex items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
+                  onClick={navigateToPosts}
+                >
+                  <ArrowLeftIcon className="h-3 w-3" />
+                  Back to posts
+                </button>
                 <EditPost
                   postId={editingPostId}
                   ownerId={user.identityId}
@@ -350,16 +355,17 @@ function BlogPageContent() {
                     refreshPosts().catch(() => {})
                   }}
                 />
-              ) : (
-                <ComposePost
-                  blog={selectedBlog}
-                  onPublished={(post) => {
-                    setOwnerPosts((prev) => [post, ...prev])
-                    setActiveTab('posts')
-                  }}
-                />
-              )}
-            </div>
+              </div>
+            ) : (
+              <ComposePost
+                blog={selectedBlog}
+                onBack={navigateToPosts}
+                onPublished={(post) => {
+                  setOwnerPosts((prev) => [post, ...prev])
+                  setActiveTab('posts')
+                }}
+              />
+            )
           )}
 
           {activeTab === 'settings' && (
@@ -384,8 +390,6 @@ function BlogPageContent() {
       </div>
     )
   }
-
-  const isWideMode = !usernameParam && selectedBlog !== null && activeTab === 'theme'
 
   if (usernameParam) {
     return (
@@ -418,9 +422,11 @@ function BlogPageContent() {
           "w-full border-gray-200 dark:border-gray-800",
           isWideMode ? "max-w-[1100px]" : "max-w-[700px] md:border-x"
         )}>
-          <header className="sticky top-[32px] sm:top-[40px] z-40 border-b border-gray-200 bg-white/80 p-4 backdrop-blur-xl dark:border-gray-800 dark:bg-neutral-900/80">
-            <h1 className="text-xl font-bold">Blog</h1>
-          </header>
+          {!isComposeMode && (
+            <header className="sticky top-[32px] sm:top-[40px] z-40 border-b border-gray-200 bg-white/80 p-4 backdrop-blur-xl dark:border-gray-800 dark:bg-neutral-900/80">
+              <h1 className="text-xl font-bold">Blog</h1>
+            </header>
+          )}
           {renderCenter()}
         </main>
       </div>
