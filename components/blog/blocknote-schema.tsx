@@ -421,6 +421,46 @@ function VideoEmbedPlayer({ url }: { url: string }) {
   )
 }
 
+// Override BlockNote's default video block so YouTube URLs render with the
+// click-to-play embed instead of a broken <video> element.
+const videoBlock = createReactBlockSpec(
+  {
+    type: 'video' as const,
+    propSchema: {
+      ...defaultProps,
+      name: { default: '' },
+      url: { default: '' },
+      caption: { default: '' },
+      showPreview: { default: true },
+      previewWidth: { default: 512 },
+    },
+    content: 'none',
+    isFileBlock: true,
+    fileBlockAccept: ['video/*'],
+  },
+  {
+    render: ({ block, editor }) => {
+      const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
+      const url = String(block.props.url || '')
+
+      return (
+        <div className="space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
+          {editable && (
+            <input
+              type="url"
+              value={url}
+              onChange={(event) => updateBlockProps(editor, block, { url: event.target.value })}
+              placeholder="YouTube or Odysee URL"
+              className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            />
+          )}
+          <VideoEmbedPlayer url={url} />
+        </div>
+      )
+    },
+  }
+)
+
 const videoEmbedBlock = createReactBlockSpec(
   {
     type: 'videoEmbed',
@@ -629,6 +669,7 @@ const footnoteBlock = createReactBlockSpec(
 export const blogBlockNoteSchema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
+    video: videoBlock,
     backgroundSection: backgroundSectionBlock,
     callout: calloutBlock,
     divider: dividerBlock,
