@@ -33,6 +33,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { PlayIcon } from '@heroicons/react/24/solid'
 import { extractYouTubeVideoId } from '@/hooks/use-link-preview'
+import { YouTubeIcon } from '@/components/ui/brand-icons'
 
 function extractInlineText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -97,31 +98,6 @@ function isTrustedHost(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`)
 }
 
-function parseYouTubeEmbedUrl(rawUrl: string): string | null {
-  try {
-    const url = new URL(rawUrl)
-    const host = url.hostname.toLowerCase()
-    let videoId = ''
-
-    if (isTrustedHost(host, 'youtu.be')) {
-      videoId = url.pathname.replace('/', '').trim()
-    } else if (isTrustedHost(host, 'youtube.com')) {
-      if (url.pathname.startsWith('/watch')) {
-        videoId = url.searchParams.get('v') || ''
-      } else if (url.pathname.startsWith('/embed/')) {
-        videoId = url.pathname.split('/embed/')[1] || ''
-      } else if (url.pathname.startsWith('/shorts/')) {
-        videoId = url.pathname.split('/shorts/')[1] || ''
-      }
-    }
-
-    if (!videoId) return null
-    return `https://www.youtube-nocookie.com/embed/${videoId}`
-  } catch {
-    return null
-  }
-}
-
 function parseOdyseeEmbedUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl)
@@ -139,7 +115,9 @@ function parseOdyseeEmbedUrl(rawUrl: string): string | null {
 }
 
 function toVideoEmbedUrl(url: string): string | null {
-  return parseYouTubeEmbedUrl(url) || parseOdyseeEmbedUrl(url)
+  const youtubeId = extractYouTubeVideoId(url)
+  if (youtubeId) return `https://www.youtube-nocookie.com/embed/${youtubeId}`
+  return parseOdyseeEmbedUrl(url)
 }
 
 const backgroundSectionBlock = createReactBlockSpec(
@@ -364,14 +342,6 @@ const codeBlock = createReactBlockSpec(
     },
   }
 )
-
-function YouTubeIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
-      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-    </svg>
-  )
-}
 
 function VideoEmbedPlayer({ url }: { url: string }) {
   const youtubeVideoId = extractYouTubeVideoId(url)
