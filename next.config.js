@@ -100,8 +100,8 @@ const nextConfig = {
         ]
       },
       {
-        // Everything else: restrictive CSP
-        source: '/:path*',
+        // Everything else: restrictive CSP (excludes /blog which has its own)
+        source: '/:path((?!blog$).*)',
         headers: [
           {
             key: 'Content-Security-Policy',
