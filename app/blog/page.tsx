@@ -34,7 +34,6 @@ function BlogPageContent() {
   const [ownerPosts, setOwnerPosts] = useState<BlogPost[]>([])
   const [editingPostId, setEditingPostId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'posts' | 'compose' | 'settings' | 'theme'>('posts')
-  const [isSavingTheme, setIsSavingTheme] = useState(false)
 
   const [viewBlog, setViewBlog] = useState<Blog | null>(null)
   const [viewPost, setViewPost] = useState<BlogPost | null>(null)
@@ -131,6 +130,36 @@ function BlogPageContent() {
     }
   }, [selectedBlog, user?.identityId])
 
+  const deselectBlog = () => {
+    setSelectedBlog(null)
+    setEditingPostId(null)
+    setActiveTab('posts')
+  }
+
+  const navigateToPosts = () => {
+    setEditingPostId(null)
+    setActiveTab('posts')
+  }
+
+  const refreshPosts = async () => {
+    if (!selectedBlog) return
+    const posts = await blogPostService.getPostsByBlog(selectedBlog.id, { limit: 100 })
+    setOwnerPosts(posts)
+  }
+
+  const handleThemeSave = async (themeConfig: string) => {
+    if (!selectedBlog || !user?.identityId) return
+    try {
+      const updated = await blogService.updateBlog(selectedBlog.id, user.identityId, {
+        themeConfig,
+      })
+      toast.success('Theme updated')
+      setSelectedBlog(updated)
+    } catch {
+      toast.error('Failed to update theme')
+    }
+  }
+
   const renderCenter = () => {
     if (loading) {
       return <p className="p-6 text-sm text-gray-500">Loading blog...</p>
@@ -169,26 +198,6 @@ function BlogPageContent() {
       )
     }
 
-    const handleThemeSave = async (themeConfig: string) => {
-      setIsSavingTheme(true)
-      try {
-        const updated = await blogService.updateBlog(selectedBlog.id, user.identityId, {
-          themeConfig,
-        })
-        toast.success('Theme updated')
-        setSelectedBlog(updated)
-      } catch {
-        toast.error('Failed to update theme')
-      } finally {
-        setIsSavingTheme(false)
-      }
-    }
-
-    const refreshPosts = async () => {
-      const posts = await blogPostService.getPostsByBlog(selectedBlog.id, { limit: 100 })
-      setOwnerPosts(posts)
-    }
-
     const tabs: { key: typeof activeTab; label: string }[] = [
       { key: 'posts', label: `Posts (${ownerPosts.length})` },
       { key: 'compose', label: editingPostId ? 'Edit Post' : 'New Post' },
@@ -203,11 +212,7 @@ function BlogPageContent() {
           <button
             type="button"
             className="text-sm text-yappr-400 hover:underline"
-            onClick={() => {
-              setSelectedBlog(null)
-              setEditingPostId(null)
-              setActiveTab('posts')
-            }}
+            onClick={deselectBlog}
           >
             Back to My Blogs
           </button>
@@ -254,47 +259,50 @@ function BlogPageContent() {
                 <p className="text-sm text-gray-500">No posts yet.</p>
               ) : (
                 <div className="space-y-2">
-                  {ownerPosts.map((post) => (
-                    <div key={post.id} className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
-                      <button
-                        type="button"
-                        className="text-left min-w-0 flex-1"
-                        onClick={() => router.push(`/blog?user=${encodeURIComponent(user.dpnsUsername || '')}&post=${encodeURIComponent(post.slug)}`)}
-                      >
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium truncate">{post.title}</p>
-                          <span className={cn(
-                            'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-                            post.publishedAt !== undefined
-                              ? 'bg-green-900/50 text-green-400'
-                              : 'bg-yellow-900/50 text-yellow-400'
-                          )}>
-                            {post.publishedAt !== undefined ? 'Published' : 'Draft'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-500">{post.createdAt.toLocaleDateString()}</p>
-                        {post.labels && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {post.labels.split(',').map((label) => (
-                              <span key={label} className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
-                                {label.trim()}
-                              </span>
-                            ))}
+                  {ownerPosts.map((post) => {
+                    const isPublished = post.publishedAt !== undefined
+                    return (
+                      <div key={post.id} className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
+                        <button
+                          type="button"
+                          className="text-left min-w-0 flex-1"
+                          onClick={() => router.push(`/blog?user=${encodeURIComponent(user.dpnsUsername || '')}&post=${encodeURIComponent(post.slug)}`)}
+                        >
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium truncate">{post.title}</p>
+                            <span className={cn(
+                              'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
+                              isPublished
+                                ? 'bg-green-900/50 text-green-400'
+                                : 'bg-yellow-900/50 text-yellow-400'
+                            )}>
+                              {isPublished ? 'Published' : 'Draft'}
+                            </span>
                           </div>
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        className="ml-3 shrink-0 text-sm text-yappr-400 hover:underline"
-                        onClick={() => {
-                          setEditingPostId(post.id)
-                          setActiveTab('compose')
-                        }}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  ))}
+                          <p className="text-xs text-gray-500">{post.createdAt.toLocaleDateString()}</p>
+                          {post.labels && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {post.labels.split(',').map((label) => (
+                                <span key={label} className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
+                                  {label.trim()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="ml-3 shrink-0 text-sm text-yappr-400 hover:underline"
+                          onClick={() => {
+                            setEditingPostId(post.id)
+                            setActiveTab('compose')
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </section>
@@ -305,10 +313,7 @@ function BlogPageContent() {
               <button
                 type="button"
                 className="mb-3 text-sm text-yappr-400 hover:underline"
-                onClick={() => {
-                  setEditingPostId(null)
-                  setActiveTab('posts')
-                }}
+                onClick={navigateToPosts}
               >
                 &larr; Back to posts
               </button>
@@ -317,8 +322,7 @@ function BlogPageContent() {
                   postId={editingPostId}
                   ownerId={user.identityId}
                   onSaved={() => {
-                    setEditingPostId(null)
-                    setActiveTab('posts')
+                    navigateToPosts()
                     refreshPosts().catch(() => {})
                   }}
                 />
@@ -344,15 +348,13 @@ function BlogPageContent() {
           )}
 
           {activeTab === 'theme' && (
-            <div className={isSavingTheme ? 'opacity-75 pointer-events-none' : ''}>
-              <ThemeEditor
-                key={`${selectedBlog.id}:${selectedBlog.themeConfig || 'default'}`}
-                initialThemeConfig={selectedBlog.themeConfig}
-                blogName={selectedBlog.name}
-                blogDescription={selectedBlog.description}
-                onSave={handleThemeSave}
-              />
-            </div>
+            <ThemeEditor
+              key={`${selectedBlog.id}:${selectedBlog.themeConfig || 'default'}`}
+              initialThemeConfig={selectedBlog.themeConfig}
+              blogName={selectedBlog.name}
+              blogDescription={selectedBlog.description}
+              onSave={handleThemeSave}
+            />
           )}
         </div>
       </div>
