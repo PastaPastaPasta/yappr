@@ -130,17 +130,15 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       reposts: 0,
       replies: 0,
       views: 0,
-      ...( {
-        __isBlogPostQuote: true,
-        title: post.title,
-        subtitle: post.subtitle,
-        slug: post.slug,
-        coverImage: post.coverImage,
-        blogId: blog.id,
-        blogName: blog.name,
-        blogUsername: username,
-        blogContent: post.content,
-      } as Record<string, unknown>),
+      __isBlogPostQuote: true,
+      title: post.title,
+      subtitle: post.subtitle,
+      slug: post.slug,
+      coverImage: post.coverImage,
+      blogId: blog.id,
+      blogName: blog.name,
+      blogUsername: username,
+      blogContent: post.content,
     })
 
     setComposeOpen(true)
@@ -177,8 +175,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       subtitle={post.subtitle}
       meta={postMeta}
     >
-      <article className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
+      <article className="space-y-6">
+        <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}>
           <Link href={`/blog?user=${encodeURIComponent(username)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
             ← Back to blog
           </Link>
@@ -206,12 +204,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           </div>
         </div>
 
-        <p className="text-xs text-[var(--blog-text)]/60">
-          View counting is not yet supported in a fully decentralized architecture.
-        </p>
-
         {post.coverImage && (
-          <IpfsImage src={post.coverImage} alt={post.title} className="h-64 w-full rounded-xl object-cover" />
+          <IpfsImage src={post.coverImage} alt={post.title} className="h-72 w-full rounded-2xl object-cover sm:h-80 lg:h-96" />
         )}
 
         <BlogViewer blocks={blocks} />
