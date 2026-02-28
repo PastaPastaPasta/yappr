@@ -52,3 +52,31 @@
     padding-top: env(safe-area-inset-top, 0);
   }
 }
+
+/* BlockNote / Mantine dark mode overrides */
+[data-color-scheme="dark"] .bn-container,
+.bn-container[data-color-scheme="dark"] {
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-background: #1a1a2e;
+  --bn-colors-hovered-background: #2a2a3e;
+  --bn-colors-selected-background: #3a3a5e;
+  --bn-colors-side-menu: #9ca3af;
+}
+
+/* Force dark background on Mantine inputs inside BlockNote */
+.bn-container [class*="mantine-"] {
+  --mantine-color-body: transparent;
+}
+
+/* Ensure BlockNote editor text stays light */
+.bn-container [class*="bn-block-content"] {
+  color: #e5e7eb;
+}
+
+/* Fix Mantine tooltip and dropdown dark mode */
+.bn-container .mantine-Menu-dropdown,
+.bn-container .mantine-Tooltip-tooltip {
+  background-color: #1a1a2e;
+  border-color: #374151;
+  color: #e5e7eb;
+}

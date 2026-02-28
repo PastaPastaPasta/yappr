@@ -389,11 +389,11 @@ const videoEmbedBlock = createReactBlockSpec(
             />
           )}
           {embedUrl ? (
-            <div className="relative w-full overflow-hidden rounded-lg border border-white/10 pt-[56.25%]">
+            <div className="relative w-full overflow-hidden rounded-lg border border-white/10 bg-black pt-[56.25%]">
               <iframe
                 src={embedUrl}
                 title="Embedded video"
-                className="absolute inset-0 h-full w-full"
+                className="absolute inset-0 h-full w-full bg-black"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
@@ -453,8 +453,8 @@ const simpleTableBlock = createReactBlockSpec(
       }
 
       return (
-        <div className="overflow-x-auto rounded-lg border border-gray-700">
-          <table className="min-w-full border-collapse text-sm">
+        <div className="overflow-x-auto rounded-lg border border-gray-700 bg-gray-950">
+          <table className="w-full border-collapse text-sm">
             <tbody>
               {tableData.map((row, rowIndex) => (
                 <tr key={`row-${rowIndex}`}>
@@ -465,10 +465,10 @@ const simpleTableBlock = createReactBlockSpec(
                           type="text"
                           value={cell}
                           onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
-                          className="h-[36px] w-full min-w-[120px] bg-transparent p-2 text-sm text-gray-100 outline-none"
+                          className="h-[36px] w-full bg-transparent p-2 text-sm text-gray-100 outline-none"
                         />
                       ) : (
-                        <div className="min-h-[36px] min-w-[120px] bg-black/10 p-2 text-gray-100">{cell}</div>
+                        <div className="min-h-[36px] p-2 text-gray-100">{cell}</div>
                       )}
                     </td>
                   ))}
@@ -512,7 +512,7 @@ const columnLayoutBlock = createReactBlockSpec(
               <option value="3">3</option>
             </select>
           </div>
-          <div className={`grid gap-2 ${columnCount === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+          <div className={`grid gap-2 ${columnCount === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
             {Array.from({ length: columnCount }).map((_, index) => (
               <div key={`col-${index}`} className="rounded-md border border-white/10 bg-black/20 p-2 text-sm text-gray-100">
                 {parts[index] || <span className="text-gray-500">{`Column ${index + 1}`}</span>}
