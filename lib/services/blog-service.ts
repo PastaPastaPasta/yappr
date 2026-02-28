@@ -61,15 +61,33 @@ class BlogService extends BaseDocumentService<Blog> {
 
   /**
    * Get all blogs on the platform (for discovery).
-   * Fetches in batches using cursor-based pagination.
-   * Note: This queries by $ownerId index, so we page through all owners.
+   * Pages through results until all blogs are fetched.
    */
-  async getAllBlogs(limit = 100): Promise<Blog[]> {
-    const result = await this.query({
-      orderBy: [['$createdAt', 'desc']],
-      limit,
-    })
-    return result.documents
+  async getAllBlogs(pageSize = 100): Promise<Blog[]> {
+    const allBlogs: Blog[] = []
+    let startAfter: string | undefined
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const result = await this.query({
+        orderBy: [['$createdAt', 'desc']],
+        limit: pageSize,
+        startAfter,
+      })
+
+      allBlogs.push(...result.documents)
+
+      // Stop if we got fewer than pageSize (last page)
+      if (result.documents.length < pageSize) {
+        break
+      }
+
+      // Use last document's ID as cursor for next page
+      const lastDoc = result.documents[result.documents.length - 1]
+      startAfter = lastDoc.id
+    }
+
+    return allBlogs
   }
 }
 

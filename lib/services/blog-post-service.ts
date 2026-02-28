@@ -152,19 +152,54 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   }
 
   /**
+   * Fetch posts from multiple blogs with concurrency limiting.
+   * Processes blogs in batches to avoid overwhelming the gateway.
+   */
+  private async fetchFromBlogs(
+    blogIds: string[],
+    perBlogLimit: number,
+    batchSize = 10
+  ): Promise<BlogPost[][]> {
+    const results: BlogPost[][] = []
+    for (let i = 0; i < blogIds.length; i += batchSize) {
+      const batch = blogIds.slice(i, i + batchSize)
+      const batchResults = await Promise.all(
+        batch.map(blogId =>
+          this.getPostsByBlog(blogId, { limit: perBlogLimit }).catch(() => [])
+        )
+      )
+      results.push(...batchResults)
+    }
+    return results
+  }
+
+  /**
+   * Fetch all posts from a blog using pagination.
+   */
+  private async getAllPostsFromBlog(blogId: string): Promise<BlogPost[]> {
+    const allPosts: BlogPost[] = []
+    let startAfter: string | undefined
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const page = await this.getPostsByBlog(blogId, { limit: 100, startAfter }).catch(() => [])
+      allPosts.push(...page)
+      if (page.length < 100) break
+      startAfter = page[page.length - 1].id
+    }
+
+    return allPosts
+  }
+
+  /**
    * Get recent blog posts across all blogs for discovery.
-   * Fetches latest posts per blog and merges client-side.
+   * Fetches enough posts per blog to ensure global recency, then merges.
    */
   async getRecentPosts(blogIds: string[], limit = 20): Promise<BlogPost[]> {
     if (blogIds.length === 0) return []
 
-    // Fetch a few recent posts per blog in parallel
-    const perBlogLimit = Math.max(3, Math.ceil(limit / blogIds.length))
-    const results = await Promise.all(
-      blogIds.map(blogId =>
-        this.getPostsByBlog(blogId, { limit: perBlogLimit }).catch(() => [])
-      )
-    )
+    // Fetch `limit` posts per blog to ensure we capture the true global most-recent
+    const results = await this.fetchFromBlogs(blogIds, limit)
 
     // Merge, sort by createdAt desc, and take top N
     return results
@@ -176,22 +211,25 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   /**
    * Search blog posts by title or subtitle text.
    * Since Dash Platform doesn't support full-text search,
-   * this fetches posts per blog and filters client-side.
+   * this fetches all posts per blog and filters client-side.
    */
   async searchPosts(blogIds: string[], query: string, limit = 20): Promise<BlogPost[]> {
     if (blogIds.length === 0 || !query.trim()) return []
 
     const lowerQuery = query.toLowerCase()
 
-    // Fetch posts from all blogs
-    const results = await Promise.all(
-      blogIds.map(blogId =>
-        this.getPostsByBlog(blogId, { limit: 50 }).catch(() => [])
+    // Fetch all posts from each blog (paginated) to avoid false negatives
+    const allResults: BlogPost[][] = []
+    for (let i = 0; i < blogIds.length; i += 10) {
+      const batch = blogIds.slice(i, i + 10)
+      const batchResults = await Promise.all(
+        batch.map(blogId => this.getAllPostsFromBlog(blogId).catch(() => []))
       )
-    )
+      allResults.push(...batchResults)
+    }
 
     // Filter by title, subtitle, or labels matching the query
-    return results
+    return allResults
       .flat()
       .filter(post => {
         const titleMatch = post.title?.toLowerCase().includes(lowerQuery)

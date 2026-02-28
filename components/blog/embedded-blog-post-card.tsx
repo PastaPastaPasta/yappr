@@ -42,7 +42,7 @@ function toExcerpt(post: EmbeddedBlogPostLike): string {
 }
 
 export function isEmbeddedBlogPostLike(post: Post): post is EmbeddedBlogPostLike {
-  return Boolean((post as EmbeddedBlogPostLike).__isBlogPostQuote || (post as EmbeddedBlogPostLike).title)
+  return Boolean((post as EmbeddedBlogPostLike).__isBlogPostQuote)
 }
 
 export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostCardProps) {

@@ -76,7 +76,7 @@ export default function ExplorePage() {
         const { dpnsService } = await import('@/lib/services/dpns-service')
         const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
-        const allBlogs = await blogService.getAllBlogs(50)
+        const allBlogs = await blogService.getAllBlogs()
         if (allBlogs.length === 0) {
           setRecentBlogPosts([])
           return
@@ -183,7 +183,7 @@ export default function ExplorePage() {
         const { dpnsService } = await import('@/lib/services/dpns-service')
         const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
-        const allBlogs = await blogService.getAllBlogs(50)
+        const allBlogs = await blogService.getAllBlogs()
         if (allBlogs.length > 0) {
           const blogMap = new Map(allBlogs.map(b => [b.id, b]))
           const blogIds = allBlogs.map(b => b.id)
@@ -221,6 +221,8 @@ export default function ExplorePage() {
         }
       } catch (error) {
         logger.error('Search failed:', error)
+        setSearchResults([])
+        setBlogSearchResults([])
       } finally {
         setIsSearching(false)
       }
