@@ -107,6 +107,10 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
   const addCustomLabel = () => {
     const trimmed = customLabel.trim()
     if (!trimmed) return
+    if (selectedLabels.includes(trimmed)) {
+      setCustomLabel('')
+      return
+    }
     setLabels(labelsToCsv([...selectedLabels, trimmed]))
     setCustomLabel('')
   }
@@ -326,6 +330,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
               ))}
               <button
                 type="button"
+                aria-label="Add labels"
                 onClick={() => setShowSettings(true)}
                 className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:text-gray-400"
               >
@@ -335,7 +340,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
           )}
 
           {/* Editor — the writing space */}
-          <div className="mt-6">
+          <div className="compose-canvas mt-6">
             <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
           </div>
         </div>

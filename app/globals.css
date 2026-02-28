@@ -81,8 +81,8 @@
   color: #e5e7eb;
 }
 
-/* Compose mode – comfortable writing typography */
-.bn-container [class*="bn-block-content"][data-content-type="paragraph"] {
+/* Compose canvas – comfortable writing typography */
+.compose-canvas .bn-container [class*="bn-block-content"][data-content-type="paragraph"] {
   font-size: 17px;
   line-height: 1.7;
 }

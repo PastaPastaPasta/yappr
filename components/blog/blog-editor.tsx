@@ -6,6 +6,7 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
+import { PhotoIcon } from '@heroicons/react/24/outline'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
@@ -22,7 +23,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     initialContent: (initialBlocks?.length ? initialBlocks : undefined) as never,
   })
 
-  const { upload, isUploading, error, clearError } = useImageUpload()
+  const { upload, isUploading, progress, error, clearError } = useImageUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const reportBytes = useCallback((nextBytes: number) => {
@@ -89,7 +90,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   return (
     <div>
-      {/* Hidden file input for image uploads */}
+      {/* Hidden file input for IPFS image uploads */}
       <input
         ref={fileInputRef}
         type="file"
@@ -99,12 +100,11 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         disabled={isUploading}
       />
 
-      {error && (
-        <p className="mb-2 text-sm text-red-400">{error}</p>
-      )}
-
-      {isUploading && (
-        <p className="mb-2 text-xs text-gray-500">Uploading image...</p>
+      {(error || isUploading) && (
+        <div className="mb-2 text-xs">
+          {error && <p className="text-red-400">{error}</p>}
+          {isUploading && <p className="text-gray-500">Uploading image... {progress}%</p>}
+        </div>
       )}
 
       <BlockNoteView
@@ -112,13 +112,25 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         theme="dark"
         onChange={publishChange}
         slashMenu={false}
-        formattingToolbar={true}
+        formattingToolbar
       >
         <SuggestionMenuController
           triggerCharacter="/"
           getItems={async (query) => getBlogSlashMenuItems(editor, query)}
         />
       </BlockNoteView>
+
+      {/* Subtle IPFS image upload action */}
+      <button
+        type="button"
+        aria-label="Upload IPFS image"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={isUploading}
+        className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
+      >
+        <PhotoIcon className="h-3.5 w-3.5" />
+        {isUploading ? `${progress}%` : 'Add image'}
+      </button>
     </div>
   )
 }
