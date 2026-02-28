@@ -113,3 +113,36 @@ export interface UsernameRegistrationResult {
   isContested: boolean
   error?: string
 }
+
+export interface Blog {
+  id: string
+  ownerId: string
+  createdAt: Date
+  updatedAt?: Date
+  $revision?: number
+  name: string
+  description?: string
+  headerImage?: string
+  avatar?: string
+  themeConfig?: string
+  commentsEnabledDefault?: boolean
+  labels?: string
+}
+
+export interface BlogPost {
+  id: string
+  ownerId: string
+  createdAt: Date
+  updatedAt?: Date
+  $revision?: number
+  blogId: string
+  title: string
+  subtitle?: string
+  content: unknown
+  compressedContent?: Uint8Array
+  coverImage?: string
+  labels?: string
+  commentsEnabled?: boolean
+  slug: string
+  publishedAt?: number
+}
