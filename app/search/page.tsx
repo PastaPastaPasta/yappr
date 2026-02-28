@@ -227,7 +227,7 @@ function SearchPageContent() {
     try {
       const { blogService, blogPostService } = await import('@/lib/services')
 
-      const allBlogs = await blogService.getAllBlogs(50)
+      const allBlogs = await blogService.getAllBlogs()
       if (allBlogs.length === 0) return []
 
       const blogMap = new Map(allBlogs.map(b => [b.id, b]))
@@ -413,13 +413,15 @@ function SearchPageContent() {
                 {blogPosts.length > 0 ? (
                   <div className="divide-y divide-gray-200 dark:divide-gray-800">
                     {blogPosts.map((post, index) => (
-                      <motion.div
+                      <motion.button
+                        type="button"
                         key={post.id}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: index * 0.05 }}
                         onClick={() => handleBlogPostClick(post)}
-                        className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left ${post.authorUsername && post.slug ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
+                        disabled={!post.authorUsername || !post.slug}
+                        className={`w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left ${post.authorUsername && post.slug ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
                       >
                         <div className="flex gap-3">
                           {post.coverImage && (
@@ -459,7 +461,7 @@ function SearchPageContent() {
                             )}
                           </div>
                         </div>
-                      </motion.div>
+                      </motion.button>
                     ))}
                   </div>
                 ) : (

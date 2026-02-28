@@ -11,6 +11,7 @@ export interface EmbeddedBlogPostLike extends Post {
   subtitle?: string
   slug?: string
   coverImage?: string
+  blogId?: string
   blogName?: string
   blogUsername?: string
   blogContent?: unknown
@@ -42,7 +43,11 @@ function toExcerpt(post: EmbeddedBlogPostLike): string {
 }
 
 export function isEmbeddedBlogPostLike(post: Post): post is EmbeddedBlogPostLike {
-  return Boolean((post as EmbeddedBlogPostLike).__isBlogPostQuote || (post as EmbeddedBlogPostLike).title)
+  const candidate = post as EmbeddedBlogPostLike
+  return Boolean(
+    candidate.__isBlogPostQuote ||
+    (candidate.blogId && candidate.slug && candidate.title)
+  )
 }
 
 export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostCardProps) {

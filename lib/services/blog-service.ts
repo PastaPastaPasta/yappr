@@ -65,11 +65,28 @@ class BlogService extends BaseDocumentService<Blog> {
    * Note: This queries by $ownerId index, so we page through all owners.
    */
   async getAllBlogs(limit = 100): Promise<Blog[]> {
-    const result = await this.query({
-      orderBy: [['$createdAt', 'desc']],
-      limit,
-    })
-    return result.documents
+    const blogs: Blog[] = []
+    const pageSize = Math.min(100, limit)
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const remaining = limit - blogs.length
+      if (remaining <= 0) break
+
+      const result = await this.query({
+        orderBy: [['$createdAt', 'desc']],
+        limit: Math.min(pageSize, remaining),
+        ...(blogs.length > 0 ? { startAfter: blogs[blogs.length - 1].id } : {}),
+      })
+
+      if (result.documents.length === 0) break
+      blogs.push(...result.documents)
+
+      // If we got fewer than requested, no more pages
+      if (result.documents.length < Math.min(pageSize, remaining)) break
+    }
+
+    return blogs
   }
 }
 

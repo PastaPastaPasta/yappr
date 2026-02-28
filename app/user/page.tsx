@@ -192,7 +192,12 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
     return [...posts, ...convertedReplies]
   }
 
-  const blogPosts = (await Promise.all(remainingIds.map(id => blogPostService.getPost(id))))
+  const blogPostResults = await Promise.allSettled(
+    remainingIds.map(id => blogPostService.getPost(id))
+  )
+  const blogPosts = blogPostResults
+    .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
+    .map(r => r.value)
     .filter((post): post is BlogPost => Boolean(post))
 
   const convertedBlogPosts: Post[] = await Promise.all(blogPosts.map(async (blogPost) => {
@@ -449,7 +454,7 @@ function UserProfileContent() {
 
           if (ownerBlogs.length > 0) {
             const blogsWithCounts = await Promise.all(ownerBlogs.map(async (blog) => {
-              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
+              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 1000 })
               return {
                 id: blog.id,
                 name: blog.name,
