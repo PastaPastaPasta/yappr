@@ -21,7 +21,7 @@ interface BlogEditorProps {
 export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEditorProps) {
   const editor = useCreateBlockNote({
     schema: blogBlockNoteSchema,
-    initialContent: (initialBlocks || undefined) as never,
+    initialContent: (initialBlocks?.length ? initialBlocks : undefined) as never,
   })
 
   const { upload, isUploading, progress, error, clearError } = useImageUpload()
@@ -72,6 +72,8 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         'after'
       )
       publishChange()
+    } catch {
+      // Error state is already set by useImageUpload hook and displayed in the UI.
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
