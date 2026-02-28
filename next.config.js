@@ -79,7 +79,7 @@ const nextConfig = {
               "worker-src 'self' blob:",
               "child-src 'self' blob:",
               "media-src 'self' https: blob:",
-              "frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com"
+              "frame-src 'self' blob: https:"
             ].join('; ')
           },
           // CRITICAL: These headers are required for WASM to work
