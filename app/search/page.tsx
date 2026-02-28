@@ -274,7 +274,7 @@ function SearchPageContent() {
 
   const handleBlogPostClick = (post: BlogPostResult) => {
     if (post.authorUsername && post.slug) {
-      router.push(`/blog?user=${encodeURIComponent(post.authorUsername)}&post=${encodeURIComponent(post.slug)}`)
+      router.push(`/blog?user=${encodeURIComponent(post.authorUsername)}&blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`)
     }
   }
 

@@ -5,17 +5,7 @@ import type { Post } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 
-export interface EmbeddedBlogPostLike extends Post {
-  __isBlogPostQuote?: boolean
-  title?: string
-  subtitle?: string
-  slug?: string
-  coverImage?: string
-  blogId?: string
-  blogName?: string
-  blogUsername?: string
-  blogContent?: unknown
-}
+export type EmbeddedBlogPostLike = Post
 
 interface EmbeddedBlogPostCardProps {
   post: EmbeddedBlogPostLike
@@ -43,17 +33,16 @@ function toExcerpt(post: EmbeddedBlogPostLike): string {
 }
 
 export function isEmbeddedBlogPostLike(post: Post): post is EmbeddedBlogPostLike {
-  const candidate = post as EmbeddedBlogPostLike
   return Boolean(
-    candidate.__isBlogPostQuote ||
-    (candidate.blogId && candidate.slug && candidate.title)
+    post.__isBlogPostQuote ||
+    (post.blogId && post.slug && post.title)
   )
 }
 
 export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostCardProps) {
   const username = post.blogUsername || post.author.username
   const href = username && post.slug
-    ? `/blog?user=${encodeURIComponent(username)}&post=${encodeURIComponent(post.slug)}`
+    ? `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(post.blogId || '')}&post=${encodeURIComponent(post.slug)}`
     : '#'
 
   return (

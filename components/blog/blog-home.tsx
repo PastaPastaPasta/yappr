@@ -118,7 +118,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
         <div className="space-y-3">
           {pagedPosts.map((post) => {
             const excerpt = extractText(post.content).slice(0, 200)
-            const href = `/blog?user=${encodeURIComponent(username)}&post=${encodeURIComponent(post.slug)}`
+            const href = `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
 
             return (
               <Link key={post.id} href={href} className="block rounded-xl border border-white/15 bg-black/20 p-4 transition hover:border-white/35">

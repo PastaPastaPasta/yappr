@@ -111,7 +111,7 @@ export function BlogDiscovery() {
         <div className="space-y-2">
           {filtered.map((blog) => {
             const href = blog.username
-              ? `/blog?user=${encodeURIComponent(blog.username)}`
+              ? `/blog?user=${encodeURIComponent(blog.username)}&blog=${encodeURIComponent(blog.id)}`
               : null
 
             const card = (

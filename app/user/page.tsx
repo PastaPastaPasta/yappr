@@ -202,16 +202,25 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
 
   const convertedBlogPosts: Post[] = await Promise.all(blogPosts.map(async (blogPost) => {
     const [blog, username, profile] = await Promise.all([
-      blogService.getBlog(blogPost.blogId).catch(() => null),
-      dpnsService.resolveUsername(blogPost.ownerId).catch(() => null),
-      unifiedProfileService.getProfile(blogPost.ownerId).catch(() => null),
+      blogService.getBlog(blogPost.blogId).catch((err) => {
+        logger.warn('Failed to load quoted blog:', err)
+        return null
+      }),
+      dpnsService.resolveUsername(blogPost.ownerId).catch((err) => {
+        logger.warn('Failed to resolve quoted blog username:', err)
+        return null
+      }),
+      unifiedProfileService.getProfile(blogPost.ownerId).catch((err) => {
+        logger.warn('Failed to load quoted blog profile:', err)
+        return null
+      }),
     ])
 
     return {
       id: blogPost.id,
       author: {
         id: blogPost.ownerId,
-        username: username || undefined,
+        username: username || '',
         displayName: profile?.displayName || blog?.name || 'Blog author',
         avatar: profile?.avatar || blog?.avatar || '',
         followers: 0,
@@ -229,18 +238,16 @@ async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
       liked: false,
       reposted: false,
       bookmarked: false,
-      ...( {
-        __isBlogPostQuote: true,
-        title: blogPost.title,
-        subtitle: blogPost.subtitle,
-        coverImage: blogPost.coverImage,
-        slug: blogPost.slug,
-        blogId: blogPost.blogId,
-        blogName: blog?.name,
-        blogUsername: username || undefined,
-        blogContent: blogPost.content,
-      } as Record<string, unknown>),
-    } as Post
+      __isBlogPostQuote: true,
+      title: blogPost.title,
+      subtitle: blogPost.subtitle,
+      coverImage: blogPost.coverImage,
+      slug: blogPost.slug,
+      blogId: blogPost.blogId,
+      blogName: blog?.name,
+      blogUsername: username || undefined,
+      blogContent: blogPost.content,
+    }
   }))
 
   return [...posts, ...convertedReplies, ...convertedBlogPosts]
@@ -1864,7 +1871,7 @@ function UserProfileContent() {
                       disabled={!username}
                       onClick={() => {
                         if (!username) return
-                        router.push(`/blog?user=${encodeURIComponent(username)}`)
+                        router.push(`/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}`)
                       }}
                       className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     >

@@ -29,6 +29,7 @@ function BlogPageContent() {
   const { user } = useAuth()
 
   const usernameParam = searchParams.get('user')
+  const blogIdParam = searchParams.get('blog')
   const postSlugParam = searchParams.get('post')
 
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
@@ -63,19 +64,24 @@ function BlogPageContent() {
           return
         }
 
-        const blogs = await blogService.getBlogsByOwner(ownerId)
-        const primaryBlog = blogs[0]
-        if (!primaryBlog) {
+        let blog: Blog | null = null
+        if (blogIdParam) {
+          blog = await blogService.getBlog(blogIdParam)
+        } else {
+          const blogs = await blogService.getBlogsByOwner(ownerId)
+          blog = blogs[0] || null
+        }
+        if (!blog) {
           if (cancelled) return
           setError('No blog found for this user')
           return
         }
 
         if (cancelled) return
-        setViewBlog(primaryBlog)
+        setViewBlog(blog)
 
         if (postSlugParam) {
-          const post = await blogPostService.getPostBySlug(primaryBlog.id, postSlugParam)
+          const post = await blogPostService.getPostBySlug(blog.id, postSlugParam)
           if (!post) {
             if (cancelled) return
             setError('Post not found')
@@ -107,7 +113,7 @@ function BlogPageContent() {
     return () => {
       cancelled = true
     }
-  }, [postSlugParam, usernameParam])
+  }, [blogIdParam, postSlugParam, usernameParam])
 
   useEffect(() => {
     let cancelled = false
@@ -298,7 +304,7 @@ function BlogPageContent() {
                         <button
                           type="button"
                           className="min-w-0 flex-1 text-left"
-                          onClick={() => router.push(`/blog?user=${encodeURIComponent(user.dpnsUsername || '')}&post=${encodeURIComponent(post.slug)}`)}
+                          onClick={() => router.push(`/blog?user=${encodeURIComponent(user.dpnsUsername || '')}&blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`)}
                         >
                           <div className="flex items-center gap-2">
                             <p className="truncate font-medium text-gray-100 group-hover:text-white transition-colors">{post.title}</p>

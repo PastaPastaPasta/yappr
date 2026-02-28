@@ -32,7 +32,7 @@ export function generateBlogPostMeta(post: BlogPost, blog: Blog, username: strin
   const descriptionSource = post.subtitle?.trim() || extractText(post.content).trim()
   const description = truncate(descriptionSource || `${blog.name} by @${username}`, 160)
   const image = post.coverImage || blog.headerImage || blog.avatar || `${baseUrl}/og-default.png`
-  const url = `${baseUrl}/blog?user=${encodeURIComponent(username)}&post=${encodeURIComponent(post.slug)}`
+  const url = `${baseUrl}/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
 
   return {
     title,
@@ -56,7 +56,7 @@ export function generateBlogPostMeta(post: BlogPost, blog: Blog, username: strin
 export function generateArticleJsonLd(post: BlogPost, blog: Blog, username: string): Record<string, unknown> {
   const baseUrl = resolveBaseUrl()
   const description = post.subtitle?.trim() || truncate(extractText(post.content).trim(), 160)
-  const url = `${baseUrl}/blog?user=${encodeURIComponent(username)}&post=${encodeURIComponent(post.slug)}`
+  const url = `${baseUrl}/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
   const image = post.coverImage || blog.headerImage || blog.avatar
 
   return {

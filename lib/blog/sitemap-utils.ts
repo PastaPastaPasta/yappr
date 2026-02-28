@@ -3,12 +3,12 @@ import { escapeXml } from '@/lib/blog/content-utils'
 
 export function generateBlogSitemap(
   posts: BlogPost[],
-  _blog: Blog,
+  blog: Blog,
   username: string,
   baseUrl: string
 ): string {
   const normalizedBase = baseUrl.replace(/\/$/, '')
-  const blogUrl = `${normalizedBase}/blog?user=${encodeURIComponent(username)}`
+  const blogUrl = `${normalizedBase}/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}`
   const latestPostDate = posts.length > 0
     ? new Date(Math.max(...posts.map((p) => (p.updatedAt || p.createdAt).getTime()))).toISOString()
     : new Date().toISOString()

@@ -92,7 +92,7 @@ function EmbedPageContent() {
   const viewPath = useMemo(() => {
     if (!state.post || !state.author || state.author === 'unknown') return '/blog'
     const username = state.author.replace(/\.dash$/i, '')
-    return `/blog?user=${encodeURIComponent(username)}&post=${encodeURIComponent(state.post.slug)}`
+    return `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(state.post.blogId)}&post=${encodeURIComponent(state.post.slug)}`
   }, [state.author, state.post])
 
   const createdLabel = state.post?.createdAt.toLocaleDateString() || ''
