@@ -73,6 +73,7 @@ class BlogService extends BaseDocumentService<Blog> {
   async getAllBlogs(limit = 100): Promise<Blog[]> {
     const blogs: Blog[] = []
     const pageSize = Math.min(100, limit)
+    const seenBlogIds = new Set<string>()
     let lastCreatedAt: number | null = null
 
     // eslint-disable-next-line no-constant-condition
@@ -80,18 +81,38 @@ class BlogService extends BaseDocumentService<Blog> {
       const remaining = limit - blogs.length
       if (remaining <= 0) break
 
-      const result = await this.query({
+      const queryOptions: QueryOptions = {
         orderBy: [['$createdAt', 'desc']],
         limit: Math.min(pageSize, remaining),
-        ...(lastCreatedAt !== null ? { where: [['$createdAt', '<', lastCreatedAt]] } : {}),
-      })
+        ...(lastCreatedAt !== null ? { where: [['$createdAt', '<=', lastCreatedAt]] } : {}),
+      }
+
+      const result = await this.query(queryOptions)
 
       if (result.documents.length === 0) break
-      blogs.push(...result.documents)
+
+      const newBlogs = result.documents.filter((blog) => {
+        if (seenBlogIds.has(blog.id)) return false
+        seenBlogIds.add(blog.id)
+        return true
+      })
+
+      if (newBlogs.length === 0) {
+        break
+      }
+
+      const nextBlogs = newBlogs.slice(0, remaining)
+      blogs.push(...nextBlogs)
       lastCreatedAt = result.documents[result.documents.length - 1].createdAt.getTime()
 
       // If we got fewer than requested, no more pages
-      if (result.documents.length < Math.min(pageSize, remaining)) break
+      if (result.documents.length < Math.min(pageSize, remaining)) {
+        break
+      }
+
+      if (remaining <= nextBlogs.length) {
+        break
+      }
     }
 
     return blogs

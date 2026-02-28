@@ -642,9 +642,18 @@ class PostService extends BaseDocumentService<Post> {
     const convertedBlogPosts: Post[] = await Promise.all(
       blogPosts.map(async (blogPost) => {
         const [blog, username, profile] = await Promise.all([
-          blogService.getBlog(blogPost.blogId).catch(() => null),
-          dpnsService.resolveUsername(blogPost.ownerId).catch(() => null),
-          unifiedProfileService.getProfile(blogPost.ownerId).catch(() => null),
+          blogService.getBlog(blogPost.blogId).catch((err) => {
+            logger.warn('Failed to load quoted blog:', err);
+            return null;
+          }),
+          dpnsService.resolveUsername(blogPost.ownerId).catch((err) => {
+            logger.warn('Failed to resolve quoted blog username:', err);
+            return null;
+          }),
+          unifiedProfileService.getProfile(blogPost.ownerId).catch((err) => {
+            logger.warn('Failed to load quoted blog profile:', err);
+            return null;
+          }),
         ]);
 
         const blogText = blogPost.subtitle || blogPost.title;
@@ -653,7 +662,7 @@ class PostService extends BaseDocumentService<Post> {
           id: blogPost.id,
           author: {
             id: blogPost.ownerId,
-            username: username || undefined,
+            username: username || '',
             displayName: profile?.displayName || blog?.name || 'Blog author',
             avatar: profile?.avatar || blog?.avatar || '',
             followers: 0,
@@ -671,18 +680,16 @@ class PostService extends BaseDocumentService<Post> {
           liked: false,
           reposted: false,
           bookmarked: false,
-          ...( {
-            __isBlogPostQuote: true,
-            title: blogPost.title,
-            subtitle: blogPost.subtitle,
-            coverImage: blogPost.coverImage,
-            slug: blogPost.slug,
-            blogId: blogPost.blogId,
-            blogName: blog?.name,
-            blogUsername: username || undefined,
-            blogContent: blogPost.content,
-          } as Record<string, unknown>),
-        } as Post;
+          __isBlogPostQuote: true,
+          title: blogPost.title,
+          subtitle: blogPost.subtitle,
+          coverImage: blogPost.coverImage,
+          slug: blogPost.slug,
+          blogId: blogPost.blogId,
+          blogName: blog?.name,
+          blogUsername: username || undefined,
+          blogContent: blogPost.content,
+        };
       })
     );
 
