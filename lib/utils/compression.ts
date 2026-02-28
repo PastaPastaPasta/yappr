@@ -7,9 +7,13 @@ export function compressContent(json: unknown): Uint8Array {
 }
 
 export function decompressContent(compressed: Uint8Array): unknown {
-  const inflated = unzlibSync(compressed)
-  const decoded = new TextDecoder().decode(inflated)
-  return JSON.parse(decoded)
+  try {
+    const inflated = unzlibSync(compressed)
+    const decoded = new TextDecoder().decode(inflated)
+    return JSON.parse(decoded)
+  } catch {
+    throw new Error('Failed to decompress content: invalid or corrupted data')
+  }
 }
 
 export function getCompressedSize(json: unknown): number {

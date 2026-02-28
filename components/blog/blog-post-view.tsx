@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { format } from 'date-fns'
+import type { PartialBlock } from '@blocknote/core'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogViewer } from './blog-viewer'
@@ -12,7 +14,7 @@ interface BlogPostViewProps {
 }
 
 export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
-  const blocks = Array.isArray(post.content) ? post.content : []
+  const blocks = (Array.isArray(post.content) ? post.content : []) as PartialBlock[]
 
   return (
     <article className="space-y-4 rounded-xl border border-gray-800 bg-neutral-950 p-5">
@@ -28,7 +30,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         <h1 className="text-3xl font-bold">{post.title}</h1>
         {post.subtitle && <p className="mt-1 text-lg text-gray-400">{post.subtitle}</p>}
         <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
-          <span>{post.createdAt.toLocaleDateString()}</span>
+          <span>{format(post.createdAt, 'MMM d, yyyy')}</span>
           <span>•</span>
           <span>{blog.name}</span>
           {post.labels && (

@@ -21,6 +21,7 @@ function BlogPageContent() {
   const { user } = useAuth()
 
   const usernameParam = searchParams.get('user')
+  const blogIdParam = searchParams.get('blog')
   const postSlugParam = searchParams.get('post')
 
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
@@ -51,16 +52,18 @@ function BlogPageContent() {
         }
 
         const blogs = await blogService.getBlogsByOwner(ownerId)
-        const primaryBlog = blogs[0]
-        if (!primaryBlog) {
+        const targetBlog = blogIdParam
+          ? blogs.find((b) => b.id === blogIdParam) ?? null
+          : blogs[0] ?? null
+        if (!targetBlog) {
           setError('No blog found for this user')
           return
         }
 
-        setViewBlog(primaryBlog)
+        setViewBlog(targetBlog)
 
         if (postSlugParam) {
-          const post = await blogPostService.getPostBySlug(primaryBlog.id, postSlugParam)
+          const post = await blogPostService.getPostBySlug(targetBlog.id, postSlugParam)
           if (!post) {
             setError('Post not found')
             setViewPost(null)
@@ -81,7 +84,7 @@ function BlogPageContent() {
       setLoading(false)
       setError('Failed to load blog')
     })
-  }, [postSlugParam, usernameParam])
+  }, [blogIdParam, postSlugParam, usernameParam])
 
   useEffect(() => {
     if (!selectedBlog || !user?.identityId) return

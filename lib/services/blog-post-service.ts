@@ -72,6 +72,10 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   }
 
   async createPost(ownerId: string, data: CreateBlogPostData): Promise<BlogPost> {
+    if (data.content == null || (Array.isArray(data.content) && data.content.length === 0)) {
+      throw new Error('Content cannot be empty')
+    }
+
     const compressed = compressContent(data.content)
     if (compressed.byteLength > BLOG_POST_SIZE_LIMIT) {
       throw new Error(`Compressed content exceeds ${BLOG_POST_SIZE_LIMIT} bytes`)
@@ -122,6 +126,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const blogIdBytes = requireIdentifierBytes(blogId, 'blogId')
     const result = await this.query({
       where: [['blogId', '==', blogIdBytes], ['slug', '==', slug]],
+      // orderBy required by Dash Platform query engine to match the blogAndSlug index
       orderBy: [['blogId', 'asc'], ['slug', 'asc']],
       limit: 1,
     })

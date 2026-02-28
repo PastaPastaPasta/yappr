@@ -17,6 +17,7 @@ interface BlogEditorProps {
 
 export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
   const editor = useCreateBlockNote({
+    // Cast needed: BlockNote's internal types for initialContent are overly strict
     initialContent: (initialBlocks || undefined) as never,
   })
 
@@ -64,6 +65,8 @@ export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
         'after'
       )
       publishChange()
+    } catch {
+      // Error is already captured by useImageUpload hook and displayed via error state
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
