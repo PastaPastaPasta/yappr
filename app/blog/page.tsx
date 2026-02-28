@@ -10,6 +10,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { blogService, blogPostService } from '@/lib/services'
 import type { Blog, BlogPost } from '@/lib/types'
+import { BlogDiscovery } from '@/components/blog/blog-discovery'
 import { MyBlogsList } from '@/components/blog/my-blogs-list'
 import { BlogSettings } from '@/components/blog/blog-settings'
 import { ComposePost } from '@/components/blog/compose-post'
@@ -146,12 +147,7 @@ function BlogPageContent() {
     }
 
     if (!user) {
-      return (
-        <div className="p-8 text-center">
-          <h1 className="text-2xl font-bold">Yappr Blog</h1>
-          <p className="mt-2 text-gray-400">Publish long-form posts with IPFS media and BlockNote editing.</p>
-        </div>
-      )
+      return <BlogDiscovery />
     }
 
     if (!selectedBlog) {
