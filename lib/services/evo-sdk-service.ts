@@ -129,7 +129,10 @@ class EvoSdkService {
     // Fetch all contracts in parallel
     const results = await Promise.allSettled(
       contractsToFetch.map(async ({ id, name }) => {
-        await this.sdk!.contracts.fetch(id);
+        const contract = await this.sdk!.contracts.fetch(id);
+        if (!contract) {
+          throw new Error(`Contract ${name} (${id}) not found on network`);
+        }
         return name;
       })
     );
@@ -141,7 +144,7 @@ class EvoSdkService {
       if (result.status === 'fulfilled') {
         logger.info(`EvoSdkService: ${contract.name} contract cached`);
       } else {
-        logger.info(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
+        logger.warn(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
       }
     }
   }
