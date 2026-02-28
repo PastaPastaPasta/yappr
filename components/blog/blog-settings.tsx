@@ -1,12 +1,15 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
-import { blogService } from '@/lib/services'
+import { blogPostService, blogService } from '@/lib/services'
+import { downloadTextFile, labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
+import { generateBlogSitemap } from '@/lib/blog/sitemap-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { ThemeEditor } from './theme-editor'
@@ -14,23 +17,24 @@ import { ThemeEditor } from './theme-editor'
 interface BlogSettingsProps {
   blog: Blog
   ownerId: string
+  username?: string
   onUpdated?: (blog: Blog) => void
 }
 
-export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
+export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSettingsProps) {
   const [name, setName] = useState(blog.name)
   const [description, setDescription] = useState(blog.description || '')
   const [avatar, setAvatar] = useState(blog.avatar || '')
   const [headerImage, setHeaderImage] = useState(blog.headerImage || '')
   const [commentsEnabledDefault, setCommentsEnabledDefault] = useState(Boolean(blog.commentsEnabledDefault))
   const [labels, setLabels] = useState(blog.labels || '')
+  const [newLabel, setNewLabel] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isSavingTheme, setIsSavingTheme] = useState(false)
+  const [isSavingLabels, setIsSavingLabels] = useState(false)
+  const [isDownloadingSitemap, setIsDownloadingSitemap] = useState(false)
 
-  const parsedLabels = useMemo(
-    () => labels.split(',').map((item) => item.trim()).filter(Boolean),
-    [labels]
-  )
+  const parsedLabels = useMemo(() => parseLabels(labels), [labels])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -53,6 +57,40 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
     }
   }
 
+  const persistLabels = async (nextLabels: string[]) => {
+    setIsSavingLabels(true)
+    const csv = labelsToCsv(nextLabels)
+    setLabels(csv)
+
+    try {
+      const updated = await blogService.updateBlog(blog.id, ownerId, {
+        labels: csv || undefined,
+      })
+      onUpdated?.(updated)
+      toast.success('Labels updated')
+    } catch {
+      toast.error('Failed to update labels')
+    } finally {
+      setIsSavingLabels(false)
+    }
+  }
+
+  const addLabel = async () => {
+    const trimmed = newLabel.trim()
+    if (!trimmed) return
+    if (parsedLabels.includes(trimmed)) {
+      setNewLabel('')
+      return
+    }
+
+    await persistLabels([...parsedLabels, trimmed])
+    setNewLabel('')
+  }
+
+  const removeLabel = async (label: string) => {
+    await persistLabels(parsedLabels.filter((item) => item !== label))
+  }
+
   const handleThemeSave = async (themeConfig: string) => {
     setIsSavingTheme(true)
     try {
@@ -65,6 +103,22 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
       toast.error('Failed to update theme')
     } finally {
       setIsSavingTheme(false)
+    }
+  }
+
+  const handleDownloadSitemap = async () => {
+    setIsDownloadingSitemap(true)
+    try {
+      const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 500 })
+      const baseUrl = window.location.origin
+      const fallbackUsername = new URLSearchParams(window.location.search).get('user') || 'blog'
+      const xml = generateBlogSitemap(posts, blog, username || fallbackUsername, baseUrl)
+      downloadTextFile(`${blog.name.toLowerCase().replace(/\s+/g, '-')}-sitemap.xml`, xml, 'application/xml')
+      toast.success('Sitemap generated')
+    } catch {
+      toast.error('Failed to generate sitemap')
+    } finally {
+      setIsDownloadingSitemap(false)
     }
   }
 
@@ -99,16 +153,55 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         />
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-300">Labels</label>
-        <Input
-          value={labels}
-          onChange={(e) => setLabels(e.target.value)}
-          maxLength={1024}
-          placeholder="tech, web3, tutorial"
-        />
-        <p className="mt-1 text-xs text-gray-500">Comma-separated taxonomy for post labels.</p>
-      </div>
+      <section className="space-y-3 rounded-lg border border-gray-800 p-3">
+        <div>
+          <h3 className="text-sm font-medium text-gray-200">Label Management</h3>
+          <p className="text-xs text-gray-500">Manage blog taxonomy labels used for post filtering and selection.</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {parsedLabels.length === 0 ? (
+            <p className="text-xs text-gray-500">No labels yet.</p>
+          ) : (
+            parsedLabels.map((label) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => removeLabel(label)}
+                aria-label={`Remove label: ${label}`}
+                disabled={isSavingLabels}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-900 px-2.5 py-1 text-xs text-gray-200 hover:bg-gray-800 disabled:opacity-50"
+              >
+                {label}
+                <XMarkIcon className="h-3 w-3" />
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <Input
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            maxLength={40}
+            placeholder="Add new label"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                addLabel().catch(() => {})
+              }
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => addLabel().catch(() => {})}
+            disabled={isSavingLabels || !newLabel.trim()}
+          >
+            Add
+          </Button>
+        </div>
+      </section>
 
       <div className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
         <div>
@@ -118,7 +211,10 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         <Switch checked={commentsEnabledDefault} onCheckedChange={setCommentsEnabledDefault} />
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" onClick={handleDownloadSitemap} disabled={isDownloadingSitemap}>
+          {isDownloadingSitemap ? 'Generating sitemap...' : 'Download Sitemap'}
+        </Button>
         <Button onClick={handleSave} disabled={isSaving || !name.trim()}>{isSaving ? 'Saving...' : 'Save settings'}</Button>
       </div>
 

@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { blogPostService } from '@/lib/services'
+import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
+import { Rss } from 'lucide-react'
+import { blogCommentService, blogPostService } from '@/lib/services'
+import { downloadTextFile, extractText, parseLabels } from '@/lib/blog/content-utils'
+import { generateBlogRSS } from '@/lib/blog/rss-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
@@ -12,27 +16,12 @@ interface BlogHomeProps {
   username: string
 }
 
-function extractText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => extractText(block))
-      .filter(Boolean)
-      .join(' ')
-  }
-  if (content && typeof content === 'object') {
-    return Object.values(content as Record<string, unknown>)
-      .map((value) => extractText(value))
-      .filter(Boolean)
-      .join(' ')
-  }
-  return ''
-}
-
 export function BlogHome({ blog, username }: BlogHomeProps) {
   const [posts, setPosts] = useState<BlogPost[]>([])
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
+  const [activeLabel, setActiveLabel] = useState<string>('All')
   const pageSize = 10
 
   useEffect(() => {
@@ -41,6 +30,19 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       try {
         const result = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
         setPosts(result)
+
+        const counts = await Promise.all(
+          result.map(async (post) => {
+            try {
+              const comments = await blogCommentService.getCommentsByPost(post.id, { limit: 100 })
+              return [post.id, comments.length] as const
+            } catch {
+              return [post.id, 0] as const
+            }
+          })
+        )
+
+        setCommentCounts(Object.fromEntries(counts))
       } finally {
         setLoading(false)
       }
@@ -49,8 +51,44 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
     load().catch(() => setLoading(false))
   }, [blog.id])
 
-  const pagedPosts = useMemo(() => posts.slice(0, page * pageSize), [page, posts])
-  const hasMore = pagedPosts.length < posts.length
+  const blogLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
+
+  const filteredPosts = useMemo(() => {
+    if (activeLabel === 'All') return posts
+    return posts.filter((post) => parseLabels(post.labels).includes(activeLabel))
+  }, [activeLabel, posts])
+
+  const pagedPosts = useMemo(() => filteredPosts.slice(0, page * pageSize), [filteredPosts, page])
+  const hasMore = pagedPosts.length < filteredPosts.length
+
+  useEffect(() => {
+    setPage(1)
+  }, [activeLabel])
+
+  useEffect(() => {
+    const baseUrl = window.location.origin
+    const blogUrl = `${baseUrl}/blog?user=${encodeURIComponent(username)}`
+    const href = `${blogUrl}&feed=rss.xml`
+
+    const existing = document.head.querySelector<HTMLLinkElement>('link[data-blog-rss="true"]')
+    const link = existing || document.createElement('link')
+
+    link.setAttribute('data-blog-rss', 'true')
+    link.rel = 'alternate'
+    link.type = 'application/rss+xml'
+    link.title = `${blog.name} RSS`
+    link.href = href
+
+    if (!existing) {
+      document.head.appendChild(link)
+    }
+
+    return () => {
+      if (link.parentNode) {
+        link.parentNode.removeChild(link)
+      }
+    }
+  }, [blog.name, username])
 
   return (
     <BlogThemeProvider
@@ -71,6 +109,48 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
         </div>
       )}
     >
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveLabel('All')}
+          aria-pressed={activeLabel === 'All'}
+          className={`rounded-full border px-3 py-1 text-xs transition ${
+            activeLabel === 'All'
+              ? 'border-white/20 bg-white/20 text-white'
+              : 'border-white/20 bg-transparent text-[var(--blog-text)]/80 hover:bg-white/10'
+          }`}
+        >
+          All
+        </button>
+        {blogLabels.map((label) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => setActiveLabel(label)}
+            aria-pressed={activeLabel === label}
+            className={`rounded-full border px-3 py-1 text-xs transition ${
+              activeLabel === label
+                ? 'border-white/20 bg-white/20 text-white'
+                : 'border-white/20 bg-transparent text-[var(--blog-text)]/80 hover:bg-white/10'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            const baseUrl = window.location.origin
+            const xml = generateBlogRSS(posts, blog, username, baseUrl)
+            downloadTextFile(`${username}-feed.xml`, xml, 'application/rss+xml')
+          }}
+          className="ml-auto inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 text-xs text-[var(--blog-text)]/80 hover:bg-white/10"
+        >
+          <Rss className="h-3.5 w-3.5" />
+          RSS
+        </button>
+      </div>
+
       {loading ? (
         <p className="text-sm text-[var(--blog-text)]/70">Loading posts...</p>
       ) : pagedPosts.length === 0 ? (
@@ -94,6 +174,10 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
                 <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blog-text)]/60">
                   <span>{post.createdAt.toLocaleDateString()}</span>
                   {post.labels && <span>• {post.labels}</span>}
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
+                    <ChatBubbleLeftIcon className="h-3 w-3" />
+                    {commentCounts[post.id] || 0}
+                  </span>
                 </div>
               </Link>
             )
