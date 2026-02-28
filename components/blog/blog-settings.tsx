@@ -202,7 +202,6 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
         </Button>
         <Button onClick={handleSave} disabled={isSaving || !name.trim()}>{isSaving ? 'Saving...' : 'Save settings'}</Button>
       </div>
-
     </div>
   )
 }

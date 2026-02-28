@@ -192,6 +192,7 @@ function BlogPageContent() {
             onSelectBlog={(blog) => {
               setSelectedBlog(blog)
               setEditingPostId(null)
+              setActiveTab('posts')
             }}
           />
         </div>
@@ -282,8 +283,8 @@ function BlogPageContent() {
                           <p className="text-xs text-gray-500">{post.createdAt.toLocaleDateString()}</p>
                           {post.labels && (
                             <div className="mt-1 flex flex-wrap gap-1">
-                              {post.labels.split(',').map((label) => (
-                                <span key={label} className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
+                              {post.labels.split(',').map((label, i) => (
+                                <span key={`${label}-${i}`} className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
                                   {label.trim()}
                                 </span>
                               ))}
