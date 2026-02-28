@@ -56,7 +56,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   }
 
   async getCommentsByPost(blogPostId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
-    const blogPostIdBytes = requireIdentifierBytes(blogPostId, 'blogPostId')
+    const blogPostIdBytes = Array.from(requireIdentifierBytes(blogPostId, 'blogPostId'))
     const queryOptions: QueryOptions = {
       where: [['blogPostId', '==', blogPostIdBytes]],
       orderBy: [['$createdAt', 'asc']],

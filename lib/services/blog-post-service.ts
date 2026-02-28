@@ -124,7 +124,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   }
 
   async getPostBySlug(blogId: string, slug: string): Promise<BlogPost | null> {
-    const blogIdBytes = requireIdentifierBytes(blogId, 'blogId')
+    const blogIdBytes = Array.from(requireIdentifierBytes(blogId, 'blogId'))
     const result = await this.query({
       where: [['blogId', '==', blogIdBytes], ['slug', '==', slug]],
       orderBy: [['blogId', 'asc'], ['slug', 'asc']],
@@ -134,7 +134,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   }
 
   async getPostsByBlog(blogId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
-    const blogIdBytes = requireIdentifierBytes(blogId, 'blogId')
+    const blogIdBytes = Array.from(requireIdentifierBytes(blogId, 'blogId'))
     const queryOptions: QueryOptions = {
       where: [['blogId', '==', blogIdBytes]],
       orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']],
@@ -179,6 +179,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   /**
    * Search blog posts by title or subtitle text.
+   * Phase 1 limitation: this fetches up to 100 posts per blog and filters client-side.
    * Since Dash Platform doesn't support full-text search,
    * this fetches posts per blog and filters client-side.
    */
