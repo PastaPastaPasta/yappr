@@ -67,25 +67,7 @@ const nextConfig = {
       {
         source: '/:path*',
         headers: [
-          {
-            // Single global CSP — per-route splitting doesn't work in a SPA
-            // because client-side navigation keeps the CSP from the initial page load.
-            // Blog features (Google Fonts, arbitrary embeds) require the permissive
-            // directives to be available globally.
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "img-src 'self' data: https: blob:",
-              "font-src 'self' https://fonts.gstatic.com",
-              "connect-src 'self' https: wss: https://44.240.98.102:1443",
-              "worker-src 'self' blob:",
-              "child-src 'self' blob:",
-              "media-src 'self' https: blob:",
-              "frame-src 'self' blob: https:",
-            ].join('; ')
-          },
+          // CSP is set via <meta> tag in app/layout.tsx so it works in static exports.
           // CRITICAL: These headers are required for WASM to work
           // Using 'credentialless' instead of 'require-corp' to allow cross-origin images
           { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
