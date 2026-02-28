@@ -12,7 +12,7 @@ import { downloadTextFile, labelsToCsv, parseLabels } from '@/lib/blog/content-u
 import { generateBlogSitemap } from '@/lib/blog/sitemap-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
-import { ThemeEditor } from './theme-editor'
+import { logger } from '@/lib/logger'
 
 interface BlogSettingsProps {
   blog: Blog
@@ -30,7 +30,6 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
   const [labels, setLabels] = useState(blog.labels || '')
   const [newLabel, setNewLabel] = useState('')
   const [isSaving, setIsSaving] = useState(false)
-  const [isSavingTheme, setIsSavingTheme] = useState(false)
   const [isSavingLabels, setIsSavingLabels] = useState(false)
   const [isDownloadingSitemap, setIsDownloadingSitemap] = useState(false)
 
@@ -68,7 +67,8 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
       })
       onUpdated?.(updated)
       toast.success('Labels updated')
-    } catch {
+    } catch (err) {
+      logger.error('Failed to add label:', err)
       toast.error('Failed to update labels')
     } finally {
       setIsSavingLabels(false)
@@ -89,21 +89,6 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
 
   const removeLabel = async (label: string) => {
     await persistLabels(parsedLabels.filter((item) => item !== label))
-  }
-
-  const handleThemeSave = async (themeConfig: string) => {
-    setIsSavingTheme(true)
-    try {
-      const updated = await blogService.updateBlog(blog.id, ownerId, {
-        themeConfig,
-      })
-      toast.success('Theme updated')
-      onUpdated?.(updated)
-    } catch {
-      toast.error('Failed to update theme')
-    } finally {
-      setIsSavingTheme(false)
-    }
   }
 
   const handleDownloadSitemap = async () => {
@@ -188,14 +173,14 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault()
-                addLabel().catch(() => {})
+                addLabel().catch((err) => logger.error('Failed to add label:', err))
               }
             }}
           />
           <Button
             type="button"
             variant="outline"
-            onClick={() => addLabel().catch(() => {})}
+            onClick={() => addLabel().catch((err) => logger.error('Failed to add label:', err))}
             disabled={isSavingLabels || !newLabel.trim()}
           >
             Add
@@ -218,15 +203,6 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
         <Button onClick={handleSave} disabled={isSaving || !name.trim()}>{isSaving ? 'Saving...' : 'Save settings'}</Button>
       </div>
 
-      <div className={isSavingTheme ? 'opacity-75 pointer-events-none' : ''}>
-        <ThemeEditor
-          key={`${blog.id}:${blog.themeConfig || 'default'}`}
-          initialThemeConfig={blog.themeConfig}
-          blogName={name || blog.name}
-          blogDescription={description || blog.description}
-          onSave={handleThemeSave}
-        />
-      </div>
     </div>
   )
 }
