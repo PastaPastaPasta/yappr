@@ -435,8 +435,6 @@ const videoBlock = createReactBlockSpec(
       previewWidth: { default: 512 },
     },
     content: 'none',
-    isFileBlock: true,
-    fileBlockAccept: ['video/*'],
   },
   {
     render: ({ block, editor }) => {
