@@ -1,6 +1,6 @@
 'use client'
 
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type ChangeEvent, useCallback, useEffect, useRef } from 'react'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
@@ -25,10 +25,8 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   const { upload, isUploading, progress, error, clearError } = useImageUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [bytesUsed, setBytesUsed] = useState(0)
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const reportBytes = useCallback((nextBytes: number) => {
-    setBytesUsed(nextBytes)
     onBytesChange?.(nextBytes)
   }, [onBytesChange])
 

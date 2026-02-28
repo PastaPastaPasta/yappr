@@ -315,7 +315,7 @@ function BlogPageContent() {
                         </button>
                         <button
                           type="button"
-                          className="shrink-0 rounded-full bg-gray-800/0 px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-800/60 group-hover:text-gray-300"
+                          className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-800/60 group-hover:text-gray-300"
                           onClick={() => {
                             setEditingPostId(post.id)
                             setActiveTab('compose')
