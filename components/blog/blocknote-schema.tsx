@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import {
   BlockNoteEditor,
   BlockNoteSchema,
@@ -30,6 +31,8 @@ import {
   TableCellsIcon,
   ViewColumnsIcon,
 } from '@heroicons/react/24/outline'
+import { PlayIcon } from '@heroicons/react/24/solid'
+import { extractYouTubeVideoId } from '@/hooks/use-link-preview'
 
 function extractInlineText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -362,6 +365,92 @@ const codeBlock = createReactBlockSpec(
   }
 )
 
+function YouTubeIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+    </svg>
+  )
+}
+
+function VideoEmbedPlayer({ url }: { url: string }) {
+  const youtubeVideoId = extractYouTubeVideoId(url)
+  const embedUrl = toVideoEmbedUrl(url)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [thumbnailUrl, setThumbnailUrl] = useState(
+    youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/maxresdefault.jpg` : ''
+  )
+
+  if (!embedUrl) {
+    return <p className="text-sm text-gray-400">Add a supported video URL to preview embed.</p>
+  }
+
+  if (youtubeVideoId) {
+    return (
+      <div className="overflow-hidden rounded-lg border border-white/10">
+        {!isPlaying ? (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsPlaying(true) }}
+            className="relative w-full aspect-video bg-black cursor-pointer group"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbnailUrl}
+              alt="YouTube video thumbnail"
+              className="w-full h-full object-cover"
+              onError={() => {
+                if (thumbnailUrl.includes('maxresdefault')) {
+                  setThumbnailUrl(`https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`)
+                }
+              }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center shadow-lg group-hover:bg-red-700 transition-colors">
+                <PlayIcon className="h-8 w-8 text-white ml-1" />
+              </div>
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent pointer-events-none" />
+          </button>
+        ) : (
+          <div className="relative w-full aspect-video bg-black">
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}?autoplay=1`}
+              title="YouTube video player"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="absolute inset-0 w-full h-full"
+              {...{ credentialless: 'true' } as React.IframeHTMLAttributes<HTMLIFrameElement>}
+            />
+          </div>
+        )}
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-400 border-t border-white/10 hover:bg-white/5 transition-colors"
+        >
+          <YouTubeIcon className="h-4 w-4 text-red-600 flex-shrink-0" />
+          <span>YouTube</span>
+        </a>
+      </div>
+    )
+  }
+
+  // Odysee / other supported embeds — use iframe directly
+  return (
+    <div className="relative w-full overflow-hidden rounded-lg border border-white/10 bg-black pt-[56.25%]">
+      <iframe
+        src={embedUrl}
+        title="Embedded video"
+        className="absolute inset-0 h-full w-full bg-black"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+      />
+    </div>
+  )
+}
+
 const videoEmbedBlock = createReactBlockSpec(
   {
     type: 'videoEmbed',
@@ -375,7 +464,6 @@ const videoEmbedBlock = createReactBlockSpec(
     render: ({ block, editor }) => {
       const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
       const url = String(block.props.url || '')
-      const embedUrl = toVideoEmbedUrl(url)
 
       return (
         <div className="space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
@@ -388,19 +476,7 @@ const videoEmbedBlock = createReactBlockSpec(
               className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
             />
           )}
-          {embedUrl ? (
-            <div className="relative w-full overflow-hidden rounded-lg border border-white/10 bg-black pt-[56.25%]">
-              <iframe
-                src={embedUrl}
-                title="Embedded video"
-                className="absolute inset-0 h-full w-full bg-black"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-              />
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400">Add a supported video URL to preview embed.</p>
-          )}
+          <VideoEmbedPlayer url={url} />
         </div>
       )
     },
