@@ -9,6 +9,7 @@ import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogService } from '@/lib/services'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
+import { ThemeEditor } from './theme-editor'
 
 interface BlogSettingsProps {
   blog: Blog
@@ -24,6 +25,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   const [commentsEnabledDefault, setCommentsEnabledDefault] = useState(Boolean(blog.commentsEnabledDefault))
   const [labels, setLabels] = useState(blog.labels || '')
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingTheme, setIsSavingTheme] = useState(false)
 
   const parsedLabels = useMemo(
     () => labels.split(',').map((item) => item.trim()).filter(Boolean),
@@ -48,6 +50,21 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
       toast.error('Failed to update blog')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const handleThemeSave = async (themeConfig: string) => {
+    setIsSavingTheme(true)
+    try {
+      const updated = await blogService.updateBlog(blog.id, ownerId, {
+        themeConfig,
+      })
+      toast.success('Theme updated')
+      onUpdated?.(updated)
+    } catch {
+      toast.error('Failed to update theme')
+    } finally {
+      setIsSavingTheme(false)
     }
   }
 
@@ -103,6 +120,16 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={isSaving || !name.trim()}>{isSaving ? 'Saving...' : 'Save settings'}</Button>
+      </div>
+
+      <div className={isSavingTheme ? 'opacity-75 pointer-events-none' : ''}>
+        <ThemeEditor
+          key={`${blog.id}:${blog.themeConfig || 'default'}`}
+          initialThemeConfig={blog.themeConfig}
+          blogName={name || blog.name}
+          blogDescription={description || blog.description}
+          onSave={handleThemeSave}
+        />
       </div>
     </div>
   )

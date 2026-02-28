@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { blogPostService } from '@/lib/services'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { BlogThemeProvider } from './theme-provider'
 
 interface BlogHomeProps {
   blog: Blog
@@ -52,34 +53,28 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
   const hasMore = pagedPosts.length < posts.length
 
   return (
-    <div className="space-y-5">
-      <section className="overflow-hidden rounded-xl border border-gray-800 bg-neutral-950">
-        {blog.headerImage ? (
-          <IpfsImage src={blog.headerImage} alt={`${blog.name} header`} className="h-44 w-full object-cover" />
-        ) : (
-          <div className="h-44 w-full bg-gradient-to-r from-yappr-900/30 via-gray-900 to-yappr-700/30" />
-        )}
-
-        <div className="p-4">
-          <div className="mb-2 flex items-center gap-3">
-            {blog.avatar ? (
-              <IpfsImage src={blog.avatar} alt={`${blog.name} avatar`} className="h-12 w-12 rounded-full object-cover" />
-            ) : (
-              <div className="h-12 w-12 rounded-full bg-gray-800" />
-            )}
-            <div>
-              <h1 className="text-2xl font-bold">{blog.name}</h1>
-              <p className="text-sm text-gray-500">@{username}</p>
-            </div>
-          </div>
-          {blog.description && <p className="text-gray-300">{blog.description}</p>}
+    <BlogThemeProvider
+      themeConfig={blog.themeConfig}
+      blogName={blog.name}
+      blogDescription={blog.description}
+      username={username}
+      headerImage={blog.headerImage}
+      labels={blog.labels}
+      meta={(
+        <div className="flex items-center gap-3">
+          {blog.avatar ? (
+            <IpfsImage src={blog.avatar} alt={`${blog.name} avatar`} className="h-9 w-9 rounded-full object-cover" />
+          ) : (
+            <div className="h-9 w-9 rounded-full bg-white/10" />
+          )}
+          <span>{blog.labels || 'Publishing on Yappr'}</span>
         </div>
-      </section>
-
+      )}
+    >
       {loading ? (
-        <p className="text-sm text-gray-500">Loading posts...</p>
+        <p className="text-sm text-[var(--blog-text)]/70">Loading posts...</p>
       ) : pagedPosts.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-gray-500">No posts yet.</div>
+        <div className="rounded-xl border border-dashed border-white/20 p-8 text-center text-[var(--blog-text)]/65">No posts yet.</div>
       ) : (
         <div className="space-y-3">
           {pagedPosts.map((post) => {
@@ -87,14 +82,16 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             const href = `/blog?user=${encodeURIComponent(username)}&post=${encodeURIComponent(post.slug)}`
 
             return (
-              <Link key={post.id} href={href} className="block rounded-xl border border-gray-800 bg-neutral-950 p-4 hover:border-gray-700">
+              <Link key={post.id} href={href} className="block rounded-xl border border-white/15 bg-black/20 p-4 transition hover:border-white/35">
                 {post.coverImage && (
                   <IpfsImage src={post.coverImage} alt={post.title} className="mb-3 h-44 w-full rounded-lg object-cover" />
                 )}
-                <h3 className="text-lg font-semibold">{post.title}</h3>
-                {post.subtitle && <p className="text-sm text-gray-400">{post.subtitle}</p>}
-                {excerpt && <p className="mt-2 text-sm text-gray-500">{excerpt}{excerpt.length >= 200 ? '...' : ''}</p>}
-                <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--blog-heading)', fontFamily: 'var(--blog-heading-font)' }}>
+                  {post.title}
+                </h3>
+                {post.subtitle && <p className="text-sm text-[var(--blog-text)]/80">{post.subtitle}</p>}
+                {excerpt && <p className="mt-2 text-sm text-[var(--blog-text)]/75">{excerpt}{excerpt.length >= 200 ? '...' : ''}</p>}
+                <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blog-text)]/60">
                   <span>{post.createdAt.toLocaleDateString()}</span>
                   {post.labels && <span>• {post.labels}</span>}
                 </div>
@@ -109,12 +106,12 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
           <button
             type="button"
             onClick={() => setPage((prev) => prev + 1)}
-            className="rounded-full border border-gray-700 px-4 py-2 text-sm hover:bg-gray-900"
+            className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--blog-text)] transition hover:bg-white/10"
           >
             Load more
           </button>
         </div>
       )}
-    </div>
+    </BlogThemeProvider>
   )
 }

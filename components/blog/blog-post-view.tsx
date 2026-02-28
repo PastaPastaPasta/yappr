@@ -4,6 +4,7 @@ import Link from 'next/link'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogViewer } from './blog-viewer'
+import { BlogThemeProvider } from './theme-provider'
 
 interface BlogPostViewProps {
   blog: Blog
@@ -15,19 +16,17 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const blocks = Array.isArray(post.content) ? post.content : []
 
   return (
-    <article className="space-y-4 rounded-xl border border-gray-800 bg-neutral-950 p-5">
-      <Link href={`/blog?user=${encodeURIComponent(username)}`} className="text-sm text-yappr-400 hover:underline">
-        ← Back to blog
-      </Link>
-
-      {post.coverImage && (
-        <IpfsImage src={post.coverImage} alt={post.title} className="h-64 w-full rounded-xl object-cover" />
-      )}
-
-      <header>
-        <h1 className="text-3xl font-bold">{post.title}</h1>
-        {post.subtitle && <p className="mt-1 text-lg text-gray-400">{post.subtitle}</p>}
-        <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
+    <BlogThemeProvider
+      themeConfig={blog.themeConfig}
+      blogName={blog.name}
+      blogDescription={blog.description}
+      username={username}
+      headerImage={blog.headerImage || post.coverImage}
+      labels={blog.labels}
+      title={post.title}
+      subtitle={post.subtitle}
+      meta={(
+        <div className="flex items-center gap-2">
           <span>{post.createdAt.toLocaleDateString()}</span>
           <span>•</span>
           <span>{blog.name}</span>
@@ -38,9 +37,19 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             </>
           )}
         </div>
-      </header>
+      )}
+    >
+      <article className="space-y-4">
+        <Link href={`/blog?user=${encodeURIComponent(username)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
+          ← Back to blog
+        </Link>
 
-      <BlogViewer blocks={blocks} />
-    </article>
+        {post.coverImage && (
+          <IpfsImage src={post.coverImage} alt={post.title} className="h-64 w-full rounded-xl object-cover" />
+        )}
+
+        <BlogViewer blocks={blocks} />
+      </article>
+    </BlogThemeProvider>
   )
 }

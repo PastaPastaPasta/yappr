@@ -5,6 +5,7 @@ import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
+import { blogBlockNoteSchema } from './blocknote-schema'
 
 interface BlogViewerProps {
   blocks: unknown[]
@@ -12,6 +13,7 @@ interface BlogViewerProps {
 
 function BlogViewerContent({ blocks }: BlogViewerProps) {
   const editor = useCreateBlockNote({
+    schema: blogBlockNoteSchema,
     initialContent: blocks as never,
   })
 

@@ -3,12 +3,14 @@
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
+import { SuggestionMenuController } from '@blocknote/react'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
 import { PhotoIcon } from '@heroicons/react/24/outline'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { useImageUpload } from '@/hooks/use-image-upload'
+import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
 
 interface BlogEditorProps {
   initialBlocks?: unknown[]
@@ -17,6 +19,7 @@ interface BlogEditorProps {
 
 export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
   const editor = useCreateBlockNote({
+    schema: blogBlockNoteSchema,
     initialContent: (initialBlocks || undefined) as never,
   })
 
@@ -118,9 +121,14 @@ export function BlogEditor({ initialBlocks, onChange }: BlogEditorProps) {
           editor={editor}
           theme="dark"
           onChange={publishChange}
-          slashMenu={true}
+          slashMenu={false}
           formattingToolbar={true}
-        />
+        >
+          <SuggestionMenuController
+            triggerCharacter="/"
+            getItems={async (query) => getBlogSlashMenuItems(editor, query)}
+          />
+        </BlockNoteView>
       </div>
     </div>
   )
