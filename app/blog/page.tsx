@@ -2,6 +2,8 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -14,6 +16,7 @@ import { ComposePost } from '@/components/blog/compose-post'
 import { EditPost } from '@/components/blog/edit-post'
 import { BlogHome } from '@/components/blog/blog-home'
 import { BlogPostView } from '@/components/blog/blog-post-view'
+import { ComposeModal } from '@/components/compose/compose-modal'
 
 function BlogPageContent() {
   const router = useRouter()
@@ -33,8 +36,11 @@ function BlogPageContent() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+
     const load = async () => {
       if (!usernameParam) {
+        if (cancelled) return
         setViewBlog(null)
         setViewPost(null)
         setError(null)
@@ -46,6 +52,7 @@ function BlogPageContent() {
       try {
         const ownerId = await dpnsService.resolveIdentity(usernameParam)
         if (!ownerId) {
+          if (cancelled) return
           setError('User not found')
           return
         }
@@ -53,45 +60,69 @@ function BlogPageContent() {
         const blogs = await blogService.getBlogsByOwner(ownerId)
         const primaryBlog = blogs[0]
         if (!primaryBlog) {
+          if (cancelled) return
           setError('No blog found for this user')
           return
         }
 
+        if (cancelled) return
         setViewBlog(primaryBlog)
 
         if (postSlugParam) {
           const post = await blogPostService.getPostBySlug(primaryBlog.id, postSlugParam)
           if (!post) {
+            if (cancelled) return
             setError('Post not found')
             setViewPost(null)
             return
           }
+          if (cancelled) return
           setViewPost(post)
         } else {
+          if (cancelled) return
           setViewPost(null)
         }
       } catch {
+        if (cancelled) return
         setError('Failed to load blog')
       } finally {
+        if (cancelled) return
         setLoading(false)
       }
     }
 
     load().catch(() => {
-      setLoading(false)
-      setError('Failed to load blog')
+      if (!cancelled) {
+        setLoading(false)
+        setError('Failed to load blog')
+      }
     })
+
+    return () => {
+      cancelled = true
+    }
   }, [postSlugParam, usernameParam])
 
   useEffect(() => {
+    let cancelled = false
+
     if (!selectedBlog || !user?.identityId) return
 
     const loadPosts = async () => {
       const posts = await blogPostService.getPostsByBlog(selectedBlog.id, { limit: 100 })
+      if (cancelled) return
       setOwnerPosts(posts)
     }
 
-    loadPosts().catch(() => setOwnerPosts([]))
+    loadPosts().catch(() => {
+      if (!cancelled) {
+        setOwnerPosts([])
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedBlog, user?.identityId])
 
   const renderCenter = () => {
@@ -108,18 +139,10 @@ function BlogPageContent() {
       }
 
       if (viewPost) {
-        return (
-          <div className="p-4">
-            <BlogPostView blog={viewBlog} post={viewPost} username={usernameParam} />
-          </div>
-        )
+        return <BlogPostView blog={viewBlog} post={viewPost} username={usernameParam} />
       }
 
-      return (
-        <div className="p-4">
-          <BlogHome blog={viewBlog} username={usernameParam} />
-        </div>
-      )
+      return <BlogHome blog={viewBlog} username={usernameParam} />
     }
 
     if (!user) {
@@ -219,6 +242,29 @@ function BlogPageContent() {
     )
   }
 
+  if (usernameParam) {
+    return (
+      <div className="min-h-screen bg-neutral-950">
+        <nav className="sticky top-0 z-50 border-b border-gray-800 bg-neutral-950/80 backdrop-blur-xl">
+          <div className="mx-auto grid max-w-5xl grid-cols-3 items-center px-4 py-3 sm:px-6 lg:px-8">
+            <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors">
+              <ArrowLeftIcon className="h-4 w-4" />
+              Back to Yappr
+            </Link>
+            <Link href="/" className="justify-self-center text-sm font-bold text-white">
+              Yappr
+            </Link>
+            <div />
+          </div>
+        </nav>
+        <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
+          {renderCenter()}
+        </main>
+        <ComposeModal />
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
@@ -231,20 +277,15 @@ function BlogPageContent() {
         </main>
       </div>
       <RightSidebar />
+      <ComposeModal />
     </div>
   )
 }
 
 function LoadingFallback() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <p className="p-6 text-sm text-gray-500">Loading blog...</p>
-        </main>
-      </div>
-      <RightSidebar />
+    <div className="flex min-h-screen items-center justify-center">
+      <p className="text-sm text-gray-500">Loading blog...</p>
     </div>
   )
 }

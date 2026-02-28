@@ -80,3 +80,37 @@
   border-color: #374151;
   color: #e5e7eb;
 }
+
+/* Blog theme – transparent BlockNote background */
+.blog-theme-root .bn-container,
+.blog-theme-root .bn-container[data-color-scheme="dark"] {
+  --bn-colors-editor-background: transparent;
+}
+
+/* Blog theme – text color inherits from theme */
+.blog-theme-root .bn-container [class*="bn-block-content"] {
+  color: var(--blog-text, #e5e7eb);
+}
+
+/* Blog prose – comfortable reading typography */
+.blog-theme-prose {
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+/* Blog prose – heading styles from theme */
+.blog-theme-prose h1,
+.blog-theme-prose h2,
+.blog-theme-prose h3,
+.blog-theme-prose h4,
+.blog-theme-prose h5,
+.blog-theme-prose h6 {
+  color: var(--blog-heading, inherit);
+  font-family: var(--blog-heading-font, inherit);
+}
+
+/* Blog prose – BlockNote heading overrides */
+.blog-theme-prose .bn-container [class*="bn-block-content"][data-content-type="heading"] {
+  color: var(--blog-heading, inherit);
+  font-family: var(--blog-heading-font, inherit);
+}

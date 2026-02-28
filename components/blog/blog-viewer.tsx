@@ -89,20 +89,20 @@ function BlogViewerContent({ blocks }: BlogViewerProps) {
   const footnotes = useMemo(() => collectFootnotes(blocks), [blocks])
 
   return (
-    <div ref={containerRef} className="rounded-xl border border-gray-700 bg-gray-900 p-2">
+    <div ref={containerRef}>
       <BlockNoteView
         editor={editor}
         editable={false}
         theme="dark"
       />
       {footnotes.length > 0 && (
-        <section className="mt-4 border-t border-white/10 pt-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Footnotes</h3>
-          <ol className="mt-2 list-decimal space-y-2 pl-6 text-sm text-gray-200">
+        <section className="mt-6 border-t pt-6" style={{ borderColor: 'color-mix(in srgb, var(--blog-text, #e5e7eb) 15%, transparent)' }}>
+          <h3 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'color-mix(in srgb, var(--blog-text, #d1d5db) 70%, transparent)' }}>Footnotes</h3>
+          <ol className="mt-2 list-decimal space-y-2 pl-6 text-sm" style={{ color: 'color-mix(in srgb, var(--blog-text, #e5e7eb) 85%, transparent)' }}>
             {footnotes.map((footnote, index) => (
               <li key={footnote.key} id={`footnote-item-${index + 1}`}>
                 {footnote.text}
-                {footnote.noteId && <span className="ml-2 text-xs text-gray-400">({footnote.noteId})</span>}
+                {footnote.noteId && <span className="ml-2 text-xs" style={{ color: 'color-mix(in srgb, var(--blog-text, #9ca3af) 60%, transparent)' }}>({footnote.noteId})</span>}
               </li>
             ))}
           </ol>
@@ -113,7 +113,12 @@ function BlogViewerContent({ blocks }: BlogViewerProps) {
 }
 
 export function BlogViewer({ blocks }: BlogViewerProps) {
-  const contentKey = useMemo(() => JSON.stringify(blocks), [blocks])
+  const prevBlocksRef = useRef(blocks)
+  const revisionRef = useRef(0)
+  if (prevBlocksRef.current !== blocks) {
+    prevBlocksRef.current = blocks
+    revisionRef.current += 1
+  }
 
-  return <BlogViewerContent key={contentKey} blocks={blocks} />
+  return <BlogViewerContent key={revisionRef.current} blocks={blocks} />
 }
