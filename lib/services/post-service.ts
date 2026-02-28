@@ -597,6 +597,10 @@ class PostService extends BaseDocumentService<Post> {
     if (ids.length === 0) return [];
 
     const { replyService } = await import('./reply-service');
+    const { blogPostService } = await import('./blog-post-service');
+    const { blogService } = await import('./blog-service');
+    const { dpnsService } = await import('./dpns-service');
+    const { unifiedProfileService } = await import('./unified-profile-service');
 
     const posts = await this.getPostsByIds(ids);
     const foundPostIds = new Set(posts.map((post) => post.id));
@@ -607,6 +611,8 @@ class PostService extends BaseDocumentService<Post> {
     }
 
     const replies = await replyService.getRepliesByIds(missingIds);
+    const foundReplyIds = new Set(replies.map((reply) => reply.id));
+    const remainingIds = missingIds.filter((id) => !foundReplyIds.has(id));
     const convertedReplies: Post[] = replies.map((reply) => ({
       id: reply.id,
       author: reply.author,
@@ -625,7 +631,62 @@ class PostService extends BaseDocumentService<Post> {
       nonce: reply.nonce,
     }));
 
-    return [...posts, ...convertedReplies];
+    if (remainingIds.length === 0) {
+      return [...posts, ...convertedReplies];
+    }
+
+    const blogPosts = (await Promise.all(remainingIds.map((id) => blogPostService.getPost(id)))).filter(
+      (blogPost): blogPost is NonNullable<Awaited<ReturnType<typeof blogPostService.getPost>>> => blogPost !== null
+    );
+
+    const convertedBlogPosts: Post[] = await Promise.all(
+      blogPosts.map(async (blogPost) => {
+        const [blog, username, profile] = await Promise.all([
+          blogService.getBlog(blogPost.blogId).catch(() => null),
+          dpnsService.resolveUsername(blogPost.ownerId).catch(() => null),
+          unifiedProfileService.getProfile(blogPost.ownerId).catch(() => null),
+        ]);
+
+        const blogText = blogPost.subtitle || blogPost.title;
+
+        return {
+          id: blogPost.id,
+          author: {
+            id: blogPost.ownerId,
+            username: username || undefined,
+            displayName: profile?.displayName || blog?.name || 'Blog author',
+            avatar: profile?.avatar || blog?.avatar || '',
+            followers: 0,
+            following: 0,
+            verified: false,
+            joinedAt: new Date(0),
+            hasDpns: typeof username === 'string' ? true : undefined,
+          },
+          content: blogText,
+          createdAt: blogPost.createdAt,
+          likes: 0,
+          reposts: 0,
+          replies: 0,
+          views: 0,
+          liked: false,
+          reposted: false,
+          bookmarked: false,
+          ...( {
+            __isBlogPostQuote: true,
+            title: blogPost.title,
+            subtitle: blogPost.subtitle,
+            coverImage: blogPost.coverImage,
+            slug: blogPost.slug,
+            blogId: blogPost.blogId,
+            blogName: blog?.name,
+            blogUsername: username || undefined,
+            blogContent: blogPost.content,
+          } as Record<string, unknown>),
+        } as Post;
+      })
+    );
+
+    return [...posts, ...convertedReplies, ...convertedBlogPosts];
   }
 
   /**

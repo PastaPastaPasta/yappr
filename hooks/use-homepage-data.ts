@@ -139,7 +139,7 @@ export function useHomepageData(): HomepageData {
 
       if (quotedPostIds.length > 0) {
         try {
-          const quotedPosts = await postService.getPostsByIds(quotedPostIds)
+          const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
           const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
           for (const post of posts) {

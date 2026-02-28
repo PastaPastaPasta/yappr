@@ -232,7 +232,7 @@ export function usePostDetail({
       .map(p => p.quotedPostId!)
     if (chainQuotedPostIds.length > 0) {
       try {
-        const quotedPosts = await postService.getPostsByIds(chainQuotedPostIds)
+        const quotedPosts = await postService.fetchPostsOrReplies(chainQuotedPostIds)
         const quotedPostMap = new Map(quotedPosts.map(qp => [qp.id, qp]))
         for (const post of chain) {
           if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
@@ -405,7 +405,7 @@ export function usePostDetail({
       let quotedPost: Post | undefined
       if (loadedPost.quotedPostId) {
         try {
-          const quotedPosts = await postService.getPostsByIds([loadedPost.quotedPostId])
+          const quotedPosts = await postService.fetchPostsOrReplies([loadedPost.quotedPostId])
           if (!isCurrent()) return
           if (quotedPosts.length > 0) {
             quotedPost = quotedPosts[0]

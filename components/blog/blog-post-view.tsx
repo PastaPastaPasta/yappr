@@ -7,6 +7,8 @@ import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
+import { useAppStore } from '@/lib/store'
+import { useRequireAuth } from '@/hooks/use-require-auth'
 
 interface BlogPostViewProps {
   blog: Blog
@@ -16,6 +18,46 @@ interface BlogPostViewProps {
 
 export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const blocks = Array.isArray(post.content) ? post.content : []
+  const { setQuotingPost, setComposeOpen } = useAppStore()
+  const { requireAuth } = useRequireAuth()
+
+  const handleQuote = () => {
+    if (!requireAuth('quote')) return
+
+    setQuotingPost({
+      id: post.id,
+      author: {
+        id: post.ownerId,
+        username,
+        displayName: blog.name,
+        avatar: blog.avatar || '',
+        followers: 0,
+        following: 0,
+        verified: false,
+        joinedAt: new Date(0),
+        hasDpns: true,
+      },
+      content: post.subtitle || post.title,
+      createdAt: post.createdAt,
+      likes: 0,
+      reposts: 0,
+      replies: 0,
+      views: 0,
+      ...( {
+        __isBlogPostQuote: true,
+        title: post.title,
+        subtitle: post.subtitle,
+        slug: post.slug,
+        coverImage: post.coverImage,
+        blogId: blog.id,
+        blogName: blog.name,
+        blogUsername: username,
+        blogContent: post.content,
+      } as Record<string, unknown>),
+    })
+
+    setComposeOpen(true)
+  }
 
   return (
     <BlogThemeProvider
@@ -46,7 +88,17 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           <Link href={`/blog?user=${encodeURIComponent(username)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
             ← Back to blog
           </Link>
-          <EmbedPreview post={post} username={username} />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleQuote}
+              className="text-sm font-medium hover:underline"
+              style={{ color: 'var(--blog-link)' }}
+            >
+              Quote
+            </button>
+            <EmbedPreview post={post} username={username} />
+          </div>
         </div>
 
         {post.coverImage && (
