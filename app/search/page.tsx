@@ -4,16 +4,18 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
 import { useSettingsStore } from '@/lib/store'
+import type { BlogPost } from '@/lib/types'
 
 interface UserResult {
   id: string
@@ -27,6 +29,12 @@ interface HashtagResult {
   postCount: number
 }
 
+interface BlogPostResult extends BlogPost {
+  authorUsername?: string
+  authorDisplayName?: string
+  blogName?: string
+}
+
 function SearchPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -35,6 +43,7 @@ function SearchPageContent() {
 
   const [users, setUsers] = useState<UserResult[]>([])
   const [hashtags, setHashtags] = useState<HashtagResult[]>([])
+  const [blogPosts, setBlogPosts] = useState<BlogPostResult[]>([])
   const [isLoading, setIsLoading] = useState(query.trim().length >= 3)
   const searchIdRef = useRef(0)
 
@@ -48,6 +57,7 @@ function SearchPageContent() {
       if (!trimmedQuery) {
         setUsers([])
         setHashtags([])
+        setBlogPosts([])
         setIsLoading(false)
         return
       }
@@ -57,6 +67,7 @@ function SearchPageContent() {
         logger.info('Search: Query too short, need at least 3 characters')
         setUsers([])
         setHashtags([])
+        setBlogPosts([])
         setIsLoading(false)
         return
       }
@@ -65,9 +76,10 @@ function SearchPageContent() {
 
       try {
         // Search in parallel
-        const [userResults, hashtagResults] = await Promise.all([
+        const [userResults, hashtagResults, blogResults] = await Promise.all([
           searchUsers(trimmedQuery),
-          searchHashtags(trimmedQuery)
+          searchHashtags(trimmedQuery),
+          searchBlogPosts(trimmedQuery),
         ])
 
         // Only update state if this is still the current search
@@ -78,6 +90,7 @@ function SearchPageContent() {
 
         setUsers(userResults)
         setHashtags(hashtagResults)
+        setBlogPosts(blogResults)
       } catch (error) {
         logger.error('Search failed:', error)
       } finally {
@@ -210,12 +223,59 @@ function SearchPageContent() {
     }
   }
 
+  const searchBlogPosts = async (searchQuery: string): Promise<BlogPostResult[]> => {
+    try {
+      const { blogService, blogPostService } = await import('@/lib/services')
+
+      const allBlogs = await blogService.getAllBlogs(50)
+      if (allBlogs.length === 0) return []
+
+      const blogMap = new Map(allBlogs.map(b => [b.id, b]))
+      const blogIds = allBlogs.map(b => b.id)
+      const matchingPosts = await blogPostService.searchPosts(blogIds, searchQuery, 10)
+
+      if (matchingPosts.length === 0) return []
+
+      // Resolve author info
+      const ownerIds = Array.from(new Set(matchingPosts.map(p => p.ownerId)))
+      const [usernameEntries, profileEntries] = await Promise.all([
+        Promise.all(ownerIds.map(async id => {
+          const name = await dpnsService.resolveUsername(id).catch(() => null)
+          return [id, name] as const
+        })),
+        Promise.all(ownerIds.map(async id => {
+          const profile = await unifiedProfileService.getProfile(id).catch(() => null)
+          return [id, profile] as const
+        })),
+      ])
+
+      const usernameMap = new Map(usernameEntries)
+      const profileMap = new Map(profileEntries)
+
+      return matchingPosts.map(post => ({
+        ...post,
+        authorUsername: usernameMap.get(post.ownerId) || undefined,
+        authorDisplayName: profileMap.get(post.ownerId)?.displayName || undefined,
+        blogName: blogMap.get(post.blogId)?.name || undefined,
+      }))
+    } catch (error) {
+      logger.error('Blog post search failed:', error)
+      return []
+    }
+  }
+
   const handleUserClick = (userId: string) => {
     router.push(`/user?id=${userId}`)
   }
 
   const handleHashtagClick = (hashtag: string) => {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
+  }
+
+  const handleBlogPostClick = (post: BlogPostResult) => {
+    if (post.authorUsername && post.slug) {
+      router.push(`/blog?user=${encodeURIComponent(post.authorUsername)}&post=${encodeURIComponent(post.slug)}`)
+    }
   }
 
   if (!query) {
@@ -338,6 +398,73 @@ function SearchPageContent() {
                 ) : (
                   <div className="p-8 text-center">
                     <p className="text-gray-500">No hashtags found</p>
+                  </div>
+                )}
+              </section>
+
+              {/* Blog Posts Section */}
+              <section>
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    <DocumentTextIcon className="h-5 w-5" />
+                    Blog Posts
+                  </h2>
+                </div>
+                {blogPosts.length > 0 ? (
+                  <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {blogPosts.map((post, index) => (
+                      <motion.div
+                        key={post.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.05 }}
+                        onClick={() => handleBlogPostClick(post)}
+                        className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left ${post.authorUsername && post.slug ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
+                      >
+                        <div className="flex gap-3">
+                          {post.coverImage && (
+                            <IpfsImage
+                              src={post.coverImage}
+                              alt={post.title}
+                              className="h-16 w-16 rounded-lg object-cover flex-shrink-0"
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 dark:text-gray-100 line-clamp-1">
+                              {post.title || 'Untitled'}
+                            </p>
+                            {post.subtitle && (
+                              <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 mt-0.5">
+                                {post.subtitle}
+                              </p>
+                            )}
+                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                              {post.blogName && <span className="font-medium">{post.blogName}</span>}
+                              {post.blogName && post.authorDisplayName && <span>·</span>}
+                              {post.authorDisplayName && <span>{post.authorDisplayName}</span>}
+                              {(post.blogName || post.authorDisplayName) && <span>·</span>}
+                              <span>{post.createdAt.toLocaleDateString()}</span>
+                            </div>
+                            {post.labels && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {post.labels.split(',').slice(0, 3).map((label) => (
+                                  <span
+                                    key={label.trim()}
+                                    className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded"
+                                  >
+                                    {label.trim()}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center">
+                    <p className="text-gray-500">No blog posts found</p>
                   </div>
                 )}
               </section>

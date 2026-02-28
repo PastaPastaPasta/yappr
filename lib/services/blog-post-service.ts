@@ -150,6 +150,58 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const result = await this.query(queryOptions)
     return result.documents
   }
+
+  /**
+   * Get recent blog posts across all blogs for discovery.
+   * Fetches latest posts per blog and merges client-side.
+   */
+  async getRecentPosts(blogIds: string[], limit = 20): Promise<BlogPost[]> {
+    if (blogIds.length === 0) return []
+
+    // Fetch a few recent posts per blog in parallel
+    const perBlogLimit = Math.max(3, Math.ceil(limit / blogIds.length))
+    const results = await Promise.all(
+      blogIds.map(blogId =>
+        this.getPostsByBlog(blogId, { limit: perBlogLimit }).catch(() => [])
+      )
+    )
+
+    // Merge, sort by createdAt desc, and take top N
+    return results
+      .flat()
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+  }
+
+  /**
+   * Search blog posts by title or subtitle text.
+   * Since Dash Platform doesn't support full-text search,
+   * this fetches posts per blog and filters client-side.
+   */
+  async searchPosts(blogIds: string[], query: string, limit = 20): Promise<BlogPost[]> {
+    if (blogIds.length === 0 || !query.trim()) return []
+
+    const lowerQuery = query.toLowerCase()
+
+    // Fetch posts from all blogs
+    const results = await Promise.all(
+      blogIds.map(blogId =>
+        this.getPostsByBlog(blogId, { limit: 50 }).catch(() => [])
+      )
+    )
+
+    // Filter by title, subtitle, or labels matching the query
+    return results
+      .flat()
+      .filter(post => {
+        const titleMatch = post.title?.toLowerCase().includes(lowerQuery)
+        const subtitleMatch = post.subtitle?.toLowerCase().includes(lowerQuery)
+        const labelsMatch = post.labels?.toLowerCase().includes(lowerQuery)
+        return titleMatch || subtitleMatch || labelsMatch
+      })
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+  }
 }
 
 export const blogPostService = new BlogPostService()

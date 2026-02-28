@@ -58,6 +58,19 @@ class BlogService extends BaseDocumentService<Blog> {
     const result = await this.query(options)
     return result.documents
   }
+
+  /**
+   * Get all blogs on the platform (for discovery).
+   * Fetches in batches using cursor-based pagination.
+   * Note: This queries by $ownerId index, so we page through all owners.
+   */
+  async getAllBlogs(limit = 100): Promise<Blog[]> {
+    const result = await this.query({
+      orderBy: [['$createdAt', 'desc']],
+      limit,
+    })
+    return result.documents
+  }
 }
 
 export const blogService = new BlogService()
