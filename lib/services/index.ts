@@ -16,6 +16,8 @@ export { directMessageService } from './direct-message-service';
 export { hashtagService } from './hashtag-service';
 export { notificationService } from './notification-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
+export { blogService } from './blog-service';
+export { blogPostService } from './blog-post-service';
 
 // New unified profile services
 export {
@@ -47,6 +49,8 @@ export type { ParsedPaymentUri, SocialLink } from '../../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
 export type { TipResult } from './tip-service';
 export type { NotificationResult } from './notification-service';
+export type { CreateBlogData, UpdateBlogData } from './blog-service';
+export type { CreateBlogPostData, UpdateBlogPostData, BlogPostQueryOptions } from './blog-post-service';
 export type {
   UnifiedProfileDocument,
   CreateUnifiedProfileData,
