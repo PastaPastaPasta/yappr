@@ -6,6 +6,7 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
+import { EmbedPreview } from './embed-preview'
 
 interface BlogPostViewProps {
   blog: Blog
@@ -41,9 +42,12 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       )}
     >
       <article className="space-y-4">
-        <Link href={`/blog?user=${encodeURIComponent(username)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
-          ← Back to blog
-        </Link>
+        <div className="flex items-center justify-between gap-3">
+          <Link href={`/blog?user=${encodeURIComponent(username)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
+            ← Back to blog
+          </Link>
+          <EmbedPreview post={post} username={username} />
+        </div>
 
         {post.coverImage && (
           <IpfsImage src={post.coverImage} alt={post.title} className="h-64 w-full rounded-xl object-cover" />
