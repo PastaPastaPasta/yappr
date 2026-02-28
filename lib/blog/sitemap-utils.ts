@@ -1,13 +1,5 @@
 import type { Blog, BlogPost } from '@/lib/types'
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
+import { escapeXml } from '@/lib/blog/content-utils'
 
 export function generateBlogSitemap(
   posts: BlogPost[],
@@ -17,11 +9,14 @@ export function generateBlogSitemap(
 ): string {
   const normalizedBase = baseUrl.replace(/\/$/, '')
   const blogUrl = `${normalizedBase}/blog?user=${encodeURIComponent(username)}`
+  const latestPostDate = posts.length > 0
+    ? new Date(Math.max(...posts.map((p) => (p.updatedAt || p.createdAt).getTime()))).toISOString()
+    : new Date().toISOString()
 
   const urls = [
     {
       loc: blogUrl,
-      lastmod: new Date().toISOString(),
+      lastmod: latestPostDate,
       changefreq: 'daily',
       priority: '0.8',
     },

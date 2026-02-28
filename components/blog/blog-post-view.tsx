@@ -43,7 +43,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       }
     }
 
-    loadCommentCount().catch(() => setCommentCount(0))
+    loadCommentCount()
   }, [post.id])
 
   useEffect(() => {

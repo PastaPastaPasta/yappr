@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogPostService, blogService } from '@/lib/services'
+import { downloadTextFile, labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import { generateBlogSitemap } from '@/lib/blog/sitemap-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -18,24 +19,6 @@ interface BlogSettingsProps {
   ownerId: string
   username?: string
   onUpdated?: (blog: Blog) => void
-}
-
-function parseLabels(value: string): string[] {
-  return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
-}
-
-function labelsToCsv(items: string[]): string {
-  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join(',')
-}
-
-function downloadTextFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
 }
 
 export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSettingsProps) {
@@ -185,6 +168,7 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
                 key={label}
                 type="button"
                 onClick={() => removeLabel(label)}
+                aria-label={`Remove label: ${label}`}
                 disabled={isSavingLabels}
                 className="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-900 px-2.5 py-1 text-xs text-gray-200 hover:bg-gray-800 disabled:opacity-50"
               >
@@ -204,11 +188,16 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault()
-                void addLabel()
+                addLabel().catch(() => {})
               }
             }}
           />
-          <Button type="button" variant="outline" onClick={() => void addLabel()} disabled={isSavingLabels || !newLabel.trim()}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => addLabel().catch(() => {})}
+            disabled={isSavingLabels || !newLabel.trim()}
+          >
             Add
           </Button>
         </div>
