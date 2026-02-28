@@ -184,6 +184,7 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
                   key={label}
                   type="button"
                   onClick={() => toggleLabel(label)}
+                  aria-pressed={selected}
                   className={`rounded-full border px-3 py-1 text-xs transition ${
                     selected
                       ? 'border-cyan-400/40 bg-cyan-400/20 text-cyan-100'

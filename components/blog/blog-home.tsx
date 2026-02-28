@@ -113,6 +113,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
         <button
           type="button"
           onClick={() => setActiveLabel('All')}
+          aria-pressed={activeLabel === 'All'}
           className={`rounded-full border px-3 py-1 text-xs transition ${
             activeLabel === 'All'
               ? 'border-white/20 bg-white/20 text-white'
@@ -126,6 +127,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             key={label}
             type="button"
             onClick={() => setActiveLabel(label)}
+            aria-pressed={activeLabel === label}
             className={`rounded-full border px-3 py-1 text-xs transition ${
               activeLabel === label
                 ? 'border-white/20 bg-white/20 text-white'

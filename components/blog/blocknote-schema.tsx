@@ -90,15 +90,19 @@ function updateBlockProps(editor: unknown, block: unknown, props: Record<string,
   })
 }
 
+function isTrustedHost(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`)
+}
+
 function parseYouTubeEmbedUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl)
     const host = url.hostname.toLowerCase()
     let videoId = ''
 
-    if (host.includes('youtu.be')) {
+    if (isTrustedHost(host, 'youtu.be')) {
       videoId = url.pathname.replace('/', '').trim()
-    } else if (host.includes('youtube.com')) {
+    } else if (isTrustedHost(host, 'youtube.com')) {
       if (url.pathname.startsWith('/watch')) {
         videoId = url.searchParams.get('v') || ''
       } else if (url.pathname.startsWith('/embed/')) {
@@ -119,7 +123,7 @@ function parseOdyseeEmbedUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl)
     const host = url.hostname.toLowerCase()
-    if (!host.includes('odysee.com') && !host.includes('lbry.tv')) {
+    if (!isTrustedHost(host, 'odysee.com') && !isTrustedHost(host, 'lbry.tv')) {
       return null
     }
 
@@ -546,8 +550,10 @@ const footnoteBlock = createReactBlockSpec(
       const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
       const entries = getFootnoteEntries((editor as { document?: unknown[] }).document || [])
       const index = Math.max(1, entries.findIndex((entry) => entry.id === block.id) + 1)
+      const text = extractInlineText(block.content).trim()
 
       if (!editable) {
+        if (!text) return null
         return (
           <sup id={`footnote-ref-${index}`} className="mx-0.5 align-super text-xs">
             <a href={`#footnote-item-${index}`} className="text-cyan-300 hover:underline">
