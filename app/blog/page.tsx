@@ -19,6 +19,7 @@ import { BlogHome } from '@/components/blog/blog-home'
 import { BlogPostView } from '@/components/blog/blog-post-view'
 import { ThemeEditor } from '@/components/blog/theme-editor'
 import { ComposeModal } from '@/components/compose/compose-modal'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -207,93 +208,114 @@ function BlogPageContent() {
     ]
 
     return (
-      <div className="p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">{selectedBlog.name}</h1>
-          <button
-            type="button"
-            className="text-sm text-yappr-400 hover:underline"
-            onClick={deselectBlog}
-          >
-            Back to My Blogs
-          </button>
-        </div>
-
-        <div className="flex border-b border-gray-200 dark:border-gray-800">
-          {tabs.map((tab) => (
+      <div>
+        {/* Blog dashboard header */}
+        <div className="border-b border-gray-800/60 px-5 pb-0 pt-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="min-w-0">
+              <h1 className="truncate text-lg font-semibold text-white">{selectedBlog.name}</h1>
+              {selectedBlog.description && (
+                <p className="mt-0.5 truncate text-sm text-gray-500">{selectedBlog.description}</p>
+              )}
+            </div>
             <button
-              key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                'flex-1 py-4 text-center font-medium transition-colors relative',
-                activeTab === tab.key
-                  ? 'text-gray-900 dark:text-white'
-                  : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-              )}
+              className="shrink-0 rounded-full bg-gray-800/60 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-300"
+              onClick={deselectBlog}
             >
-              {tab.label}
-              {activeTab === tab.key && (
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
-              )}
+              All Blogs
             </button>
-          ))}
+          </div>
+
+          <nav className="flex gap-1" role="tablist">
+            {tabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={cn(
+                  'relative px-4 py-2.5 text-sm font-medium transition-colors',
+                  activeTab === tab.key
+                    ? 'text-white'
+                    : 'text-gray-500 hover:text-gray-300'
+                )}
+              >
+                {tab.label}
+                {activeTab === tab.key && (
+                  <div className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-yappr-500" />
+                )}
+              </button>
+            ))}
+          </nav>
         </div>
 
-        <div className="mt-4">
+        {/* Tab content */}
+        <div className="p-5">
           {activeTab === 'posts' && (
             <section>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Posts</h3>
-                <button
-                  type="button"
-                  className="rounded-lg bg-yappr-500 px-4 py-2 text-sm font-medium text-white hover:bg-yappr-600 transition-colors"
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-gray-500">
+                  {ownerPosts.length === 0 ? 'No posts yet' : `${ownerPosts.length} post${ownerPosts.length !== 1 ? 's' : ''}`}
+                </p>
+                <Button
+                  size="sm"
                   onClick={() => {
                     setEditingPostId(null)
                     setActiveTab('compose')
                   }}
                 >
                   New Post
-                </button>
+                </Button>
               </div>
+
               {ownerPosts.length === 0 ? (
-                <p className="text-sm text-gray-500">No posts yet.</p>
+                <div className="rounded-xl border border-dashed border-gray-800 py-12 text-center">
+                  <p className="text-sm text-gray-500">Start writing your first post.</p>
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-medium text-yappr-400 transition-colors hover:text-yappr-300"
+                    onClick={() => {
+                      setEditingPostId(null)
+                      setActiveTab('compose')
+                    }}
+                  >
+                    Create a post
+                  </button>
+                </div>
               ) : (
-                <div className="space-y-2">
+                <div className="divide-y divide-gray-800/60">
                   {ownerPosts.map((post) => {
                     const isPublished = post.publishedAt !== undefined
                     return (
-                      <div key={post.id} className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
+                      <div key={post.id} className="group flex items-start gap-3 py-3.5 first:pt-0 last:pb-0">
                         <button
                           type="button"
-                          className="text-left min-w-0 flex-1"
+                          className="min-w-0 flex-1 text-left"
                           onClick={() => router.push(`/blog?user=${encodeURIComponent(user.dpnsUsername || '')}&post=${encodeURIComponent(post.slug)}`)}
                         >
                           <div className="flex items-center gap-2">
-                            <p className="font-medium truncate">{post.title}</p>
+                            <p className="truncate font-medium text-gray-100 group-hover:text-white transition-colors">{post.title}</p>
                             <span className={cn(
-                              'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
+                              'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
                               isPublished
-                                ? 'bg-green-900/50 text-green-400'
-                                : 'bg-yellow-900/50 text-yellow-400'
+                                ? 'bg-green-500/10 text-green-400'
+                                : 'bg-amber-500/10 text-amber-400'
                             )}>
                               {isPublished ? 'Published' : 'Draft'}
                             </span>
                           </div>
-                          <p className="text-xs text-gray-500">{post.createdAt.toLocaleDateString()}</p>
-                          {post.labels && (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {post.labels.split(',').map((label, i) => (
-                                <span key={`${label}-${i}`} className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
-                                  {label.trim()}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-xs text-gray-500">{post.createdAt.toLocaleDateString()}</span>
+                            {post.labels && (
+                              <span className="text-xs text-gray-600">{post.labels}</span>
+                            )}
+                          </div>
                         </button>
                         <button
                           type="button"
-                          className="ml-3 shrink-0 text-sm text-yappr-400 hover:underline"
+                          className="shrink-0 rounded-full bg-gray-800/0 px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-800/60 group-hover:text-gray-300"
                           onClick={() => {
                             setEditingPostId(post.id)
                             setActiveTab('compose')
@@ -313,10 +335,11 @@ function BlogPageContent() {
             <div>
               <button
                 type="button"
-                className="mb-3 text-sm text-yappr-400 hover:underline"
+                className="mb-5 inline-flex items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
                 onClick={navigateToPosts}
               >
-                &larr; Back to posts
+                <ArrowLeftIcon className="h-3 w-3" />
+                Back to posts
               </button>
               {editingPostId ? (
                 <EditPost
@@ -362,6 +385,8 @@ function BlogPageContent() {
     )
   }
 
+  const isWideMode = !usernameParam && selectedBlog !== null && activeTab === 'theme'
+
   if (usernameParam) {
     return (
       <div className="min-h-screen bg-neutral-950">
@@ -389,14 +414,17 @@ function BlogPageContent() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <main className={cn(
+          "w-full border-gray-200 dark:border-gray-800",
+          isWideMode ? "max-w-[1100px]" : "max-w-[700px] md:border-x"
+        )}>
           <header className="sticky top-[32px] sm:top-[40px] z-40 border-b border-gray-200 bg-white/80 p-4 backdrop-blur-xl dark:border-gray-800 dark:bg-neutral-900/80">
             <h1 className="text-xl font-bold">Blog</h1>
           </header>
           {renderCenter()}
         </main>
       </div>
-      <RightSidebar />
+      {!isWideMode && <RightSidebar />}
       <ComposeModal />
     </div>
   )

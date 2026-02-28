@@ -13,6 +13,7 @@ import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
 import { useAuth } from '@/contexts/auth-context'
+import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
 
 interface ComposePostProps {
@@ -82,8 +83,9 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
       }
       try {
         localStorage.setItem(draftKey, JSON.stringify(draft))
-      } catch {
+      } catch (err) {
         // Local storage can fail in private mode or when quota is exceeded.
+        logger.warn('Auto-save draft failed:', err)
       }
     }, 700)
 
@@ -167,32 +169,49 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-gray-800 bg-neutral-950 p-4">
-      <h2 className="text-lg font-semibold">Compose Post</h2>
+    <div className="space-y-6">
+      {/* Title & Subtitle — editorial hero inputs */}
+      <section>
+        <Input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          maxLength={128}
+          required
+          placeholder="Post title"
+          className="!h-auto border-0 bg-transparent px-0 text-2xl font-bold text-white placeholder:text-gray-600 focus:ring-0"
+        />
+        <Textarea
+          value={subtitle}
+          onChange={(e) => setSubtitle(e.target.value)}
+          maxLength={256}
+          rows={1}
+          placeholder="Add a subtitle..."
+          className="mt-2 resize-none border-0 bg-transparent px-0 text-base text-gray-300 placeholder:text-gray-600 focus:ring-0"
+        />
+      </section>
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-300">Title</label>
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={128} required />
-      </div>
+      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-300">Subtitle</label>
-        <Textarea value={subtitle} onChange={(e) => setSubtitle(e.target.value)} maxLength={256} rows={2} />
-      </div>
+      {/* Cover image */}
+      <section>
+        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">Cover image</p>
+        <ProfileImageUpload
+          aspectRatio="banner"
+          label=""
+          currentUrl={coverImage || undefined}
+          onUpload={setCoverImage}
+          onClear={() => setCoverImage('')}
+        />
+      </section>
 
-      <ProfileImageUpload
-        aspectRatio="banner"
-        label="Cover image"
-        currentUrl={coverImage || undefined}
-        onUpload={setCoverImage}
-        onClear={() => setCoverImage('')}
-      />
+      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
 
-      <div className="space-y-2">
-        <label className="mb-1 block text-sm text-gray-300">Labels</label>
+      {/* Labels */}
+      <section>
+        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">Labels</p>
 
-        {availableLabels.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+        {(availableLabels.length > 0 || selectedLabels.length > 0) && (
+          <div className="mb-3 flex flex-wrap gap-1.5">
             {availableLabels.map((label) => {
               const selected = selectedLabels.includes(label)
               return (
@@ -201,10 +220,10 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
                   type="button"
                   onClick={() => toggleLabel(label)}
                   aria-pressed={selected}
-                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
                     selected
-                      ? 'border-cyan-400/40 bg-cyan-400/20 text-cyan-100'
-                      : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'
+                      ? 'bg-yappr-500/20 text-yappr-300 ring-1 ring-yappr-500/40'
+                      : 'bg-gray-800/60 text-gray-400 hover:bg-gray-800 hover:text-gray-300'
                   }`}
                 >
                   {label}
@@ -219,7 +238,8 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
             value={customLabel}
             onChange={(e) => setCustomLabel(e.target.value)}
             maxLength={40}
-            placeholder="Custom label"
+            placeholder="Add a label..."
+            className="h-9 text-sm"
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault()
@@ -227,33 +247,37 @@ export function ComposePost({ blog, onPublished }: ComposePostProps) {
               }
             }}
           />
-          <Button type="button" variant="outline" onClick={addCustomLabel} disabled={!customLabel.trim()}>
+          <Button type="button" variant="outline" size="sm" onClick={addCustomLabel} disabled={!customLabel.trim()}>
             Add
           </Button>
         </div>
+      </section>
 
-        {selectedLabels.length > 0 && (
-          <p className="text-xs text-gray-500">Selected: {selectedLabels.join(', ')}</p>
-        )}
-      </div>
+      <div className="h-px bg-gradient-to-r from-transparent via-gray-800 to-transparent" />
 
-      <div className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
-        <div>
-          <p className="text-sm font-medium">Comments enabled</p>
-          <p className="text-xs text-gray-500">Toggle comments for this post.</p>
+      {/* Editor — the writing canvas */}
+      <section>
+        <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
+      </section>
+
+      {/* Settings & Actions — bottom bar */}
+      <div className="space-y-4 rounded-xl border border-gray-800/60 bg-gray-900/30 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
+            <span className="text-sm text-gray-400">Comments</span>
+          </div>
+          <p className="text-xs tabular-nums text-gray-600">{compressedBytes.toLocaleString()} / {BLOG_POST_SIZE_LIMIT.toLocaleString()} bytes</p>
         </div>
-        <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
-      </div>
 
-      <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
-
-      <p className="text-xs text-gray-500">{compressedBytes} / {BLOG_POST_SIZE_LIMIT} bytes used</p>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={saveDraft}>Save Draft</Button>
-        <Button onClick={handlePublish} disabled={isPublishing || !title.trim()}>
-          {isPublishing ? 'Publishing...' : 'Publish'}
-        </Button>
+        <div className="flex items-center justify-end gap-3">
+          <Button variant="ghost" onClick={saveDraft} className="text-gray-400 hover:text-white">
+            Save Draft
+          </Button>
+          <Button onClick={handlePublish} disabled={isPublishing || !title.trim()}>
+            {isPublishing ? 'Publishing...' : 'Publish'}
+          </Button>
+        </div>
       </div>
     </div>
   )

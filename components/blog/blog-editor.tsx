@@ -93,12 +93,9 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between rounded-lg border border-gray-700 bg-gray-900/60 p-3">
-        <div>
-          <p className="text-sm font-medium text-gray-100">Editor</p>
-          <p className="text-xs text-gray-400">{bytesUsed} / {BLOG_POST_SIZE_LIMIT} bytes used</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Content</p>
+        <div className="flex items-center gap-3">
           <input
             ref={fileInputRef}
             type="file"
@@ -109,12 +106,12 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
           />
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-full border border-gray-600 px-3 py-1.5 text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gray-800/60 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-300 disabled:opacity-50"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
           >
-            <PhotoIcon className="h-4 w-4" />
-            {isUploading ? `Uploading ${progress}%` : 'Insert IPFS image'}
+            <PhotoIcon className="h-3.5 w-3.5" />
+            {isUploading ? `${progress}%` : 'Image'}
           </button>
         </div>
       </div>
@@ -123,7 +120,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         <p className="text-sm text-red-400">{error}</p>
       )}
 
-      <div className="rounded-xl border border-gray-700 bg-gray-900 p-2">
+      <div className="rounded-xl border border-gray-800/60 bg-gray-900/40 p-3">
         <BlockNoteView
           editor={editor}
           theme="dark"
