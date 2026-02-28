@@ -1,243 +1,242 @@
 {
-  "$schema": "https://json-schema.org/draft-07/schema#",
-  "documents": {
-    "blog": {
-      "type": "object",
-      "indices": [
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        }
-      ],
-      "mutable": true,
-      "required": [
-        "$createdAt",
-        "name"
-      ],
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64,
-          "position": 0,
-          "description": "Blog name"
-        },
-        "description": {
-          "type": "string",
-          "maxLength": 256,
-          "position": 1,
-          "description": "Blog description"
-        },
-        "headerImage": {
-          "type": "string",
-          "maxLength": 256,
-          "position": 2,
-          "description": "ipfs:// URI for header/banner image"
-        },
-        "avatar": {
-          "type": "string",
-          "maxLength": 256,
-          "position": 3,
-          "description": "ipfs:// URI for blog avatar"
-        },
-        "themeConfig": {
-          "type": "string",
-          "maxLength": 512,
-          "position": 4,
-          "description": "JSON string of theme configuration"
-        },
-        "commentsEnabledDefault": {
-          "type": "boolean",
-          "position": 5,
-          "description": "Default comments setting for new posts"
-        },
-        "labels": {
-          "type": "string",
-          "maxLength": 1024,
-          "position": 6,
-          "description": "Comma-separated label taxonomy"
-        }
+  "blog": {
+    "type": "object",
+    "documentsKeepHistory": true,
+    "documentsMutable": true,
+    "indices": [
+      {
+        "name": "ownerAndTime",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "name"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "position": 0,
+        "description": "Blog name"
       },
-      "additionalProperties": false
+      "description": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 1,
+        "description": "Blog description"
+      },
+      "headerImage": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 2,
+        "description": "ipfs:// URI for header/banner image"
+      },
+      "avatar": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 3,
+        "description": "ipfs:// URI for blog avatar"
+      },
+      "themeConfig": {
+        "type": "string",
+        "maxLength": 512,
+        "position": 4,
+        "description": "JSON string of theme configuration"
+      },
+      "commentsEnabledDefault": {
+        "type": "boolean",
+        "position": 5,
+        "description": "Default comments setting for new posts"
+      },
+      "labels": {
+        "type": "string",
+        "maxLength": 1024,
+        "position": 6,
+        "description": "Comma-separated label taxonomy"
+      }
     },
-    "blogPost": {
-      "type": "object",
-      "indices": [
-        {
-          "name": "blogAndTime",
-          "properties": [
-            {
-              "blogId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "blogAndSlug",
-          "unique": true,
-          "properties": [
-            {
-              "blogId": "asc"
-            },
-            {
-              "slug": "asc"
-            }
-          ]
-        }
-      ],
-      "mutable": true,
-      "required": [
-        "$createdAt",
-        "blogId",
-        "title",
-        "content",
-        "slug"
-      ],
-      "properties": {
-        "blogId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "position": 0,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "description": "Reference to parent blog document"
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "position": 1,
-          "description": "Post title"
-        },
-        "subtitle": {
-          "type": "string",
-          "maxLength": 256,
-          "position": 2,
-          "description": "Post subtitle"
-        },
-        "content": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 1,
-          "maxItems": 16384,
-          "position": 3,
-          "description": "Compressed BlockNote JSON content"
-        },
-        "coverImage": {
-          "type": "string",
-          "maxLength": 256,
-          "position": 4,
-          "description": "ipfs:// URI for cover image"
-        },
-        "labels": {
-          "type": "string",
-          "maxLength": 256,
-          "position": 5,
-          "description": "Comma-separated labels from blog taxonomy"
-        },
-        "commentsEnabled": {
-          "type": "boolean",
-          "position": 6,
-          "description": "Whether comments are enabled"
-        },
-        "slug": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "position": 7,
-          "description": "URL-safe slug derived from title"
-        },
-        "publishedAt": {
-          "type": "integer",
-          "minimum": 0,
-          "position": 8,
-          "description": "Publication timestamp (ms since epoch)"
-        }
+    "additionalProperties": false
+  },
+  "blogPost": {
+    "type": "object",
+    "documentsKeepHistory": true,
+    "documentsMutable": true,
+    "indices": [
+      {
+        "name": "blogAndTime",
+        "properties": [
+          {
+            "blogId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
       },
-      "additionalProperties": false
+      {
+        "name": "ownerAndTime",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "blogAndSlug",
+        "unique": true,
+        "properties": [
+          {
+            "blogId": "asc"
+          },
+          {
+            "slug": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "blogId",
+      "title",
+      "content",
+      "slug"
+    ],
+    "properties": {
+      "blogId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "Reference to parent blog document"
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "position": 1,
+        "description": "Post title"
+      },
+      "subtitle": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 2,
+        "description": "Post subtitle"
+      },
+      "content": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 16384,
+        "position": 3,
+        "description": "Compressed BlockNote JSON content"
+      },
+      "coverImage": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 4,
+        "description": "ipfs:// URI for cover image"
+      },
+      "labels": {
+        "type": "string",
+        "maxLength": 256,
+        "position": 5,
+        "description": "Comma-separated labels from blog taxonomy"
+      },
+      "commentsEnabled": {
+        "type": "boolean",
+        "position": 6,
+        "description": "Whether comments are enabled"
+      },
+      "slug": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 63,
+        "position": 7,
+        "description": "URL-safe slug derived from title"
+      },
+      "publishedAt": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 8,
+        "description": "Publication timestamp (ms since epoch)"
+      }
     },
-    "blogComment": {
-      "type": "object",
-      "indices": [
-        {
-          "name": "postAndTime",
-          "properties": [
-            {
-              "blogPostId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        }
-      ],
-      "mutable": false,
-      "required": [
-        "$createdAt",
-        "blogPostId",
-        "blogPostOwnerId",
-        "content"
-      ],
-      "properties": {
-        "blogPostId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "position": 0,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "description": "Reference to parent blog post document"
-        },
-        "blogPostOwnerId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "position": 1,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "description": "Owner identity ID of parent blog post"
-        },
-        "content": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500,
-          "position": 2,
-          "description": "Comment content"
-        }
+    "additionalProperties": false
+  },
+  "blogComment": {
+    "type": "object",
+    "documentsMutable": false,
+    "indices": [
+      {
+        "name": "postAndTime",
+        "properties": [
+          {
+            "blogPostId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
       },
-      "additionalProperties": false
-    }
+      {
+        "name": "ownerAndTime",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "blogPostId",
+      "blogPostOwnerId",
+      "content"
+    ],
+    "properties": {
+      "blogPostId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "Reference to parent blog post document"
+      },
+      "blogPostOwnerId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 1,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "Owner identity ID of parent blog post"
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+        "position": 2,
+        "description": "Comment content"
+      }
+    },
+    "additionalProperties": false
   }
 }

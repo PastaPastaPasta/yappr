@@ -39,11 +39,17 @@ class BlogService extends BaseDocumentService<Blog> {
   }
 
   async createBlog(ownerId: string, data: CreateBlogData): Promise<Blog> {
-    return this.create(ownerId, data as unknown as Record<string, unknown>)
+    const cleaned = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined)
+    )
+    return this.create(ownerId, cleaned)
   }
 
   async updateBlog(blogId: string, ownerId: string, data: UpdateBlogData): Promise<Blog> {
-    return this.update(blogId, ownerId, data as unknown as Record<string, unknown>)
+    const cleaned = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined)
+    )
+    return this.update(blogId, ownerId, cleaned)
   }
 
   async getBlog(blogId: string): Promise<Blog | null> {

@@ -9,10 +9,10 @@ export function generateSlug(title: string): string {
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
 
-  const truncated = normalized.slice(0, 128).replace(/-+$/g, '')
+  const truncated = normalized.slice(0, 63).replace(/-+$/g, '')
   return truncated || 'post'
 }
 
 export function isValidSlug(slug: string): boolean {
-  return slug.length > 0 && slug.length <= 128 && SLUG_REGEX.test(slug)
+  return slug.length > 0 && slug.length <= 63 && SLUG_REGEX.test(slug)
 }

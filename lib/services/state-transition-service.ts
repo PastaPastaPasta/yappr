@@ -5,7 +5,7 @@ import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { extractErrorMessage, isTimeoutError, isAlreadyExistsError } from '../error-utils';
+import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -487,6 +487,23 @@ class StateTransitionService {
             transactionHash: documentId,
             document: doc || { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
             confirmed: Boolean(doc)
+          };
+        }
+        // Non-fatal verification errors (e.g. newly deployed contract not yet propagated
+        // to all nodes). Broadcast succeeded, so check Platform then return optimistic success.
+        if (isNonFatalWaitError(waitErr)) {
+          logger.warn(`waitForResponse hit non-fatal error for ${documentId}: ${extractErrorMessage(waitErr)}`);
+          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+          if (doc) {
+            clearPendingSTBytes(documentId);
+            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
+          }
+          try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+          return {
+            success: true,
+            transactionHash: documentId,
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+            confirmed: false
           };
         }
         throw waitErr;

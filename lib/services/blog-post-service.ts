@@ -82,26 +82,28 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       title: data.title,
       content: compressed,
       slug: data.slug || generateSlug(data.title),
-      subtitle: data.subtitle,
-      coverImage: data.coverImage,
-      labels: data.labels,
-      commentsEnabled: data.commentsEnabled,
       publishedAt: data.publishedAt ?? Date.now(),
     }
+    if (data.subtitle !== undefined) payload.subtitle = data.subtitle
+    if (data.coverImage !== undefined) payload.coverImage = data.coverImage
+    if (data.labels !== undefined) payload.labels = data.labels
+    if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
 
     return this.create(ownerId, payload)
   }
 
   async updatePost(postId: string, ownerId: string, data: UpdateBlogPostData): Promise<BlogPost> {
-    const payload: Record<string, unknown> = {
-      title: data.title,
-      subtitle: data.subtitle,
-      coverImage: data.coverImage,
-      labels: data.labels,
-      commentsEnabled: data.commentsEnabled,
-      slug: data.slug,
-      publishedAt: data.publishedAt,
-    }
+    const payload: Record<string, unknown> = Object.fromEntries(
+      Object.entries({
+        title: data.title,
+        subtitle: data.subtitle,
+        coverImage: data.coverImage,
+        labels: data.labels,
+        commentsEnabled: data.commentsEnabled,
+        slug: data.slug,
+        publishedAt: data.publishedAt,
+      }).filter(([, v]) => v !== undefined)
+    )
 
     if (typeof data.content !== 'undefined') {
       const compressed = compressContent(data.content)
