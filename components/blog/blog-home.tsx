@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { Rss } from 'lucide-react'
 import { blogCommentService, blogPostService } from '@/lib/services'
+import { downloadTextFile, extractText, parseLabels } from '@/lib/blog/content-utils'
 import { generateBlogRSS } from '@/lib/blog/rss-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -13,38 +14,6 @@ import { BlogThemeProvider } from './theme-provider'
 interface BlogHomeProps {
   blog: Blog
   username: string
-}
-
-function extractText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => extractText(block))
-      .filter(Boolean)
-      .join(' ')
-  }
-  if (content && typeof content === 'object') {
-    return Object.values(content as Record<string, unknown>)
-      .map((value) => extractText(value))
-      .filter(Boolean)
-      .join(' ')
-  }
-  return ''
-}
-
-function parseLabels(value?: string): string[] {
-  if (!value) return []
-  return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
-}
-
-function downloadTextFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
 }
 
 export function BlogHome({ blog, username }: BlogHomeProps) {

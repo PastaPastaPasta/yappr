@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogPostService, blogService } from '@/lib/services'
+import { downloadTextFile, labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import { generateBlogSitemap } from '@/lib/blog/sitemap-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -18,24 +19,6 @@ interface BlogSettingsProps {
   ownerId: string
   username?: string
   onUpdated?: (blog: Blog) => void
-}
-
-function parseLabels(value: string): string[] {
-  return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
-}
-
-function labelsToCsv(items: string[]): string {
-  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join(',')
-}
-
-function downloadTextFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
 }
 
 export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSettingsProps) {

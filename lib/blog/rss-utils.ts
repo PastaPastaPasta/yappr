@@ -1,32 +1,5 @@
 import type { Blog, BlogPost } from '@/lib/types'
-
-function extractText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content.map((item) => extractText(item)).filter(Boolean).join(' ')
-  }
-  if (content && typeof content === 'object') {
-    return Object.values(content as Record<string, unknown>)
-      .map((value) => extractText(value))
-      .filter(Boolean)
-      .join(' ')
-  }
-  return ''
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  return `${value.slice(0, Math.max(0, maxLength - 3)).trim()}...`
-}
+import { escapeXml, extractText, truncate } from '@/lib/blog/content-utils'
 
 export function generateBlogRSS(posts: BlogPost[], blog: Blog, username: string, baseUrl: string): string {
   const normalizedBase = baseUrl.replace(/\/$/, '')

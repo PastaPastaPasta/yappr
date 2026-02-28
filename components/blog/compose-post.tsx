@@ -9,6 +9,7 @@ import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { blogPostService } from '@/lib/services'
+import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
 import { useAuth } from '@/contexts/auth-context'
@@ -26,15 +27,6 @@ interface DraftData {
   labels: string
   commentsEnabled: boolean
   blocks: unknown[]
-}
-
-function parseLabels(value?: string): string[] {
-  if (!value) return []
-  return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
-}
-
-function labelsToCsv(items: string[]): string {
-  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join(',')
 }
 
 export function ComposePost({ blog, onPublished }: ComposePostProps) {
