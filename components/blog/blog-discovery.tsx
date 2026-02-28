@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { blogService } from '@/lib/services'
@@ -18,30 +18,44 @@ export function BlogDiscovery() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
-  const loadBlogs = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const allBlogs = await blogService.getAllBlogs(100)
-      const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
-      const usernameMap = await dpnsService.resolveUsernamesBatch(ownerIds)
+  useEffect(() => {
+    let cancelled = false
 
-      setBlogs(
-        allBlogs.map((blog) => ({
-          ...blog,
-          username: usernameMap.get(blog.ownerId) ?? null,
-        }))
-      )
-    } catch {
-      setError('Failed to load blogs')
-    } finally {
-      setLoading(false)
+    const load = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const allBlogs = await blogService.getAllBlogs(100)
+        if (cancelled) return
+
+        const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
+        const usernameMap = await dpnsService.resolveUsernamesBatch(ownerIds)
+        if (cancelled) return
+
+        setBlogs(
+          allBlogs.map((blog) => ({
+            ...blog,
+            username: usernameMap.get(blog.ownerId) ?? null,
+          }))
+        )
+      } catch {
+        if (!cancelled) setError('Failed to load blogs')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load().catch(() => {
+      if (!cancelled) {
+        setLoading(false)
+        setError('Failed to load blogs')
+      }
+    })
+
+    return () => {
+      cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    loadBlogs().catch(() => setLoading(false))
-  }, [loadBlogs])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return blogs
@@ -127,14 +141,17 @@ export function BlogDiscovery() {
                   )}
                   {blog.labels && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {blog.labels.split(',').slice(0, 4).map((label) => (
-                        <span
-                          key={label}
-                          className="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] text-gray-400"
-                        >
-                          {label.trim()}
-                        </span>
-                      ))}
+                      {blog.labels.split(',').slice(0, 4).map((label) => {
+                        const trimmed = label.trim()
+                        return (
+                          <span
+                            key={trimmed}
+                            className="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] text-gray-400"
+                          >
+                            {trimmed}
+                          </span>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
