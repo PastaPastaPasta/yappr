@@ -5,6 +5,7 @@ import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
+import { BlogComments } from './blog-comments'
 
 interface BlogPostViewProps {
   blog: Blog
@@ -49,6 +50,12 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         )}
 
         <BlogViewer blocks={blocks} />
+
+        <BlogComments
+          blogPostId={post.id}
+          blogPostOwnerId={post.ownerId}
+          commentsEnabled={post.commentsEnabled !== false}
+        />
       </article>
     </BlogThemeProvider>
   )
