@@ -146,3 +146,12 @@ export interface BlogPost {
   slug: string
   publishedAt?: number
 }
+
+export interface BlogComment {
+  id: string
+  ownerId: string
+  createdAt: Date
+  blogPostId: string
+  blogPostOwnerId: string
+  content: string
+}

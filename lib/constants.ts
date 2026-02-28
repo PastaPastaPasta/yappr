@@ -58,6 +58,7 @@ export const DOCUMENT_TYPES = {
   PRIVATE_FEED_STATE: 'privateFeedState',
   BLOG: 'blog',
   BLOG_POST: 'blogPost',
+  BLOG_COMMENT: 'blogComment',
 } as const
 
 // Storefront document types (separate contract)

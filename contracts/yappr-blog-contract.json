@@ -176,6 +176,68 @@
         }
       },
       "additionalProperties": false
+    },
+    "blogComment": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "postAndTime",
+          "properties": [
+            {
+              "blogPostId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "mutable": false,
+      "required": [
+        "$createdAt",
+        "blogPostId",
+        "blogPostOwnerId",
+        "content"
+      ],
+      "properties": {
+        "blogPostId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "position": 0,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "description": "Reference to parent blog post document"
+        },
+        "blogPostOwnerId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "position": 1,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "description": "Owner identity ID of parent blog post"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 2,
+          "description": "Comment content"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
