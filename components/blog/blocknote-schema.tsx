@@ -442,7 +442,7 @@ const videoBlock = createReactBlockSpec(
       const url = String(block.props.url || '')
 
       return (
-        <div className="space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
+        <div className="w-full space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
           {editable && (
             <input
               type="url"
@@ -474,7 +474,7 @@ const videoEmbedBlock = createReactBlockSpec(
       const url = String(block.props.url || '')
 
       return (
-        <div className="space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
+        <div className="w-full space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
           {editable && (
             <input
               type="url"
