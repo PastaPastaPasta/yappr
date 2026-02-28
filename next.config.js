@@ -66,9 +66,7 @@ const nextConfig = {
     const sharedCSPDirectives = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https: blob:",
-      "font-src 'self'",
       "connect-src 'self' https: wss: https://44.240.98.102:1443",
       "worker-src 'self' blob:",
       "child-src 'self' blob:",
@@ -107,6 +105,8 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               ...sharedCSPDirectives,
+              "style-src 'self' 'unsafe-inline'",
+              "font-src 'self'",
               "frame-src 'self' blob: https://www.youtube-nocookie.com",
             ].join('; ')
           },
