@@ -23,11 +23,6 @@ export function BlogDiscovery() {
     setError(null)
     try {
       const allBlogs = await blogService.getAllBlogs(100)
-      if (allBlogs.length === 0) {
-        setBlogs([])
-        return
-      }
-
       const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
       const usernameMap = await dpnsService.resolveUsernamesBatch(ownerIds)
 
