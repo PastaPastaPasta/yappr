@@ -12,18 +12,55 @@ interface EmbeddedBlogPostCardProps {
   className?: string
 }
 
+/** Extract human-readable text from BlockNote block structures. */
 function extractText(content: unknown): string {
   if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content.map((item) => extractText(item)).filter(Boolean).join(' ')
-  }
-  if (content && typeof content === 'object') {
-    return Object.values(content as Record<string, unknown>)
-      .map((item) => extractText(item))
-      .filter(Boolean)
-      .join(' ')
-  }
-  return ''
+  if (!Array.isArray(content)) return ''
+
+  return content
+    .map((block) => {
+      if (typeof block === 'string') return block
+      if (!block || typeof block !== 'object') return ''
+
+      const b = block as {
+        content?: unknown[]
+        children?: unknown[]
+        text?: string
+        props?: Record<string, unknown>
+      }
+
+      // Inline content item (e.g. { type: "text", text: "Hello" })
+      if (typeof b.text === 'string') return b.text
+
+      const parts: string[] = []
+
+      // Extract text from inline content array
+      if (Array.isArray(b.content)) {
+        for (const item of b.content) {
+          if (typeof item === 'string') {
+            parts.push(item)
+          } else if (item && typeof item === 'object') {
+            const maybeText = (item as { text?: unknown }).text
+            if (typeof maybeText === 'string') parts.push(maybeText)
+          }
+        }
+      }
+
+      // Code blocks store text in props.code
+      if (typeof b.props?.code === 'string' && b.props.code) {
+        parts.push(b.props.code)
+      }
+
+      // Recurse into children blocks
+      if (Array.isArray(b.children) && b.children.length > 0) {
+        const childText = extractText(b.children)
+        if (childText) parts.push(childText)
+      }
+
+      return parts.join(' ')
+    })
+    .filter(Boolean)
+    .join(' ')
 }
 
 function toExcerpt(post: EmbeddedBlogPostLike): string {
