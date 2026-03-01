@@ -94,7 +94,7 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
   const handleDownloadSitemap = async () => {
     setIsDownloadingSitemap(true)
     try {
-      const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 500 })
+      const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
       const baseUrl = window.location.origin
       const fallbackUsername = new URLSearchParams(window.location.search).get('user') || 'blog'
       const xml = generateBlogSitemap(posts, blog, username || fallbackUsername, baseUrl)

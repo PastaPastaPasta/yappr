@@ -461,7 +461,7 @@ function UserProfileContent() {
 
           if (ownerBlogs.length > 0) {
             const blogsWithCounts = await Promise.all(ownerBlogs.map(async (blog) => {
-              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 1000 })
+              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
               return {
                 id: blog.id,
                 name: blog.name,
