@@ -1,6 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions } from '../../types';
+import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { paginateCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
@@ -629,15 +630,20 @@ class PostService extends BaseDocumentService<Post> {
       encryptedContent: reply.encryptedContent,
       epoch: reply.epoch,
       nonce: reply.nonce,
+      parentId: reply.parentId,
+      parentOwnerId: reply.parentOwnerId,
+      _enrichment: reply._enrichment,
     }));
 
     if (remainingIds.length === 0) {
       return [...posts, ...convertedReplies];
     }
 
-    const blogPosts = (await Promise.all(remainingIds.map((id) => blogPostService.getPost(id)))).filter(
-      (blogPost): blogPost is NonNullable<Awaited<ReturnType<typeof blogPostService.getPost>>> => blogPost !== null
-    );
+    const blogPostResults = await Promise.allSettled(remainingIds.map((id) => blogPostService.getPost(id)));
+    const blogPosts = blogPostResults
+      .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
+      .map(r => r.value)
+      .filter((post): post is BlogPost => post !== null);
 
     const convertedBlogPosts: Post[] = await Promise.all(
       blogPosts.map(async (blogPost) => {

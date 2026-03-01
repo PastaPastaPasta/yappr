@@ -226,11 +226,13 @@ const SAFE_CSS_PROPERTIES = new Set([
 
 export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|behavior\s*:|binding\s*:)/i
 
+const SAFE_CSS_COLOR = /^(#[0-9a-fA-F]{3,8}|transparent|[a-zA-Z]{3,20})$/
+
 function normalizeColor(input: unknown, fallback: string): string {
   if (typeof input !== 'string') return fallback
   const value = input.trim()
   if (!value) return fallback
-  if (FORBIDDEN_CSS_PATTERN.test(value)) return fallback
+  if (!SAFE_CSS_COLOR.test(value)) return fallback
   return value
 }
 
@@ -340,8 +342,6 @@ export function normalizeBlogThemeConfig(value: Partial<BlogThemeConfig> | undef
     gradient: normalizeGradient(value?.gradient),
   }
 }
-
-const SAFE_CSS_COLOR = /^(#[0-9a-fA-F]{3,8}|transparent|[a-zA-Z]{3,20})$/
 
 function safeCSSColor(value: string, fallback: string): string {
   return SAFE_CSS_COLOR.test(value) ? value : fallback

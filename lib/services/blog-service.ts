@@ -52,6 +52,15 @@ class BlogService extends BaseDocumentService<Blog> {
     super('blog', YAPPR_BLOG_CONTRACT_ID)
   }
 
+  protected extractContentFields(doc: Blog): Record<string, unknown> {
+    const fields = super.extractContentFields(doc)
+    // Serialize themeConfig back to compressed bytes for platform
+    if (fields.themeConfig && typeof fields.themeConfig === 'object' && !(fields.themeConfig instanceof Uint8Array)) {
+      fields.themeConfig = serializeThemeConfig(fields.themeConfig as BlogThemeConfig)
+    }
+    return fields
+  }
+
   protected transformDocument(doc: Record<string, unknown>): Blog {
     const data = (doc.data || doc) as Record<string, unknown>
 
@@ -108,43 +117,37 @@ class BlogService extends BaseDocumentService<Blog> {
 
   /**
    * Get all blogs on the platform (for discovery).
-   * Fetches in batches using cursor-based pagination.
-   * Note: This queries by $ownerId index, so we page through all owners.
+   * Uses the ownerAndTime index [$ownerId, $createdAt] with cursor-based pagination,
+   * then sorts client-side by createdAt desc for display.
    */
   async getAllBlogs(limit = 100): Promise<Blog[]> {
     const blogs: Blog[] = []
     const pageSize = Math.min(100, limit)
-    const seenBlogIds = new Set<string>()
-    let lastCreatedAt: number | null = null
+    let startAfter: string | undefined
 
     while (blogs.length < limit) {
       const remaining = limit - blogs.length
       const batchLimit = Math.min(pageSize, remaining)
 
       const queryOptions: QueryOptions = {
-        orderBy: [['$createdAt', 'desc']],
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
         limit: batchLimit,
-        ...(lastCreatedAt !== null ? { where: [['$createdAt', '<=', lastCreatedAt]] } : {}),
+        startAfter,
       }
 
       const result = await this.query(queryOptions)
       if (result.documents.length === 0) break
 
-      const newBlogs = result.documents.filter((blog) => {
-        if (seenBlogIds.has(blog.id)) return false
-        seenBlogIds.add(blog.id)
-        return true
-      })
-
-      if (newBlogs.length === 0) break
-
-      blogs.push(...newBlogs.slice(0, remaining))
-      lastCreatedAt = result.documents[result.documents.length - 1].createdAt.getTime()
+      blogs.push(...result.documents)
+      startAfter = result.documents[result.documents.length - 1].id
 
       if (result.documents.length < batchLimit) break
     }
 
-    return blogs
+    // Sort client-side by newest first
+    blogs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+
+    return blogs.slice(0, limit)
   }
 }
 

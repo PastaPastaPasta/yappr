@@ -38,7 +38,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import type { BlogPost, Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
+import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
@@ -131,126 +131,6 @@ function isValidHttpUrl(value: string): boolean {
   } catch {
     return false
   }
-}
-
-/**
- * Helper to fetch content by IDs, trying posts first and then replies for any not found.
- * Returns an array of Post objects (replies are converted to Post format for display).
- * Needed because quoted content can be either a post or a reply.
- */
-async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
-  if (ids.length === 0) return []
-
-  const { postService } = await import('@/lib/services')
-  const { replyService } = await import('@/lib/services/reply-service')
-  const { blogPostService } = await import('@/lib/services/blog-post-service')
-  const { blogService } = await import('@/lib/services/blog-service')
-  const { dpnsService } = await import('@/lib/services/dpns-service')
-  const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-
-  // First try to fetch as posts
-  const posts = await postService.getPostsByIds(ids)
-  const foundPostIds = new Set(posts.map(p => p.id))
-
-  // Find IDs that weren't found as posts
-  const missingIds = ids.filter(id => !foundPostIds.has(id))
-
-  if (missingIds.length === 0) {
-    return posts
-  }
-
-  // Try to fetch missing IDs as replies
-  const replies = await replyService.getRepliesByIds(missingIds)
-  const foundReplyIds = new Set(replies.map(reply => reply.id))
-  const remainingIds = missingIds.filter(id => !foundReplyIds.has(id))
-
-  // Convert replies to Post format for display
-  const convertedReplies: Post[] = replies.map(reply => ({
-    id: reply.id,
-    author: reply.author,
-    content: reply.content,
-    createdAt: reply.createdAt,
-    likes: reply.likes,
-    reposts: reply.reposts,
-    replies: reply.replies,
-    views: reply.views,
-    liked: reply.liked,
-    reposted: reply.reposted,
-    bookmarked: reply.bookmarked,
-    media: reply.media,
-    encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
-    nonce: reply.nonce,
-    // Thread context fields
-    parentId: reply.parentId,
-    parentOwnerId: reply.parentOwnerId,
-    // Enrichment metadata
-    _enrichment: reply._enrichment,
-  }))
-
-  if (remainingIds.length === 0) {
-    return [...posts, ...convertedReplies]
-  }
-
-  const blogPostResults = await Promise.allSettled(
-    remainingIds.map(id => blogPostService.getPost(id))
-  )
-  const blogPosts = blogPostResults
-    .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
-    .map(r => r.value)
-    .filter((post): post is BlogPost => Boolean(post))
-
-  const convertedBlogPosts: Post[] = await Promise.all(blogPosts.map(async (blogPost) => {
-    const [blog, username, profile] = await Promise.all([
-      blogService.getBlog(blogPost.blogId).catch((err) => {
-        logger.warn('Failed to load quoted blog:', err)
-        return null
-      }),
-      dpnsService.resolveUsername(blogPost.ownerId).catch((err) => {
-        logger.warn('Failed to resolve quoted blog username:', err)
-        return null
-      }),
-      unifiedProfileService.getProfile(blogPost.ownerId).catch((err) => {
-        logger.warn('Failed to load quoted blog profile:', err)
-        return null
-      }),
-    ])
-
-    return {
-      id: blogPost.id,
-      author: {
-        id: blogPost.ownerId,
-        username: username || '',
-        displayName: profile?.displayName || blog?.name || 'Blog author',
-        avatar: profile?.avatar || blog?.avatar || '',
-        followers: 0,
-        following: 0,
-        verified: false,
-        joinedAt: new Date(0),
-        hasDpns: typeof username === 'string' ? true : undefined,
-      },
-      content: blogPost.subtitle || blogPost.title,
-      createdAt: blogPost.createdAt,
-      likes: 0,
-      reposts: 0,
-      replies: 0,
-      views: 0,
-      liked: false,
-      reposted: false,
-      bookmarked: false,
-      __isBlogPostQuote: true,
-      title: blogPost.title,
-      subtitle: blogPost.subtitle,
-      coverImage: blogPost.coverImage,
-      slug: blogPost.slug,
-      blogId: blogPost.blogId,
-      blogName: blog?.name,
-      blogUsername: username || undefined,
-      blogContent: blogPost.content,
-    }
-  }))
-
-  return [...posts, ...convertedReplies, ...convertedBlogPosts]
 }
 
 function UserProfileContent() {
@@ -558,7 +438,7 @@ function UserProfileContent() {
             .map((p: any) => p.quotedPostId)
 
           if (quotedPostIds.length > 0) {
-            const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
+            const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
             const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
             for (const post of transformedPosts) {
@@ -788,7 +668,7 @@ function UserProfileContent() {
           .map((p: any) => p.quotedPostId)
 
         if (quotedPostIds.length > 0) {
-          const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
+          const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
           const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
           for (const post of newPosts) {

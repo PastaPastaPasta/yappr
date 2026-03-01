@@ -38,6 +38,17 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     super('blogPost', YAPPR_BLOG_CONTRACT_ID)
   }
 
+  protected extractContentFields(doc: BlogPost): Record<string, unknown> {
+    const fields = super.extractContentFields(doc)
+    // Remove client-side computed field not in contract
+    delete fields.compressedContent
+    // Re-compress content to wire format (byte array) if it was deserialized
+    if (fields.content && !(fields.content instanceof Uint8Array)) {
+      fields.content = doc.compressedContent || compressContent(fields.content)
+    }
+    return fields
+  }
+
   protected transformDocument(doc: Record<string, unknown>): BlogPost {
     const data = (doc.data || doc) as Record<string, unknown>
     const rawBlogId = data.blogId || doc.blogId
@@ -80,11 +91,18 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       throw new Error(`Compressed content exceeds ${BLOG_POST_SIZE_LIMIT} bytes`)
     }
 
+    let slug = data.slug || generateSlug(data.title)
+    // Check for collision and append suffix if needed
+    const existing = await this.getPostBySlug(data.blogId, slug)
+    if (existing) {
+      slug = `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
+    }
+
     const payload: Record<string, unknown> = {
       blogId: requireIdentifierBytes(data.blogId, 'blogId'),
       title: data.title,
       content: compressed,
-      slug: data.slug || generateSlug(data.title),
+      slug,
       publishedAt: data.publishedAt ?? Date.now(),
     }
     if (data.subtitle !== undefined) payload.subtitle = data.subtitle
