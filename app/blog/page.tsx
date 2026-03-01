@@ -403,10 +403,10 @@ function BlogPageContent() {
       <div className="min-h-screen bg-neutral-950">
         <nav className="sticky top-0 z-50 border-b border-gray-800 bg-neutral-950/80 backdrop-blur-xl">
           <div className="mx-auto grid max-w-5xl grid-cols-3 items-center px-4 py-3 sm:px-6 lg:px-8">
-            <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors">
+            <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors">
               <ArrowLeftIcon className="h-4 w-4" />
               Back to Yappr
-            </Link>
+            </button>
             <Link href="/" className="justify-self-center text-sm font-bold text-white">
               Yappr
             </Link>
