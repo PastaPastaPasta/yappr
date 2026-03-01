@@ -37,12 +37,13 @@ export function ProfileImageUpload({
   aspectRatio = 'square',
   maxSizeMB = 5,
   label = 'Upload Image',
-  placeholder = 'Click to upload',
+  placeholder = 'Click or drag to upload',
 }: ProfileImageUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { upload, isUploading, progress, error, isProviderConnected, checkProvider, clearError } = useImageUpload()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   const [imageLoading, setImageLoading] = useState(false)
 
@@ -62,10 +63,7 @@ export function ProfileImageUpload({
     }
   }, [currentUrl])
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
+  const processFile = useCallback(async (file: File) => {
     // Reset errors
     setLocalError(null)
     clearError()
@@ -73,7 +71,6 @@ export function ProfileImageUpload({
     // Validate file type
     if (!file.type.startsWith('image/')) {
       setLocalError('Please select an image file')
-      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
@@ -81,7 +78,6 @@ export function ProfileImageUpload({
     const maxBytes = maxSizeMB * 1024 * 1024
     if (file.size > maxBytes) {
       setLocalError(`Image must be smaller than ${maxSizeMB}MB`)
-      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
@@ -94,20 +90,56 @@ export function ProfileImageUpload({
 
     try {
       const result = await upload(file)
-      // Return ipfs:// URL for storage (canonical format)
       const ipfsUrl = `ipfs://${result.cid}`
       onUpload(ipfsUrl)
-      setPreviewUrl(null) // Clear preview, will use the uploaded URL
-    } catch (err) {
-      // Error is already set in the hook
+      setPreviewUrl(null)
+    } catch {
       setPreviewUrl(null)
     }
+  }, [upload, maxSizeMB, onUpload, clearError])
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    await processFile(file)
 
     // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
-  }, [upload, maxSizeMB, onUpload, clearError])
+  }, [processFile])
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    if (isUploading) return
+
+    const file = e.dataTransfer.files[0]
+    if (file) {
+      await processFile(file)
+    }
+  }, [isUploading, processFile])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isUploading) setIsDragging(true)
+  }, [isUploading])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // Only set false if leaving the container (not entering a child)
+    if (e.currentTarget === e.target) setIsDragging(false)
+  }, [])
 
   const handleClear = useCallback(() => {
     setPreviewUrl(null)
@@ -183,7 +215,15 @@ export function ProfileImageUpload({
             handleClick()
           }
         }}
-        className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed border-gray-200 dark:border-gray-800 hover:border-yappr-500/60 dark:hover:border-yappr-500/40 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed transition-colors overflow-hidden ${
+          isDragging
+            ? 'border-yappr-500 bg-yappr-500/10 dark:bg-yappr-500/10'
+            : 'border-gray-200 dark:border-gray-800 hover:border-yappr-500/60 dark:hover:border-yappr-500/40'
+        } focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
           isUploading ? 'cursor-wait' : 'cursor-pointer'
         }`}
       >
@@ -257,9 +297,9 @@ export function ProfileImageUpload({
         {/* Empty state */}
         {!previewUrl && !currentUrl && !isUploading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <PhotoIcon className="h-10 w-10 text-gray-400 mb-2" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {placeholder}
+            <PhotoIcon className={`h-10 w-10 mb-2 ${isDragging ? 'text-yappr-500' : 'text-gray-400'}`} />
+            <span className={`text-sm ${isDragging ? 'text-yappr-500' : 'text-gray-500 dark:text-gray-400'}`}>
+              {isDragging ? 'Drop image here' : placeholder}
             </span>
             <span className="text-xs text-gray-400 mt-1">
               Max {maxSizeMB}MB
