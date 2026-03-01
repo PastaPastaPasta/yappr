@@ -37,19 +37,40 @@ interface DraftData {
   blocks: unknown[]
 }
 
+function loadDraft(identityId: string, blogId: string): DraftData | null {
+  try {
+    const raw = localStorage.getItem(`yappr:blog-draft:${identityId}:${blogId}:new`)
+    if (!raw) return null
+    return JSON.parse(raw) as DraftData
+  } catch {
+    return null
+  }
+}
+
 export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: ComposePostProps) {
   const isEditing = Boolean(editPost)
   const { user } = useAuth()
-  const [title, setTitle] = useState(editPost?.title ?? '')
-  const [subtitle, setSubtitle] = useState(editPost?.subtitle ?? '')
-  const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? '')
-  const [labels, setLabels] = useState(editPost?.labels ?? '')
+
+  // Load draft synchronously so BlogEditor gets correct initialBlocks on first render
+  const savedDraft = useMemo(() => {
+    if (isEditing || !user?.identityId) return null
+    return loadDraft(user.identityId, blog.id)
+  }, [isEditing, user?.identityId, blog.id])
+
+  const [title, setTitle] = useState(editPost?.title ?? savedDraft?.title ?? '')
+  const [subtitle, setSubtitle] = useState(editPost?.subtitle ?? savedDraft?.subtitle ?? '')
+  const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? savedDraft?.coverImage ?? '')
+  const [labels, setLabels] = useState(editPost?.labels ?? savedDraft?.labels ?? '')
   const [customLabel, setCustomLabel] = useState('')
   const [commentsEnabled, setCommentsEnabled] = useState(
-    editPost ? Boolean(editPost.commentsEnabled ?? true) : Boolean(blog.commentsEnabledDefault ?? true)
+    editPost ? Boolean(editPost.commentsEnabled ?? true)
+      : savedDraft ? Boolean(savedDraft.commentsEnabled ?? true)
+      : Boolean(blog.commentsEnabledDefault ?? true)
   )
   const [blocks, setBlocks] = useState<unknown[]>(
-    editPost && Array.isArray(editPost.content) ? editPost.content : []
+    editPost && Array.isArray(editPost.content) ? editPost.content
+      : savedDraft && Array.isArray(savedDraft.blocks) ? savedDraft.blocks
+      : []
   )
   const [isPublishing, setIsPublishing] = useState(false)
   const [compressedBytes, setCompressedBytes] = useState(0)
@@ -136,25 +157,6 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     if (!user?.identityId) return ''
     return `yappr:blog-draft:${user.identityId}:${blog.id}:new`
   }, [blog.id, user?.identityId])
-
-  useEffect(() => {
-    if (!draftKey || isEditing) return
-
-    const raw = localStorage.getItem(draftKey)
-    if (!raw) return
-
-    try {
-      const parsed = JSON.parse(raw) as DraftData
-      setTitle(parsed.title || '')
-      setSubtitle(parsed.subtitle || '')
-      setCoverImage(parsed.coverImage || '')
-      setLabels(parsed.labels || '')
-      setCommentsEnabled(parsed.commentsEnabled ?? false)
-      setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : [])
-    } catch {
-      // Ignore invalid drafts
-    }
-  }, [draftKey, isEditing])
 
   useEffect(() => {
     if (!draftKey || isEditing) return
