@@ -1,15 +1,18 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { XMarkIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { XMarkIcon, Cog6ToothIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
+import { IpfsImage } from '@/components/ui/ipfs-image'
+import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
+import { useImageUpload } from '@/hooks/use-image-upload'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
 import { useAuth } from '@/contexts/auth-context'
@@ -20,6 +23,8 @@ interface ComposePostProps {
   blog: Blog
   onBack?: () => void
   onPublished?: (post: BlogPost) => void
+  editPost?: BlogPost
+  ownerId?: string
 }
 
 interface DraftData {
@@ -31,19 +36,69 @@ interface DraftData {
   blocks: unknown[]
 }
 
-export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
+export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: ComposePostProps) {
+  const isEditing = Boolean(editPost)
   const { user } = useAuth()
-  const [title, setTitle] = useState('')
-  const [subtitle, setSubtitle] = useState('')
-  const [coverImage, setCoverImage] = useState('')
-  const [labels, setLabels] = useState('')
+  const [title, setTitle] = useState(editPost?.title ?? '')
+  const [subtitle, setSubtitle] = useState(editPost?.subtitle ?? '')
+  const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? '')
+  const [labels, setLabels] = useState(editPost?.labels ?? '')
   const [customLabel, setCustomLabel] = useState('')
-  const [commentsEnabled, setCommentsEnabled] = useState(Boolean(blog.commentsEnabledDefault ?? true))
-  const [blocks, setBlocks] = useState<unknown[]>([])
+  const [commentsEnabled, setCommentsEnabled] = useState(
+    editPost ? Boolean(editPost.commentsEnabled ?? true) : Boolean(blog.commentsEnabledDefault ?? true)
+  )
+  const [blocks, setBlocks] = useState<unknown[]>(
+    editPost && Array.isArray(editPost.content) ? editPost.content : []
+  )
   const [isPublishing, setIsPublishing] = useState(false)
   const [compressedBytes, setCompressedBytes] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [draftSaved, setDraftSaved] = useState(false)
+
+  const labelInputRef = useRef<HTMLInputElement>(null)
+  const coverFileRef = useRef<HTMLInputElement>(null)
+  const { upload: uploadImage, isUploading: isUploadingCover, progress: uploadProgress, isProviderConnected, checkProvider } = useImageUpload()
+
+  useEffect(() => {
+    checkProvider().catch(() => {})
+  }, [checkProvider])
+
+  const handleCoverFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file')
+      if (coverFileRef.current) coverFileRef.current.value = ''
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be smaller than 5MB')
+      if (coverFileRef.current) coverFileRef.current.value = ''
+      return
+    }
+
+    try {
+      const result = await uploadImage(file)
+      setCoverImage(`ipfs://${result.cid}`)
+    } catch {
+      toast.error('Failed to upload cover image')
+    }
+    if (coverFileRef.current) coverFileRef.current.value = ''
+  }, [uploadImage])
+
+  const handleCoverClick = useCallback(() => {
+    if (!isProviderConnected) {
+      toast.error('Connect a storage provider in Settings to upload images')
+      return
+    }
+    coverFileRef.current?.click()
+  }, [isProviderConnected])
+
+  const handleAddLabel = () => {
+    setShowSettings(true)
+    setTimeout(() => labelInputRef.current?.focus(), 100)
+  }
 
   const availableLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
   const selectedLabels = useMemo(() => parseLabels(labels), [labels])
@@ -54,7 +109,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
   }, [blog.id, user?.identityId])
 
   useEffect(() => {
-    if (!draftKey) return
+    if (!draftKey || isEditing) return
 
     const raw = localStorage.getItem(draftKey)
     if (!raw) return
@@ -70,10 +125,10 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
     } catch {
       // Ignore invalid drafts
     }
-  }, [draftKey])
+  }, [draftKey, isEditing])
 
   useEffect(() => {
-    if (!draftKey) return
+    if (!draftKey || isEditing) return
 
     setDraftSaved(false)
     const timeout = setTimeout(() => {
@@ -94,7 +149,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
     }, 700)
 
     return () => clearTimeout(timeout)
-  }, [blocks, commentsEnabled, coverImage, draftKey, labels, subtitle, title])
+  }, [blocks, commentsEnabled, coverImage, draftKey, isEditing, labels, subtitle, title])
 
   const toggleLabel = (label: string) => {
     if (selectedLabels.includes(label)) {
@@ -115,7 +170,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
     setCustomLabel('')
   }
 
-  const handlePublish = async () => {
+  const handleSubmit = async () => {
     if (!user?.identityId) return
     if (!title.trim()) {
       toast.error('Title is required')
@@ -136,30 +191,43 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
 
     setIsPublishing(true)
     try {
-      const created = await blogPostService.createPost(user.identityId, {
-        blogId: blog.id,
-        title: title.trim(),
-        subtitle: subtitle.trim() || undefined,
-        content: blocks,
-        coverImage: coverImage || undefined,
-        labels: labels || undefined,
-        commentsEnabled,
-      })
+      if (isEditing && editPost && ownerId) {
+        const updated = await blogPostService.updatePost(editPost.id, ownerId, {
+          title: title.trim(),
+          subtitle: subtitle.trim() || undefined,
+          coverImage: coverImage || undefined,
+          labels: labels || undefined,
+          commentsEnabled,
+          content: blocks,
+        })
+        toast.success('Post updated')
+        onPublished?.(updated)
+      } else {
+        const created = await blogPostService.createPost(user.identityId, {
+          blogId: blog.id,
+          title: title.trim(),
+          subtitle: subtitle.trim() || undefined,
+          content: blocks,
+          coverImage: coverImage || undefined,
+          labels: labels || undefined,
+          commentsEnabled,
+        })
 
-      if (draftKey) {
-        localStorage.removeItem(draftKey)
+        if (draftKey) {
+          localStorage.removeItem(draftKey)
+        }
+        toast.success('Post published')
+        onPublished?.(created)
+        setTitle('')
+        setSubtitle('')
+        setCoverImage('')
+        setLabels('')
+        setCustomLabel('')
+        setBlocks([])
+        setCommentsEnabled(Boolean(blog.commentsEnabledDefault ?? true))
       }
-      toast.success('Post published')
-      onPublished?.(created)
-      setTitle('')
-      setSubtitle('')
-      setCoverImage('')
-      setLabels('')
-      setCustomLabel('')
-      setBlocks([])
-      setCommentsEnabled(Boolean(blog.commentsEnabledDefault ?? true))
     } catch {
-      toast.error('Failed to publish post')
+      toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
     } finally {
       setIsPublishing(false)
     }
@@ -179,7 +247,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
               &larr;
             </button>
           )}
-          {draftSaved && (
+          {draftSaved && !isEditing && (
             <span className="flex items-center gap-1.5 text-xs text-gray-600">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500/70" />
               Saved
@@ -198,10 +266,12 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
           </button>
           <Button
             size="sm"
-            onClick={handlePublish}
+            onClick={handleSubmit}
             disabled={isPublishing || !title.trim()}
           >
-            {isPublishing ? 'Publishing...' : 'Publish'}
+            {isPublishing
+              ? (isEditing ? 'Saving...' : 'Publishing...')
+              : (isEditing ? 'Save Changes' : 'Publish')}
           </Button>
         </div>
       </div>
@@ -220,14 +290,6 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
                 <XMarkIcon className="h-4 w-4" />
               </button>
             </div>
-
-            <ProfileImageUpload
-              aspectRatio="banner"
-              label="Cover image"
-              currentUrl={coverImage || undefined}
-              onUpload={setCoverImage}
-              onClear={() => setCoverImage('')}
-            />
 
             {/* Labels */}
             <div>
@@ -256,6 +318,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
               )}
               <div className="flex gap-2">
                 <Input
+                  ref={labelInputRef}
                   value={customLabel}
                   onChange={(e) => setCustomLabel(e.target.value)}
                   maxLength={40}
@@ -287,18 +350,72 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
         </div>
       )}
 
+      {/* Hidden file input for cover image */}
+      <input
+        ref={coverFileRef}
+        type="file"
+        accept="image/*"
+        onChange={handleCoverFileSelect}
+        className="hidden"
+      />
+
       {/* Writing canvas */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[640px] px-4 py-8">
-          {/* Title */}
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={128}
-            placeholder="Title"
-            className="w-full bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
-          />
+          {/* Cover image banner */}
+          {coverImage && (
+            <div className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg">
+              {isIpfsProtocol(coverImage) ? (
+                <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={coverImage} alt="Cover" className="h-full w-full object-cover" />
+              )}
+              <button
+                type="button"
+                onClick={() => setCoverImage('')}
+                className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 transition-colors hover:bg-black/70"
+                title="Remove cover image"
+              >
+                <XMarkIcon className="h-4 w-4 text-white" />
+              </button>
+            </div>
+          )}
+
+          {/* Title + cover image button */}
+          <div className="flex items-start gap-2">
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={128}
+              placeholder="Title"
+              className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={handleCoverClick}
+              disabled={isUploadingCover}
+              className="mt-2 shrink-0 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400 disabled:opacity-50"
+              title={coverImage ? 'Change cover image' : 'Add cover image'}
+            >
+              {isUploadingCover ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <PhotoIcon className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+
+          {/* Upload progress */}
+          {isUploadingCover && (
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-800/40">
+              <div
+                className="h-full bg-yappr-500 transition-all duration-300"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          )}
 
           {/* Subtitle */}
           <input
@@ -310,34 +427,32 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
             className="mt-3 w-full bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
           />
 
-          {/* Inline labels */}
-          {selectedLabels.length > 0 && (
-            <div className="mt-4 flex flex-wrap items-center gap-1.5">
-              {selectedLabels.map((label) => (
-                <span
-                  key={label}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-400"
-                >
-                  {label}
-                  <button
-                    type="button"
-                    onClick={() => toggleLabel(label)}
-                    className="text-gray-600 hover:text-gray-300"
-                  >
-                    <XMarkIcon className="h-3 w-3" />
-                  </button>
-                </span>
-              ))}
-              <button
-                type="button"
-                aria-label="Add labels"
-                onClick={() => setShowSettings(true)}
-                className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:text-gray-400"
+          {/* Inline labels — always visible */}
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
+            {selectedLabels.map((label) => (
+              <span
+                key={label}
+                className="inline-flex items-center gap-1 rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-400"
               >
-                +
-              </button>
-            </div>
-          )}
+                {label}
+                <button
+                  type="button"
+                  onClick={() => toggleLabel(label)}
+                  className="text-gray-600 hover:text-gray-300"
+                >
+                  <XMarkIcon className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              aria-label="Add labels"
+              onClick={handleAddLabel}
+              className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400"
+            >
+              +
+            </button>
+          </div>
 
           {/* Editor — the writing space */}
           <div className="compose-canvas mt-6">
