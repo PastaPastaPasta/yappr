@@ -83,62 +83,52 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
     : '#'
   const excerpt = toExcerpt(post)
   const blogLabel = post.blogName || post.author.displayName
+  const subtitle = post.subtitle || (excerpt !== post.title ? excerpt : '')
 
   return (
     <Link
       href={href}
       onClick={(event) => event.stopPropagation()}
       className={cn(
-        'mt-3 block overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 hover:border-yappr-400 dark:hover:border-yappr-600 transition-all group',
+        'mt-3 flex overflow-hidden rounded-xl border border-gray-700/80 hover:border-yappr-500/60 bg-gray-900/40 hover:bg-gray-900/60 transition-all group',
         className
       )}
     >
-      {/* Cover image banner */}
-      {post.coverImage ? (
-        <div className="relative h-32 w-full bg-gray-100 dark:bg-gray-800">
+      {/* Left accent */}
+      <div className="w-1 flex-shrink-0 bg-yappr-500/70 group-hover:bg-yappr-400 transition-colors" />
+
+      <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
+        {/* Cover image thumbnail */}
+        {post.coverImage && (
           <IpfsImage
             src={post.coverImage}
             alt={post.title || 'Blog post cover'}
-            className="h-full w-full object-cover"
+            className="h-14 w-14 flex-shrink-0 rounded-lg object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
-          <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-black/60 backdrop-blur-sm px-2 py-0.5 text-[11px] font-medium text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
-              <path d="M3 4.75a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6.5ZM4.25 5a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-7.5ZM4 7.75A.25.25 0 0 1 4.25 7.5h7.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-7.5A.25.25 0 0 1 4 8.25v-.5ZM4.25 10a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h4.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-4.5Z" />
-            </svg>
-            Blog
-          </span>
-        </div>
-      ) : null}
+        )}
 
-      <div className="p-3">
-        {/* Blog badge when no cover image */}
-        {!post.coverImage && (
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-yappr-500 dark:text-yappr-400">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
-              <path d="M3 4.75a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6.5ZM4.25 5a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-7.5ZM4 7.75A.25.25 0 0 1 4.25 7.5h7.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-7.5A.25.25 0 0 1 4 8.25v-.5ZM4.25 10a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h4.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-4.5Z" />
+        <div className="min-w-0 flex-1">
+          {/* Source line */}
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 text-yappr-400 flex-shrink-0">
+              <path d="M10.75 16.82A7.462 7.462 0 0 1 15 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0 0 18 15.06V3.44a.75.75 0 0 0-.546-.721A9.006 9.006 0 0 0 15 2.5a9.006 9.006 0 0 0-4.25 1.065v13.254ZM9.25 4.565A9.006 9.006 0 0 0 5 3.5a9.006 9.006 0 0 0-2.454.218A.75.75 0 0 0 2 4.44v11.62a.75.75 0 0 0 .954.721A7.506 7.506 0 0 1 5 16.5c1.579 0 3.042.487 4.25 1.32V4.565Z" />
             </svg>
-            Blog Post
+            {blogLabel && <span className="truncate">{blogLabel}</span>}
+            {blogLabel && username && <span>·</span>}
+            {username && <span className="truncate">@{username}</span>}
           </div>
-        )}
 
-        {/* Title */}
-        <p className="line-clamp-2 text-[15px] font-bold text-gray-900 dark:text-gray-100 group-hover:text-yappr-600 dark:group-hover:text-yappr-400 transition-colors">
-          {post.title || 'Untitled'}
-        </p>
-
-        {/* Excerpt */}
-        {excerpt && (
-          <p className="mt-1 text-sm leading-snug text-gray-500 dark:text-gray-400 line-clamp-2">
-            {excerpt}
+          {/* Title */}
+          <p className="mt-0.5 line-clamp-1 text-sm font-semibold text-gray-100 group-hover:text-yappr-300 transition-colors">
+            {post.title || 'Untitled'}
           </p>
-        )}
 
-        {/* Footer: blog name + username */}
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
-          {blogLabel && <span className="font-medium text-gray-600 dark:text-gray-400">{blogLabel}</span>}
-          {blogLabel && username && <span>·</span>}
-          {username && <span>@{username}</span>}
+          {/* Subtitle / excerpt — single line */}
+          {subtitle && (
+            <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">
+              {subtitle}
+            </p>
+          )}
         </div>
       </div>
     </Link>
