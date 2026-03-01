@@ -421,8 +421,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
               </div>
             )}
 
-            {/* Title + cover image actions */}
-            <div className="flex items-center gap-2">
+            {/* Title + cover image actions — min-h prevents layout shift when swapping title ↔ URL input */}
+            <div className="flex min-h-[44px] items-center gap-2">
               {showCoverUrlInput ? (
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   <input
