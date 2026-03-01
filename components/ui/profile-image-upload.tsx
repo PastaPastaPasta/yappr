@@ -2,7 +2,9 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useImageUpload } from '@/hooks/use-image-upload'
+import { useFileDrop } from '@/hooks/use-file-drop'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
+import { validateHttpUrl } from '@/lib/utils'
 import { IpfsImage } from './ipfs-image'
 import { PhotoIcon, XMarkIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
@@ -41,47 +43,36 @@ export function ProfileImageUpload({
   const { upload, isUploading, progress, error, isProviderConnected, checkProvider, clearError } = useImageUpload()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
   const [urlInput, setUrlInput] = useState('')
   const [showUrlInput, setShowUrlInput] = useState(false)
 
   const [imageLoading, setImageLoading] = useState(false)
 
-  // Check provider on mount
   useEffect(() => {
     checkProvider().catch(() => {
       // Silently handle - state will be updated
     })
   }, [checkProvider])
 
-  // Track when we have an IPFS URL to show (for loading state)
   useEffect(() => {
-    if (currentUrl && isIpfsProtocol(currentUrl)) {
-      setImageLoading(true)
-    } else {
-      setImageLoading(false)
-    }
+    setImageLoading(Boolean(currentUrl && isIpfsProtocol(currentUrl)))
   }, [currentUrl])
 
   const processFile = useCallback(async (file: File) => {
-    // Reset errors
     setLocalError(null)
     clearError()
 
-    // Validate file type
     if (!file.type.startsWith('image/')) {
       setLocalError('Please select an image file')
       return
     }
 
-    // Validate file size
     const maxBytes = maxSizeMB * 1024 * 1024
     if (file.size > maxBytes) {
       setLocalError(`Image must be smaller than ${maxSizeMB}MB`)
       return
     }
 
-    // Create local preview
     const reader = new FileReader()
     reader.onload = () => {
       setPreviewUrl(reader.result as string)
@@ -90,8 +81,7 @@ export function ProfileImageUpload({
 
     try {
       const result = await upload(file)
-      const ipfsUrl = `ipfs://${result.cid}`
-      onUpload(ipfsUrl)
+      onUpload(`ipfs://${result.cid}`)
       setPreviewUrl(null)
     } catch {
       setPreviewUrl(null)
@@ -104,42 +94,15 @@ export function ProfileImageUpload({
 
     await processFile(file)
 
-    // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
   }, [processFile])
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-
-    if (isUploading) return
-
-    const file = e.dataTransfer.files[0]
-    if (file) {
-      await processFile(file)
-    }
-  }, [isUploading, processFile])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!isUploading) setIsDragging(true)
-  }, [isUploading])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    // Only set false if leaving the container (not entering a child)
-    if (e.currentTarget === e.target) setIsDragging(false)
-  }, [])
+  const { isDragging, dropZoneProps } = useFileDrop({
+    disabled: isUploading,
+    onDrop: processFile,
+  })
 
   const handleClear = useCallback(() => {
     setPreviewUrl(null)
@@ -155,21 +118,14 @@ export function ProfileImageUpload({
   }, [isUploading, isProviderConnected])
 
   const handleUrlSubmit = useCallback(() => {
-    const trimmed = urlInput.trim()
-    if (!trimmed) return
-    try {
-      const parsed = new URL(trimmed)
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        setLocalError('Please enter an http or https URL')
-        return
-      }
-    } catch {
-      setLocalError('Please enter a valid URL')
+    const validated = validateHttpUrl(urlInput)
+    if (!validated) {
+      setLocalError('Please enter a valid http or https URL')
       return
     }
     setLocalError(null)
     clearError()
-    onUpload(trimmed)
+    onUpload(validated)
     setUrlInput('')
     setShowUrlInput(false)
   }, [urlInput, onUpload, clearError])
@@ -179,6 +135,39 @@ export function ProfileImageUpload({
     : 'aspect-[3/1] rounded-lg'
 
   const currentError = localError || error
+  const imageClass = `absolute inset-0 w-full h-full object-cover ${isUploading ? 'opacity-50' : ''}`
+
+  function renderImage(): React.ReactNode {
+    if (previewUrl) {
+      // eslint-disable-next-line @next/next/no-img-element
+      return <img src={previewUrl} alt="Preview" className={imageClass} />
+    }
+
+    if (!currentUrl) return null
+
+    if (isIpfsProtocol(currentUrl)) {
+      return (
+        <>
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+              <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
+            </div>
+          )}
+          <IpfsImage
+            src={currentUrl}
+            alt="Preview"
+            className={imageClass}
+            onLoad={() => setImageLoading(false)}
+            onError={() => setImageLoading(false)}
+          />
+        </>
+      )
+    }
+
+    // Regular http(s) URL
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={currentUrl} alt="Preview" className={imageClass} />
+  }
 
   return (
     <div className="space-y-2">
@@ -208,10 +197,7 @@ export function ProfileImageUpload({
             handleClick()
           }
         }}
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
+        {...dropZoneProps}
         className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed transition-colors overflow-hidden ${
           isDragging
             ? 'border-yappr-500 bg-yappr-500/10 dark:bg-yappr-500/10'
@@ -223,47 +209,7 @@ export function ProfileImageUpload({
         {/* Current or preview image */}
         {(previewUrl || currentUrl) && (
           <>
-            {/* Use IpfsImage for IPFS URLs (handles gateway fallback), regular img for data URLs */}
-            {previewUrl ? (
-              // Preview from file input (data: URL)
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt="Preview"
-                className={`absolute inset-0 w-full h-full object-cover ${
-                  isUploading ? 'opacity-50' : ''
-                }`}
-              />
-            ) : currentUrl && isIpfsProtocol(currentUrl) ? (
-              // IPFS URL - use IpfsImage for gateway fallback
-              <>
-                {imageLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
-                    <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
-                  </div>
-                )}
-                <IpfsImage
-                  src={currentUrl}
-                  alt="Preview"
-                  className={`absolute inset-0 w-full h-full object-cover ${
-                    isUploading ? 'opacity-50' : ''
-                  }`}
-                  onLoad={() => setImageLoading(false)}
-                  onError={() => setImageLoading(false)}
-                />
-              </>
-            ) : currentUrl ? (
-              // Regular URL
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={currentUrl}
-                alt="Preview"
-                className={`absolute inset-0 w-full h-full object-cover ${
-                  isUploading ? 'opacity-50' : ''
-                }`}
-              />
-            ) : null}
-            {/* Clear button */}
+            {renderImage()}
             {!isUploading && onClear && !imageLoading && (
               <button
                 onClick={(e) => {

@@ -10,8 +10,10 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
+import { validateHttpUrl } from '@/lib/utils'
 import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
+import { useFileDrop } from '@/hooks/use-file-drop'
 import type { Blog, BlogPost } from '@/lib/types'
 import { BlogEditor } from './blog-editor'
 import { useAuth } from '@/contexts/auth-context'
@@ -57,7 +59,6 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
   const labelInputRef = useRef<HTMLInputElement>(null)
   const coverFileRef = useRef<HTMLInputElement>(null)
   const { upload: uploadImage, isUploading: isUploadingCover, progress: uploadProgress, isProviderConnected, checkProvider } = useImageUpload()
-  const [isDraggingCover, setIsDraggingCover] = useState(false)
   const [coverUrlInput, setCoverUrlInput] = useState('')
   const [showCoverUrlInput, setShowCoverUrlInput] = useState(false)
 
@@ -90,31 +91,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     if (coverFileRef.current) coverFileRef.current.value = ''
   }, [processCoverFile])
 
-  const handleCoverDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDraggingCover(false)
-    if (isUploadingCover || !isProviderConnected) return
-    const file = e.dataTransfer.files[0]
-    if (file) await processCoverFile(file)
-  }, [isUploadingCover, isProviderConnected, processCoverFile])
-
-  const handleCoverDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleCoverDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!isUploadingCover && isProviderConnected) setIsDraggingCover(true)
-  }, [isUploadingCover, isProviderConnected])
-
-  const handleCoverDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.currentTarget === e.target) setIsDraggingCover(false)
-  }, [])
+  const { isDragging: isDraggingCover, dropZoneProps: coverDropProps } = useFileDrop({
+    disabled: isUploadingCover || !isProviderConnected,
+    onDrop: processCoverFile,
+  })
 
   const handleCoverClick = useCallback(() => {
     if (!isProviderConnected) {
@@ -125,19 +105,12 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
   }, [isProviderConnected])
 
   const handleCoverUrlSubmit = useCallback(() => {
-    const trimmed = coverUrlInput.trim()
-    if (!trimmed) return
-    try {
-      const parsed = new URL(trimmed)
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        toast.error('Please enter an http or https URL')
-        return
-      }
-    } catch {
-      toast.error('Please enter a valid URL')
+    const validated = validateHttpUrl(coverUrlInput)
+    if (!validated) {
+      toast.error('Please enter a valid http or https URL')
       return
     }
-    setCoverImage(trimmed)
+    setCoverImage(validated)
     setCoverUrlInput('')
     setShowCoverUrlInput(false)
   }, [coverUrlInput])
@@ -422,10 +395,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
           {coverImage ? (
             <div
               className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg"
-              onDrop={handleCoverDrop}
-              onDragOver={handleCoverDragOver}
-              onDragEnter={handleCoverDragEnter}
-              onDragLeave={handleCoverDragLeave}
+              {...coverDropProps}
             >
               <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
               {isDraggingCover && (
@@ -450,10 +420,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCoverClick() }
               }}
-              onDrop={handleCoverDrop}
-              onDragOver={handleCoverDragOver}
-              onDragEnter={handleCoverDragEnter}
-              onDragLeave={handleCoverDragLeave}
+              {...coverDropProps}
               className={`mb-6 flex aspect-[3/1] items-center justify-center rounded-lg border border-dashed transition-colors ${
                 isDraggingCover
                   ? 'border-yappr-500 bg-yappr-500/10'

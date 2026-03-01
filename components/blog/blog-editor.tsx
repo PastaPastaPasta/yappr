@@ -9,7 +9,9 @@ import '@blocknote/mantine/style.css'
 import Link from 'next/link'
 import { PhotoIcon, LinkIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { getCompressedSize } from '@/lib/utils/compression'
+import { validateHttpUrl } from '@/lib/utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
+import { useFileDrop } from '@/hooks/use-file-drop'
 import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
 
 interface BlogEditorProps {
@@ -26,7 +28,6 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   const { upload, isUploading, progress, error, clearError } = useImageUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [isDragging, setIsDragging] = useState(false)
   const [imageUrlInput, setImageUrlInput] = useState('')
   const [showImageUrlInput, setShowImageUrlInput] = useState(false)
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -47,41 +48,13 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     }, 500)
   }, [editor, onChange, reportBytes])
 
-  const insertImageFile = useCallback(async (file: File) => {
-    clearError()
-
-    try {
-      const result = await upload(file)
-      const ipfsUrl = `ipfs://${result.cid}`
-      const cursor = editor.getTextCursorPosition()
-
-      editor.insertBlocks(
-        [
-          {
-            type: 'image',
-            props: {
-              url: ipfsUrl,
-              caption: '',
-              name: file.name,
-            },
-          } as never,
-        ],
-        cursor.block,
-        'after'
-      )
-      publishChange()
-    } catch {
-      // Error state is already set by useImageUpload hook and displayed in the UI.
-    }
-  }, [clearError, editor, publishChange, upload])
-
-  const insertImageUrl = useCallback((url: string) => {
+  const insertImageBlock = useCallback((url: string, name = '') => {
     const cursor = editor.getTextCursorPosition()
     editor.insertBlocks(
       [
         {
           type: 'image',
-          props: { url, caption: '', name: '' },
+          props: { url, caption: '', name },
         } as never,
       ],
       cursor.block,
@@ -90,19 +63,24 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     publishChange()
   }, [editor, publishChange])
 
-  const handleImageUrlSubmit = useCallback(() => {
-    const trimmed = imageUrlInput.trim()
-    if (!trimmed) return
+  const insertImageFile = useCallback(async (file: File) => {
+    clearError()
+
     try {
-      const parsed = new URL(trimmed)
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
+      const result = await upload(file)
+      insertImageBlock(`ipfs://${result.cid}`, file.name)
     } catch {
-      return
+      // Error state is already set by useImageUpload hook and displayed in the UI.
     }
-    insertImageUrl(trimmed)
+  }, [clearError, insertImageBlock, upload])
+
+  const handleImageUrlSubmit = useCallback(() => {
+    const validated = validateHttpUrl(imageUrlInput)
+    if (!validated) return
+    insertImageBlock(validated)
     setImageUrlInput('')
     setShowImageUrlInput(false)
-  }, [imageUrlInput, insertImageUrl])
+  }, [imageUrlInput, insertImageBlock])
 
   const handleImageUpload = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -111,33 +89,11 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [insertImageFile])
 
-  const handleEditorDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-    if (isUploading) return
-    const file = e.dataTransfer.files[0]
-    if (file?.type.startsWith('image/')) {
-      await insertImageFile(file)
-    }
-  }, [isUploading, insertImageFile])
-
-  const handleEditorDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleEditorDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!isUploading) setIsDragging(true)
-  }, [isUploading])
-
-  const handleEditorDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.currentTarget === e.target) setIsDragging(false)
-  }, [])
+  const { isDragging, dropZoneProps } = useFileDrop({
+    disabled: isUploading,
+    accept: 'image/',
+    onDrop: insertImageFile,
+  })
 
   useEffect(() => {
     reportBytes(getCompressedSize(editor.document as unknown[]))
@@ -151,10 +107,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   return (
     <div
-      onDrop={handleEditorDrop}
-      onDragOver={handleEditorDragOver}
-      onDragEnter={handleEditorDragEnter}
-      onDragLeave={handleEditorDragLeave}
+      {...dropZoneProps}
       className={`relative rounded-lg transition-colors ${
         isDragging ? 'ring-2 ring-yappr-500/60 bg-yappr-500/5' : ''
       }`}
