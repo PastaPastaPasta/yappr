@@ -33,7 +33,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const { user } = useAuth()
   const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id)
   const isOwnBlog = user?.identityId === blog.ownerId
-  const showFollowCta = user && !isOwnBlog && !isFollowing
+  const showFollowCta = user && !isOwnBlog && !isFollowing && !followLoading
   const [commentCount, setCommentCount] = useState(0)
   const { readingMode, fontSize } = useReaderPreferencesStore()
   const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])

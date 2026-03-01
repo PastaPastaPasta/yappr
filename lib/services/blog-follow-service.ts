@@ -83,8 +83,8 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
 
   async isFollowingBlog(userId: string, blogId: string): Promise<boolean> {
     if (!userId || !blogId) return false;
-    const followedIds = await this.getFollowedBlogIds(userId);
-    return followedIds.includes(blogId);
+    const follow = await this.getFollow(userId, blogId);
+    return follow !== null;
   }
 
   private async getFollow(userId: string, blogId: string): Promise<BlogFollowDocument | null> {
