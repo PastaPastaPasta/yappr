@@ -341,18 +341,29 @@ export function normalizeBlogThemeConfig(value: Partial<BlogThemeConfig> | undef
   }
 }
 
+const SAFE_CSS_COLOR = /^(#[0-9a-fA-F]{3,8}|transparent|[a-zA-Z]{3,20})$/
+
+function safeCSSColor(value: string, fallback: string): string {
+  return SAFE_CSS_COLOR.test(value) ? value : fallback
+}
+
 export function buildGradientCSS(gradient: BlogGradientConfig): string {
-  const fromColor = gradient.opacity < 100
-    ? `color-mix(in srgb, ${gradient.from} ${gradient.opacity}%, transparent)`
-    : gradient.from
+  const from = safeCSSColor(gradient.from, '#38bdf8')
+  const to = safeCSSColor(gradient.to, 'transparent')
+  const angle = Math.max(0, Math.min(360, Math.round(gradient.angle)))
+  const opacity = Math.max(0, Math.min(100, Math.round(gradient.opacity)))
+
+  const fromColor = opacity < 100
+    ? `color-mix(in srgb, ${from} ${opacity}%, transparent)`
+    : from
 
   if (gradient.type === 'solid') {
     return fromColor
   }
 
   if (gradient.type === 'radial') {
-    return `radial-gradient(circle, ${fromColor}, ${gradient.to})`
+    return `radial-gradient(circle, ${fromColor}, ${to})`
   }
 
-  return `linear-gradient(${gradient.angle}deg, ${fromColor}, ${gradient.to})`
+  return `linear-gradient(${angle}deg, ${fromColor}, ${to})`
 }

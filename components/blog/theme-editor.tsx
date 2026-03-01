@@ -423,7 +423,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
               <div className="h-2 w-2 rounded-full bg-white/[0.15]" />
               <div className="h-2 w-2 rounded-full bg-white/[0.15]" />
               <div className="ml-2 flex h-5 flex-1 items-center rounded-md bg-white/[0.04] px-2 text-[10px] text-gray-600">
-                yappr.social/blog/preview
+                yap.pr/blog/preview
               </div>
             </div>
             {/* Preview content */}

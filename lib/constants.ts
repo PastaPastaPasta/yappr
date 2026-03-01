@@ -12,7 +12,7 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9Mx
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
-export const YAPPR_BLOG_CONTRACT_ID = 'DJ6sKoEb2yKLqStZNovhCQ4MqhCaDTyXeEpR7MhRzPcD' // Testnet - Blog contract v2 (no history)
+export const YAPPR_BLOG_CONTRACT_ID = '3hVuz9FgPxBmyV63fjQbCpqahxMWqmyLY6ERrVr45K5n' // Testnet - Blog contract v3 (themeConfig byteArray)
 export const BLOG_POST_SIZE_LIMIT = 16384 // 16KB compressed content limit (leaves headroom in 20KB doc)
 
 // Network configuration
