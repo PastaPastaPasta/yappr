@@ -32,10 +32,13 @@ interface BlogPostWithAuthor extends BlogPost {
   blogName?: string
 }
 
+type ExploreTab = 'hashtags' | 'blogs'
+
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [searchResults, setSearchResults] = useState<Post[]>([])
@@ -274,6 +277,50 @@ export default function ExplorePage() {
                 />
               </div>
             </div>
+
+            {/* Tabs */}
+            {!searchQuery && (
+              <div className="flex">
+                <button
+                  onClick={() => setActiveTab('hashtags')}
+                  className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
+                    activeTab === 'hashtags'
+                      ? 'text-foreground'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-1.5">
+                    <FireIcon className="h-4 w-4" />
+                    Trending
+                  </span>
+                  {activeTab === 'hashtags' && (
+                    <motion.div
+                      layoutId="explore-tab-indicator"
+                      className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
+                    />
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab('blogs')}
+                  className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
+                    activeTab === 'blogs'
+                      ? 'text-foreground'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-1.5">
+                    <DocumentTextIcon className="h-4 w-4" />
+                    Blog Posts
+                  </span>
+                  {activeTab === 'blogs' && (
+                    <motion.div
+                      layoutId="explore-tab-indicator"
+                      className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
+                    />
+                  )}
+                </button>
+              </div>
+            )}
           </header>
 
           <AnimatePresence mode="wait">
@@ -339,92 +386,93 @@ export default function ExplorePage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
               >
-                {/* Recent Blog Posts */}
-                {!isLoadingBlogs && recentBlogPosts.length > 0 && (
-                  <>
-                    <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-                      <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <DocumentTextIcon className="h-5 w-5 text-yappr-500" />
-                        Recent Blog Posts
-                      </h2>
-                      <p className="text-sm text-gray-500 mt-1">
-                        Latest articles from the community
-                      </p>
-                    </div>
-                    <div>
-                      {recentBlogPosts.map((post, index) => (
-                        <BlogPostCard
-                          key={post.id}
-                          post={post}
-                          onClick={handleBlogPostClick}
-                          index={index}
-                          className="border-b border-gray-200 dark:border-gray-800"
-                        />
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {isLoadingBlogs && (
-                  <div className="p-6 text-center border-b border-gray-200 dark:border-gray-800">
-                    <Spinner size="sm" className="mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">Loading blog posts...</p>
-                  </div>
-                )}
-
-                {/* Trending Header */}
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-                  <h2 className="text-lg font-semibold flex items-center gap-2">
-                    <FireIcon className="h-5 w-5 text-orange-500" />
-                    Trending Hashtags
-                  </h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Based on recent post activity
-                  </p>
-                </div>
-
-                {/* Trending Hashtags */}
-                <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                  {isLoadingTrends ? (
-                    <div className="p-8 text-center">
-                      <Spinner size="md" className="mx-auto mb-4" />
-                      <p className="text-gray-500">Loading trending hashtags...</p>
-                    </div>
-                  ) : trendingHashtags.length === 0 ? (
-                    <div className="p-8 text-center">
-                      <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                      <p className="text-gray-500">No trending tags yet</p>
-                      <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
-                    </div>
-                  ) : (
-                    trendingHashtags.map((trend, index) => {
-                      const isCashtag = isCashtagStorage(trend.hashtag)
-                      const displayTag = isCashtag ? cashtagStorageToDisplay(trend.hashtag) : trend.hashtag
-                      const tagSymbol = isCashtag ? '$' : '#'
-
-                      return (
-                        <motion.div
-                          key={trend.hashtag}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: index * 0.05 }}
-                          onClick={() => handleHashtagClick(trend.hashtag)}
-                          className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-400 w-6">#{index + 1}</span>
-                            <div className="flex-1">
-                              <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
-                              <p className="text-sm text-gray-500">
-                                {formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}
-                              </p>
-                            </div>
+                <AnimatePresence mode="wait">
+                  {activeTab === 'hashtags' ? (
+                    <motion.div
+                      key="tab-hashtags"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {/* Trending Hashtags */}
+                      <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                        {isLoadingTrends ? (
+                          <div className="p-8 text-center">
+                            <Spinner size="md" className="mx-auto mb-4" />
+                            <p className="text-gray-500">Loading trending hashtags...</p>
                           </div>
-                        </motion.div>
-                      )
-                    })
+                        ) : trendingHashtags.length === 0 ? (
+                          <div className="p-8 text-center">
+                            <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                            <p className="text-gray-500">No trending tags yet</p>
+                            <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
+                          </div>
+                        ) : (
+                          trendingHashtags.map((trend, index) => {
+                            const isCashtag = isCashtagStorage(trend.hashtag)
+                            const displayTag = isCashtag ? cashtagStorageToDisplay(trend.hashtag) : trend.hashtag
+                            const tagSymbol = isCashtag ? '$' : '#'
+
+                            return (
+                              <motion.div
+                                key={trend.hashtag}
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: index * 0.05 }}
+                                onClick={() => handleHashtagClick(trend.hashtag)}
+                                className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-sm text-gray-400 w-6">#{index + 1}</span>
+                                  <div className="flex-1">
+                                    <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
+                                    <p className="text-sm text-gray-500">
+                                      {formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )
+                          })
+                        )}
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="tab-blogs"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {/* Blog Posts */}
+                      {isLoadingBlogs ? (
+                        <div className="p-8 text-center">
+                          <Spinner size="md" className="mx-auto mb-4" />
+                          <p className="text-gray-500">Loading blog posts...</p>
+                        </div>
+                      ) : recentBlogPosts.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                          <p className="text-gray-500">No blog posts yet</p>
+                          <p className="text-sm text-gray-400 mt-1">Be the first to publish an article!</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                          {recentBlogPosts.map((post, index) => (
+                            <BlogPostCard
+                              key={post.id}
+                              post={post}
+                              onClick={handleBlogPostClick}
+                              index={index}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
                   )}
-                </div>
+                </AnimatePresence>
               </motion.div>
             )}
           </AnimatePresence>
