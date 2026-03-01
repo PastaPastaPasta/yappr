@@ -17,6 +17,7 @@ import 'highlight.js/styles/github-dark.css'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
 import { blogBlockNoteSchema } from './blocknote-schema'
+import { extractInlineText } from '@/lib/blog/content-utils'
 
 // Register only the languages we support to keep bundle small
 hljs.registerLanguage('javascript', javascript)
@@ -31,22 +32,6 @@ hljs.registerLanguage('go', go)
 
 interface BlogViewerProps {
   blocks: unknown[]
-}
-
-function extractInlineText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-
-  return content
-    .map((item) => {
-      if (typeof item === 'string') return item
-      if (item && typeof item === 'object') {
-        const maybeText = (item as { text?: unknown }).text
-        return typeof maybeText === 'string' ? maybeText : ''
-      }
-      return ''
-    })
-    .join('')
 }
 
 function collectFootnotes(blocks: unknown[]): Array<{ key: string; text: string; noteId?: string }> {

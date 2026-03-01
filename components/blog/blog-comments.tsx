@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { truncateId } from '@/lib/utils'
+import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService, dpnsService, unifiedProfileService } from '@/lib/services'
 
@@ -17,6 +18,7 @@ interface BlogCommentsProps {
   blogPostId: string
   blogPostOwnerId: string
   commentsEnabled: boolean
+  onCommentCountChange?: (count: number) => void
 }
 
 const MAX_COMMENT_LENGTH = 500
@@ -26,7 +28,7 @@ function CommentTimestamp({ createdAt }: { createdAt: Date }) {
   return <span>{relativeTime}</span>
 }
 
-export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: BlogCommentsProps) {
+export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onCommentCountChange }: BlogCommentsProps) {
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const [comments, setComments] = useState<BlogComment[]>([])
@@ -59,6 +61,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
 
       const filtered = allComments.filter((comment) => !blockedMap.get(comment.ownerId))
       setComments(filtered)
+      onCommentCountChange?.(filtered.length)
 
       const filteredAuthorIds = Array.from(new Set(filtered.map((comment) => comment.ownerId).filter(Boolean)))
       const [resolvedUsernames, resolvedAvatars] = await Promise.all([
@@ -121,7 +124,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
     }
   }
 
-  const headingLabel = useMemo(() => `Comments (${comments.length})`, [comments.length])
+  const headingLabel = `Comments (${comments.length})`
 
   if (!commentsEnabled) {
     return (
@@ -176,7 +179,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
 
         {!isLoading && !error && comments.map((comment) => {
           const resolvedUsername = usernames.get(comment.ownerId)
-          const username = resolvedUsername ? resolvedUsername.replace(/\.dash$/i, '') : null
+          const username = resolvedUsername ? normalizeDpnsUsername(resolvedUsername) : null
           const displayName = username ? `@${username}` : truncateId(comment.ownerId, 8, 6)
           const isOwnComment = user?.identityId === comment.ownerId
 

@@ -15,7 +15,8 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
 import { useSettingsStore } from '@/lib/store'
-import type { BlogPost } from '@/lib/types'
+import type { BlogPostWithAuthor } from '@/lib/types'
+import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
 interface UserResult {
   id: string
@@ -29,12 +30,6 @@ interface HashtagResult {
   postCount: number
 }
 
-interface BlogPostResult extends BlogPost {
-  authorUsername?: string
-  authorDisplayName?: string
-  blogName?: string
-}
-
 function SearchPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -43,7 +38,7 @@ function SearchPageContent() {
 
   const [users, setUsers] = useState<UserResult[]>([])
   const [hashtags, setHashtags] = useState<HashtagResult[]>([])
-  const [blogPosts, setBlogPosts] = useState<BlogPostResult[]>([])
+  const [blogPosts, setBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoading, setIsLoading] = useState(query.trim().length >= 3)
   const searchIdRef = useRef(0)
 
@@ -223,7 +218,7 @@ function SearchPageContent() {
     }
   }
 
-  const searchBlogPosts = async (searchQuery: string): Promise<BlogPostResult[]> => {
+  const searchBlogPosts = async (searchQuery: string): Promise<BlogPostWithAuthor[]> => {
     try {
       const { blogService, blogPostService } = await import('@/lib/services')
 
@@ -234,30 +229,7 @@ function SearchPageContent() {
       const blogIds = allBlogs.map(b => b.id)
       const matchingPosts = await blogPostService.searchPosts(blogIds, searchQuery, 10)
 
-      if (matchingPosts.length === 0) return []
-
-      // Resolve author info
-      const ownerIds = Array.from(new Set(matchingPosts.map(p => p.ownerId)))
-      const [usernameEntries, profileEntries] = await Promise.all([
-        Promise.all(ownerIds.map(async id => {
-          const name = await dpnsService.resolveUsername(id).catch(() => null)
-          return [id, name] as const
-        })),
-        Promise.all(ownerIds.map(async id => {
-          const profile = await unifiedProfileService.getProfile(id).catch(() => null)
-          return [id, profile] as const
-        })),
-      ])
-
-      const usernameMap = new Map(usernameEntries)
-      const profileMap = new Map(profileEntries)
-
-      return matchingPosts.map(post => ({
-        ...post,
-        authorUsername: usernameMap.get(post.ownerId) || undefined,
-        authorDisplayName: profileMap.get(post.ownerId)?.displayName || undefined,
-        blogName: blogMap.get(post.blogId)?.name || undefined,
-      }))
+      return enrichBlogPostsWithAuthors(matchingPosts, blogMap)
     } catch (error) {
       logger.error('Blog post search failed:', error)
       return []
@@ -272,9 +244,9 @@ function SearchPageContent() {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
   }
 
-  const handleBlogPostClick = (post: BlogPostResult) => {
+  const handleBlogPostClick = (post: BlogPostWithAuthor) => {
     if (post.blogId && post.slug) {
-      router.push(`/blog?blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`)
+      router.push(getBlogPostUrl(post.blogId, post.slug))
     }
   }
 

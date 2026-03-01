@@ -4,63 +4,13 @@ import Link from 'next/link'
 import type { Post } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { extractText, getBlogPostUrl } from '@/lib/blog/content-utils'
 
 export type EmbeddedBlogPostLike = Post
 
 interface EmbeddedBlogPostCardProps {
   post: EmbeddedBlogPostLike
   className?: string
-}
-
-/** Extract human-readable text from BlockNote block structures. */
-function extractText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-
-  return content
-    .map((block) => {
-      if (typeof block === 'string') return block
-      if (!block || typeof block !== 'object') return ''
-
-      const b = block as {
-        content?: unknown[]
-        children?: unknown[]
-        text?: string
-        props?: Record<string, unknown>
-      }
-
-      // Inline content item (e.g. { type: "text", text: "Hello" })
-      if (typeof b.text === 'string') return b.text
-
-      const parts: string[] = []
-
-      // Extract text from inline content array
-      if (Array.isArray(b.content)) {
-        for (const item of b.content) {
-          if (typeof item === 'string') {
-            parts.push(item)
-          } else if (item && typeof item === 'object') {
-            const maybeText = (item as { text?: unknown }).text
-            if (typeof maybeText === 'string') parts.push(maybeText)
-          }
-        }
-      }
-
-      // Code blocks store text in props.code
-      if (typeof b.props?.code === 'string' && b.props.code) {
-        parts.push(b.props.code)
-      }
-
-      // Recurse into children blocks
-      if (Array.isArray(b.children) && b.children.length > 0) {
-        const childText = extractText(b.children)
-        if (childText) parts.push(childText)
-      }
-
-      return parts.join(' ')
-    })
-    .filter(Boolean)
-    .join(' ')
 }
 
 function toExcerpt(post: EmbeddedBlogPostLike): string {
@@ -79,7 +29,7 @@ export function isEmbeddedBlogPostLike(post: Post): post is EmbeddedBlogPostLike
 export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostCardProps) {
   const username = post.blogUsername || post.author.username
   const href = post.blogId && post.slug
-    ? `/blog?blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`
+    ? getBlogPostUrl(post.blogId, post.slug)
     : '#'
   const excerpt = toExcerpt(post)
   const blogLabel = post.blogName || post.author.displayName

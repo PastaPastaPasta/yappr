@@ -17,19 +17,14 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
-import type { Post, BlogPost } from '@/lib/types'
+import type { Post, BlogPostWithAuthor } from '@/lib/types'
+import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
 interface RawPostDocument {
   $id: string
   $ownerId: string
   $createdAt: number
   content?: string
-}
-
-interface BlogPostWithAuthor extends BlogPost {
-  authorUsername?: string
-  authorDisplayName?: string
-  blogName?: string
 }
 
 type ExploreTab = 'hashtags' | 'blogs'
@@ -76,8 +71,6 @@ export default function ExplorePage() {
       try {
         setIsLoadingBlogs(true)
         const { blogService, blogPostService } = await import('@/lib/services')
-        const { dpnsService } = await import('@/lib/services/dpns-service')
-        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
         const allBlogs = await blogService.getAllBlogs()
         if (allBlogs.length === 0) {
@@ -94,26 +87,7 @@ export default function ExplorePage() {
           return
         }
 
-        // Resolve author info in parallel
-        const ownerIds = Array.from(new Set(recentPosts.map(p => p.ownerId)))
-        const [usernameMap, profileMap] = await Promise.all([
-          Promise.all(ownerIds.map(async id => {
-            const name = await dpnsService.resolveUsername(id).catch(() => null)
-            return [id, name] as const
-          })).then(entries => new Map(entries)),
-          Promise.all(ownerIds.map(async id => {
-            const profile = await unifiedProfileService.getProfile(id).catch(() => null)
-            return [id, profile] as const
-          })).then(entries => new Map(entries)),
-        ])
-
-        const postsWithAuthors: BlogPostWithAuthor[] = recentPosts.map(post => ({
-          ...post,
-          authorUsername: usernameMap.get(post.ownerId) || undefined,
-          authorDisplayName: profileMap.get(post.ownerId)?.displayName || undefined,
-          blogName: blogMap.get(post.blogId)?.name || undefined,
-        }))
-
+        const postsWithAuthors = await enrichBlogPostsWithAuthors(recentPosts, blogMap)
         setRecentBlogPosts(postsWithAuthors)
       } catch (error) {
         logger.error('Failed to load recent blog posts:', error)
@@ -183,8 +157,6 @@ export default function ExplorePage() {
 
         // Search blog posts
         const { blogService, blogPostService } = await import('@/lib/services')
-        const { dpnsService } = await import('@/lib/services/dpns-service')
-        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
         const allBlogs = await blogService.getAllBlogs()
         if (allBlogs.length > 0) {
@@ -192,33 +164,8 @@ export default function ExplorePage() {
           const blogIds = allBlogs.map(b => b.id)
           const matchingBlogPosts = await blogPostService.searchPosts(blogIds, searchQuery, 10)
 
-          if (matchingBlogPosts.length > 0) {
-            const blogOwnerIds = Array.from(new Set(matchingBlogPosts.map(p => p.ownerId)))
-            const [usernameEntries, profileEntries] = await Promise.all([
-              Promise.all(blogOwnerIds.map(async id => {
-                const name = await dpnsService.resolveUsername(id).catch(() => null)
-                return [id, name] as const
-              })),
-              Promise.all(blogOwnerIds.map(async id => {
-                const profile = await unifiedProfileService.getProfile(id).catch(() => null)
-                return [id, profile] as const
-              })),
-            ])
-
-            const usernameMap = new Map(usernameEntries)
-            const profileMap = new Map(profileEntries)
-
-            const blogResults: BlogPostWithAuthor[] = matchingBlogPosts.map(post => ({
-              ...post,
-              authorUsername: usernameMap.get(post.ownerId) || undefined,
-              authorDisplayName: profileMap.get(post.ownerId)?.displayName || undefined,
-              blogName: blogMap.get(post.blogId)?.name || undefined,
-            }))
-
-            setBlogSearchResults(blogResults)
-          } else {
-            setBlogSearchResults([])
-          }
+          const blogResults = await enrichBlogPostsWithAuthors(matchingBlogPosts, blogMap)
+          setBlogSearchResults(blogResults)
         } else {
           setBlogSearchResults([])
         }
@@ -241,7 +188,7 @@ export default function ExplorePage() {
 
   const handleBlogPostClick = (post: BlogPostWithAuthor) => {
     if (post.blogId && post.slug) {
-      router.push(`/blog?blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`)
+      router.push(getBlogPostUrl(post.blogId, post.slug))
     }
   }
 

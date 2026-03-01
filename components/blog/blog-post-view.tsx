@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChatBubbleLeftIcon, LinkIcon } from '@heroicons/react/24/outline'
@@ -13,8 +13,7 @@ import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
 import { EditHistoryModal } from './edit-history-modal'
-import { blogCommentService } from '@/lib/services'
-import { estimateReadingTime } from '@/lib/blog/content-utils'
+import { estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
@@ -35,19 +34,6 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const isAuthor = user?.identityId === post.ownerId
   const hasEdits = (post.$revision || 1) > 1 || Boolean(post.updatedAt && post.updatedAt.getTime() !== post.createdAt.getTime())
-
-  useEffect(() => {
-    const loadCommentCount = async () => {
-      try {
-        const comments = await blogCommentService.getCommentsByPost(post.id, { limit: 100 })
-        setCommentCount(comments.length)
-      } catch {
-        setCommentCount(0)
-      }
-    }
-
-    loadCommentCount().catch(() => setCommentCount(0))
-  }, [post.id])
 
   const handleQuote = () => {
     if (!requireAuth('quote')) return
@@ -85,7 +71,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     setComposeOpen(true)
   }
 
-  const postUrl = `${APP_URL}/blog?blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
+  const postUrl = `${APP_URL}${getBlogPostUrl(blog.id, post.slug)}`
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(postUrl).then(
@@ -227,6 +213,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           blogPostId={post.id}
           blogPostOwnerId={post.ownerId}
           commentsEnabled={post.commentsEnabled !== false}
+          onCommentCountChange={setCommentCount}
         />
       </article>
 

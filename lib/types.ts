@@ -157,3 +157,9 @@ export interface BlogComment {
   blogPostOwnerId: string
   content: string
 }
+
+export interface BlogPostWithAuthor extends BlogPost {
+  authorUsername?: string
+  authorDisplayName?: string
+  blogName?: string
+}

@@ -34,22 +34,7 @@ import {
 import { PlayIcon } from '@heroicons/react/24/solid'
 import { extractYouTubeVideoId } from '@/hooks/use-link-preview'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
-
-function extractInlineText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-
-  return content
-    .map((item) => {
-      if (typeof item === 'string') return item
-      if (item && typeof item === 'object') {
-        const maybeText = (item as { text?: unknown }).text
-        return typeof maybeText === 'string' ? maybeText : ''
-      }
-      return ''
-    })
-    .join('')
-}
+import { extractInlineText } from '@/lib/blog/content-utils'
 
 function getHeadingLinks(documentBlocks: unknown[]): Array<{ id: string; text: string }> {
   let index = 0

@@ -142,7 +142,7 @@ export function BlogThemeProvider({
   const headingFont = useMemo(() => getBlogFontOption(theme.fonts.heading), [theme.fonts.heading])
   const bodyFont = useMemo(() => getBlogFontOption(theme.fonts.body), [theme.fonts.body])
   const sanitizedCustomCSS = useMemo(() => sanitizeCustomCSS(theme.customCSS), [theme.customCSS])
-  const customScopeClass = useMemo(() => `blog-theme-scope-${Math.random().toString(36).slice(2, 10)}`, [])
+  const customScopeClass = 'blog-theme-scope'
   const gradientCSS = useMemo(() => theme.gradient ? buildGradientCSS(theme.gradient) : 'linear-gradient(120deg, var(--blog-accent), transparent)', [theme.gradient])
 
   useEffect(() => {

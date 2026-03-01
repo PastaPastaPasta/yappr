@@ -3,7 +3,7 @@ import { FORBIDDEN_CSS_PATTERN } from '@/lib/blog/theme-types'
 
 const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io/ipfs/'
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

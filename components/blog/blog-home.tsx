@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { blogCommentService, blogPostService } from '@/lib/services'
-import { estimateReadingTime, extractText, parseLabels } from '@/lib/blog/content-utils'
+import { estimateReadingTime, extractText, getBlogPostUrl, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
@@ -125,7 +125,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
         <div className="space-y-3">
           {pagedPosts.map((post) => {
             const excerpt = extractText(post.content).slice(0, 200)
-            const href = `/blog?blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
+            const href = getBlogPostUrl(blog.id, post.slug)
 
             return (
               <Link key={post.id} href={href} className="block rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4 transition hover:brightness-110">

@@ -6,22 +6,13 @@ import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import type { BlogPost } from '@/lib/types'
 import { EMBED_STYLES } from '@/lib/embed/embed-styles'
-import { renderEmbedHtml } from '@/lib/embed/embed-renderer'
+import { escapeHtml, renderEmbedHtml } from '@/lib/embed/embed-renderer'
 import type { EmbedTheme } from '@/lib/embed/embed-types'
 import { APP_URL } from '@/lib/constants'
 
 interface EmbedPreviewProps {
   post: BlogPost
   username: string
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
 }
 
 export function EmbedPreview({ post, username }: EmbedPreviewProps) {

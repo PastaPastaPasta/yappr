@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { blogService } from '@/lib/services'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { parseLabels } from '@/lib/blog/content-utils'
 import type { Blog } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 
@@ -139,7 +140,7 @@ export function BlogDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
                   )}
                   {blog.labels && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {Array.from(new Set(blog.labels.split(',').map(l => l.trim()).filter(Boolean))).slice(0, 4).map((label, i) => (
+                      {parseLabels(blog.labels).slice(0, 4).map((label, i) => (
                           <span
                             key={`${label}-${i}`}
                             className="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] text-gray-400"

@@ -176,10 +176,11 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   async getRecentPosts(blogIds: string[], limit = 20): Promise<BlogPost[]> {
     if (blogIds.length === 0) return []
 
-    // Fetch `limit` posts per blog to avoid missing recent posts from active blogs
+    // Fetch a small number of posts per blog — we only need the global top N
+    const perBlogLimit = Math.min(5, limit)
     const results = await Promise.all(
       blogIds.map(blogId =>
-        this.getPostsByBlog(blogId, { limit }).catch(() => [])
+        this.getPostsByBlog(blogId, { limit: perBlogLimit }).catch(() => [])
       )
     )
 
@@ -201,10 +202,10 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
     const lowerQuery = query.toLowerCase()
 
-    // Fetch all available posts per blog (no hard cap) so search is comprehensive
+    // Fetch a reasonable number of posts per blog for client-side filtering
     const results = await Promise.all(
       blogIds.map(blogId =>
-        this.getPostsByBlog(blogId, { limit: 100 }).catch(() => [])
+        this.getPostsByBlog(blogId, { limit: 20 }).catch(() => [])
       )
     )
 
