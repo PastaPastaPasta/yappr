@@ -422,16 +422,47 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
             )}
 
             {/* Title + cover image actions */}
-            <div className="flex items-start gap-2">
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={128}
-                placeholder="Title"
-                className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
-              />
-              <div className="mt-2 flex shrink-0 items-center gap-1">
+            <div className="flex items-center gap-2">
+              {showCoverUrlInput ? (
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <input
+                    type="url"
+                    value={coverUrlInput}
+                    onChange={(e) => setCoverUrlInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); handleCoverUrlSubmit() }
+                      if (e.key === 'Escape') { setShowCoverUrlInput(false); setCoverUrlInput('') }
+                    }}
+                    placeholder="https://example.com/image.jpg"
+                    className="h-8 min-w-0 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-sm text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCoverUrlSubmit}
+                    className="shrink-0 rounded bg-gray-800 px-2.5 py-1 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
+                    className="shrink-0 rounded p-1 text-gray-500 hover:text-gray-300"
+                  >
+                    <XMarkIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  maxLength={128}
+                  placeholder="Title"
+                  className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
+                />
+              )}
+              <div className="flex shrink-0 items-center gap-1">
                 {!showCoverUrlInput && (
                   <button
                     type="button"
@@ -465,35 +496,6 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   className="h-full bg-yappr-500 transition-all duration-300"
                   style={{ width: `${uploadProgress}%` }}
                 />
-              </div>
-            )}
-
-            {/* Cover image URL input */}
-            {showCoverUrlInput && (
-              <div className="mt-2 flex gap-1.5">
-                <input
-                  type="url"
-                  value={coverUrlInput}
-                  onChange={(e) => setCoverUrlInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCoverUrlSubmit() } }}
-                  placeholder="https://example.com/image.jpg"
-                  className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={handleCoverUrlSubmit}
-                  className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
-                >
-                  Add
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
-                  className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
-                >
-                  <XMarkIcon className="h-3.5 w-3.5" />
-                </button>
               </div>
             )}
 

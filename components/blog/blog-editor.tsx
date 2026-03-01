@@ -165,12 +165,41 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
           aria-label="Upload image"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
-          className="inline-flex items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
         >
           <PhotoIcon className="h-3.5 w-3.5" />
           {isUploading ? `${progress}%` : 'Add image'}
         </button>
-        {!showImageUrlInput && (
+        {showImageUrlInput ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <input
+              type="url"
+              value={imageUrlInput}
+              onChange={(e) => setImageUrlInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleImageUrlSubmit() }
+                if (e.key === 'Escape') { setShowImageUrlInput(false); setImageUrlInput('') }
+              }}
+              placeholder="https://example.com/image.jpg"
+              className="h-7 min-w-0 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={handleImageUrlSubmit}
+              className="shrink-0 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowImageUrlInput(false); setImageUrlInput('') }}
+              className="shrink-0 rounded p-0.5 text-gray-500 hover:text-gray-300"
+            >
+              <XMarkIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
             onClick={() => setShowImageUrlInput(true)}
@@ -181,33 +210,6 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
           </button>
         )}
       </div>
-      {showImageUrlInput && (
-        <div className="mt-2 flex gap-1.5">
-          <input
-            type="url"
-            value={imageUrlInput}
-            onChange={(e) => setImageUrlInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleImageUrlSubmit() } }}
-            placeholder="https://example.com/image.jpg"
-            className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
-            autoFocus
-          />
-          <button
-            type="button"
-            onClick={handleImageUrlSubmit}
-            className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
-          >
-            Add
-          </button>
-          <button
-            type="button"
-            onClick={() => { setShowImageUrlInput(false); setImageUrlInput('') }}
-            className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
-          >
-            <XMarkIcon className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
     </div>
   )
 }
