@@ -112,7 +112,7 @@
       "$createdAt",
       "blogId",
       "title",
-      "content",
+      "data0",
       "slug"
     ],
     "properties": {
@@ -138,42 +138,63 @@
         "position": 2,
         "description": "Post subtitle"
       },
-      "content": {
+      "data0": {
         "type": "array",
         "byteArray": true,
         "minItems": 1,
-        "maxItems": 16384,
+        "maxItems": 5120,
         "position": 3,
-        "description": "Compressed BlockNote JSON content"
+        "description": "Compressed content chunk 0 (max 5120 bytes per platform field limit)"
+      },
+      "data1": {
+        "type": "array",
+        "byteArray": true,
+        "maxItems": 5120,
+        "position": 4,
+        "description": "Compressed content chunk 1 (overflow)"
+      },
+      "data2": {
+        "type": "array",
+        "byteArray": true,
+        "maxItems": 5120,
+        "position": 5,
+        "description": "Compressed content chunk 2 (overflow)"
+      },
+      "data3": {
+        "type": "array",
+        "byteArray": true,
+        "maxItems": 5120,
+        "position": 6,
+        "description": "Compressed content chunk 3 (overflow)"
       },
       "coverImage": {
         "type": "string",
         "maxLength": 256,
-        "position": 4,
+        "position": 7,
         "description": "ipfs:// URI for cover image"
       },
       "labels": {
         "type": "string",
         "maxLength": 256,
-        "position": 5,
+        "position": 8,
         "description": "Comma-separated labels from blog taxonomy"
       },
       "commentsEnabled": {
         "type": "boolean",
-        "position": 6,
+        "position": 9,
         "description": "Whether comments are enabled"
       },
       "slug": {
         "type": "string",
         "minLength": 1,
         "maxLength": 63,
-        "position": 7,
+        "position": 10,
         "description": "URL-safe slug derived from title"
       },
       "publishedAt": {
         "type": "integer",
         "minimum": 0,
-        "position": 8,
+        "position": 11,
         "description": "Publication timestamp (ms since epoch)"
       }
     },

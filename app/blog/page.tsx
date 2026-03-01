@@ -191,7 +191,7 @@ function BlogPageContent() {
         <div className="p-4">
           {user && (
             <MyBlogsList
-              ownerId={user.identityId}
+              ownerId={user?.identityId}
               onSelectBlog={(blog) => {
                 setSelectedBlog(blog)
                 setEditingPost(null)
@@ -203,6 +203,8 @@ function BlogPageContent() {
         </div>
       )
     }
+
+    if (!user) return null
 
     const tabs: { key: typeof activeTab; label: string }[] = [
       { key: 'posts', label: `Posts (${ownerPosts.length})` },

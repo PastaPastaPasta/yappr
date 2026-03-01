@@ -1,8 +1,8 @@
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
+import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireIdentifierBytes } from './sdk-helpers'
-import { compressContent, decompressContent } from '@/lib/utils/compression'
+import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
 
 export interface BlogPostQueryOptions {
@@ -40,11 +40,14 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   protected extractContentFields(doc: BlogPost): Record<string, unknown> {
     const fields = super.extractContentFields(doc)
-    // Remove client-side computed field not in contract
-    delete fields.compressedContent
-    // Re-compress content to wire format (byte array) if it was deserialized
-    if (fields.content && !(fields.content instanceof Uint8Array)) {
-      fields.content = doc.compressedContent || compressContent(fields.content)
+    delete fields.content
+    // Re-compress and chunk content into data0–data3 (only set chunks that exist)
+    if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
+      const compressed = compressContent(doc.content)
+      const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
+      for (let i = 0; i < chunks.length; i++) {
+        fields[`data${i}`] = chunks[i]
+      }
     }
     return fields
   }
@@ -52,12 +55,18 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   protected transformDocument(doc: Record<string, unknown>): BlogPost {
     const data = (doc.data || doc) as Record<string, unknown>
     const rawBlogId = data.blogId || doc.blogId
-    const rawContent = data.content || doc.content
-    const contentBytes = rawContent ? normalizeBytes(rawContent) : null
+
+    // Reassemble chunked content from data0–data3
+    const chunks = Array.from({ length: BLOG_MAX_CHUNKS }, (_, i) => i).map(i => {
+      const raw = data[`data${i}`] || doc[`data${i}`]
+      return raw ? normalizeBytes(raw) : null
+    })
+    const joined = joinChunks(chunks)
+
     let content: Record<string, unknown>[] = []
-    if (contentBytes) {
+    if (joined.byteLength > 0) {
       try {
-        const decompressed = decompressContent(contentBytes)
+        const decompressed = decompressContent(joined)
         if (Array.isArray(decompressed)) {
           content = decompressed as Record<string, unknown>[]
         }
@@ -76,7 +85,6 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       title: (data.title || doc.title || '') as string,
       subtitle: (data.subtitle || doc.subtitle) as string | undefined,
       content,
-      compressedContent: contentBytes || undefined,
       coverImage: (data.coverImage || doc.coverImage) as string | undefined,
       labels: (data.labels || doc.labels) as string | undefined,
       commentsEnabled: (data.commentsEnabled ?? doc.commentsEnabled) as boolean | undefined,
@@ -98,12 +106,16 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       slug = `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
     }
 
+    const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
     const payload: Record<string, unknown> = {
       blogId: requireIdentifierBytes(data.blogId, 'blogId'),
       title: data.title,
-      content: compressed,
+      data0: chunks[0],
       slug,
       publishedAt: data.publishedAt ?? Date.now(),
+    }
+    for (let i = 1; i < chunks.length; i++) {
+      payload[`data${i}`] = chunks[i]
     }
     if (data.subtitle !== undefined) payload.subtitle = data.subtitle
     if (data.coverImage !== undefined) payload.coverImage = data.coverImage
@@ -128,7 +140,11 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       if (compressed.byteLength > BLOG_POST_SIZE_LIMIT) {
         throw new Error(`Compressed content exceeds ${BLOG_POST_SIZE_LIMIT} bytes`)
       }
-      payload.content = compressed
+      const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
+      // Set all chunk slots — undefined for missing ones clears stale chunks after merge
+      for (let i = 0; i < BLOG_MAX_CHUNKS; i++) {
+        payload[`data${i}`] = chunks[i]
+      }
     }
 
     return this.update(postId, ownerId, payload)

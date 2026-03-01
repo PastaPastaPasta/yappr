@@ -241,6 +241,10 @@ export abstract class BaseDocumentService<T> {
       // Document replacement requires ALL fields, not just the changed ones.
       const existingData = this.extractContentFields(currentDoc);
       const mergedData = { ...existingData, ...data };
+      // Strip undefined values — they represent intentionally cleared optional fields
+      for (const key of Object.keys(mergedData)) {
+        if (mergedData[key] === undefined) delete mergedData[key];
+      }
 
       const result = await stateTransitionService.updateDocument(
         this.contractId,

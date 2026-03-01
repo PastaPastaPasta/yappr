@@ -13,7 +13,9 @@ export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const YAPPR_BLOG_CONTRACT_ID = '3hVuz9FgPxBmyV63fjQbCpqahxMWqmyLY6ERrVr45K5n' // Testnet - Blog contract v3 (themeConfig byteArray)
-export const BLOG_POST_SIZE_LIMIT = 16384 // 16KB compressed content limit (leaves headroom in 20KB doc)
+export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_value_size
+export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
+export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
 
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'
