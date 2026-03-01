@@ -98,7 +98,7 @@ function EmbedPageContent() {
 
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: EMBED_STYLES }} />
+      <style>{EMBED_STYLES}</style>
       <div className="yappr-embed" data-yappr-theme={theme}>
         <article className="yappr-embed-article">
           {state.loading ? (

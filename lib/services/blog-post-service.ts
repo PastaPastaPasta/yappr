@@ -104,9 +104,6 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
     if (data.slug !== undefined) payload.slug = data.slug
     if (data.publishedAt !== undefined) payload.publishedAt = data.publishedAt
-    if (data.title !== undefined && data.slug === undefined) {
-      payload.slug = generateSlug(data.title)
-    }
 
     if (typeof data.content !== 'undefined') {
       const compressed = compressContent(data.content)

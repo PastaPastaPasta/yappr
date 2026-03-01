@@ -22,6 +22,9 @@
       iframe.height = '600';
       iframe.style.border = 'none';
       iframe.style.maxWidth = '100%';
+      iframe.title = 'Yappr embedded post';
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      iframe.loading = 'lazy';
 
       el.appendChild(iframe);
       el.setAttribute('data-yappr-loaded', 'true');

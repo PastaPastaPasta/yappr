@@ -416,6 +416,7 @@ function VideoEmbedPlayer({ url }: { url: string }) {
         className="absolute inset-0 h-full w-full bg-black"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         allowFullScreen
+        {...{ credentialless: 'true' } as React.IframeHTMLAttributes<HTMLIFrameElement>}
       />
     </div>
   )
