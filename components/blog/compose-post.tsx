@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
@@ -98,10 +97,19 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     coverFileRef.current?.click()
   }, [isProviderConnected])
 
+  const [pendingLabelFocus, setPendingLabelFocus] = useState(false)
+
   const handleAddLabel = () => {
     setShowSettings(true)
-    setTimeout(() => labelInputRef.current?.focus(), 100)
+    setPendingLabelFocus(true)
   }
+
+  useEffect(() => {
+    if (pendingLabelFocus && showSettings) {
+      labelInputRef.current?.focus()
+      setPendingLabelFocus(false)
+    }
+  }, [pendingLabelFocus, showSettings])
 
   const availableLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
   const selectedLabels = useMemo(() => parseLabels(labels), [labels])
@@ -364,12 +372,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
           {/* Cover image banner */}
           {coverImage && (
             <div className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg">
-              {isIpfsProtocol(coverImage) ? (
-                <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={coverImage} alt="Cover" className="h-full w-full object-cover" />
-              )}
+              <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
               <button
                 type="button"
                 onClick={() => setCoverImage('')}
