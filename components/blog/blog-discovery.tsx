@@ -71,11 +71,11 @@ export function BlogDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
   }, [blogs, search])
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-4">
       <div className="text-center">
-        <h1 className="text-2xl font-bold">Blogs</h1>
+        <h2 className="text-xl font-bold">Discover Blogs</h2>
         <p className="mt-1 text-sm text-gray-400">
-          Discover long-form content published on Yappr
+          Long-form content published on Yappr
         </p>
       </div>
 

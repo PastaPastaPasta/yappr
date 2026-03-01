@@ -201,6 +201,9 @@ function BlogPageContent() {
               setActiveTab('posts')
             }}
           />
+          <div className="mt-6 border-t border-gray-800 pt-6">
+            <BlogDiscovery sdkReady={sdkReady} />
+          </div>
         </div>
       )
     }
