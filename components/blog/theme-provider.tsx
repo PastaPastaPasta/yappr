@@ -23,6 +23,8 @@ interface BlogThemeProviderProps {
   subtitle?: string
   meta?: ReactNode
   children: ReactNode
+  readerOverrides?: CSSProperties
+  contentFontSize?: string
 }
 
 function getLayoutClass(layout: BlogThemeConfig['layout']): string {
@@ -134,6 +136,8 @@ export function BlogThemeProvider({
   subtitle,
   meta,
   children,
+  readerOverrides,
+  contentFontSize,
 }: BlogThemeProviderProps) {
   const theme = useMemo(
     () => themeConfig ? normalizeBlogThemeConfig(themeConfig) : getDefaultBlogThemeConfig(),
@@ -172,7 +176,7 @@ export function BlogThemeProvider({
         customScopeClass,
         'rounded-2xl border border-[var(--blog-border)] p-4 shadow-[0_1px_0_rgba(255,255,255,0.05)_inset] md:p-6'
       )}
-      style={getContainerStyle(theme)}
+      style={{ ...getContainerStyle(theme), ...readerOverrides }}
     >
       {sanitizedCustomCSS && (
         <style>{`.${customScopeClass} .blog-theme-prose { ${sanitizedCustomCSS} }`}</style>
@@ -193,7 +197,7 @@ export function BlogThemeProvider({
 
         {theme.layout === 'magazine' ? (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-            <div className="blog-theme-prose min-w-0">{children}</div>
+            <div className="blog-theme-prose min-w-0" style={contentFontSize ? { fontSize: contentFontSize } : undefined}>{children}</div>
             <aside className="h-fit rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4 text-sm text-[var(--blog-text)]/85">
               <h3 className="text-base font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
                 About this blog
@@ -208,7 +212,7 @@ export function BlogThemeProvider({
             </aside>
           </div>
         ) : (
-          <div className="blog-theme-prose">{children}</div>
+          <div className="blog-theme-prose" style={contentFontSize ? { fontSize: contentFontSize } : undefined}>{children}</div>
         )}
       </div>
     </section>

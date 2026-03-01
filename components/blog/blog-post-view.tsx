@@ -12,7 +12,9 @@ import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
 import { estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
-import { useAppStore } from '@/lib/store'
+import { getReaderOverrideStyle, getReaderFontSize } from '@/lib/blog/reader-preferences'
+import { ReadingPreferencesPopover } from './reading-preferences'
+import { useAppStore, useReaderPreferencesStore } from '@/lib/store'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { APP_URL } from '@/lib/constants'
 
@@ -27,6 +29,9 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const { setQuotingPost, setComposeOpen } = useAppStore()
   const { requireAuth } = useRequireAuth()
   const [commentCount, setCommentCount] = useState(0)
+  const { readingMode, fontSize } = useReaderPreferencesStore()
+  const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])
+  const contentFontSize = useMemo(() => getReaderFontSize(fontSize), [fontSize])
 
   const handleQuote = () => {
     if (!requireAuth('quote')) return
@@ -120,6 +125,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       title={post.title}
       subtitle={post.subtitle}
       meta={postMeta}
+      readerOverrides={readerOverrides}
+      contentFontSize={contentFontSize}
     >
       <article className="space-y-6">
         <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'var(--blog-border)' }}>
@@ -135,6 +142,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             >
               Quote
             </button>
+            <ReadingPreferencesPopover />
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button

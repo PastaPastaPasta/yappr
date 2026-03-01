@@ -231,3 +231,27 @@ export const useSettingsStore = create<SettingsState>()(
     }
   )
 )
+
+// Reader preferences store (font size + reading mode for blog posts)
+import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
+
+interface ReaderPreferencesState {
+  readingMode: ReadingMode
+  fontSize: FontSizeLevel
+  setReadingMode: (mode: ReadingMode) => void
+  setFontSize: (size: FontSizeLevel) => void
+  resetPreferences: () => void
+}
+
+export const useReaderPreferencesStore = create<ReaderPreferencesState>()(
+  persist(
+    (set) => ({
+      readingMode: 'author' as ReadingMode,
+      fontSize: 'medium' as FontSizeLevel,
+      setReadingMode: (mode) => set({ readingMode: mode }),
+      setFontSize: (size) => set({ fontSize: size }),
+      resetPreferences: () => set({ readingMode: 'author', fontSize: 'medium' }),
+    }),
+    { name: 'yappr-reader-prefs' }
+  )
+)
