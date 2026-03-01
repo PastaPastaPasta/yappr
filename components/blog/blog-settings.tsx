@@ -7,9 +7,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
-import { blogPostService, blogService } from '@/lib/services'
-import { downloadTextFile, labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
-import { generateBlogSitemap } from '@/lib/blog/sitemap-utils'
+import { blogService } from '@/lib/services'
+import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
@@ -31,7 +30,7 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
   const [newLabel, setNewLabel] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isSavingLabels, setIsSavingLabels] = useState(false)
-  const [isDownloadingSitemap, setIsDownloadingSitemap] = useState(false)
+
 
   const parsedLabels = useMemo(() => parseLabels(labels), [labels])
 
@@ -89,22 +88,6 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
 
   const removeLabel = async (label: string) => {
     await persistLabels(parsedLabels.filter((item) => item !== label))
-  }
-
-  const handleDownloadSitemap = async () => {
-    setIsDownloadingSitemap(true)
-    try {
-      const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
-      const baseUrl = window.location.origin
-      const fallbackUsername = new URLSearchParams(window.location.search).get('user') || 'blog'
-      const xml = generateBlogSitemap(posts, blog, username || fallbackUsername, baseUrl)
-      downloadTextFile(`${blog.name.toLowerCase().replace(/\s+/g, '-')}-sitemap.xml`, xml, 'application/xml')
-      toast.success('Sitemap generated')
-    } catch {
-      toast.error('Failed to generate sitemap')
-    } finally {
-      setIsDownloadingSitemap(false)
-    }
   }
 
   return (
@@ -196,10 +179,7 @@ export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSetting
         <Switch checked={commentsEnabledDefault} onCheckedChange={setCommentsEnabledDefault} />
       </div>
 
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="outline" onClick={handleDownloadSitemap} disabled={isDownloadingSitemap}>
-          {isDownloadingSitemap ? 'Generating sitemap...' : 'Download Sitemap'}
-        </Button>
+      <div className="flex justify-end">
         <Button onClick={handleSave} disabled={isSaving || !name.trim()}>{isSaving ? 'Saving...' : 'Save settings'}</Button>
       </div>
     </div>

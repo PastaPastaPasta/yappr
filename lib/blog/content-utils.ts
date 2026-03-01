@@ -14,20 +14,6 @@ export function extractText(content: unknown): string {
   return ''
 }
 
-export function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  return `${value.slice(0, Math.max(0, maxLength - 3)).trim()}...`
-}
-
-export function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
 export function parseLabels(value?: string): string[] {
   if (!value) return []
   return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
@@ -41,14 +27,4 @@ export function estimateReadingTime(content: unknown): number {
   const text = extractText(content)
   const words = text.split(/\s+/).filter(Boolean).length
   return Math.max(1, Math.round(words / 238))
-}
-
-export function downloadTextFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
