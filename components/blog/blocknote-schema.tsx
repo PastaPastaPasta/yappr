@@ -34,6 +34,8 @@ import {
 import { PlayIcon } from '@heroicons/react/24/solid'
 import { extractYouTubeVideoId } from '@/hooks/use-link-preview'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
+import { IpfsImage } from '@/components/ui/ipfs-image'
+import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { extractInlineText } from '@/lib/blog/content-utils'
 
 function getHeadingLinks(documentBlocks: unknown[]): Array<{ id: string; text: string }> {
@@ -651,9 +653,74 @@ const footnoteBlock = createReactBlockSpec(
   }
 )
 
+const imageBlock = createReactBlockSpec(
+  {
+    type: 'image' as const,
+    propSchema: {
+      ...defaultProps,
+      name: { default: '' },
+      url: { default: '' },
+      caption: { default: '' },
+      showPreview: { default: true },
+      previewWidth: { default: 512 },
+    },
+    content: 'none',
+  },
+  {
+    render: ({ block, editor }) => {
+      const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
+      const url = String(block.props.url || '')
+      const caption = String(block.props.caption || '')
+      const width = Number(block.props.previewWidth || 512)
+
+      if (!url) {
+        return (
+          <div className="flex items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-900/30 p-6 text-sm text-gray-500">
+            No image URL
+          </div>
+        )
+      }
+
+      return (
+        <div className="w-full">
+          <div style={{ maxWidth: width }} className="mx-auto">
+            {isIpfsProtocol(url) ? (
+              <IpfsImage
+                src={url}
+                alt={caption || block.props.name || 'Blog image'}
+                className="w-full rounded-lg"
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={url}
+                alt={caption || block.props.name || 'Blog image'}
+                className="w-full rounded-lg"
+              />
+            )}
+          </div>
+          {editable && (
+            <input
+              type="text"
+              value={caption}
+              onChange={(event) => updateBlockProps(editor, block, { caption: event.target.value })}
+              placeholder="Add a caption..."
+              className="mt-2 w-full bg-transparent text-center text-sm text-gray-400 placeholder:text-gray-600 focus:outline-none"
+            />
+          )}
+          {!editable && caption && (
+            <p className="mt-2 text-center text-sm text-gray-400">{caption}</p>
+          )}
+        </div>
+      )
+    },
+  }
+)
+
 export const blogBlockNoteSchema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
+    image: imageBlock,
     video: videoBlock,
     backgroundSection: backgroundSectionBlock,
     callout: calloutBlock,
