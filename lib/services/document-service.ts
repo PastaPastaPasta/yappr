@@ -201,6 +201,25 @@ export abstract class BaseDocumentService<T> {
   }
 
   /**
+   * Extract content fields from a transformed document, stripping system metadata.
+   * Used to build the full document data for replacements (updates).
+   * Subclasses can override for custom extraction logic.
+   */
+  protected extractContentFields(doc: T): Record<string, unknown> {
+    const systemFields = new Set([
+      'id', 'ownerId', 'createdAt', 'updatedAt',
+      '$id', '$ownerId', '$createdAt', '$updatedAt', '$revision', '$type', 'revision',
+    ]);
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
+      if (!systemFields.has(key) && value !== undefined) {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
+  /**
    * Update a document
    */
   async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
@@ -210,7 +229,7 @@ export abstract class BaseDocumentService<T> {
       // Clear cache to ensure we get fresh revision from network
       this.cache.delete(documentId);
 
-      // Get current document to find revision
+      // Get current document to find revision and existing data
       const currentDoc = await this.get(documentId);
       if (!currentDoc) {
         throw new Error('Document not found');
@@ -218,12 +237,17 @@ export abstract class BaseDocumentService<T> {
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
       logger.info(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
 
+      // Merge existing document data with partial update.
+      // Document replacement requires ALL fields, not just the changed ones.
+      const existingData = this.extractContentFields(currentDoc);
+      const mergedData = { ...existingData, ...data };
+
       const result = await stateTransitionService.updateDocument(
         this.contractId,
         this.documentType,
         documentId,
         ownerId,
-        data,
+        mergedData,
         revision
       );
 
