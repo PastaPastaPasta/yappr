@@ -1,12 +1,11 @@
 import { logger } from '@/lib/logger';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, identifierToBase58, RequestDeduplicator } from './sdk-helpers';
+import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { YAPPR_BLOG_CONTRACT_ID } from '../constants';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 import type { BlogFollow } from '@/lib/types';
-
-const DOCUMENT_TYPE = 'blogFollow';
 
 interface BlogFollowDocument {
   $id: string;
@@ -15,22 +14,26 @@ interface BlogFollowDocument {
   blogId: string;
 }
 
-function transformDocument(doc: Record<string, unknown>): BlogFollowDocument {
-  const data = (doc.data || doc) as Record<string, unknown>;
-  const rawBlogId = data.blogId || doc.blogId;
-  const blogId = rawBlogId ? identifierToBase58(rawBlogId) : '';
-
+function toBlogFollow(doc: BlogFollowDocument): BlogFollow {
   return {
-    $id: (doc.$id || doc.id) as string,
-    $ownerId: (doc.$ownerId || doc.ownerId) as string,
-    $createdAt: (doc.$createdAt || doc.createdAt || 0) as number,
-    blogId: blogId || '',
+    id: doc.$id,
+    ownerId: doc.$ownerId,
+    blogId: doc.blogId,
+    createdAt: new Date(doc.$createdAt),
   };
 }
 
-class BlogFollowService {
+class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
   private followingDeduplicator = new RequestDeduplicator<string, string[]>();
   private countFollowersDeduplicator = new RequestDeduplicator<string, number>();
+
+  constructor() {
+    super('blogFollow', YAPPR_BLOG_CONTRACT_ID);
+  }
+
+  protected transformDocument(doc: Record<string, unknown>): BlogFollowDocument {
+    return transformDocumentWithField<BlogFollowDocument>(doc, 'blogId', 'BlogFollowService');
+  }
 
   async followBlog(userId: string, blogId: string): Promise<{ success: boolean; error?: string }> {
     try {
@@ -40,14 +43,12 @@ class BlogFollowService {
         return { success: true };
       }
 
-      const result = await stateTransitionService.createDocument(
-        YAPPR_BLOG_CONTRACT_ID,
-        DOCUMENT_TYPE,
+      return await stateTransitionService.createDocument(
+        this.contractId,
+        this.documentType,
         userId,
         { blogId: stringToIdentifierBytes(blogId) }
       );
-
-      return result;
     } catch (error) {
       logger.error('Error following blog:', error);
       return {
@@ -65,14 +66,12 @@ class BlogFollowService {
         return { success: true };
       }
 
-      const result = await stateTransitionService.deleteDocument(
-        YAPPR_BLOG_CONTRACT_ID,
-        DOCUMENT_TYPE,
+      return await stateTransitionService.deleteDocument(
+        this.contractId,
+        this.documentType,
         follow.$id,
         userId
       );
-
-      return result;
     } catch (error) {
       logger.error('Error unfollowing blog:', error);
       return {
@@ -90,23 +89,15 @@ class BlogFollowService {
 
   private async getFollow(userId: string, blogId: string): Promise<BlogFollowDocument | null> {
     try {
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.query({
-        dataContractId: YAPPR_BLOG_CONTRACT_ID,
-        documentTypeName: DOCUMENT_TYPE,
+      const result = await this.query({
         where: [
           ['$ownerId', '==', userId],
           ['blogId', '==', blogId]
         ],
         limit: 1
-      } as any);
+      });
 
-      const documents = Array.isArray(response) ? response : [];
-      if (documents.length === 0) return null;
-
-      const doc = typeof documents[0].toJSON === 'function' ? documents[0].toJSON() : documents[0];
-      return transformDocument(doc as Record<string, unknown>);
+      return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
       logger.error('Error getting blog follow:', error);
       return null;
@@ -120,23 +111,15 @@ class BlogFollowService {
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
-          dataContractId: YAPPR_BLOG_CONTRACT_ID,
-          documentTypeName: DOCUMENT_TYPE,
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
           where: [
             ['$ownerId', '==', userId],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
         }),
-        (doc) => {
-          const transformed = transformDocument(doc);
-          return {
-            id: transformed.$id,
-            ownerId: transformed.$ownerId,
-            blogId: transformed.blogId,
-            createdAt: new Date(transformed.$createdAt),
-          };
-        }
+        (doc) => toBlogFollow(this.transformDocument(doc))
       );
 
       return documents;
@@ -162,23 +145,15 @@ class BlogFollowService {
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
-          dataContractId: YAPPR_BLOG_CONTRACT_ID,
-          documentTypeName: DOCUMENT_TYPE,
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
           where: [
             ['blogId', '==', blogId],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['blogId', 'asc'], ['$createdAt', 'asc']]
         }),
-        (doc) => {
-          const transformed = transformDocument(doc);
-          return {
-            id: transformed.$id,
-            ownerId: transformed.$ownerId,
-            blogId: transformed.blogId,
-            createdAt: new Date(transformed.$createdAt),
-          };
-        }
+        (doc) => toBlogFollow(this.transformDocument(doc))
       );
 
       return documents;
@@ -196,8 +171,8 @@ class BlogFollowService {
         const { count } = await paginateCount(
           sdk,
           () => ({
-            dataContractId: YAPPR_BLOG_CONTRACT_ID,
-            documentTypeName: DOCUMENT_TYPE,
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
             where: [
               ['blogId', '==', blogId],
               ['$createdAt', '>', 0]

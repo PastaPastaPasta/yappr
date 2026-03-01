@@ -5,34 +5,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
 import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
-
-// In-memory cache for blog follow status (same pattern as user-status-cache)
-const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
-const blogFollowCache = new Map<string, { isFollowing: boolean; timestamp: number }>()
-
-function getCachedStatus(key: string): boolean | null {
-  const cached = blogFollowCache.get(key)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.isFollowing
-  }
-  return null
-}
-
-function setCachedStatus(key: string, isFollowing: boolean): void {
-  blogFollowCache.set(key, { isFollowing, timestamp: Date.now() })
-}
-
-function deleteCachedStatus(key: string): void {
-  blogFollowCache.delete(key)
-}
-
-export function seedBlogFollowCache(userId: string, statusMap: Map<string, boolean>): void {
-  if (!userId) return
-  const now = Date.now()
-  statusMap.forEach((isFollowing, blogId) => {
-    blogFollowCache.set(`blog:${userId}:${blogId}`, { isFollowing, timestamp: now })
-  })
-}
+import {
+  getBlogFollowStatus,
+  setBlogFollowStatus,
+  clearBlogFollowCache as clearSharedBlogFollowCache,
+  seedBlogFollowStatusCache
+} from '@/lib/caches/user-status-cache'
 
 export interface UseBlogFollowResult {
   isFollowing: boolean
@@ -61,7 +39,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     }
 
     if (cacheKey) {
-      const cached = getCachedStatus(cacheKey)
+      const cached = getBlogFollowStatus(cacheKey)
       if (cached !== null) {
         setIsFollowing(cached)
         setIsLoading(false)
@@ -73,7 +51,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     try {
       const { blogFollowService } = await import('@/lib/services/blog-follow-service')
       const following = await blogFollowService.isFollowingBlog(user.identityId, blogId)
-      if (cacheKey) setCachedStatus(cacheKey, following)
+      if (cacheKey) setBlogFollowStatus(cacheKey, following)
       setIsFollowing(following)
     } catch (error) {
       logger.error('useBlogFollow: Error checking status:', error)
@@ -86,7 +64,6 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     checkStatus()
   }, [checkStatus])
 
-  // Fetch follower count
   useEffect(() => {
     if (!blogId) return
     let cancelled = false
@@ -119,7 +96,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     setFollowerCount(prev => wasFollowing ? Math.max(0, prev - 1) : prev + 1)
     setIsLoading(true)
 
-    if (cacheKey) setCachedStatus(cacheKey, !wasFollowing)
+    if (cacheKey) setBlogFollowStatus(cacheKey, !wasFollowing)
 
     try {
       const { blogFollowService } = await import('@/lib/services/blog-follow-service')
@@ -137,7 +114,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
       // Rollback
       setIsFollowing(wasFollowing)
       setFollowerCount(prev => wasFollowing ? prev + 1 : Math.max(0, prev - 1))
-      if (cacheKey) setCachedStatus(cacheKey, wasFollowing)
+      if (cacheKey) setBlogFollowStatus(cacheKey, wasFollowing)
       logger.error('useBlogFollow: Error toggling follow:', error)
       toast.error('Failed to update blog follow status')
     } finally {
@@ -149,5 +126,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
 }
 
 export function clearBlogFollowCache(): void {
-  blogFollowCache.clear()
+  clearSharedBlogFollowCache()
 }
+
+export { seedBlogFollowStatusCache as seedBlogFollowCache }
