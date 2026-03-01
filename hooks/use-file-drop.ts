@@ -61,7 +61,9 @@ export function useFileDrop({ disabled, onDrop, accept }: UseFileDropOptions): U
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (e.currentTarget === e.target) setIsDragging(false)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false)
+    }
   }, [])
 
   return {

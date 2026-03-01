@@ -7,6 +7,7 @@ import { SuggestionMenuController } from '@blocknote/react'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
 import Link from 'next/link'
+import toast from 'react-hot-toast'
 import { PhotoIcon, LinkIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
@@ -76,7 +77,10 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   const handleImageUrlSubmit = useCallback(() => {
     const validated = validateHttpUrl(imageUrlInput)
-    if (!validated) return
+    if (!validated) {
+      toast.error('Please enter a valid http or https URL')
+      return
+    }
     insertImageBlock(validated)
     setImageUrlInput('')
     setShowImageUrlInput(false)

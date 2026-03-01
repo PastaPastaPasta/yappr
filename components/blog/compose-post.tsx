@@ -432,17 +432,19 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                 <p className={`mt-1 text-xs ${isDraggingCover ? 'text-yappr-400' : 'text-gray-600'}`}>
                   {isDraggingCover ? 'Drop image here' : 'Click or drag to add cover image'}
                 </p>
-                {!isDraggingCover && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setShowCoverUrlInput(true) }}
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-400"
-                  >
-                    <LinkIcon className="h-3 w-3" />
-                    Paste URL
-                  </button>
-                )}
               </div>
+            </div>
+          )}
+          {!coverImage && !isDraggingCover && !showCoverUrlInput && (
+            <div className="-mt-4 mb-4">
+              <button
+                type="button"
+                onClick={() => setShowCoverUrlInput(true)}
+                className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-400"
+              >
+                <LinkIcon className="h-3 w-3" />
+                Paste URL
+              </button>
             </div>
           )}
 

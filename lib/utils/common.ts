@@ -84,10 +84,6 @@ export function truncateId(id: string, startChars = 8, endChars = 6): string {
 }
 
 /**
- * Checks if content consists only of emoji characters (and optional whitespace).
- * Used to display emoji-only content with larger text.
- */
-/**
  * Validate that a string is a well-formed http(s) URL.
  * Returns the trimmed URL on success, or null on failure.
  */
