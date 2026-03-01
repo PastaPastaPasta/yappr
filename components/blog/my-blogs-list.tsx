@@ -40,9 +40,9 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
   }, [ownerId])
 
   return (
-    <div className="space-y-4">
+    <div className="mb-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">My Blogs</h2>
+        <h2 className="text-lg font-semibold text-gray-300">My Blogs</h2>
         <Button onClick={() => setOpenCreate(true)}>
           <PlusIcon className="mr-2 h-4 w-4" />
           Create Blog
@@ -51,11 +51,7 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
 
       {loading ? (
         <p className="text-sm text-gray-500">Loading blogs...</p>
-      ) : blogs.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-800 p-6 text-center text-gray-400">
-          No blogs yet. Create your first blog.
-        </div>
-      ) : (
+      ) : blogs.length === 0 ? null : (
         <div className="space-y-3">
           {blogs.map((blog) => (
             <button

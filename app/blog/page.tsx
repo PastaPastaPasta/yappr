@@ -186,24 +186,20 @@ function BlogPageContent() {
       return <BlogHome blog={viewBlog} username={viewUsername || ''} />
     }
 
-    if (!user) {
-      return <BlogDiscovery sdkReady={sdkReady} />
-    }
-
     if (!selectedBlog) {
       return (
         <div className="p-4">
-          <MyBlogsList
-            ownerId={user.identityId}
-            onSelectBlog={(blog) => {
-              setSelectedBlog(blog)
-              setEditingPost(null)
-              setActiveTab('posts')
-            }}
-          />
-          <div className="mt-6 border-t border-gray-800 pt-6">
-            <BlogDiscovery sdkReady={sdkReady} />
-          </div>
+          {user && (
+            <MyBlogsList
+              ownerId={user.identityId}
+              onSelectBlog={(blog) => {
+                setSelectedBlog(blog)
+                setEditingPost(null)
+                setActiveTab('posts')
+              }}
+            />
+          )}
+          <BlogDiscovery sdkReady={sdkReady} showHeader={!user} />
         </div>
       )
     }

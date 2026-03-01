@@ -13,7 +13,7 @@ interface BlogWithUsername extends Blog {
   username: string | null
 }
 
-export function BlogDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
+export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkReady?: boolean; showHeader?: boolean }) {
   const [blogs, setBlogs] = useState<BlogWithUsername[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -72,12 +72,14 @@ export function BlogDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="text-center">
-        <h2 className="text-xl font-bold">Discover Blogs</h2>
-        <p className="mt-1 text-sm text-gray-400">
-          Long-form content published on Yappr
-        </p>
-      </div>
+      {showHeader && (
+        <div className="text-center">
+          <h2 className="text-xl font-bold">Discover Blogs</h2>
+          <p className="mt-1 text-sm text-gray-400">
+            Long-form content published on Yappr
+          </p>
+        </div>
+      )}
 
       <div className="relative">
         <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
