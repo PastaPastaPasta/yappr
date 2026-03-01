@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChatBubbleLeftIcon, LinkIcon } from '@heroicons/react/24/outline'
-import { Clock3 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -12,10 +11,8 @@ import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
-import { EditHistoryModal } from './edit-history-modal'
 import { estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { useAppStore } from '@/lib/store'
-import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { APP_URL } from '@/lib/constants'
 
@@ -29,11 +26,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const blocks = Array.isArray(post.content) ? post.content : []
   const { setQuotingPost, setComposeOpen } = useAppStore()
   const { requireAuth } = useRequireAuth()
-  const { user } = useAuth()
   const [commentCount, setCommentCount] = useState(0)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const isAuthor = user?.identityId === post.ownerId
-  const hasEdits = (post.$revision || 1) > 1 || Boolean(post.updatedAt && post.updatedAt.getTime() !== post.createdAt.getTime())
 
   const handleQuote = () => {
     if (!requireAuth('quote')) return
@@ -142,17 +135,6 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             >
               Quote
             </button>
-            {hasEdits && (
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(true)}
-                className="inline-flex items-center gap-1 text-sm font-medium hover:underline"
-                style={{ color: 'var(--blog-link)' }}
-              >
-                <Clock3 className="h-4 w-4" />
-                History
-              </button>
-            )}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button
@@ -217,12 +199,6 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         />
       </article>
 
-      <EditHistoryModal
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        post={post}
-        isAuthor={Boolean(isAuthor)}
-      />
     </BlogThemeProvider>
   )
 }
