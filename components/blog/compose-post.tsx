@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { XMarkIcon, Cog6ToothIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, Cog6ToothIcon, PhotoIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -57,25 +57,21 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
   const labelInputRef = useRef<HTMLInputElement>(null)
   const coverFileRef = useRef<HTMLInputElement>(null)
   const { upload: uploadImage, isUploading: isUploadingCover, progress: uploadProgress, isProviderConnected, checkProvider } = useImageUpload()
+  const [isDraggingCover, setIsDraggingCover] = useState(false)
+  const [coverUrlInput, setCoverUrlInput] = useState('')
+  const [showCoverUrlInput, setShowCoverUrlInput] = useState(false)
 
   useEffect(() => {
     checkProvider().catch(() => {})
   }, [checkProvider])
 
-  const handleCoverFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const resetInput = () => { if (coverFileRef.current) coverFileRef.current.value = '' }
-
+  const processCoverFile = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) {
       toast.error('Please select an image file')
-      resetInput()
       return
     }
     if (file.size > 5 * 1024 * 1024) {
       toast.error('Image must be smaller than 5MB')
-      resetInput()
       return
     }
 
@@ -84,10 +80,41 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       setCoverImage(`ipfs://${result.cid}`)
     } catch {
       toast.error('Failed to upload cover image')
-    } finally {
-      resetInput()
     }
   }, [uploadImage])
+
+  const handleCoverFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await processCoverFile(file)
+    if (coverFileRef.current) coverFileRef.current.value = ''
+  }, [processCoverFile])
+
+  const handleCoverDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingCover(false)
+    if (isUploadingCover || !isProviderConnected) return
+    const file = e.dataTransfer.files[0]
+    if (file) await processCoverFile(file)
+  }, [isUploadingCover, isProviderConnected, processCoverFile])
+
+  const handleCoverDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleCoverDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isUploadingCover && isProviderConnected) setIsDraggingCover(true)
+  }, [isUploadingCover, isProviderConnected])
+
+  const handleCoverDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget === e.target) setIsDraggingCover(false)
+  }, [])
 
   const handleCoverClick = useCallback(() => {
     if (!isProviderConnected) {
@@ -96,6 +123,24 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     }
     coverFileRef.current?.click()
   }, [isProviderConnected])
+
+  const handleCoverUrlSubmit = useCallback(() => {
+    const trimmed = coverUrlInput.trim()
+    if (!trimmed) return
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        toast.error('Please enter an http or https URL')
+        return
+      }
+    } catch {
+      toast.error('Please enter a valid URL')
+      return
+    }
+    setCoverImage(trimmed)
+    setCoverUrlInput('')
+    setShowCoverUrlInput(false)
+  }, [coverUrlInput])
 
   const [pendingLabelFocus, setPendingLabelFocus] = useState(false)
 
@@ -373,10 +418,21 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       {/* Writing canvas */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[640px] px-4 py-8">
-          {/* Cover image banner */}
-          {coverImage && (
-            <div className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg">
+          {/* Cover image banner / drop zone */}
+          {coverImage ? (
+            <div
+              className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg"
+              onDrop={handleCoverDrop}
+              onDragOver={handleCoverDragOver}
+              onDragEnter={handleCoverDragEnter}
+              onDragLeave={handleCoverDragLeave}
+            >
               <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
+              {isDraggingCover && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                  <p className="text-sm font-medium text-white">Drop to replace cover</p>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setCoverImage('')}
@@ -384,6 +440,70 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                 title="Remove cover image"
               >
                 <XMarkIcon className="h-4 w-4 text-white" />
+              </button>
+            </div>
+          ) : (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={handleCoverClick}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCoverClick() }
+              }}
+              onDrop={handleCoverDrop}
+              onDragOver={handleCoverDragOver}
+              onDragEnter={handleCoverDragEnter}
+              onDragLeave={handleCoverDragLeave}
+              className={`mb-6 flex aspect-[3/1] items-center justify-center rounded-lg border border-dashed transition-colors ${
+                isDraggingCover
+                  ? 'border-yappr-500 bg-yappr-500/10'
+                  : 'border-gray-800 bg-gray-900/20 hover:border-gray-700 hover:bg-gray-900/40'
+              } cursor-pointer`}
+            >
+              <div className="text-center">
+                <PhotoIcon className={`mx-auto h-8 w-8 ${isDraggingCover ? 'text-yappr-500' : 'text-gray-600'}`} />
+                <p className={`mt-1 text-xs ${isDraggingCover ? 'text-yappr-400' : 'text-gray-600'}`}>
+                  {isDraggingCover ? 'Drop image here' : 'Click or drag to add cover image'}
+                </p>
+                {!isDraggingCover && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowCoverUrlInput(true) }}
+                    className="mt-2 inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-400"
+                  >
+                    <LinkIcon className="h-3 w-3" />
+                    Paste URL
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Cover image URL input */}
+          {showCoverUrlInput && !coverImage && (
+            <div className="-mt-4 mb-4 flex gap-1.5">
+              <input
+                type="url"
+                value={coverUrlInput}
+                onChange={(e) => setCoverUrlInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCoverUrlSubmit() } }}
+                placeholder="https://example.com/image.jpg"
+                className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={handleCoverUrlSubmit}
+                className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
+                className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
+              >
+                <XMarkIcon className="h-3.5 w-3.5" />
               </button>
             </div>
           )}

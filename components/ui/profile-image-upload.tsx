@@ -4,10 +4,8 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from './ipfs-image'
-import { PhotoIcon, XMarkIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { PhotoIcon, XMarkIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
-import { Button } from './button'
-import Link from 'next/link'
 
 export interface ProfileImageUploadProps {
   /** Current ipfs:// or data: URL */
@@ -44,6 +42,8 @@ export function ProfileImageUpload({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [urlInput, setUrlInput] = useState('')
+  const [showUrlInput, setShowUrlInput] = useState(false)
 
   const [imageLoading, setImageLoading] = useState(false)
 
@@ -150,42 +150,35 @@ export function ProfileImageUpload({
 
   const handleClick = useCallback(() => {
     if (isUploading) return
+    if (!isProviderConnected) return
     fileInputRef.current?.click()
-  }, [isUploading])
+  }, [isUploading, isProviderConnected])
+
+  const handleUrlSubmit = useCallback(() => {
+    const trimmed = urlInput.trim()
+    if (!trimmed) return
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        setLocalError('Please enter an http or https URL')
+        return
+      }
+    } catch {
+      setLocalError('Please enter a valid URL')
+      return
+    }
+    setLocalError(null)
+    clearError()
+    onUpload(trimmed)
+    setUrlInput('')
+    setShowUrlInput(false)
+  }, [urlInput, onUpload, clearError])
 
   const aspectClass = aspectRatio === 'square'
     ? 'aspect-square rounded-full'
     : 'aspect-[3/1] rounded-lg'
 
   const currentError = localError || error
-
-  // Show provider connection prompt if not connected
-  if (!isProviderConnected) {
-    return (
-      <div className="space-y-2">
-        {label && (
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {label}
-          </label>
-        )}
-        <div
-          className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed border-gray-200 dark:border-gray-800 flex items-center justify-center cursor-default`}
-        >
-          <div className="text-center p-4">
-            <Cog6ToothIcon className="h-6 w-6 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
-            <p className="text-xs text-gray-500 dark:text-gray-500 mb-2">
-              Connect a storage provider to upload images
-            </p>
-            <Link href="/settings">
-              <Button size="sm" variant="outline">
-                Go to Settings
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-2">
@@ -299,14 +292,56 @@ export function ProfileImageUpload({
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <PhotoIcon className={`h-10 w-10 mb-2 ${isDragging ? 'text-yappr-500' : 'text-gray-400'}`} />
             <span className={`text-sm ${isDragging ? 'text-yappr-500' : 'text-gray-500 dark:text-gray-400'}`}>
-              {isDragging ? 'Drop image here' : placeholder}
+              {isDragging ? 'Drop image here' : isProviderConnected ? placeholder : 'Paste a URL below'}
             </span>
-            <span className="text-xs text-gray-400 mt-1">
-              Max {maxSizeMB}MB
-            </span>
+            {isProviderConnected && (
+              <span className="text-xs text-gray-400 mt-1">
+                Max {maxSizeMB}MB
+              </span>
+            )}
           </div>
         )}
       </div>
+
+      {/* URL paste toggle + input */}
+      {!currentUrl && !previewUrl && (
+        showUrlInput ? (
+          <div className="flex gap-1.5">
+            <input
+              type="url"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleUrlSubmit() } }}
+              placeholder="https://example.com/image.jpg"
+              className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              onClick={handleUrlSubmit}
+              className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowUrlInput(false); setUrlInput('') }}
+              className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
+            >
+              <XMarkIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowUrlInput(true)}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-400"
+          >
+            <LinkIcon className="h-3 w-3" />
+            Paste image URL
+          </button>
+        )
+      )}
 
       {/* Error message */}
       {currentError && (

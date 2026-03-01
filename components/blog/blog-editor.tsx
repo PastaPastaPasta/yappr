@@ -1,13 +1,13 @@
 'use client'
 
-import { type ChangeEvent, useCallback, useEffect, useRef } from 'react'
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
 import Link from 'next/link'
-import { PhotoIcon } from '@heroicons/react/24/outline'
+import { PhotoIcon, LinkIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
@@ -26,6 +26,9 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
   const { upload, isUploading, progress, error, clearError } = useImageUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [imageUrlInput, setImageUrlInput] = useState('')
+  const [showImageUrlInput, setShowImageUrlInput] = useState(false)
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const reportBytes = useCallback((nextBytes: number) => {
     onBytesChange?.(nextBytes)
@@ -44,10 +47,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     }, 500)
   }, [editor, onChange, reportBytes])
 
-  const handleImageUpload = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
+  const insertImageFile = useCallback(async (file: File) => {
     clearError()
 
     try {
@@ -72,12 +72,72 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
       publishChange()
     } catch {
       // Error state is already set by useImageUpload hook and displayed in the UI.
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
     }
   }, [clearError, editor, publishChange, upload])
+
+  const insertImageUrl = useCallback((url: string) => {
+    const cursor = editor.getTextCursorPosition()
+    editor.insertBlocks(
+      [
+        {
+          type: 'image',
+          props: { url, caption: '', name: '' },
+        } as never,
+      ],
+      cursor.block,
+      'after'
+    )
+    publishChange()
+  }, [editor, publishChange])
+
+  const handleImageUrlSubmit = useCallback(() => {
+    const trimmed = imageUrlInput.trim()
+    if (!trimmed) return
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
+    } catch {
+      return
+    }
+    insertImageUrl(trimmed)
+    setImageUrlInput('')
+    setShowImageUrlInput(false)
+  }, [imageUrlInput, insertImageUrl])
+
+  const handleImageUpload = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    await insertImageFile(file)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [insertImageFile])
+
+  const handleEditorDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    if (isUploading) return
+    const file = e.dataTransfer.files[0]
+    if (file?.type.startsWith('image/')) {
+      await insertImageFile(file)
+    }
+  }, [isUploading, insertImageFile])
+
+  const handleEditorDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleEditorDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isUploading) setIsDragging(true)
+  }, [isUploading])
+
+  const handleEditorDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget === e.target) setIsDragging(false)
+  }, [])
 
   useEffect(() => {
     reportBytes(getCompressedSize(editor.document as unknown[]))
@@ -90,7 +150,15 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
   }, [editor, reportBytes])
 
   return (
-    <div>
+    <div
+      onDrop={handleEditorDrop}
+      onDragOver={handleEditorDragOver}
+      onDragEnter={handleEditorDragEnter}
+      onDragLeave={handleEditorDragLeave}
+      className={`relative rounded-lg transition-colors ${
+        isDragging ? 'ring-2 ring-yappr-500/60 bg-yappr-500/5' : ''
+      }`}
+    >
       {/* Hidden file input for IPFS image uploads */}
       <input
         ref={fileInputRef}
@@ -114,6 +182,12 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         </div>
       )}
 
+      {isDragging && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/40">
+          <p className="text-sm font-medium text-yappr-400">Drop image to insert</p>
+        </div>
+      )}
+
       <BlockNoteView
         editor={editor}
         theme="dark"
@@ -127,17 +201,56 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         />
       </BlockNoteView>
 
-      {/* Subtle IPFS image upload action */}
-      <button
-        type="button"
-        aria-label="Upload IPFS image"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={isUploading}
-        className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
-      >
-        <PhotoIcon className="h-3.5 w-3.5" />
-        {isUploading ? `${progress}%` : 'Add image'}
-      </button>
+      {/* Image actions */}
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          aria-label="Upload image"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading}
+          className="inline-flex items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
+        >
+          <PhotoIcon className="h-3.5 w-3.5" />
+          {isUploading ? `${progress}%` : 'Add image'}
+        </button>
+        {!showImageUrlInput && (
+          <button
+            type="button"
+            onClick={() => setShowImageUrlInput(true)}
+            className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-400"
+          >
+            <LinkIcon className="h-3 w-3" />
+            Paste URL
+          </button>
+        )}
+      </div>
+      {showImageUrlInput && (
+        <div className="mt-2 flex gap-1.5">
+          <input
+            type="url"
+            value={imageUrlInput}
+            onChange={(e) => setImageUrlInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleImageUrlSubmit() } }}
+            placeholder="https://example.com/image.jpg"
+            className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+            autoFocus
+          />
+          <button
+            type="button"
+            onClick={handleImageUrlSubmit}
+            className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+          >
+            Add
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowImageUrlInput(false); setImageUrlInput('') }}
+            className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
+          >
+            <XMarkIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
