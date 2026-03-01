@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { blogCommentService, blogPostService } from '@/lib/services'
-import { extractText, parseLabels } from '@/lib/blog/content-utils'
+import { estimateReadingTime, extractText, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
@@ -132,6 +132,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
                 {excerpt && <p className="mt-2 text-sm text-[var(--blog-text)]/75">{excerpt}{excerpt.length >= 200 ? '...' : ''}</p>}
                 <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blog-text)]/60">
                   <span>{post.createdAt.toLocaleDateString()}</span>
+                  <span>• {estimateReadingTime(post.content)} min read</span>
                   {post.labels && <span>• {post.labels}</span>}
                   <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--blog-border)] px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
                     <ChatBubbleLeftIcon className="h-3 w-3" />

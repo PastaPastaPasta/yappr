@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { extractText } from '@/lib/blog/content-utils'
+import { estimateReadingTime, extractText } from '@/lib/blog/content-utils'
 import type { BlogPost } from '@/lib/types'
 
 interface BlogPostWithAuthor extends BlogPost {
@@ -55,6 +55,8 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
             {post.authorDisplayName && <span>{post.authorDisplayName}</span>}
             {(post.blogName || post.authorDisplayName) && <span>·</span>}
             <span>{post.createdAt.toLocaleDateString()}</span>
+            <span>·</span>
+            <span>{estimateReadingTime(post.content)} min read</span>
           </div>
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 line-clamp-1">
             {post.title || 'Untitled'}

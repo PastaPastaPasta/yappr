@@ -13,6 +13,7 @@ import { EmbedPreview } from './embed-preview'
 import { EditHistoryModal } from './edit-history-modal'
 import { blogCommentService } from '@/lib/services'
 import { generateArticleJsonLd, generateBlogPostMeta } from '@/lib/blog/seo-utils'
+import { estimateReadingTime } from '@/lib/blog/content-utils'
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
@@ -144,11 +145,15 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     setComposeOpen(true)
   }
 
+  const readingTime = useMemo(() => estimateReadingTime(post.content), [post.content])
+
   const postMeta = useMemo(() => (
     <div className="flex flex-wrap items-center gap-2">
       <span>{post.createdAt.toLocaleDateString()}</span>
       <span>•</span>
       <span>{blog.name}</span>
+      <span>•</span>
+      <span>{readingTime} min read</span>
       {post.labels && (
         <>
           <span>•</span>
@@ -161,7 +166,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         {commentCount}
       </span>
     </div>
-  ), [blog.name, commentCount, post.createdAt, post.labels])
+  ), [blog.name, commentCount, post.createdAt, post.labels, readingTime])
 
   return (
     <BlogThemeProvider

@@ -37,6 +37,12 @@ export function labelsToCsv(items: string[]): string {
   return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join(',')
 }
 
+export function estimateReadingTime(content: unknown): number {
+  const text = extractText(content)
+  const words = text.split(/\s+/).filter(Boolean).length
+  return Math.max(1, Math.round(words / 238))
+}
+
 export function downloadTextFile(filename: string, content: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType })
   const url = URL.createObjectURL(blob)
