@@ -27,7 +27,6 @@ interface BlogThemeProviderProps {
 
 function getLayoutClass(layout: BlogThemeConfig['layout']): string {
   if (layout === 'narrow') return 'mx-auto max-w-2xl'
-  if (layout === 'magazine') return 'mx-auto max-w-6xl'
   return 'mx-auto max-w-6xl'
 }
 

@@ -117,19 +117,17 @@ class BlogService extends BaseDocumentService<Blog> {
     const seenBlogIds = new Set<string>()
     let lastCreatedAt: number | null = null
 
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
+    while (blogs.length < limit) {
       const remaining = limit - blogs.length
-      if (remaining <= 0) break
+      const batchLimit = Math.min(pageSize, remaining)
 
       const queryOptions: QueryOptions = {
         orderBy: [['$createdAt', 'desc']],
-        limit: Math.min(pageSize, remaining),
+        limit: batchLimit,
         ...(lastCreatedAt !== null ? { where: [['$createdAt', '<=', lastCreatedAt]] } : {}),
       }
 
       const result = await this.query(queryOptions)
-
       if (result.documents.length === 0) break
 
       const newBlogs = result.documents.filter((blog) => {
@@ -138,22 +136,12 @@ class BlogService extends BaseDocumentService<Blog> {
         return true
       })
 
-      if (newBlogs.length === 0) {
-        break
-      }
+      if (newBlogs.length === 0) break
 
-      const nextBlogs = newBlogs.slice(0, remaining)
-      blogs.push(...nextBlogs)
+      blogs.push(...newBlogs.slice(0, remaining))
       lastCreatedAt = result.documents[result.documents.length - 1].createdAt.getTime()
 
-      // If we got fewer than requested, no more pages
-      if (result.documents.length < Math.min(pageSize, remaining)) {
-        break
-      }
-
-      if (remaining <= nextBlogs.length) {
-        break
-      }
+      if (result.documents.length < batchLimit) break
     }
 
     return blogs
