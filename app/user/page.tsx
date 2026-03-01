@@ -66,6 +66,13 @@ interface ProfileData {
   joinedAt?: Date
 }
 
+interface ProfileBlog {
+  id: string
+  name: string
+  description?: string
+  postCount: number
+}
+
 function getSocialLinkUrl(platform: string, handle: string): string | null {
   const trimmedHandle = handle.trim()
   if (!trimmedHandle) return null
@@ -126,58 +133,6 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
-/**
- * Helper to fetch content by IDs, trying posts first and then replies for any not found.
- * Returns an array of Post objects (replies are converted to Post format for display).
- * Needed because quoted content can be either a post or a reply.
- */
-async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
-  if (ids.length === 0) return []
-
-  const { postService } = await import('@/lib/services')
-  const { replyService } = await import('@/lib/services/reply-service')
-
-  // First try to fetch as posts
-  const posts = await postService.getPostsByIds(ids)
-  const foundPostIds = new Set(posts.map(p => p.id))
-
-  // Find IDs that weren't found as posts
-  const missingIds = ids.filter(id => !foundPostIds.has(id))
-
-  if (missingIds.length === 0) {
-    return posts
-  }
-
-  // Try to fetch missing IDs as replies
-  const replies = await replyService.getRepliesByIds(missingIds)
-
-  // Convert replies to Post format for display
-  const convertedReplies: Post[] = replies.map(reply => ({
-    id: reply.id,
-    author: reply.author,
-    content: reply.content,
-    createdAt: reply.createdAt,
-    likes: reply.likes,
-    reposts: reply.reposts,
-    replies: reply.replies,
-    views: reply.views,
-    liked: reply.liked,
-    reposted: reply.reposted,
-    bookmarked: reply.bookmarked,
-    media: reply.media,
-    encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
-    nonce: reply.nonce,
-    // Thread context fields
-    parentId: reply.parentId,
-    parentOwnerId: reply.parentOwnerId,
-    // Enrichment metadata
-    _enrichment: reply._enrichment,
-  }))
-
-  return [...posts, ...convertedReplies]
-}
-
 function UserProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -234,13 +189,15 @@ function UserProfileContent() {
   // Tip modal
   const { openForUser: openTipModal } = useTipModal()
 
-  // Tab state for Posts/Mentions
-  const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
+  // Tab state for Posts/Mentions/Blog
+  const [activeTab, setActiveTab] = useState<'posts' | 'mentions' | 'blog'>('posts')
   const [postFilter, setPostFilter] = useState<'posts' | 'replies'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
   const [mentionCount, setMentionCount] = useState<number | null>(null)
+  const [blogs, setBlogs] = useState<ProfileBlog[]>([])
+  const [blogsLoading, setBlogsLoading] = useState(false)
 
   // User replies state (for replies tab)
   const [userReplies, setUserReplies] = useState<Post[]>([])
@@ -376,6 +333,36 @@ function UserProfileContent() {
           setUserStore(null)
         }
 
+        // Check if user has blogs and load counts for Blog tab
+        setBlogsLoading(true)
+        try {
+          const { blogService, blogPostService } = await import('@/lib/services')
+          const ownerBlogs = await blogService.getBlogsByOwner(userId)
+
+          if (ownerBlogs.length > 0) {
+            const results = await Promise.allSettled(ownerBlogs.map(async (blog) => {
+              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
+              return {
+                id: blog.id,
+                name: blog.name,
+                description: blog.description,
+                postCount: blogPosts.length,
+              } as ProfileBlog
+            }))
+            const blogsWithCounts = results
+              .filter((r): r is PromiseFulfilledResult<ProfileBlog> => r.status === 'fulfilled')
+              .map(r => r.value)
+            setBlogs(blogsWithCounts)
+          } else {
+            setBlogs([])
+          }
+        } catch (blogError) {
+          logger.error('Failed to load blogs for profile:', blogError)
+          setBlogs([])
+        } finally {
+          setBlogsLoading(false)
+        }
+
         // Process posts - postService.getUserPosts() returns already-transformed Post objects
         // We just need to update author display info for progressive enrichment
         const transformedPosts: Post[] = (postsResult.documents || []).map((post: Post) => ({
@@ -454,7 +441,7 @@ function UserProfileContent() {
             .map((p: any) => p.quotedPostId)
 
           if (quotedPostIds.length > 0) {
-            const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
+            const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
             const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
             for (const post of transformedPosts) {
@@ -684,7 +671,7 @@ function UserProfileContent() {
           .map((p: any) => p.quotedPostId)
 
         if (quotedPostIds.length > 0) {
-          const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
+          const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
           const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
           for (const post of newPosts) {
@@ -866,6 +853,8 @@ function UserProfileContent() {
     setHasPrivateFeed(false)
     setIsPrivateFollower(false)
     setUserStore(null)
+    setBlogs([])
+    setBlogsLoading(false)
   }, [userId])
 
   const handleFollow = async () => {
@@ -1641,6 +1630,22 @@ function UserProfileContent() {
                     <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
                   )}
                 </button>
+                {blogs.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('blog')}
+                    className={cn(
+                      'flex-1 py-4 text-center font-medium transition-colors relative',
+                      activeTab === 'blog'
+                        ? 'text-gray-900 dark:text-white'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    )}
+                  >
+                    Blog ({blogs.length})
+                    {activeTab === 'blog' && (
+                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Tab Content */}
@@ -1709,7 +1714,7 @@ function UserProfileContent() {
                     </div>
                   )}
                 </>
-              ) : (
+              ) : activeTab === 'mentions' ? (
                 // Mentions Tab
                 mentionsLoading ? (
                   <div className="p-8 text-center">
@@ -1732,6 +1737,33 @@ function UserProfileContent() {
                     ))}
                   </div>
                 )
+              ) : blogsLoading ? (
+                <div className="p-8 text-center">
+                  <Spinner size="md" className="mx-auto mb-4" />
+                  <p className="text-gray-500">Loading blogs...</p>
+                </div>
+              ) : blogs.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">
+                  <p>No blogs yet</p>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3">
+                  {blogs.map((blog) => (
+                    <button
+                      key={blog.id}
+                      onClick={() => {
+                        router.push(`/blog?blog=${encodeURIComponent(blog.id)}`)
+                      }}
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <p className="text-lg font-semibold">{blog.name}</p>
+                      {blog.description && (
+                        <p className="mt-1 text-sm text-gray-500">{blog.description}</p>
+                      )}
+                      <p className="mt-2 text-xs text-gray-500">{blog.postCount} posts</p>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </>

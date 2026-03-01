@@ -1,6 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions } from '../../types';
+import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { paginateCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
@@ -597,6 +598,10 @@ class PostService extends BaseDocumentService<Post> {
     if (ids.length === 0) return [];
 
     const { replyService } = await import('./reply-service');
+    const { blogPostService } = await import('./blog-post-service');
+    const { blogService } = await import('./blog-service');
+    const { dpnsService } = await import('./dpns-service');
+    const { unifiedProfileService } = await import('./unified-profile-service');
 
     const posts = await this.getPostsByIds(ids);
     const foundPostIds = new Set(posts.map((post) => post.id));
@@ -607,6 +612,8 @@ class PostService extends BaseDocumentService<Post> {
     }
 
     const replies = await replyService.getRepliesByIds(missingIds);
+    const foundReplyIds = new Set(replies.map((reply) => reply.id));
+    const remainingIds = missingIds.filter((id) => !foundReplyIds.has(id));
     const convertedReplies: Post[] = replies.map((reply) => ({
       id: reply.id,
       author: reply.author,
@@ -623,9 +630,76 @@ class PostService extends BaseDocumentService<Post> {
       encryptedContent: reply.encryptedContent,
       epoch: reply.epoch,
       nonce: reply.nonce,
+      parentId: reply.parentId,
+      parentOwnerId: reply.parentOwnerId,
+      _enrichment: reply._enrichment,
     }));
 
-    return [...posts, ...convertedReplies];
+    if (remainingIds.length === 0) {
+      return [...posts, ...convertedReplies];
+    }
+
+    const blogPostResults = await Promise.allSettled(remainingIds.map((id) => blogPostService.getPost(id)));
+    const blogPosts = blogPostResults
+      .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
+      .map(r => r.value)
+      .filter((post): post is BlogPost => post !== null);
+
+    const convertedBlogPosts: Post[] = await Promise.all(
+      blogPosts.map(async (blogPost) => {
+        const [blog, username, profile] = await Promise.all([
+          blogService.getBlog(blogPost.blogId).catch((err) => {
+            logger.warn('Failed to load quoted blog:', err);
+            return null;
+          }),
+          dpnsService.resolveUsername(blogPost.ownerId).catch((err) => {
+            logger.warn('Failed to resolve quoted blog username:', err);
+            return null;
+          }),
+          unifiedProfileService.getProfile(blogPost.ownerId).catch((err) => {
+            logger.warn('Failed to load quoted blog profile:', err);
+            return null;
+          }),
+        ]);
+
+        const blogText = blogPost.subtitle || blogPost.title;
+
+        return {
+          id: blogPost.id,
+          author: {
+            id: blogPost.ownerId,
+            username: username || '',
+            displayName: profile?.displayName || blog?.name || 'Blog author',
+            avatar: profile?.avatar || blog?.avatar || '',
+            followers: 0,
+            following: 0,
+            verified: false,
+            joinedAt: new Date(0),
+            hasDpns: username ? true : undefined,
+          },
+          content: blogText,
+          createdAt: blogPost.createdAt,
+          likes: 0,
+          reposts: 0,
+          replies: 0,
+          views: 0,
+          liked: false,
+          reposted: false,
+          bookmarked: false,
+          __isBlogPostQuote: true,
+          title: blogPost.title,
+          subtitle: blogPost.subtitle,
+          coverImage: blogPost.coverImage,
+          slug: blogPost.slug,
+          blogId: blogPost.blogId,
+          blogName: blog?.name,
+          blogUsername: username || undefined,
+          blogContent: blogPost.content,
+        };
+      })
+    );
+
+    return [...posts, ...convertedReplies, ...convertedBlogPosts];
   }
 
   /**

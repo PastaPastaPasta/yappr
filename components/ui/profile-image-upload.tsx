@@ -137,11 +137,11 @@ export function ProfileImageUpload({
           </label>
         )}
         <div
-          className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center cursor-default`}
+          className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed border-gray-200 dark:border-gray-800 flex items-center justify-center cursor-default`}
         >
           <div className="text-center p-4">
-            <Cog6ToothIcon className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            <Cog6ToothIcon className="h-6 w-6 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-2">
               Connect a storage provider to upload images
             </p>
             <Link href="/settings">
@@ -183,7 +183,7 @@ export function ProfileImageUpload({
             handleClick()
           }
         }}
-        className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-yappr-500 dark:hover:border-yappr-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
+        className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed border-gray-200 dark:border-gray-800 hover:border-yappr-500/60 dark:hover:border-yappr-500/40 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
           isUploading ? 'cursor-wait' : 'cursor-pointer'
         }`}
       >

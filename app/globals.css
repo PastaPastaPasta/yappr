@@ -52,3 +52,71 @@
     padding-top: env(safe-area-inset-top, 0);
   }
 }
+
+/* BlockNote / Mantine dark mode overrides */
+[data-color-scheme="dark"] .bn-container,
+.bn-container[data-color-scheme="dark"] {
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-background: #1a1a2e;
+  --bn-colors-hovered-background: #2a2a3e;
+  --bn-colors-selected-background: #3a3a5e;
+  --bn-colors-side-menu: #9ca3af;
+}
+
+/* Force dark background on Mantine inputs inside BlockNote */
+.bn-container [class*="mantine-"] {
+  --mantine-color-body: transparent;
+}
+
+/* Ensure BlockNote editor text stays light */
+.bn-container [class*="bn-block-content"] {
+  color: #e5e7eb;
+}
+
+/* Fix Mantine tooltip and dropdown dark mode */
+.bn-container .mantine-Menu-dropdown,
+.bn-container .mantine-Tooltip-tooltip {
+  background-color: #1a1a2e;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+
+/* Compose canvas – comfortable writing typography */
+.compose-canvas .bn-container [class*="bn-block-content"][data-content-type="paragraph"] {
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+/* Blog theme – transparent BlockNote background */
+.blog-theme-root .bn-container,
+.blog-theme-root .bn-container[data-color-scheme="dark"] {
+  --bn-colors-editor-background: transparent;
+}
+
+/* Blog theme – text color inherits from theme */
+.blog-theme-root .bn-container [class*="bn-block-content"] {
+  color: var(--blog-text, #e5e7eb);
+}
+
+/* Blog prose – comfortable reading typography */
+.blog-theme-prose {
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+/* Blog prose – heading styles from theme */
+.blog-theme-prose h1,
+.blog-theme-prose h2,
+.blog-theme-prose h3,
+.blog-theme-prose h4,
+.blog-theme-prose h5,
+.blog-theme-prose h6 {
+  color: var(--blog-heading, inherit);
+  font-family: var(--blog-heading-font, inherit);
+}
+
+/* Blog prose – BlockNote heading overrides */
+.blog-theme-prose .bn-container [class*="bn-block-content"][data-content-type="heading"] {
+  color: var(--blog-heading, inherit);
+  font-family: var(--blog-heading-font, inherit);
+}

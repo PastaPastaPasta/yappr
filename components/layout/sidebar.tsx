@@ -19,6 +19,7 @@ import {
   ArrowPathIcon,
   BellIcon,
   BuildingStorefrontIcon,
+  BookOpenIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeIconSolid,
@@ -30,6 +31,7 @@ import {
   HashtagIcon as HashtagIconSolid,
   BellIcon as BellIconSolid,
   BuildingStorefrontIcon as BuildingStorefrontIconSolid,
+  BookOpenIcon as BookOpenIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn, truncateId } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -47,6 +49,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
       { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
       { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
+      { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
     ]
   }
 
@@ -56,6 +59,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     { name: 'Followers', href: '/followers', icon: UsersIcon, activeIcon: UsersIconSolid },
     { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
     { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
     { name: 'Notifications', href: '/notifications', icon: BellIcon, activeIcon: BellIconSolid },
     { name: 'Messages', href: '/messages', icon: EnvelopeIcon, activeIcon: EnvelopeIconSolid },
     { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon, activeIcon: BookmarkIconSolid },

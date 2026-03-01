@@ -5,7 +5,7 @@ import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { extractErrorMessage, isTimeoutError, isAlreadyExistsError } from '../error-utils';
+import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -463,7 +463,10 @@ class StateTransitionService {
         if (isTimeoutError(waitErr)) {
           logger.warn(`waitForResponse timed out for ${documentId} — ST bytes cached for retry`);
           // Check Platform in case it landed despite timeout
-          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+          let doc = null;
+          try { doc = await this.checkDocumentExists(contractId, documentType, documentId); } catch (checkErr) {
+            logger.warn(`checkDocumentExists failed for ${documentId}:`, extractErrorMessage(checkErr));
+          }
           if (doc) {
             clearPendingSTBytes(documentId);
             return { success: true, transactionHash: documentId, document: doc, confirmed: true };
@@ -479,7 +482,10 @@ class StateTransitionService {
           };
         }
         if (isAlreadyExistsError(waitErr)) {
-          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+          let doc = null;
+          try { doc = await this.checkDocumentExists(contractId, documentType, documentId); } catch (checkErr) {
+            logger.warn(`checkDocumentExists failed for ${documentId}:`, extractErrorMessage(checkErr));
+          }
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
@@ -487,6 +493,26 @@ class StateTransitionService {
             transactionHash: documentId,
             document: doc || { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
             confirmed: Boolean(doc)
+          };
+        }
+        // Non-fatal verification errors (e.g. newly deployed contract not yet propagated
+        // to all nodes). Broadcast succeeded, so check Platform then return optimistic success.
+        if (isNonFatalWaitError(waitErr)) {
+          logger.warn(`waitForResponse hit non-fatal error for ${documentId}: ${extractErrorMessage(waitErr)}`);
+          let doc = null;
+          try { doc = await this.checkDocumentExists(contractId, documentType, documentId); } catch (checkErr) {
+            logger.warn(`checkDocumentExists failed for ${documentId}:`, extractErrorMessage(checkErr));
+          }
+          if (doc) {
+            clearPendingSTBytes(documentId);
+            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
+          }
+          try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+          return {
+            success: true,
+            transactionHash: documentId,
+            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+            confirmed: false
           };
         }
         throw waitErr;

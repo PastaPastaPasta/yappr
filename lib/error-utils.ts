@@ -66,6 +66,20 @@ export function isAlreadyExistsError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error from waitForResponse is a non-fatal verification
+ * issue that should not fail an operation whose broadcast succeeded.
+ * These are typically transient network/propagation issues (e.g. a newly
+ * deployed contract not yet visible to the node handling the wait request).
+ */
+export function isNonFatalWaitError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  // Only match the specific "unknown contract" propagation error.
+  // Do NOT broadly match "document verification" or "drive error" —
+  // those can indicate permanent rejections (wrong schema, bad signature, etc.).
+  return msg.includes('unknown contract')
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {

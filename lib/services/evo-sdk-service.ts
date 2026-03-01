@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { EvoSDK } from '@dashevo/evo-sdk';
-import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '../constants';
+import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID } from '../constants';
 
 export interface EvoSdkConfig {
   network: 'testnet' | 'mainnet';
@@ -78,11 +78,13 @@ class EvoSdkService {
       await this.sdk.connect();
       logger.info('EvoSdkService: Connected successfully');
 
+      // Preload contracts to avoid repeated fetches.
+      // Must happen BEFORE setting _isInitialized so that getSdk()
+      // callers don't get an SDK instance without cached contracts.
+      await this._preloadContracts();
+
       this._isInitialized = true;
       logger.info('EvoSdkService: SDK initialized successfully');
-
-      // Preload contracts to avoid repeated fetches
-      await this._preloadContracts();
     } catch (error) {
       logger.error('EvoSdkService: Failed to initialize SDK:', error);
       logger.error('EvoSdkService: Error details:', {
@@ -113,15 +115,24 @@ class EvoSdkService {
       { id: YAPPR_PROFILE_CONTRACT_ID, name: 'Profile' },
     ];
 
-    // Add DM contract if configured
+    // Add optional contracts if configured
     if (YAPPR_DM_CONTRACT_ID && !YAPPR_DM_CONTRACT_ID.includes('PLACEHOLDER')) {
       contractsToFetch.push({ id: YAPPR_DM_CONTRACT_ID, name: 'DM' });
+    }
+    if (YAPPR_BLOG_CONTRACT_ID) {
+      contractsToFetch.push({ id: YAPPR_BLOG_CONTRACT_ID, name: 'Blog' });
+    }
+    if (YAPPR_STOREFRONT_CONTRACT_ID) {
+      contractsToFetch.push({ id: YAPPR_STOREFRONT_CONTRACT_ID, name: 'Storefront' });
     }
 
     // Fetch all contracts in parallel
     const results = await Promise.allSettled(
       contractsToFetch.map(async ({ id, name }) => {
-        await this.sdk!.contracts.fetch(id);
+        const contract = await this.sdk!.contracts.fetch(id);
+        if (!contract) {
+          throw new Error(`Contract ${name} (${id}) not found on network`);
+        }
         return name;
       })
     );
@@ -133,7 +144,7 @@ class EvoSdkService {
       if (result.status === 'fulfilled') {
         logger.info(`EvoSdkService: ${contract.name} contract cached`);
       } else {
-        logger.info(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
+        logger.warn(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
       }
     }
   }
