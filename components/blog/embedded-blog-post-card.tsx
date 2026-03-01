@@ -81,39 +81,64 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
   const href = username && post.slug
     ? `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(post.blogId || '')}&post=${encodeURIComponent(post.slug)}`
     : '#'
+  const excerpt = toExcerpt(post)
+  const blogLabel = post.blogName || post.author.displayName
 
   return (
     <Link
       href={href}
       onClick={(event) => event.stopPropagation()}
       className={cn(
-        'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all',
+        'mt-3 block overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 hover:border-yappr-400 dark:hover:border-yappr-600 transition-all group',
         className
       )}
     >
-      <div className="flex items-center justify-between gap-2 text-xs text-gray-500">
-        <span className="font-medium">{post.author.displayName}</span>
-        <span className="inline-flex items-center rounded-full border border-yappr-200 dark:border-yappr-700 px-2 py-0.5 text-[11px] font-semibold text-yappr-600 dark:text-yappr-300">
-          Blog Post
-        </span>
-      </div>
-      <div className="mt-2 flex gap-3">
-        {post.coverImage && (
+      {/* Cover image banner */}
+      {post.coverImage ? (
+        <div className="relative h-32 w-full bg-gray-100 dark:bg-gray-800">
           <IpfsImage
             src={post.coverImage}
             alt={post.title || 'Blog post cover'}
-            className="h-20 w-20 rounded-lg object-cover"
+            className="h-full w-full object-cover"
           />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+          <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-black/60 backdrop-blur-sm px-2 py-0.5 text-[11px] font-medium text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+              <path d="M3 4.75a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6.5ZM4.25 5a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-7.5ZM4 7.75A.25.25 0 0 1 4.25 7.5h7.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-7.5A.25.25 0 0 1 4 8.25v-.5ZM4.25 10a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h4.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-4.5Z" />
+            </svg>
+            Blog
+          </span>
+        </div>
+      ) : null}
+
+      <div className="p-3">
+        {/* Blog badge when no cover image */}
+        {!post.coverImage && (
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-yappr-500 dark:text-yappr-400">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
+              <path d="M3 4.75a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6.5ZM4.25 5a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-7.5ZM4 7.75A.25.25 0 0 1 4.25 7.5h7.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-7.5A.25.25 0 0 1 4 8.25v-.5ZM4.25 10a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h4.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25h-4.5Z" />
+            </svg>
+            Blog Post
+          </div>
         )}
-        <div className="min-w-0 flex-1">
-          <p className="line-clamp-1 text-sm font-semibold text-gray-900 dark:text-gray-100">
-            {post.title || 'Untitled'}
+
+        {/* Title */}
+        <p className="line-clamp-2 text-[15px] font-bold text-gray-900 dark:text-gray-100 group-hover:text-yappr-600 dark:group-hover:text-yappr-400 transition-colors">
+          {post.title || 'Untitled'}
+        </p>
+
+        {/* Excerpt */}
+        {excerpt && (
+          <p className="mt-1 text-sm leading-snug text-gray-500 dark:text-gray-400 line-clamp-2">
+            {excerpt}
           </p>
-          {toExcerpt(post) && (
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
-              {toExcerpt(post)}
-            </p>
-          )}
+        )}
+
+        {/* Footer: blog name + username */}
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+          {blogLabel && <span className="font-medium text-gray-600 dark:text-gray-400">{blogLabel}</span>}
+          {blogLabel && username && <span>·</span>}
+          {username && <span>@{username}</span>}
         </div>
       </div>
     </Link>
