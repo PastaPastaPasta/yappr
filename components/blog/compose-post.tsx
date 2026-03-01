@@ -67,14 +67,16 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     const file = e.target.files?.[0]
     if (!file) return
 
+    const resetInput = () => { if (coverFileRef.current) coverFileRef.current.value = '' }
+
     if (!file.type.startsWith('image/')) {
       toast.error('Please select an image file')
-      if (coverFileRef.current) coverFileRef.current.value = ''
+      resetInput()
       return
     }
     if (file.size > 5 * 1024 * 1024) {
       toast.error('Image must be smaller than 5MB')
-      if (coverFileRef.current) coverFileRef.current.value = ''
+      resetInput()
       return
     }
 
@@ -83,8 +85,9 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       setCoverImage(`ipfs://${result.cid}`)
     } catch {
       toast.error('Failed to upload cover image')
+    } finally {
+      resetInput()
     }
-    if (coverFileRef.current) coverFileRef.current.value = ''
   }, [uploadImage])
 
   const handleCoverClick = useCallback(() => {
@@ -176,41 +179,37 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       toast.error('Title is required')
       return
     }
-    const estimatedBytes = (() => {
-      try {
-        return getCompressedSize(blocks)
-      } catch {
-        return BLOG_POST_SIZE_LIMIT + 1
-      }
-    })()
+    let estimatedBytes: number
+    try {
+      estimatedBytes = getCompressedSize(blocks)
+    } catch {
+      estimatedBytes = BLOG_POST_SIZE_LIMIT + 1
+    }
 
     if (estimatedBytes > BLOG_POST_SIZE_LIMIT) {
       toast.error('Post is too large after compression')
       return
     }
 
+    const postFields = {
+      title: title.trim(),
+      subtitle: subtitle.trim() || undefined,
+      coverImage: coverImage || undefined,
+      labels: labels || undefined,
+      commentsEnabled,
+      content: blocks,
+    }
+
     setIsPublishing(true)
     try {
       if (isEditing && editPost && ownerId) {
-        const updated = await blogPostService.updatePost(editPost.id, ownerId, {
-          title: title.trim(),
-          subtitle: subtitle.trim() || undefined,
-          coverImage: coverImage || undefined,
-          labels: labels || undefined,
-          commentsEnabled,
-          content: blocks,
-        })
+        const updated = await blogPostService.updatePost(editPost.id, ownerId, postFields)
         toast.success('Post updated')
         onPublished?.(updated)
       } else {
         const created = await blogPostService.createPost(user.identityId, {
           blogId: blog.id,
-          title: title.trim(),
-          subtitle: subtitle.trim() || undefined,
-          content: blocks,
-          coverImage: coverImage || undefined,
-          labels: labels || undefined,
-          commentsEnabled,
+          ...postFields,
         })
 
         if (draftKey) {
@@ -270,8 +269,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
             disabled={isPublishing || !title.trim()}
           >
             {isPublishing
-              ? (isEditing ? 'Saving...' : 'Publishing...')
-              : (isEditing ? 'Save Changes' : 'Publish')}
+              ? isEditing ? 'Saving...' : 'Publishing...'
+              : isEditing ? 'Save Changes' : 'Publish'}
           </Button>
         </div>
       </div>
