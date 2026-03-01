@@ -391,165 +391,151 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       {/* Writing canvas */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[640px] px-4 py-8">
-          {/* Cover image banner / drop zone */}
-          {coverImage ? (
-            <div
-              className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg"
-              {...coverDropProps}
-            >
-              <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
-              {isDraggingCover && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                  <p className="text-sm font-medium text-white">Drop to replace cover</p>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setCoverImage('')}
-                className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 transition-colors hover:bg-black/70"
-                title="Remove cover image"
-              >
-                <XMarkIcon className="h-4 w-4 text-white" />
-              </button>
-            </div>
-          ) : (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={handleCoverClick}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCoverClick() }
-              }}
-              {...coverDropProps}
-              className={`mb-6 flex aspect-[3/1] items-center justify-center rounded-lg border border-dashed transition-colors ${
-                isDraggingCover
-                  ? 'border-yappr-500 bg-yappr-500/10'
-                  : 'border-gray-800 bg-gray-900/20 hover:border-gray-700 hover:bg-gray-900/40'
-              } cursor-pointer`}
-            >
-              <div className="text-center">
-                <PhotoIcon className={`mx-auto h-8 w-8 ${isDraggingCover ? 'text-yappr-500' : 'text-gray-600'}`} />
-                <p className={`mt-1 text-xs ${isDraggingCover ? 'text-yappr-400' : 'text-gray-600'}`}>
-                  {isDraggingCover ? 'Drop image here' : 'Click or drag to add cover image'}
+          {/* Header area — invisible cover image drop zone */}
+          <div
+            {...coverDropProps}
+            className={`relative rounded-lg transition-colors ${
+              isDraggingCover ? 'ring-2 ring-yappr-500/60 bg-yappr-500/5' : ''
+            }`}
+          >
+            {isDraggingCover && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/30">
+                <p className="text-sm font-medium text-yappr-400">
+                  {coverImage ? 'Drop to replace cover' : 'Drop to set cover image'}
                 </p>
               </div>
-            </div>
-          )}
-          {!coverImage && !isDraggingCover && !showCoverUrlInput && (
-            <div className="-mt-4 mb-4">
-              <button
-                type="button"
-                onClick={() => setShowCoverUrlInput(true)}
-                className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-400"
-              >
-                <LinkIcon className="h-3 w-3" />
-                Paste URL
-              </button>
-            </div>
-          )}
+            )}
 
-          {/* Cover image URL input */}
-          {showCoverUrlInput && !coverImage && (
-            <div className="-mt-4 mb-4 flex gap-1.5">
-              <input
-                type="url"
-                value={coverUrlInput}
-                onChange={(e) => setCoverUrlInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCoverUrlSubmit() } }}
-                placeholder="https://example.com/image.jpg"
-                className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={handleCoverUrlSubmit}
-                className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
-                className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
-              >
-                <XMarkIcon className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* Title + cover image button */}
-          <div className="flex items-start gap-2">
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={128}
-              placeholder="Title"
-              className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={handleCoverClick}
-              disabled={isUploadingCover}
-              className="mt-2 shrink-0 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400 disabled:opacity-50"
-              title={coverImage ? 'Change cover image' : 'Add cover image'}
-            >
-              {isUploadingCover ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <PhotoIcon className="h-5 w-5" />
-              )}
-            </button>
-          </div>
-
-          {/* Upload progress */}
-          {isUploadingCover && (
-            <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-800/40">
-              <div
-                className="h-full bg-yappr-500 transition-all duration-300"
-                style={{ width: `${uploadProgress}%` }}
-              />
-            </div>
-          )}
-
-          {/* Subtitle */}
-          <input
-            type="text"
-            value={subtitle}
-            onChange={(e) => setSubtitle(e.target.value)}
-            maxLength={256}
-            placeholder="Add a subtitle..."
-            className="mt-3 w-full bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
-          />
-
-          {/* Inline labels — always visible */}
-          <div className="mt-4 flex flex-wrap items-center gap-1.5">
-            {selectedLabels.map((label) => (
-              <span
-                key={label}
-                className="inline-flex items-center gap-1 rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-400"
-              >
-                {label}
+            {/* Cover image banner */}
+            {coverImage && (
+              <div className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg">
+                <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
                 <button
                   type="button"
-                  onClick={() => toggleLabel(label)}
-                  className="text-gray-600 hover:text-gray-300"
+                  onClick={() => setCoverImage('')}
+                  className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 transition-colors hover:bg-black/70"
+                  title="Remove cover image"
                 >
-                  <XMarkIcon className="h-3 w-3" />
+                  <XMarkIcon className="h-4 w-4 text-white" />
                 </button>
-              </span>
-            ))}
-            <button
-              type="button"
-              aria-label="Add labels"
-              onClick={handleAddLabel}
-              className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400"
-            >
-              +
-            </button>
+              </div>
+            )}
+
+            {/* Title + cover image actions */}
+            <div className="flex items-start gap-2">
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={128}
+                placeholder="Title"
+                className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
+              />
+              <div className="mt-2 flex shrink-0 items-center gap-1">
+                {!showCoverUrlInput && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoverUrlInput(true)}
+                    className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400"
+                    title="Paste cover image URL"
+                  >
+                    <LinkIcon className="h-5 w-5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCoverClick}
+                  disabled={isUploadingCover}
+                  className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400 disabled:opacity-50"
+                  title={coverImage ? 'Change cover image' : 'Upload cover image'}
+                >
+                  {isUploadingCover ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <PhotoIcon className="h-5 w-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Upload progress */}
+            {isUploadingCover && (
+              <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-800/40">
+                <div
+                  className="h-full bg-yappr-500 transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            )}
+
+            {/* Cover image URL input */}
+            {showCoverUrlInput && (
+              <div className="mt-2 flex gap-1.5">
+                <input
+                  type="url"
+                  value={coverUrlInput}
+                  onChange={(e) => setCoverUrlInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCoverUrlSubmit() } }}
+                  placeholder="https://example.com/image.jpg"
+                  className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={handleCoverUrlSubmit}
+                  className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
+                  className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
+                >
+                  <XMarkIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Subtitle */}
+            <input
+              type="text"
+              value={subtitle}
+              onChange={(e) => setSubtitle(e.target.value)}
+              maxLength={256}
+              placeholder="Add a subtitle..."
+              className="mt-3 w-full bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
+            />
+
+            {/* Inline labels — always visible */}
+            <div className="mt-4 flex flex-wrap items-center gap-1.5">
+              {selectedLabels.map((label) => (
+                <span
+                  key={label}
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-400"
+                >
+                  {label}
+                  <button
+                    type="button"
+                    onClick={() => toggleLabel(label)}
+                    className="text-gray-600 hover:text-gray-300"
+                  >
+                    <XMarkIcon className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                aria-label="Add labels"
+                onClick={handleAddLabel}
+                className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400"
+              >
+                +
+              </button>
+            </div>
           </div>
 
-          {/* Editor — the writing space */}
+          {/* Editor — the writing space (handles its own image drops) */}
           <div className="compose-canvas mt-6">
             <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
           </div>
