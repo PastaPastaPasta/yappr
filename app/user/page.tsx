@@ -1868,10 +1868,8 @@ function UserProfileContent() {
                   {blogs.map((blog) => (
                     <button
                       key={blog.id}
-                      disabled={!username}
                       onClick={() => {
-                        if (!username) return
-                        router.push(`/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}`)
+                        router.push(`/blog?blog=${encodeURIComponent(blog.id)}`)
                       }}
                       className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     >

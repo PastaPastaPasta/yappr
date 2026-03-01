@@ -85,7 +85,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     setComposeOpen(true)
   }
 
-  const postUrl = `${APP_URL}/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
+  const postUrl = `${APP_URL}/blog?blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(postUrl).catch(() => {/* noop */})
@@ -142,7 +142,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     >
       <article className="space-y-6">
         <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'var(--blog-border)' }}>
-          <Link href={`/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
+          <Link href={`/blog?blog=${encodeURIComponent(blog.id)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
             ← Back to blog
           </Link>
           <div className="flex items-center gap-3">

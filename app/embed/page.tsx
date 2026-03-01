@@ -90,16 +90,15 @@ function EmbedPageContent() {
   }, [state.post])
 
   const viewPath = useMemo(() => {
-    if (!state.post || !state.author || state.author === 'unknown') return '/blog'
-    const username = state.author.replace(/\.dash$/i, '')
-    return `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(state.post.blogId)}&post=${encodeURIComponent(state.post.slug)}`
-  }, [state.author, state.post])
+    if (!state.post) return '/blog'
+    return `/blog?blog=${encodeURIComponent(state.post.blogId)}&post=${encodeURIComponent(state.post.slug)}`
+  }, [state.post])
 
   const createdLabel = state.post?.createdAt.toLocaleDateString() || ''
 
   return (
     <>
-      <style>{EMBED_STYLES}</style>
+      <style dangerouslySetInnerHTML={{ __html: EMBED_STYLES }} />
       <div className="yappr-embed" data-yappr-theme={theme}>
         <article className="yappr-embed-article">
           {state.loading ? (

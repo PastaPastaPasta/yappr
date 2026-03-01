@@ -109,12 +109,8 @@ export function BlogDiscovery() {
         </p>
       ) : (
         <div className="space-y-2">
-          {filtered.map((blog) => {
-            const href = blog.username
-              ? `/blog?user=${encodeURIComponent(blog.username)}&blog=${encodeURIComponent(blog.id)}`
-              : null
-
-            const card = (
+          {filtered.map((blog) => (
+            <Link key={blog.id} href={`/blog?blog=${encodeURIComponent(blog.id)}`} className="block">
               <div className="flex items-start gap-3 rounded-xl border border-gray-800 bg-neutral-950 p-4 transition hover:border-gray-600">
                 {blog.avatar ? (
                   <IpfsImage
@@ -156,16 +152,8 @@ export function BlogDiscovery() {
                   )}
                 </div>
               </div>
-            )
-
-            if (!href) return <div key={blog.id}>{card}</div>
-
-            return (
-              <Link key={blog.id} href={href} className="block">
-                {card}
-              </Link>
-            )
-          })}
+            </Link>
+          ))}
         </div>
       )}
     </div>

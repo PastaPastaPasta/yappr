@@ -14,7 +14,6 @@ import { BlogDiscovery } from '@/components/blog/blog-discovery'
 import { MyBlogsList } from '@/components/blog/my-blogs-list'
 import { BlogSettings } from '@/components/blog/blog-settings'
 import { ComposePost } from '@/components/blog/compose-post'
-import { EditPost } from '@/components/blog/edit-post'
 import { BlogHome } from '@/components/blog/blog-home'
 import { BlogPostView } from '@/components/blog/blog-post-view'
 import { ThemeEditor } from '@/components/blog/theme-editor'
@@ -29,28 +28,32 @@ function BlogPageContent() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
 
-  const usernameParam = searchParams.get('user')
   const blogIdParam = searchParams.get('blog')
   const postSlugParam = searchParams.get('post')
 
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
   const [ownerPosts, setOwnerPosts] = useState<BlogPost[]>([])
   const [editingPostId, setEditingPostId] = useState<string | null>(null)
+  const [editingPost, setEditingPost] = useState<BlogPost | null>(null)
   const [activeTab, setActiveTab] = useState<'posts' | 'compose' | 'settings' | 'theme'>('posts')
 
   const [viewBlog, setViewBlog] = useState<Blog | null>(null)
   const [viewPost, setViewPost] = useState<BlogPost | null>(null)
+  const [viewUsername, setViewUsername] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const isViewMode = Boolean(blogIdParam)
 
   useEffect(() => {
     let cancelled = false
 
     const load = async () => {
-      if (!usernameParam) {
+      if (!blogIdParam) {
         if (cancelled) return
         setViewBlog(null)
         setViewPost(null)
+        setViewUsername(null)
         setError(null)
         return
       }
@@ -58,28 +61,17 @@ function BlogPageContent() {
       setLoading(true)
       setError(null)
       try {
-        const ownerId = await dpnsService.resolveIdentity(usernameParam)
-        if (!ownerId) {
-          if (cancelled) return
-          setError('User not found')
-          return
-        }
-
-        let blog: Blog | null = null
-        if (blogIdParam) {
-          blog = await blogService.getBlog(blogIdParam)
-        } else {
-          const blogs = await blogService.getBlogsByOwner(ownerId)
-          blog = blogs[0] || null
-        }
+        const blog = await blogService.getBlog(blogIdParam)
         if (!blog) {
           if (cancelled) return
-          setError('No blog found for this user')
+          setError('Blog not found')
           return
         }
 
+        const resolved = await dpnsService.resolveUsername(blog.ownerId)
         if (cancelled) return
         setViewBlog(blog)
+        setViewUsername(resolved ? resolved.replace(/\.dash$/i, '') : null)
 
         if (postSlugParam) {
           const post = await blogPostService.getPostBySlug(blog.id, postSlugParam)
@@ -114,7 +106,7 @@ function BlogPageContent() {
     return () => {
       cancelled = true
     }
-  }, [blogIdParam, postSlugParam, usernameParam])
+  }, [blogIdParam, postSlugParam])
 
   useEffect(() => {
     let cancelled = false
@@ -138,14 +130,33 @@ function BlogPageContent() {
     }
   }, [selectedBlog, user?.identityId])
 
+  useEffect(() => {
+    if (!editingPostId) {
+      setEditingPost(null)
+      return
+    }
+
+    let cancelled = false
+
+    blogPostService.getPost(editingPostId).then((post) => {
+      if (!cancelled) setEditingPost(post)
+    }).catch(() => {
+      if (!cancelled) setEditingPost(null)
+    })
+
+    return () => { cancelled = true }
+  }, [editingPostId])
+
   const deselectBlog = () => {
     setSelectedBlog(null)
     setEditingPostId(null)
+    setEditingPost(null)
     setActiveTab('posts')
   }
 
   const navigateToPosts = () => {
     setEditingPostId(null)
+    setEditingPost(null)
     setActiveTab('posts')
   }
 
@@ -168,15 +179,15 @@ function BlogPageContent() {
     }
   }
 
-  const isComposeMode = !usernameParam && selectedBlog !== null && activeTab === 'compose' && !editingPostId
-  const isWideMode = !usernameParam && selectedBlog !== null && (activeTab === 'theme' || isComposeMode)
+  const isComposeMode = !isViewMode && selectedBlog !== null && activeTab === 'compose' && !editingPostId
+  const isWideMode = !isViewMode && selectedBlog !== null && (activeTab === 'theme' || isComposeMode)
 
   const renderCenter = () => {
     if (loading) {
       return <p className="p-6 text-sm text-gray-500">Loading blog...</p>
     }
 
-    if (usernameParam) {
+    if (isViewMode) {
       if (error) {
         return <p className="p-6 text-sm text-gray-500">{error}</p>
       }
@@ -185,10 +196,10 @@ function BlogPageContent() {
       }
 
       if (viewPost) {
-        return <BlogPostView blog={viewBlog} post={viewPost} username={usernameParam} />
+        return <BlogPostView blog={viewBlog} post={viewPost} username={viewUsername || ''} />
       }
 
-      return <BlogHome blog={viewBlog} username={usernameParam} />
+      return <BlogHome blog={viewBlog} username={viewUsername || ''} />
     }
 
     if (!user) {
@@ -305,7 +316,7 @@ function BlogPageContent() {
                         <button
                           type="button"
                           className="min-w-0 flex-1 text-left"
-                          onClick={() => router.push(`/blog?user=${encodeURIComponent(user.dpnsUsername || '')}&blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`)}
+                          onClick={() => router.push(`/blog?blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`)}
                         >
                           <div className="flex items-center gap-2">
                             <p className="truncate font-medium text-gray-100 group-hover:text-white transition-colors">{post.title}</p>
@@ -344,32 +355,23 @@ function BlogPageContent() {
           )}
 
           {activeTab === 'compose' && (
-            editingPostId ? (
-              <div>
-                <button
-                  type="button"
-                  className="mb-5 inline-flex items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
-                  onClick={navigateToPosts}
-                >
-                  <ArrowLeftIcon className="h-3 w-3" />
-                  Back to posts
-                </button>
-                <EditPost
-                  postId={editingPostId}
-                  ownerId={user.identityId}
-                  onSaved={() => {
-                    navigateToPosts()
-                    refreshPosts().catch(() => {})
-                  }}
-                />
-              </div>
+            editingPostId && !editingPost ? (
+              <p className="text-sm text-gray-500">Loading post...</p>
             ) : (
               <ComposePost
+                key={editingPost?.id ?? 'new'}
                 blog={selectedBlog}
                 onBack={navigateToPosts}
+                editPost={editingPost ?? undefined}
+                ownerId={editingPost ? user.identityId : undefined}
                 onPublished={(post) => {
-                  setOwnerPosts((prev) => [post, ...prev])
-                  setActiveTab('posts')
+                  if (editingPost) {
+                    navigateToPosts()
+                    refreshPosts().catch(() => {})
+                  } else {
+                    setOwnerPosts((prev) => [post, ...prev])
+                    setActiveTab('posts')
+                  }
                 }}
               />
             )
@@ -398,7 +400,7 @@ function BlogPageContent() {
     )
   }
 
-  if (usernameParam) {
+  if (isViewMode) {
     return (
       <div className="min-h-screen bg-neutral-950">
         <nav className="sticky top-0 z-50 border-b border-gray-800 bg-neutral-950/80 backdrop-blur-xl">

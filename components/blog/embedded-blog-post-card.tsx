@@ -78,8 +78,8 @@ export function isEmbeddedBlogPostLike(post: Post): post is EmbeddedBlogPostLike
 
 export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostCardProps) {
   const username = post.blogUsername || post.author.username
-  const href = username && post.slug
-    ? `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(post.blogId || '')}&post=${encodeURIComponent(post.slug)}`
+  const href = post.blogId && post.slug
+    ? `/blog?blog=${encodeURIComponent(post.blogId)}&post=${encodeURIComponent(post.slug)}`
     : '#'
   const excerpt = toExcerpt(post)
   const blogLabel = post.blogName || post.author.displayName
