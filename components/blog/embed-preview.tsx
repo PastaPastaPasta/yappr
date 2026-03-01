@@ -8,6 +8,7 @@ import type { BlogPost } from '@/lib/types'
 import { EMBED_STYLES } from '@/lib/embed/embed-styles'
 import { renderEmbedHtml } from '@/lib/embed/embed-renderer'
 import type { EmbedTheme } from '@/lib/embed/embed-types'
+import { APP_URL } from '@/lib/constants'
 
 interface EmbedPreviewProps {
   post: BlogPost
@@ -28,8 +29,8 @@ export function EmbedPreview({ post, username }: EmbedPreviewProps) {
   const [theme, setTheme] = useState<EmbedTheme>('light')
   const [copied, setCopied] = useState(false)
 
-  const iframeSnippet = `<iframe src="https://yappr.app/embed?post=${post.id}&owner=${post.ownerId}" width="100%" height="600" frameborder="0"></iframe>`
-  const scriptSnippet = `<div data-yappr-post="${post.id}" data-yappr-owner="${post.ownerId}"></div>\n<script src="https://yappr.app/embed.js"></script>`
+  const iframeSnippet = `<iframe src="${APP_URL}/embed/?post=${post.id}&owner=${post.ownerId}&theme=${theme}" width="100%" height="600" style="border:none"></iframe>`
+  const scriptSnippet = `<div data-yappr-post="${post.id}" data-yappr-owner="${post.ownerId}" data-yappr-theme="${theme}"></div>\n<script src="${APP_URL}/embed.js"></script>`
 
   const html = useMemo(() => renderEmbedHtml(post.content), [post.content])
 

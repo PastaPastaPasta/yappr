@@ -15,6 +15,9 @@ export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7
 export const YAPPR_BLOG_CONTRACT_ID = '3hVuz9FgPxBmyV63fjQbCpqahxMWqmyLY6ERrVr45K5n' // Testnet - Blog contract v3 (themeConfig byteArray)
 export const BLOG_POST_SIZE_LIMIT = 16384 // 16KB compressed content limit (leaves headroom in 20KB doc)
 
+// App URL (custom domain on GitHub Pages)
+export const APP_URL = 'https://yap.pr'
+
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
 
