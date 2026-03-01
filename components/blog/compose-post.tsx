@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
-import { blogPostService } from '@/lib/services'
+import { blogPostService, blogService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
 import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
@@ -256,6 +256,19 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
         setCustomLabel('')
         setBlocks([])
         setCommentsEnabled(Boolean(blog.commentsEnabledDefault ?? true))
+      }
+
+      // Register any new post labels to the blog so they appear as filter pills
+      const postLabels = parseLabels(labels)
+      if (postLabels.length > 0) {
+        const existingBlogLabels = parseLabels(blog.labels)
+        const newLabels = postLabels.filter((l) => !existingBlogLabels.includes(l))
+        if (newLabels.length > 0) {
+          const allLabels = labelsToCsv([...existingBlogLabels, ...newLabels])
+          blogService.updateBlog(blog.id, user.identityId, { labels: allLabels }).catch((err) => {
+            logger.warn('Failed to register new labels to blog:', err)
+          })
+        }
       }
     } catch {
       toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
