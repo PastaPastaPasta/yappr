@@ -22,6 +22,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isSafeCssValue(value: string): boolean {
+  if (/[;{}]/.test(value)) return false
   return !FORBIDDEN_CSS_PATTERN.test(value)
 }
 

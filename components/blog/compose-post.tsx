@@ -210,7 +210,11 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
     setIsPublishing(true)
     try {
-      if (isEditing && editPost && ownerId) {
+      if (isEditing && editPost) {
+        if (!ownerId) {
+          toast.error('Cannot update post: missing owner ID')
+          return
+        }
         const updated = await blogPostService.updatePost(editPost.id, ownerId, postFields)
         toast.success('Post updated')
         onPublished?.(updated)

@@ -669,7 +669,7 @@ class PostService extends BaseDocumentService<Post> {
             following: 0,
             verified: false,
             joinedAt: new Date(0),
-            hasDpns: typeof username === 'string' ? true : undefined,
+            hasDpns: username ? true : undefined,
           },
           content: blogText,
           createdAt: blogPost.createdAt,

@@ -88,8 +88,10 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const postUrl = `${APP_URL}/blog?blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(postUrl).catch(() => {/* noop */})
-    toast.success('Link copied to clipboard')
+    navigator.clipboard.writeText(postUrl).then(
+      () => toast.success('Link copied to clipboard'),
+      () => toast.error('Failed to copy link')
+    )
   }
 
   const handleShareX = () => {

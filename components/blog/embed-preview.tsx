@@ -117,6 +117,7 @@ export function EmbedPreview({ post, username }: EmbedPreviewProps) {
             <iframe
               title="Embed preview"
               srcDoc={previewDoc}
+              sandbox=""
               className="h-[380px] w-full rounded-lg border border-gray-800 bg-white"
             />
           </div>
