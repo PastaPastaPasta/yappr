@@ -1,7 +1,6 @@
 'use client'
 
 import * as Popover from '@radix-ui/react-popover'
-import { useState } from 'react'
 import { useReaderPreferencesStore } from '@/lib/store'
 import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 
@@ -20,20 +19,18 @@ const READING_MODES: { mode: ReadingMode; label: string; swatch: string }[] = [
 ]
 
 export function ReadingPreferencesPopover() {
-  const [open, setOpen] = useState(false)
   const { readingMode, fontSize, setReadingMode, setFontSize, resetPreferences } =
     useReaderPreferencesStore()
 
   const isDefault = readingMode === 'author' && fontSize === 'medium'
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root>
       <Popover.Trigger asChild>
         <button
           type="button"
           title="Reading preferences"
           aria-label="Reading preferences"
-          aria-expanded={open}
           className="rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-900"
         >
           Aa

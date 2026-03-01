@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
+import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 
 export type PostVisibility = 'public' | 'private' | 'private-with-teaser'
 
@@ -233,8 +234,6 @@ export const useSettingsStore = create<SettingsState>()(
 )
 
 // Reader preferences store (font size + reading mode for blog posts)
-import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
-
 interface ReaderPreferencesState {
   readingMode: ReadingMode
   fontSize: FontSizeLevel
@@ -246,8 +245,8 @@ interface ReaderPreferencesState {
 export const useReaderPreferencesStore = create<ReaderPreferencesState>()(
   persist(
     (set) => ({
-      readingMode: 'author' as ReadingMode,
-      fontSize: 'medium' as FontSizeLevel,
+      readingMode: 'author',
+      fontSize: 'medium',
       setReadingMode: (mode) => set({ readingMode: mode }),
       setFontSize: (size) => set({ fontSize: size }),
       resetPreferences: () => set({ readingMode: 'author', fontSize: 'medium' }),

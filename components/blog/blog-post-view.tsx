@@ -31,7 +31,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const [commentCount, setCommentCount] = useState(0)
   const { readingMode, fontSize } = useReaderPreferencesStore()
   const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])
-  const contentFontSize = useMemo(() => getReaderFontSize(fontSize), [fontSize])
+  const contentFontSize = getReaderFontSize(fontSize)
 
   const handleQuote = () => {
     if (!requireAuth('quote')) return
