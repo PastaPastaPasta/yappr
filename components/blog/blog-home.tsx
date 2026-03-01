@@ -87,8 +87,8 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
           aria-pressed={activeLabel === 'All'}
           className={`rounded-full border px-3 py-1 text-xs transition ${
             activeLabel === 'All'
-              ? 'border-white/20 bg-white/20 text-white'
-              : 'border-white/20 bg-transparent text-[var(--blog-text)]/80 hover:bg-white/10'
+              ? 'border-[var(--blog-border)] bg-[var(--blog-surface)] text-[var(--blog-heading)]'
+              : 'border-[var(--blog-border)] bg-transparent text-[var(--blog-text)]/80 hover:bg-[var(--blog-surface)]'
           }`}
         >
           All
@@ -101,8 +101,8 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             aria-pressed={activeLabel === label}
             className={`rounded-full border px-3 py-1 text-xs transition ${
               activeLabel === label
-                ? 'border-white/20 bg-white/20 text-white'
-                : 'border-white/20 bg-transparent text-[var(--blog-text)]/80 hover:bg-white/10'
+                ? 'border-[var(--blog-border)] bg-[var(--blog-surface)] text-[var(--blog-heading)]'
+                : 'border-[var(--blog-border)] bg-transparent text-[var(--blog-text)]/80 hover:bg-[var(--blog-surface)]'
             }`}
           >
             {label}
@@ -113,7 +113,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       {loading ? (
         <p className="text-sm text-[var(--blog-text)]/70">Loading posts...</p>
       ) : pagedPosts.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/20 p-8 text-center text-[var(--blog-text)]/65">No posts yet.</div>
+        <div className="rounded-xl border border-dashed border-[var(--blog-border)] p-8 text-center text-[var(--blog-text)]/65">No posts yet.</div>
       ) : (
         <div className="space-y-3">
           {pagedPosts.map((post) => {
@@ -121,7 +121,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             const href = `/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}&post=${encodeURIComponent(post.slug)}`
 
             return (
-              <Link key={post.id} href={href} className="block rounded-xl border border-white/15 bg-black/20 p-4 transition hover:border-white/35">
+              <Link key={post.id} href={href} className="block rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4 transition hover:brightness-110">
                 {post.coverImage && (
                   <IpfsImage src={post.coverImage} alt={post.title} className="mb-3 h-44 w-full rounded-lg object-cover" />
                 )}
@@ -133,7 +133,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
                 <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blog-text)]/60">
                   <span>{post.createdAt.toLocaleDateString()}</span>
                   {post.labels && <span>• {post.labels}</span>}
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--blog-border)] px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
                     <ChatBubbleLeftIcon className="h-3 w-3" />
                     {commentCounts[post.id] || 0}
                   </span>
@@ -149,7 +149,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
           <button
             type="button"
             onClick={() => setPage((prev) => prev + 1)}
-            className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--blog-text)] transition hover:bg-white/10"
+            className="rounded-full border border-[var(--blog-border)] px-4 py-2 text-sm text-[var(--blog-text)] transition hover:bg-[var(--blog-surface)]"
           >
             Load more
           </button>

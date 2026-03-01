@@ -176,7 +176,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       meta={postMeta}
     >
       <article className="space-y-6">
-        <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}>
+        <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'var(--blog-border)' }}>
           <Link href={`/blog?user=${encodeURIComponent(username)}&blog=${encodeURIComponent(blog.id)}`} className="text-sm hover:underline" style={{ color: 'var(--blog-link)' }}>
             ← Back to blog
           </Link>

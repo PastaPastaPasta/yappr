@@ -125,7 +125,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
 
   if (!commentsEnabled) {
     return (
-      <section className="rounded-xl border p-4" style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}>
+      <section className="rounded-xl border p-4" style={{ borderColor: 'var(--blog-border)' }}>
         <h3 className="text-lg font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
           Comments
         </h3>
@@ -135,12 +135,12 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
   }
 
   return (
-    <section className="rounded-xl border p-4" style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}>
+    <section className="rounded-xl border p-4" style={{ borderColor: 'var(--blog-border)' }}>
       <h3 className="text-lg font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
         {headingLabel}
       </h3>
 
-      <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}>
+      <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--blog-border)' }}>
         <Textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
@@ -162,7 +162,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
         {isLoading && <p className="text-sm text-[var(--blog-text)]/75">Loading comments...</p>}
 
         {!isLoading && error && (
-          <div className="flex items-center justify-between rounded-lg border p-3" style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}>
+          <div className="flex items-center justify-between rounded-lg border p-3" style={{ borderColor: 'var(--blog-border)' }}>
             <p className="text-sm text-[var(--blog-text)]/80">{error}</p>
             <Button type="button" variant="outline" size="sm" onClick={() => loadComments().catch(() => null)}>
               Retry
@@ -184,7 +184,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled }: B
             <article
               key={comment.id}
               className="rounded-lg border p-3"
-              style={{ borderColor: 'color-mix(in srgb, var(--blog-text) 15%, transparent)' }}
+              style={{ borderColor: 'var(--blog-border)' }}
             >
               <div className="flex items-start gap-3">
                 <UserAvatar userId={comment.ownerId} preloadedUrl={avatars.get(comment.ownerId)} size="sm" />

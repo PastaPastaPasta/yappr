@@ -5,12 +5,13 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import {
   BLOG_FONT_OPTIONS,
-  BLOG_THEME_CUSTOM_CSS_MAX_CHARS,
   BLOG_THEME_PRESETS,
+  buildGradientCSS,
   getDefaultBlogThemeConfig,
+  getDefaultGradient,
   normalizeBlogThemeConfig,
-  parseBlogThemeConfig,
-  stringifyBlogThemeConfig,
+  type BlogGradientConfig,
+  type BlogGradientType,
   type BlogHeaderStyle,
   type BlogLayoutMode,
   type BlogThemeConfig,
@@ -20,10 +21,10 @@ import { BlogThemeProvider } from './theme-provider'
 import { cn } from '@/lib/utils'
 
 interface ThemeEditorProps {
-  initialThemeConfig?: string
+  initialThemeConfig?: BlogThemeConfig
   blogName: string
   blogDescription?: string
-  onSave: (themeConfig: string) => Promise<void> | void
+  onSave: (themeConfig: BlogThemeConfig) => Promise<void> | void
 }
 
 const colorFields: Array<{ key: keyof BlogThemeColors; label: string }> = [
@@ -32,6 +33,8 @@ const colorFields: Array<{ key: keyof BlogThemeColors; label: string }> = [
   { key: 'accent', label: 'Accent' },
   { key: 'heading', label: 'Heading' },
   { key: 'link', label: 'Link' },
+  { key: 'surface', label: 'Surface' },
+  { key: 'border', label: 'Border' },
 ]
 
 function SegmentedControl<T extends string>({
@@ -64,11 +67,149 @@ function SegmentedControl<T extends string>({
   )
 }
 
+function GradientSection({
+  gradient,
+  onChange,
+}: {
+  gradient: BlogGradientConfig
+  onChange: (gradient: BlogGradientConfig) => void
+}) {
+  const previewCSS = useMemo(() => buildGradientCSS(gradient), [gradient])
+
+  const update = (partial: Partial<BlogGradientConfig>) => {
+    onChange({ ...gradient, ...partial })
+  }
+
+  return (
+    <section>
+      <h4 className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-gray-500">Banner Gradient</h4>
+
+      {/* Preview swatch */}
+      <div
+        className="mb-3 h-10 w-full rounded-lg ring-1 ring-white/[0.08]"
+        style={{ background: previewCSS }}
+      />
+
+      {/* Type selector */}
+      <div className="mb-3">
+        <SegmentedControl<BlogGradientType>
+          options={[
+            { value: 'solid', label: 'Solid' },
+            { value: 'linear', label: 'Linear' },
+            { value: 'radial', label: 'Radial' },
+          ]}
+          value={gradient.type}
+          onChange={(type) => update({ type })}
+        />
+      </div>
+
+      {/* Color pickers */}
+      <div className="mb-3 grid grid-cols-2 gap-3">
+        <label className="group">
+          <span className="mb-1 block text-[11px] text-gray-500">From</span>
+          <div className="flex items-center gap-2">
+            <div className="relative shrink-0">
+              <input
+                type="color"
+                value={gradient.from}
+                onChange={(e) => update({ from: e.target.value })}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+              <div
+                className="h-7 w-7 rounded-full border-2 border-white/10 transition-all group-hover:border-white/25"
+                style={{ backgroundColor: gradient.from }}
+              />
+            </div>
+            <input
+              type="text"
+              value={gradient.from}
+              onChange={(e) => update({ from: e.target.value })}
+              className="w-full rounded bg-transparent text-[11px] text-gray-400 outline-none focus:text-gray-200"
+            />
+          </div>
+        </label>
+        <label className="group">
+          <span className="mb-1 flex items-center gap-1 text-[11px] text-gray-500">
+            To
+            <button
+              type="button"
+              onClick={() => update({ to: 'transparent' })}
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide transition-colors',
+                gradient.to === 'transparent'
+                  ? 'bg-white/10 text-gray-300'
+                  : 'text-gray-600 hover:text-gray-400'
+              )}
+            >
+              Transparent
+            </button>
+          </span>
+          <div className="flex items-center gap-2">
+            <div className="relative shrink-0">
+              <input
+                type="color"
+                value={gradient.to === 'transparent' ? '#000000' : gradient.to}
+                onChange={(e) => update({ to: e.target.value })}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+              <div
+                className="h-7 w-7 rounded-full border-2 border-white/10 transition-all group-hover:border-white/25"
+                style={{ backgroundColor: gradient.to === 'transparent' ? 'transparent' : gradient.to }}
+              />
+            </div>
+            <input
+              type="text"
+              value={gradient.to}
+              onChange={(e) => update({ to: e.target.value })}
+              className="w-full rounded bg-transparent text-[11px] text-gray-400 outline-none focus:text-gray-200"
+            />
+          </div>
+        </label>
+      </div>
+
+      {/* Angle slider (linear only) */}
+      {gradient.type === 'linear' && (
+        <div className="mb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-gray-500">Angle</span>
+            <span className="text-[11px] text-gray-500">{gradient.angle}°</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={360}
+            value={gradient.angle}
+            onChange={(e) => update({ angle: Number(e.target.value) })}
+            className="mt-1 w-full accent-gray-500"
+          />
+        </div>
+      )}
+
+      {/* Opacity slider */}
+      <div>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-gray-500">Opacity</span>
+          <span className="text-[11px] text-gray-500">{gradient.opacity}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={gradient.opacity}
+          onChange={(e) => update({ opacity: Number(e.target.value) })}
+          className="mt-1 w-full accent-gray-500"
+        />
+      </div>
+    </section>
+  )
+}
+
 export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onSave }: ThemeEditorProps) {
-  const [theme, setTheme] = useState<BlogThemeConfig>(() => parseBlogThemeConfig(initialThemeConfig))
+  const [theme, setTheme] = useState<BlogThemeConfig>(
+    () => initialThemeConfig ? normalizeBlogThemeConfig(initialThemeConfig) : getDefaultBlogThemeConfig(),
+  )
   const [isSaving, setIsSaving] = useState(false)
 
-  const previewThemeConfig = useMemo(() => stringifyBlogThemeConfig(theme), [theme])
   const cssChars = theme.customCSS.length
 
   const updateColor = (field: keyof BlogThemeColors, value: string) => {
@@ -96,10 +237,9 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
   }
 
   const handleSave = async () => {
-    const serialized = stringifyBlogThemeConfig(theme)
     setIsSaving(true)
     try {
-      await onSave(serialized)
+      await onSave(normalizeBlogThemeConfig(theme))
     } finally {
       setIsSaving(false)
     }
@@ -125,29 +265,34 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
         <section>
           <h4 className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-gray-500">Presets</h4>
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
-            {BLOG_THEME_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => handlePresetApply(preset.id)}
-                className="group shrink-0 w-[120px] rounded-xl border border-white/[0.06] bg-white/[0.02] p-2.5 text-left transition-all hover:border-white/[0.15] hover:bg-white/[0.05]"
-              >
-                <div className="mb-2 flex h-5 overflow-hidden rounded-md ring-1 ring-white/[0.08]">
-                  <div className="flex-1" style={{ backgroundColor: preset.config.colors.bg }} />
-                  <div className="flex-1" style={{ backgroundColor: preset.config.colors.accent }} />
-                  <div className="flex-1" style={{ backgroundColor: preset.config.colors.heading }} />
-                </div>
-                <p className="text-[11px] font-medium text-gray-300 group-hover:text-gray-100 transition-colors">{preset.name}</p>
-                <p className="mt-0.5 text-[10px] leading-snug text-gray-600 line-clamp-2">{preset.description}</p>
-              </button>
-            ))}
+            {BLOG_THEME_PRESETS.map((preset) => {
+              const presetGradient = preset.config.gradient
+                ? buildGradientCSS(preset.config.gradient)
+                : preset.config.colors.accent
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => handlePresetApply(preset.id)}
+                  className="group shrink-0 w-[120px] rounded-xl border border-white/[0.06] bg-white/[0.02] p-2.5 text-left transition-all hover:border-white/[0.15] hover:bg-white/[0.05]"
+                >
+                  <div className="mb-2 flex h-5 overflow-hidden rounded-md ring-1 ring-white/[0.08]">
+                    <div className="flex-1" style={{ backgroundColor: preset.config.colors.bg }} />
+                    <div className="flex-1" style={{ background: presetGradient }} />
+                    <div className="flex-1" style={{ backgroundColor: preset.config.colors.heading }} />
+                  </div>
+                  <p className="text-[11px] font-medium text-gray-300 group-hover:text-gray-100 transition-colors">{preset.name}</p>
+                  <p className="mt-0.5 text-[10px] leading-snug text-gray-600 line-clamp-2">{preset.description}</p>
+                </button>
+              )
+            })}
           </div>
         </section>
 
         {/* Colors */}
         <section>
           <h4 className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-gray-500">Colors</h4>
-          <div className="flex items-start justify-between">
+          <div className="flex flex-wrap items-start gap-x-3 gap-y-3">
             {colorFields.map((field) => (
               <label key={field.key} className="group flex flex-col items-center gap-1.5">
                 <div className="relative">
@@ -233,6 +378,12 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
           </div>
         </section>
 
+        {/* Banner Gradient */}
+        <GradientSection
+          gradient={theme.gradient || getDefaultGradient()}
+          onChange={(gradient) => setTheme((current) => ({ ...current, gradient }))}
+        />
+
         {/* Custom CSS */}
         <section>
           <details className="group">
@@ -246,15 +397,11 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
             <div className="mt-2">
               <Textarea
                 value={theme.customCSS}
-                onChange={(event) => {
-                  const value = event.target.value.slice(0, BLOG_THEME_CUSTOM_CSS_MAX_CHARS)
-                  updateTheme({ customCSS: value })
-                }}
+                onChange={(event) => updateTheme({ customCSS: event.target.value })}
                 rows={3}
                 placeholder="line-height: 1.8; letter-spacing: 0.01em;"
                 className="font-mono text-xs"
               />
-              <p className="mt-1 text-right text-[10px] text-gray-600">{cssChars}/{BLOG_THEME_CUSTOM_CSS_MAX_CHARS}</p>
             </div>
           </details>
         </section>
@@ -288,7 +435,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                 <style>{`.theme-editor-preview .blog-theme-root > .grid { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }`}</style>
               )}
               <BlogThemeProvider
-                themeConfig={previewThemeConfig}
+                themeConfig={theme}
                 blogName={blogName}
                 blogDescription={blogDescription}
                 username="preview"
@@ -297,7 +444,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                 labels="design, notes"
                 meta={<span>Feb 28, 2026 &middot; 5 min read</span>}
               >
-                <article className="space-y-3 rounded-xl border border-white/10 bg-black/20 p-4">
+                <article className="space-y-3 rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4">
                   <h2 className="text-2xl font-semibold" style={{ color: 'var(--blog-heading)', fontFamily: 'var(--blog-heading-font)' }}>
                     Themed paragraph and link styles
                   </h2>
@@ -305,7 +452,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                     Theme preview text helps validate readability across palette choices.{' '}
                     <a href="#" style={{ color: 'var(--blog-link)' }}>This is a sample link</a>.
                   </p>
-                  <div className="rounded-lg border border-white/10 p-3" style={{ backgroundColor: 'color-mix(in srgb, var(--blog-accent) 15%, transparent)' }}>
+                  <div className="rounded-lg border border-[var(--blog-border)] p-3" style={{ backgroundColor: 'color-mix(in srgb, var(--blog-accent) 15%, transparent)' }}>
                     Accent panel with border for contrast checks.
                   </div>
                 </article>

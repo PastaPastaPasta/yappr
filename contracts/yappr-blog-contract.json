@@ -47,10 +47,12 @@
         "description": "ipfs:// URI for blog avatar"
       },
       "themeConfig": {
-        "type": "string",
-        "maxLength": 512,
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 5000,
         "position": 4,
-        "description": "JSON string of theme configuration"
+        "description": "Compressed JSON theme configuration"
       },
       "commentsEnabledDefault": {
         "type": "boolean",

@@ -21,6 +21,7 @@ import { ThemeEditor } from '@/components/blog/theme-editor'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import toast from 'react-hot-toast'
 
 function BlogPageContent() {
@@ -154,7 +155,7 @@ function BlogPageContent() {
     setOwnerPosts(posts)
   }
 
-  const handleThemeSave = async (themeConfig: string) => {
+  const handleThemeSave = async (themeConfig: BlogThemeConfig) => {
     if (!selectedBlog || !user?.identityId) return
     try {
       const updated = await blogService.updateBlog(selectedBlog.id, user.identityId, {
@@ -385,7 +386,7 @@ function BlogPageContent() {
 
           {activeTab === 'theme' && (
             <ThemeEditor
-              key={`${selectedBlog.id}:${selectedBlog.themeConfig || 'default'}`}
+              key={`${selectedBlog.id}:${selectedBlog.$revision || 0}`}
               initialThemeConfig={selectedBlog.themeConfig}
               blogName={selectedBlog.name}
               blogDescription={selectedBlog.description}

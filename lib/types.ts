@@ -3,6 +3,8 @@ export * from '../types/post'
 export * from '../types/store'
 export * from '../types/notification'
 
+import type { BlogThemeConfig } from '@/lib/blog/theme-types'
+
 // V3 DM contract document types (raw from platform)
 export interface ConversationInviteDocument {
   $id: string
@@ -124,7 +126,7 @@ export interface Blog {
   description?: string
   headerImage?: string
   avatar?: string
-  themeConfig?: string
+  themeConfig?: BlogThemeConfig
   commentsEnabledDefault?: boolean
   labels?: string
 }
