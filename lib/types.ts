@@ -162,3 +162,10 @@ export interface BlogPostWithAuthor extends BlogPost {
   authorDisplayName?: string
   blogName?: string
 }
+
+export interface BlogFollow {
+  id: string
+  ownerId: string
+  blogId: string
+  createdAt: Date
+}

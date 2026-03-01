@@ -8,6 +8,8 @@ import { estimateReadingTime, extractText, getBlogPostUrl, parseLabels } from '@
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
+import { useAuth } from '@/contexts/auth-context'
+import { useBlogFollow } from '@/hooks/use-blog-follow'
 
 interface BlogHomeProps {
   blog: Blog
@@ -21,6 +23,9 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
   const [page, setPage] = useState(1)
   const [activeLabel, setActiveLabel] = useState<string>('All')
   const pageSize = 10
+  const { user } = useAuth()
+  const { isFollowing, isLoading: followLoading, followerCount, toggleFollow } = useBlogFollow(blog.id)
+  const isOwnBlog = user?.identityId === blog.ownerId
 
   useEffect(() => {
     let cancelled = false
@@ -84,6 +89,25 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             <IpfsImage src={blog.avatar} alt={`${blog.name} avatar`} className="h-9 w-9 rounded-full object-cover" />
           )}
           <span>{blog.labels || 'Publishing on Yappr'}</span>
+          {!isOwnBlog && (
+            <button
+              type="button"
+              onClick={toggleFollow}
+              disabled={followLoading}
+              className={`ml-auto rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+                isFollowing
+                  ? 'border border-[var(--blog-border)] bg-[var(--blog-surface)] text-[var(--blog-heading)]'
+                  : 'bg-[var(--blog-link)] text-white'
+              }`}
+            >
+              {isFollowing ? 'Following' : 'Follow'}
+            </button>
+          )}
+          {followerCount > 0 && (
+            <span className="text-xs text-[var(--blog-text)]/60">
+              {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
+            </span>
+          )}
         </div>
       )}
     >

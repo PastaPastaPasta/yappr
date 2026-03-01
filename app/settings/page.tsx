@@ -61,6 +61,16 @@ const settingsSections = [
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
 
+const NOTIFICATION_LABELS: Record<string, string> = {
+  likes: 'Likes',
+  reposts: 'Reposts',
+  replies: 'Replies',
+  follows: 'Follows',
+  mentions: 'Mentions',
+  messages: 'Messages',
+  blogPosts: 'Blog posts',
+}
+
 const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   likes: 'When someone likes your posts',
   reposts: 'When someone reposts your content',
@@ -68,6 +78,7 @@ const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   follows: 'When someone follows you',
   mentions: 'When someone mentions you',
   messages: 'When you receive new messages',
+  blogPosts: 'When a blog you follow publishes a new post',
 }
 
 function SettingsPage() {
@@ -335,7 +346,7 @@ function SettingsPage() {
           {Object.entries(notificationSettings).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between">
               <div>
-                <p className="font-medium capitalize">{key}</p>
+                <p className="font-medium">{NOTIFICATION_LABELS[key] || key}</p>
                 <p className="text-sm text-gray-500">
                   {NOTIFICATION_DESCRIPTIONS[key]}
                 </p>

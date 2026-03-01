@@ -19,6 +19,7 @@ export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
 export { blogService } from './blog-service';
 export { blogPostService } from './blog-post-service';
 export { blogCommentService } from './blog-comment-service';
+export { blogFollowService } from './blog-follow-service';
 
 // New unified profile services
 export {

@@ -16,6 +16,8 @@ import { getReaderOverrideStyle, getReaderFontSize } from '@/lib/blog/reader-pre
 import { ReadingPreferencesPopover } from './reading-preferences'
 import { useAppStore, useReaderPreferencesStore } from '@/lib/store'
 import { useRequireAuth } from '@/hooks/use-require-auth'
+import { useAuth } from '@/contexts/auth-context'
+import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { APP_URL } from '@/lib/constants'
 
 interface BlogPostViewProps {
@@ -28,6 +30,10 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const blocks = Array.isArray(post.content) ? post.content : []
   const { setQuotingPost, setComposeOpen } = useAppStore()
   const { requireAuth } = useRequireAuth()
+  const { user } = useAuth()
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id)
+  const isOwnBlog = user?.identityId === blog.ownerId
+  const showFollowCta = user && !isOwnBlog && !isFollowing
   const [commentCount, setCommentCount] = useState(0)
   const { readingMode, fontSize } = useReaderPreferencesStore()
   const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])
@@ -198,6 +204,26 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         )}
 
         <BlogViewer blocks={blocks} />
+
+        {showFollowCta && (
+          <div className="flex items-center gap-3 rounded-xl border p-4" style={{ borderColor: 'var(--blog-border)', backgroundColor: 'var(--blog-surface)' }}>
+            {blog.avatar && (
+              <IpfsImage src={blog.avatar} alt={blog.name} className="h-8 w-8 rounded-full object-cover" />
+            )}
+            <p className="flex-1 text-sm" style={{ color: 'var(--blog-text)' }}>
+              Follow <strong style={{ color: 'var(--blog-heading)' }}>{blog.name}</strong> to get notified of new posts
+            </p>
+            <button
+              type="button"
+              onClick={toggleFollow}
+              disabled={followLoading}
+              className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition"
+              style={{ backgroundColor: 'var(--blog-link)' }}
+            >
+              Follow
+            </button>
+          </div>
+        )}
 
         <BlogComments
           blogPostId={post.id}

@@ -23,15 +23,23 @@ type PrivateFeedNotificationType = 'privateFeedRequest' | 'privateFeedApproved' 
 type EngagementNotificationType = 'like' | 'repost' | 'reply';
 
 /**
+ * Blog post notification type
+ */
+type BlogPostNotificationType = 'blogPost';
+
+/**
  * Raw notification data before enrichment
  */
 interface RawNotification {
   id: string;
-  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType;
+  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogPostNotificationType;
   fromUserId: string;
   postId?: string;
   parentId?: string; // For reply notifications: the ID of the post/reply being replied to
   replyContent?: string; // For reply notifications: pre-fetched content to avoid re-querying
+  blogId?: string;
+  blogPostTitle?: string;
+  blogPostSlug?: string;
   createdAt: number;
 }
 
@@ -241,6 +249,55 @@ class NotificationService {
   }
 
   /**
+   * Get blog post notifications for blogs the user follows.
+   * Queries followed blogs, then fetches recent posts from each.
+   */
+  async getBlogPostNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+    try {
+      const { blogFollowService } = await import('./blog-follow-service');
+      const { blogPostService } = await import('./blog-post-service');
+
+      const followedBlogIds = await blogFollowService.getFollowedBlogIds(userId);
+      if (followedBlogIds.length === 0) return [];
+
+      // Batch fetch recent posts from followed blogs (concurrency limit of 20)
+      const batchSize = 20;
+      const allNotifications: RawNotification[] = [];
+
+      for (let i = 0; i < followedBlogIds.length; i += batchSize) {
+        const batch = followedBlogIds.slice(i, i + batchSize);
+        const results = await Promise.all(
+          batch.map(async (blogId) => {
+            try {
+              const posts = await blogPostService.getPostsByBlog(blogId, { limit: 10 });
+              return posts
+                .filter(post => post.createdAt.getTime() > sinceTimestamp)
+                .map(post => ({
+                  id: `blogPost-${post.id}`,
+                  type: 'blogPost' as const,
+                  fromUserId: post.ownerId,
+                  postId: post.id,
+                  blogId,
+                  blogPostTitle: post.title,
+                  blogPostSlug: post.slug,
+                  createdAt: post.createdAt.getTime(),
+                }));
+            } catch {
+              return [];
+            }
+          })
+        );
+        allNotifications.push(...results.flat());
+      }
+
+      return allNotifications;
+    } catch (error) {
+      logger.error('Error fetching blog post notifications:', error);
+      return [];
+    }
+  }
+
+  /**
    * Enrich raw notifications with user profiles and post data.
    * Uses Promise.allSettled for fault tolerance - partial failures don't block other notifications.
    */
@@ -328,13 +385,32 @@ class NotificationService {
         post = raw.postId ? posts.get(raw.postId) : undefined;
       }
 
+      // For blogPost notifications, create a synthetic post with the title
+      if (raw.type === 'blogPost' && raw.blogPostTitle) {
+        post = {
+          id: raw.postId || '',
+          author: user,
+          content: raw.blogPostTitle,
+          createdAt: new Date(raw.createdAt),
+          likes: 0,
+          reposts: 0,
+          replies: 0,
+          views: 0,
+          liked: false,
+          reposted: false,
+          bookmarked: false,
+        };
+      }
+
       return {
         id: raw.id,
         type: raw.type,
         from: user,
         post,
         createdAt: new Date(raw.createdAt),
-        read: readIds.has(raw.id)
+        read: readIds.has(raw.id),
+        blogId: raw.blogId,
+        blogPostSlug: raw.blogPostSlug,
       };
     });
   }
@@ -514,16 +590,17 @@ class NotificationService {
     readIds: Set<string>,
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
-    const [followers, mentions, privateFeed, likes, reposts, replies] = await Promise.all([
+    const [followers, mentions, privateFeed, likes, reposts, replies, blogPosts] = await Promise.all([
       this.getNewFollowers(userId, sinceTimestamp),
       this.getNewMentions(userId, sinceTimestamp),
       this.getPrivateFeedNotifications(userId, sinceTimestamp),
       this.getLikeNotifications(userId, sinceTimestamp),
       this.getRepostNotifications(userId, sinceTimestamp),
-      this.getReplyNotifications(userId, sinceTimestamp)
+      this.getReplyNotifications(userId, sinceTimestamp),
+      this.getBlogPostNotifications(userId, sinceTimestamp)
     ]);
 
-    const rawNotifications = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies];
+    const rawNotifications = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];
     rawNotifications.sort((a, b) => b.createdAt - a.createdAt);
 
     const notifications = await this.enrichNotifications(rawNotifications, readIds);

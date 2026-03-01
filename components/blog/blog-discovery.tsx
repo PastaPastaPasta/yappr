@@ -7,6 +7,8 @@ import { blogService } from '@/lib/services'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { Blog } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { useAuth } from '@/contexts/auth-context'
+import { useBlogFollow, seedBlogFollowCache } from '@/hooks/use-blog-follow'
 
 interface BlogWithUsername extends Blog {
   username: string | null
@@ -17,6 +19,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const { user } = useAuth()
 
   useEffect(() => {
     if (!sdkReady) return
@@ -32,6 +35,20 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
 
         const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
         const usernameMap = await dpnsService.resolveUsernamesBatch(ownerIds)
+        if (cancelled) return
+
+        // Batch-prefetch follow status for all blogs
+        if (user?.identityId) {
+          try {
+            const { blogFollowService } = await import('@/lib/services/blog-follow-service')
+            const blogIds = allBlogs.map((b) => b.id)
+            const statusMap = await blogFollowService.getFollowStatusBatch(blogIds, user.identityId)
+            if (!cancelled) seedBlogFollowCache(user.identityId, statusMap)
+          } catch {
+            // Non-critical, individual hooks will query on their own
+          }
+        }
+
         if (cancelled) return
 
         setBlogs(
@@ -57,7 +74,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
     return () => {
       cancelled = true
     }
-  }, [sdkReady])
+  }, [sdkReady, user?.identityId])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return blogs
@@ -114,37 +131,66 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
       ) : (
         <div className="space-y-2">
           {filtered.map((blog) => (
-            <Link key={blog.id} href={`/blog?blog=${encodeURIComponent(blog.id)}`} className="block">
-              <div className="flex items-start gap-3 rounded-xl border border-gray-800 bg-neutral-950 p-4 transition hover:border-gray-600">
-                {blog.avatar ? (
-                  <IpfsImage
-                    src={blog.avatar}
-                    alt={blog.name}
-                    className="h-10 w-10 flex-shrink-0 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-yappr-500 to-yappr-700 text-sm font-bold text-white">
-                    {blog.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate font-semibold text-white">
-                    {blog.name}
-                  </h3>
-                  {blog.username && (
-                    <p className="text-xs text-yappr-400">@{blog.username}</p>
-                  )}
-                  {blog.description && (
-                    <p className="mt-1 line-clamp-2 text-sm text-gray-400">
-                      {blog.description}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </Link>
+            <BlogCard key={blog.id} blog={blog} currentUserId={user?.identityId} />
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+function BlogCard({ blog, currentUserId }: { blog: BlogWithUsername; currentUserId?: string }) {
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id)
+  const isOwnBlog = currentUserId === blog.ownerId
+
+  const handleFollowClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    toggleFollow().catch(() => {})
+  }
+
+  return (
+    <Link href={`/blog?blog=${encodeURIComponent(blog.id)}`} className="block">
+      <div className="flex items-start gap-3 rounded-xl border border-gray-800 bg-neutral-950 p-4 transition hover:border-gray-600">
+        {blog.avatar ? (
+          <IpfsImage
+            src={blog.avatar}
+            alt={blog.name}
+            className="h-10 w-10 flex-shrink-0 rounded-full object-cover"
+          />
+        ) : (
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-yappr-500 to-yappr-700 text-sm font-bold text-white">
+            {blog.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-semibold text-white">
+            {blog.name}
+          </h3>
+          {blog.username && (
+            <p className="text-xs text-yappr-400">@{blog.username}</p>
+          )}
+          {blog.description && (
+            <p className="mt-1 line-clamp-2 text-sm text-gray-400">
+              {blog.description}
+            </p>
+          )}
+        </div>
+        {!isOwnBlog && (
+          <button
+            type="button"
+            onClick={handleFollowClick}
+            disabled={followLoading}
+            className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition ${
+              isFollowing
+                ? 'border border-gray-600 text-gray-300 hover:border-red-500 hover:text-red-400'
+                : 'bg-yappr-500 text-white hover:bg-yappr-600'
+            }`}
+          >
+            {isFollowing ? 'Following' : 'Follow'}
+          </button>
+        )}
+      </div>
+    </Link>
   )
 }

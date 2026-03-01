@@ -261,5 +261,61 @@
       }
     },
     "additionalProperties": false
+  },
+  "blogFollow": {
+    "type": "object",
+    "documentsMutable": false,
+    "indices": [
+      {
+        "name": "ownerAndBlog",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "blogId": "asc"
+          }
+        ]
+      },
+      {
+        "name": "following",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "followers",
+        "properties": [
+          {
+            "blogId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "blogId"
+    ],
+    "properties": {
+      "blogId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "Reference to the blog being followed"
+      }
+    },
+    "additionalProperties": false
   }
 }
