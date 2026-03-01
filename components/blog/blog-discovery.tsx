@@ -12,13 +12,15 @@ interface BlogWithUsername extends Blog {
   username: string | null
 }
 
-export function BlogDiscovery() {
+export function BlogDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
   const [blogs, setBlogs] = useState<BlogWithUsername[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
   useEffect(() => {
+    if (!sdkReady) return
+
     let cancelled = false
 
     const load = async () => {
@@ -55,7 +57,7 @@ export function BlogDiscovery() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [sdkReady])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return blogs
@@ -137,17 +139,14 @@ export function BlogDiscovery() {
                   )}
                   {blog.labels && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {blog.labels.split(',').slice(0, 4).map((label) => {
-                        const trimmed = label.trim()
-                        return (
+                      {Array.from(new Set(blog.labels.split(',').map(l => l.trim()).filter(Boolean))).slice(0, 4).map((label, i) => (
                           <span
-                            key={trimmed}
+                            key={`${label}-${i}`}
                             className="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] text-gray-400"
                           >
-                            {trimmed}
+                            {label}
                           </span>
-                        )
-                      })}
+                      ))}
                     </div>
                   )}
                 </div>

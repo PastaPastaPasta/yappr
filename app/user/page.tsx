@@ -340,7 +340,7 @@ function UserProfileContent() {
           const ownerBlogs = await blogService.getBlogsByOwner(userId)
 
           if (ownerBlogs.length > 0) {
-            const blogsWithCounts = await Promise.all(ownerBlogs.map(async (blog) => {
+            const results = await Promise.allSettled(ownerBlogs.map(async (blog) => {
               const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
               return {
                 id: blog.id,
@@ -349,6 +349,9 @@ function UserProfileContent() {
                 postCount: blogPosts.length,
               } as ProfileBlog
             }))
+            const blogsWithCounts = results
+              .filter((r): r is PromiseFulfilledResult<ProfileBlog> => r.status === 'fulfilled')
+              .map(r => r.value)
             setBlogs(blogsWithCounts)
           } else {
             setBlogs([])

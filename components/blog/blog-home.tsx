@@ -23,10 +23,14 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
   const pageSize = 10
 
   useEffect(() => {
+    let cancelled = false
+
     const load = async () => {
       setLoading(true)
       try {
         const result = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
+        if (cancelled) return
+
         setPosts(result)
 
         const counts = await Promise.all(
@@ -39,14 +43,17 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             }
           })
         )
+        if (cancelled) return
 
         setCommentCounts(Object.fromEntries(counts))
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
-    load().catch(() => setLoading(false))
+    load().catch(() => { if (!cancelled) setLoading(false) })
+
+    return () => { cancelled = true }
   }, [blog.id])
 
   const blogLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])

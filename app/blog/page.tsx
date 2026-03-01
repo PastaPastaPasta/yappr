@@ -7,6 +7,7 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
+import { useSdk } from '@/contexts/sdk-context'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { blogService, blogPostService } from '@/lib/services'
 import type { Blog, BlogPost } from '@/lib/types'
@@ -27,6 +28,7 @@ function BlogPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useAuth()
+  const { isReady: sdkReady } = useSdk()
 
   const blogIdParam = searchParams.get('blog')
   const postSlugParam = searchParams.get('post')
@@ -46,6 +48,8 @@ function BlogPageContent() {
   const isViewMode = Boolean(blogIdParam)
 
   useEffect(() => {
+    if (!sdkReady) return
+
     let cancelled = false
 
     const load = async () => {
@@ -91,8 +95,7 @@ function BlogPageContent() {
         if (cancelled) return
         setError('Failed to load blog')
       } finally {
-        if (cancelled) return
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
@@ -106,7 +109,7 @@ function BlogPageContent() {
     return () => {
       cancelled = true
     }
-  }, [blogIdParam, postSlugParam])
+  }, [sdkReady, blogIdParam, postSlugParam])
 
   useEffect(() => {
     let cancelled = false
@@ -203,7 +206,7 @@ function BlogPageContent() {
     }
 
     if (!user) {
-      return <BlogDiscovery />
+      return <BlogDiscovery sdkReady={sdkReady} />
     }
 
     if (!selectedBlog) {
@@ -381,7 +384,6 @@ function BlogPageContent() {
             <BlogSettings
               blog={selectedBlog}
               ownerId={user.identityId}
-              username={user.dpnsUsername || undefined}
               onUpdated={(updated) => setSelectedBlog(updated)}
             />
           )}

@@ -221,12 +221,13 @@ const SAFE_CSS_PROPERTIES = new Set([
   'line-height',
   'letter-spacing',
   'text-transform',
+  'text-align',
   'text-decoration',
 ])
 
 export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|behavior\s*:|binding\s*:)/i
 
-const SAFE_CSS_COLOR = /^(#[0-9a-fA-F]{3,8}|transparent|[a-zA-Z]{3,20})$/
+const SAFE_CSS_COLOR = /^(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|transparent|[a-zA-Z]{3,20})$/
 
 function normalizeColor(input: unknown, fallback: string): string {
   if (typeof input !== 'string') return fallback
@@ -259,10 +260,10 @@ function normalizeGradient(input: unknown): BlogGradientConfig {
   const g = input as Partial<BlogGradientConfig>
   return {
     type: normalizeGradientType(g.type),
-    angle: typeof g.angle === 'number' ? Math.max(0, Math.min(360, g.angle)) : defaultGradient.angle,
+    angle: Number.isFinite(g.angle) ? Math.max(0, Math.min(360, g.angle as number)) : defaultGradient.angle,
     from: normalizeColor(g.from, defaultGradient.from),
     to: normalizeColor(g.to, defaultGradient.to),
-    opacity: typeof g.opacity === 'number' ? Math.max(0, Math.min(100, g.opacity)) : defaultGradient.opacity,
+    opacity: Number.isFinite(g.opacity) ? Math.max(0, Math.min(100, g.opacity as number)) : defaultGradient.opacity,
   }
 }
 

@@ -131,7 +131,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       setSubtitle(parsed.subtitle || '')
       setCoverImage(parsed.coverImage || '')
       setLabels(parsed.labels || '')
-      setCommentsEnabled(parsed.commentsEnabled)
+      setCommentsEnabled(parsed.commentsEnabled ?? false)
       setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : [])
     } catch {
       // Ignore invalid drafts

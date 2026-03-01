@@ -16,11 +16,10 @@ import { logger } from '@/lib/logger'
 interface BlogSettingsProps {
   blog: Blog
   ownerId: string
-  username?: string
   onUpdated?: (blog: Blog) => void
 }
 
-export function BlogSettings({ blog, ownerId, username, onUpdated }: BlogSettingsProps) {
+export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   const [name, setName] = useState(blog.name)
   const [description, setDescription] = useState(blog.description || '')
   const [avatar, setAvatar] = useState(blog.avatar || '')

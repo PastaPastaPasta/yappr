@@ -9,7 +9,7 @@ import { LinkPreviewModalProvider } from '@/components/post/link-preview'
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
-  if (pathname.startsWith('/embed')) {
+  if (pathname === '/embed' || pathname.startsWith('/embed/')) {
     return <>{children}</>
   }
 

@@ -360,6 +360,7 @@ function VideoEmbedPlayer({ url }: { url: string }) {
       <div className="overflow-hidden rounded-lg border border-white/10">
         {!isPlaying ? (
           <button
+            type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsPlaying(true) }}
             className="relative w-full aspect-video bg-black cursor-pointer group"
           >

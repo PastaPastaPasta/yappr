@@ -73,12 +73,12 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
           )}
           {post.labels && (
             <div className="flex flex-wrap gap-1 mt-1.5">
-              {post.labels.split(',').slice(0, 3).map((label) => (
+              {Array.from(new Set(post.labels.split(',').map(l => l.trim()).filter(Boolean))).slice(0, 3).map((label, i) => (
                 <span
-                  key={label.trim()}
+                  key={`${label}-${i}`}
                   className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded"
                 >
-                  {label.trim()}
+                  {label}
                 </span>
               ))}
             </div>

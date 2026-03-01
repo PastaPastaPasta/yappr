@@ -26,5 +26,5 @@ export function labelsToCsv(items: string[]): string {
 export function estimateReadingTime(content: unknown): number {
   const text = extractText(content)
   const words = text.split(/\s+/).filter(Boolean).length
-  return Math.max(1, Math.round(words / 238))
+  return Math.max(1, Math.ceil(words / 238))
 }

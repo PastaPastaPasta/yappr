@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -240,6 +241,8 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
     setIsSaving(true)
     try {
       await onSave(normalizeBlogThemeConfig(theme))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save theme')
     } finally {
       setIsSaving(false)
     }
