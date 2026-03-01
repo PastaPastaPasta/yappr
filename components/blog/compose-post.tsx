@@ -65,7 +65,7 @@ export function ComposePost({ blog, onBack, onPublished }: ComposePostProps) {
       setSubtitle(parsed.subtitle || '')
       setCoverImage(parsed.coverImage || '')
       setLabels(parsed.labels || '')
-      setCommentsEnabled(parsed.commentsEnabled)
+      setCommentsEnabled(parsed.commentsEnabled ?? true)
       setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : [])
     } catch {
       // Ignore invalid drafts

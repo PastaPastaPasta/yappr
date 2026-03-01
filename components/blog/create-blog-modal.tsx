@@ -60,7 +60,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
           <div className="mb-4 flex items-center justify-between">
             <Dialog.Title className="text-lg font-semibold">Create Blog</Dialog.Title>
             <Dialog.Close asChild>
-              <button className="rounded-full p-1 hover:bg-gray-800">
+              <button className="rounded-full p-1 hover:bg-gray-800" aria-label="Close">
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </Dialog.Close>
