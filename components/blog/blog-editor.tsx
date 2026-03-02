@@ -6,13 +6,14 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
-import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { PhotoIcon, LinkIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { AnimatePresence } from 'framer-motion'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
+import { UploadProgress } from '@/components/compose/upload-progress'
 import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
 
 interface BlogEditorProps {
@@ -27,7 +28,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     initialContent: (initialBlocks?.length ? initialBlocks : undefined) as never,
   })
 
-  const { upload, isUploading, progress, error, clearError } = useImageUpload()
+  const { upload, isUploading, progress, clearError } = useImageUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [imageUrlInput, setImageUrlInput] = useState('')
   const [showImageUrlInput, setShowImageUrlInput] = useState(false)
@@ -139,20 +140,13 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         disabled={isUploading}
       />
 
-      {(error || isUploading) && (
-        <div className="mb-2 text-xs">
-          {error && (
-            <p className="text-amber-400">
-              {error.includes('provider') ? (
-                <>No storage provider connected. <Link href="/settings" className="underline hover:text-amber-300">Connect in Settings</Link></>
-              ) : error}
-            </p>
-          )}
-          {isUploading && <p className="text-gray-500">Uploading image... {progress}%</p>}
-        </div>
-      )}
+      <AnimatePresence>
+        {isUploading && (
+          <UploadProgress progress={progress} message="Uploading image to IPFS..." />
+        )}
+      </AnimatePresence>
 
-      {isDragging && (
+      {isDragging && !isUploading && (
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/40">
           <p className="text-sm font-medium text-yappr-400">Drop image to insert</p>
         </div>
@@ -181,7 +175,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
         >
           <PhotoIcon className="h-3.5 w-3.5" />
-          {isUploading ? `${progress}%` : 'Add image'}
+          Add image
         </button>
         {showImageUrlInput ? (
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
