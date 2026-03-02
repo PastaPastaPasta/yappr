@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChatBubbleLeftIcon, LinkIcon } from '@heroicons/react/24/outline'
+import { useTheme } from 'next-themes'
 import toast from 'react-hot-toast'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -12,7 +13,8 @@ import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
 import { estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
-import { getReaderOverrideStyle, getReaderFontSize } from '@/lib/blog/reader-preferences'
+import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
+import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { ReadingPreferencesPopover } from './reading-preferences'
 import { useAppStore, useReaderPreferencesStore } from '@/lib/store'
 import { useRequireAuth } from '@/hooks/use-require-auth'
@@ -38,6 +40,28 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const { readingMode, fontSize } = useReaderPreferencesStore()
   const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])
   const contentFontSize = getReaderFontSize(fontSize)
+  const { setTheme } = useTheme()
+  const savedThemeRef = useRef<string | undefined>(undefined)
+  const authorBg = useMemo(
+    () => normalizeBlogThemeConfig(blog.themeConfig).colors.bg,
+    [blog.themeConfig],
+  )
+
+  // Sync reading mode → app theme so nav/comments/buttons match
+  useEffect(() => {
+    // Save the user's original theme once before we start overriding
+    if (!savedThemeRef.current) {
+      savedThemeRef.current = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+    }
+    setTheme(getAppThemeForReadingMode(readingMode, authorBg))
+  }, [readingMode, authorBg, setTheme])
+
+  // Restore original theme on unmount
+  useEffect(() => {
+    return () => {
+      if (savedThemeRef.current) setTheme(savedThemeRef.current)
+    }
+  }, [setTheme])
 
   const handleQuote = () => {
     if (!requireAuth('quote')) return
