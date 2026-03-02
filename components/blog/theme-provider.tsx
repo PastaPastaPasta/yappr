@@ -178,9 +178,10 @@ export function BlogThemeProvider({
       )}
       style={{ ...getContainerStyle(theme), ...readerOverrides }}
     >
-      {sanitizedCustomCSS && (
-        <style>{`.${customScopeClass} .blog-theme-prose { ${sanitizedCustomCSS} }`}</style>
-      )}
+      <style>
+        {`.${customScopeClass} .blog-theme-prose .bn-default-styles { font-size: inherit; }`}
+        {sanitizedCustomCSS ? `.${customScopeClass} .blog-theme-prose { ${sanitizedCustomCSS} }` : ''}
+      </style>
 
       <div className={cn(getLayoutClass(theme.layout), 'blog-theme-root')} style={{ fontFamily: 'var(--blog-body-font)' }}>
         <ThemeHeader
