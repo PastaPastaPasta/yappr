@@ -40,7 +40,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const { readingMode, fontSize } = useReaderPreferencesStore()
   const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])
   const contentFontSize = getReaderFontSize(fontSize)
-  const { setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const savedThemeRef = useRef<string | undefined>(undefined)
   const authorBg = useMemo(
     () => normalizeBlogThemeConfig(blog.themeConfig).colors.bg,
@@ -49,12 +49,12 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
 
   // Sync reading mode → app theme so nav/comments/buttons match
   useEffect(() => {
-    // Save the user's original theme once before we start overriding
-    if (!savedThemeRef.current) {
-      savedThemeRef.current = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+    // Save the user's original theme once (preserves 'system' correctly)
+    if (!savedThemeRef.current && theme !== undefined) {
+      savedThemeRef.current = theme
     }
     setTheme(getAppThemeForReadingMode(readingMode, authorBg))
-  }, [readingMode, authorBg, setTheme])
+  }, [readingMode, authorBg, setTheme, theme])
 
   // Restore original theme on unmount
   useEffect(() => {
