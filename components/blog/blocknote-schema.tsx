@@ -308,14 +308,23 @@ const codeBlock = createReactBlockSpec(
     render: ({ block, editor }) => {
       const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
 
+      if (!editable) {
+        return (
+          <div className="rounded-lg border border-gray-700 bg-gray-950 p-3">
+            <pre className="overflow-x-auto rounded-md bg-black/40 p-3">
+              <code className={`language-${block.props.language || 'javascript'}`}>{String(block.props.code || '')}</code>
+            </pre>
+          </div>
+        )
+      }
+
       return (
         <div className="space-y-2 rounded-lg border border-gray-700 bg-gray-950 p-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium uppercase tracking-wider text-gray-400">Language</label>
             <select
               value={block.props.language || 'javascript'}
-              disabled={!editable}
-              className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-200 disabled:opacity-70"
+              className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-200"
               onChange={(event) => updateBlockProps(editor, block, { language: event.target.value })}
             >
               {['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'].map((language) => (
@@ -324,18 +333,12 @@ const codeBlock = createReactBlockSpec(
             </select>
           </div>
 
-          {editable ? (
-            <textarea
-              value={String(block.props.code || '')}
-              onChange={(event) => updateBlockProps(editor, block, { code: event.target.value })}
-              placeholder="Paste or type code..."
-              className="h-44 w-full resize-y rounded-md border border-gray-700 bg-gray-900 p-2 font-mono text-xs text-gray-100"
-            />
-          ) : (
-            <pre className="overflow-x-auto rounded-md bg-black/40 p-3">
-              <code className={`language-${block.props.language || 'javascript'}`}>{String(block.props.code || '')}</code>
-            </pre>
-          )}
+          <textarea
+            value={String(block.props.code || '')}
+            onChange={(event) => updateBlockProps(editor, block, { code: event.target.value })}
+            placeholder="Paste or type code..."
+            className="h-44 w-full resize-y rounded-md border border-gray-700 bg-gray-900 p-2 font-mono text-xs text-gray-100"
+          />
         </div>
       )
     },
