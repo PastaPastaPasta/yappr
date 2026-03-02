@@ -1,6 +1,7 @@
 'use client'
 
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
@@ -8,12 +9,11 @@ import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
 import toast from 'react-hot-toast'
 import { PhotoIcon, LinkIcon, XMarkIcon } from '@heroicons/react/24/outline'
-import { AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
-import { UploadProgress } from '@/components/compose/upload-progress'
 import { blogBlockNoteSchema, getBlogSlashMenuItems } from './blocknote-schema'
 
 interface BlogEditorProps {
@@ -140,12 +140,6 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
         disabled={isUploading}
       />
 
-      <AnimatePresence>
-        {isUploading && (
-          <UploadProgress progress={progress} message="Uploading image to IPFS..." />
-        )}
-      </AnimatePresence>
-
       {isDragging && !isUploading && (
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/40">
           <p className="text-sm font-medium text-yappr-400">Drop image to insert</p>
@@ -216,6 +210,48 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
             Paste URL
           </button>
         )}
+      </div>
+
+      {/* Full-screen upload overlay via portal */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {isUploading && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm"
+            >
+              <UploadProgressCircle progress={progress} />
+              <p className="mt-4 text-sm font-medium text-white">Uploading image to IPFS...</p>
+              <p className="mt-1 text-xs text-gray-400">Please wait</p>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+function UploadProgressCircle({ progress }: { progress: number }) {
+  const radius = 40
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference * (1 - progress / 100)
+
+  return (
+    <div className="relative h-24 w-24">
+      <svg className="-rotate-90" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="6" />
+        <circle
+          cx="50" cy="50" r={radius}
+          fill="none" stroke="white" strokeWidth="6" strokeLinecap="round"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          className="transition-all duration-300 ease-out"
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-lg font-semibold tabular-nums text-white">{Math.round(progress)}%</span>
       </div>
     </div>
   )
