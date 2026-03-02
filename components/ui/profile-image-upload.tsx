@@ -6,6 +6,8 @@ import { useFileDrop } from '@/hooks/use-file-drop'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { validateHttpUrl } from '@/lib/utils'
 import { IpfsImage } from './ipfs-image'
+import { useRouter } from 'next/navigation'
+import toast from 'react-hot-toast'
 import { PhotoIcon, XMarkIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 
@@ -39,6 +41,7 @@ export function ProfileImageUpload({
   label = 'Upload Image',
   placeholder = 'Click or drag to upload',
 }: ProfileImageUploadProps) {
+  const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { upload, isUploading, progress, error, isProviderConnected, checkProvider, clearError } = useImageUpload()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -83,8 +86,14 @@ export function ProfileImageUpload({
       const result = await upload(file)
       onUpload(`ipfs://${result.cid}`)
       setPreviewUrl(null)
-    } catch {
+    } catch (err) {
       setPreviewUrl(null)
+      const msg = err instanceof Error ? err.message : 'Image upload failed'
+      if (msg.toLowerCase().includes('provider')) {
+        toast.error('No storage provider connected. Set one up in Settings to upload images.')
+      } else {
+        toast.error(msg)
+      }
     }
   }, [upload, maxSizeMB, onUpload, clearError])
 
@@ -113,9 +122,15 @@ export function ProfileImageUpload({
 
   const handleClick = useCallback(() => {
     if (isUploading) return
-    if (!isProviderConnected) return
+    if (!isProviderConnected) {
+      toast.error('No storage provider connected. Set one up in Settings to upload images.', {
+        duration: 5000,
+      })
+      router.push('/settings')
+      return
+    }
     fileInputRef.current?.click()
-  }, [isUploading, isProviderConnected])
+  }, [isUploading, isProviderConnected, router])
 
   const handleUrlSubmit = useCallback(() => {
     const validated = validateHttpUrl(urlInput)
