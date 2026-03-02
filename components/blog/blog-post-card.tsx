@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { estimateReadingTime, extractText, parseLabels } from '@/lib/blog/content-utils'
+import { estimateReadingTime, getPostExcerpt, decodeSummary, parseLabels } from '@/lib/blog/content-utils'
 import type { BlogPostWithAuthor } from '@/lib/types'
 
 interface BlogPostCardProps {
@@ -12,8 +12,8 @@ interface BlogPostCardProps {
 
 export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogPostCardProps) {
   const isDisabled = !post.authorUsername || !post.slug
-  const rawExcerpt = extractText(post.content).replace(/\s+/g, ' ').trim()
-  const excerpt = rawExcerpt && !post.subtitle ? (rawExcerpt.length > 150 ? `${rawExcerpt.slice(0, 150)}...` : rawExcerpt) : ''
+  const { text: subtitleText } = decodeSummary(post.subtitle)
+  const excerpt = getPostExcerpt(post, 150)
 
   return (
     <motion.button
@@ -55,14 +55,9 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 line-clamp-1">
             {post.title || 'Untitled'}
           </p>
-          {post.subtitle && (
-            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 mt-0.5">
-              {post.subtitle}
-            </p>
-          )}
-          {excerpt && (
+          {(subtitleText || excerpt) && (
             <p className="text-sm text-gray-500 line-clamp-2 mt-0.5">
-              {excerpt}
+              {subtitleText || excerpt}
             </p>
           )}
           {post.labels && (

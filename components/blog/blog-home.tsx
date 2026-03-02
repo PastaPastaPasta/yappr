@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { blogCommentService, blogPostService } from '@/lib/services'
-import { estimateReadingTime, extractText, getBlogPostUrl, parseLabels } from '@/lib/blog/content-utils'
+import { estimateReadingTime, getBlogPostUrl, getPostExcerpt, parseLabels } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
@@ -148,7 +148,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       ) : (
         <div className="space-y-3">
           {pagedPosts.map((post) => {
-            const excerpt = extractText(post.content).slice(0, 200)
+            const excerpt = getPostExcerpt(post, 200)
             const href = getBlogPostUrl(blog.id, post.slug)
 
             return (
@@ -159,8 +159,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--blog-heading)', fontFamily: 'var(--blog-heading-font)' }}>
                   {post.title}
                 </h3>
-                {post.subtitle && <p className="text-sm text-[var(--blog-text)]/80">{post.subtitle}</p>}
-                {excerpt && <p className="mt-2 text-sm text-[var(--blog-text)]/75">{excerpt}{excerpt.length >= 200 ? '...' : ''}</p>}
+                {excerpt && <p className="mt-2 line-clamp-2 text-sm text-[var(--blog-text)]/75">{excerpt}</p>}
                 <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blog-text)]/60">
                   <span>{post.createdAt.toLocaleDateString()}</span>
                   <span>• {estimateReadingTime(post.content)} min read</span>

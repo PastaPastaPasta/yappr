@@ -1,3 +1,54 @@
+/** Zero-width space used to flag a summary as hidden from the post view. */
+export const SUMMARY_HIDDEN_PREFIX = '\u200B'
+
+/** Encode a summary string, prepending the hidden sentinel when `hidden` is true. */
+export function encodeSummary(text: string, hidden: boolean): string {
+  return hidden ? `${SUMMARY_HIDDEN_PREFIX}${text}` : text
+}
+
+/** Decode a raw subtitle/summary, stripping any hidden prefix. */
+export function decodeSummary(raw?: string): { text: string; hidden: boolean } {
+  if (!raw) return { text: '', hidden: false }
+  if (raw.startsWith(SUMMARY_HIDDEN_PREFIX)) {
+    return { text: raw.slice(SUMMARY_HIDDEN_PREFIX.length), hidden: true }
+  }
+  return { text: raw, hidden: false }
+}
+
+/**
+ * Extract text from only the first text-bearing block (paragraph or heading).
+ * Skips image, video, audio, file, and other non-text blocks.
+ */
+export function extractFirstTextBlock(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue
+    const node = block as Record<string, unknown>
+    const type = node.type as string | undefined
+    if (type === 'paragraph' || type === 'heading') {
+      const text = extractInlineText(node.content).trim()
+      if (text) return text
+    }
+  }
+  return ''
+}
+
+/**
+ * Unified excerpt for listing cards: uses decoded summary if present,
+ * otherwise falls back to extractFirstTextBlock. Truncates at maxLength.
+ */
+export function getPostExcerpt(
+  post: { subtitle?: string; content?: unknown; blogContent?: unknown },
+  maxLength = 200,
+): string {
+  const { text: summary } = decodeSummary(post.subtitle)
+  const source = summary || extractFirstTextBlock(post.blogContent ?? post.content)
+  if (!source) return ''
+  const clean = source.replace(/\s+/g, ' ').trim()
+  return clean.length > maxLength ? `${clean.slice(0, maxLength)}...` : clean
+}
+
 export function extractText(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {

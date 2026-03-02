@@ -4,7 +4,7 @@ import Link from 'next/link'
 import type { Post } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { extractText, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { decodeSummary, extractFirstTextBlock, getBlogPostUrl } from '@/lib/blog/content-utils'
 
 export type EmbeddedBlogPostLike = Post
 
@@ -14,7 +14,7 @@ interface EmbeddedBlogPostCardProps {
 }
 
 function toExcerpt(post: EmbeddedBlogPostLike): string {
-  const raw = extractText(post.blogContent ?? post.content).replace(/\s+/g, ' ').trim()
+  const raw = extractFirstTextBlock(post.blogContent ?? post.content).replace(/\s+/g, ' ').trim()
   if (!raw) return ''
   return raw.length > 150 ? `${raw.slice(0, 150)}...` : raw
 }
@@ -33,7 +33,8 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
     : '#'
   const excerpt = toExcerpt(post)
   const blogLabel = post.blogName || post.author.displayName
-  const subtitle = post.subtitle || (excerpt !== post.title ? excerpt : '')
+  const { text: decodedSubtitle } = decodeSummary(post.subtitle)
+  const subtitle = decodedSubtitle || (excerpt !== post.title ? excerpt : '')
 
   return (
     <Link

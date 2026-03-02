@@ -11,7 +11,7 @@ import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService, blogService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
-import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
+import { labelsToCsv, parseLabels, decodeSummary, encodeSummary } from '@/lib/blog/content-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
 import type { Blog, BlogPost } from '@/lib/types'
@@ -35,6 +35,7 @@ interface DraftData {
   labels: string
   commentsEnabled: boolean
   blocks: unknown[]
+  summaryHidden?: boolean
 }
 
 function loadDraft(identityId: string, blogId: string): DraftData | null {
@@ -57,8 +58,11 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     return loadDraft(user.identityId, blog.id)
   }, [isEditing, user?.identityId, blog.id])
 
+  const editDecoded = useMemo(() => decodeSummary(editPost?.subtitle), [editPost?.subtitle])
+
   const [title, setTitle] = useState(editPost?.title ?? savedDraft?.title ?? '')
-  const [subtitle, setSubtitle] = useState(editPost?.subtitle ?? savedDraft?.subtitle ?? '')
+  const [summary, setSummary] = useState(editDecoded.text || savedDraft?.subtitle || '')
+  const [summaryHidden, setSummaryHidden] = useState(editDecoded.hidden || savedDraft?.summaryHidden || false)
   const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? savedDraft?.coverImage ?? '')
   const [labels, setLabels] = useState(editPost?.labels ?? savedDraft?.labels ?? '')
   const [customLabel, setCustomLabel] = useState('')
@@ -165,11 +169,12 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     const timeout = setTimeout(() => {
       const draft: DraftData = {
         title,
-        subtitle,
+        subtitle: summary,
         coverImage,
         labels,
         commentsEnabled,
         blocks,
+        summaryHidden,
       }
       try {
         localStorage.setItem(draftKey, JSON.stringify(draft))
@@ -180,7 +185,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     }, 700)
 
     return () => clearTimeout(timeout)
-  }, [blocks, commentsEnabled, coverImage, draftKey, isEditing, labels, subtitle, title])
+  }, [blocks, commentsEnabled, coverImage, draftKey, isEditing, labels, summary, summaryHidden, title])
 
   const toggleLabel = (label: string) => {
     if (selectedLabels.includes(label)) {
@@ -219,9 +224,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       return
     }
 
+    const trimmedSummary = summary.trim()
     const postFields = {
       title: title.trim(),
-      subtitle: subtitle.trim() || undefined,
+      subtitle: trimmedSummary ? encodeSummary(trimmedSummary, summaryHidden) : undefined,
       coverImage: coverImage || undefined,
       labels: labels || undefined,
       commentsEnabled,
@@ -250,7 +256,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
         toast.success('Post published')
         onPublished?.(created)
         setTitle('')
-        setSubtitle('')
+        setSummary('')
+        setSummaryHidden(false)
         setCoverImage('')
         setLabels('')
         setCustomLabel('')
@@ -514,15 +521,30 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
               </div>
             )}
 
-            {/* Subtitle */}
-            <input
-              type="text"
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              maxLength={256}
-              placeholder="Add a subtitle..."
-              className="mt-3 w-full bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
-            />
+            {/* Summary */}
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="text"
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                maxLength={255}
+                placeholder="Add a summary..."
+                className="min-w-0 flex-1 bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
+              />
+              {summary.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setSummaryHidden((prev) => !prev)}
+                  className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                    summaryHidden
+                      ? 'bg-gray-800/60 text-gray-500'
+                      : 'bg-yappr-500/20 text-yappr-300'
+                  }`}
+                >
+                  {summaryHidden ? 'Hidden from post' : 'Visible on post'}
+                </button>
+              )}
+            </div>
 
             {/* Inline labels — always visible */}
             <div className="mt-4 flex flex-wrap items-center gap-1.5">

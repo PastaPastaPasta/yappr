@@ -18,7 +18,7 @@ import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
-import { estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { decodeSummary, estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { ReadingPreferencesPopover } from './reading-preferences'
@@ -58,6 +58,7 @@ function BlogAvatar({ blog, size }: { blog: Blog; size: 'sm' | 'md' }) {
 
 export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const blocks = Array.isArray(post.content) ? post.content : []
+  const { text: summaryText, hidden: summaryHidden } = decodeSummary(post.subtitle)
   const { setQuotingPost, setComposeOpen } = useAppStore()
   const { requireAuth } = useRequireAuth()
   const { user } = useAuth()
@@ -108,7 +109,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         joinedAt: new Date(0),
         hasDpns: true,
       },
-      content: post.subtitle || post.title,
+      content: summaryText || post.title,
       createdAt: post.createdAt,
       likes: 0,
       reposts: 0,
@@ -116,7 +117,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       views: 0,
       __isBlogPostQuote: true,
       title: post.title,
-      subtitle: post.subtitle,
+      subtitle: summaryText || undefined,
       slug: post.slug,
       coverImage: post.coverImage,
       blogId: blog.id,
@@ -179,9 +180,9 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             {post.title}
           </h1>
 
-          {post.subtitle && (
+          {summaryText && !summaryHidden && (
             <p className="mt-2 text-lg" style={{ color: 'var(--blog-text)', opacity: 0.7 }}>
-              {post.subtitle}
+              {summaryText}
             </p>
           )}
 
