@@ -25,6 +25,8 @@ interface BlogThemeProviderProps {
   children: ReactNode
   readerOverrides?: CSSProperties
   contentFontSize?: string
+  hideHeader?: boolean
+  hideOuterChrome?: boolean
 }
 
 function getLayoutClass(layout: BlogThemeConfig['layout']): string {
@@ -138,6 +140,8 @@ export function BlogThemeProvider({
   children,
   readerOverrides,
   contentFontSize,
+  hideHeader,
+  hideOuterChrome,
 }: BlogThemeProviderProps) {
   const theme = useMemo(
     () => themeConfig ? normalizeBlogThemeConfig(themeConfig) : getDefaultBlogThemeConfig(),
@@ -174,7 +178,7 @@ export function BlogThemeProvider({
     <section
       className={cn(
         customScopeClass,
-        'rounded-2xl border border-[var(--blog-border)] p-4 shadow-[0_1px_0_rgba(255,255,255,0.05)_inset] md:p-6'
+        !hideOuterChrome && 'rounded-2xl border border-[var(--blog-border)] p-4 shadow-[0_1px_0_rgba(255,255,255,0.05)_inset] md:p-6'
       )}
       style={{ ...getContainerStyle(theme), ...readerOverrides }}
     >
@@ -184,17 +188,19 @@ export function BlogThemeProvider({
       </style>
 
       <div className={cn(getLayoutClass(theme.layout), 'blog-theme-root')} style={{ fontFamily: 'var(--blog-body-font)' }}>
-        <ThemeHeader
-          headerStyle={theme.headerStyle}
-          blogName={blogName}
-          blogDescription={blogDescription}
-          username={username}
-          headerImage={headerImage}
-          title={title}
-          subtitle={subtitle}
-          meta={meta}
-          gradientCSS={gradientCSS}
-        />
+        {!hideHeader && (
+          <ThemeHeader
+            headerStyle={theme.headerStyle}
+            blogName={blogName}
+            blogDescription={blogDescription}
+            username={username}
+            headerImage={headerImage}
+            title={title}
+            subtitle={subtitle}
+            meta={meta}
+            gradientCSS={gradientCSS}
+          />
+        )}
 
         {theme.layout === 'magazine' ? (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
