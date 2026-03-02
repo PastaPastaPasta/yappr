@@ -405,7 +405,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
       {/* Writing canvas */}
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[640px] px-4 py-8">
+        <div className="mx-auto max-w-[640px] px-4 pt-8 pb-[60vh]">
           {/* Header area — invisible cover image drop zone */}
           <div
             {...coverDropProps}
