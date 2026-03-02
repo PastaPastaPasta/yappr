@@ -150,7 +150,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       blogName={blog.name}
       blogDescription={blog.description}
       username={username}
-      headerImage={blog.headerImage || post.coverImage}
+      headerImage={blog.headerImage}
       labels={blog.labels}
       title={post.title}
       subtitle={post.subtitle}
@@ -224,7 +224,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         </div>
 
         {post.coverImage && (
-          <IpfsImage src={post.coverImage} alt={post.title} className="h-72 w-full rounded-2xl object-cover sm:h-80 lg:h-96" />
+          <IpfsImage src={post.coverImage} alt={post.title} className="w-full rounded-2xl" />
         )}
 
         <BlogViewer blocks={blocks} />

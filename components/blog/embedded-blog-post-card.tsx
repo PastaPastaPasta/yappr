@@ -40,24 +40,24 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
       href={href}
       onClick={(event) => event.stopPropagation()}
       className={cn(
-        'mt-3 flex overflow-hidden rounded-xl border border-gray-700/80 hover:border-yappr-500/60 bg-gray-900/40 hover:bg-gray-900/60 transition-all group',
+        'mt-3 block overflow-hidden rounded-xl border border-gray-700/80 hover:border-yappr-500/60 bg-gray-900/40 hover:bg-gray-900/60 transition-all group',
         className
       )}
     >
-      {/* Left accent */}
-      <div className="w-1 flex-shrink-0 bg-yappr-500/70 group-hover:bg-yappr-400 transition-colors" />
+      {/* Cover image — full width banner */}
+      {post.coverImage && (
+        <IpfsImage
+          src={post.coverImage}
+          alt={post.title || 'Blog post cover'}
+          className="w-full max-h-48 object-cover"
+        />
+      )}
 
-      <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
-        {/* Cover image thumbnail */}
-        {post.coverImage && (
-          <IpfsImage
-            src={post.coverImage}
-            alt={post.title || 'Blog post cover'}
-            className="h-14 w-14 flex-shrink-0 rounded-lg object-cover"
-          />
-        )}
+      <div className="flex">
+        {/* Left accent */}
+        <div className="w-1 flex-shrink-0 bg-yappr-500/70 group-hover:bg-yappr-400 transition-colors" />
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 px-3 py-2.5">
           {/* Source line */}
           <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 text-yappr-400 flex-shrink-0">
