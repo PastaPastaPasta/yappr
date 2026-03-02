@@ -191,7 +191,7 @@ export async function deriveOnchainKey(
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt.buffer as ArrayBuffer,
       iterations,
       hash: 'SHA-256'
     },
@@ -227,7 +227,7 @@ export async function encryptKeyForOnchain(
   // Encrypt the private key
   const encoder = new TextEncoder()
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
     key,
     encoder.encode(privateKeyWif)
   )
@@ -263,7 +263,7 @@ export async function decryptKeyFromOnchain(
 
   try {
     const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
       key,
       ciphertext
     )
@@ -350,7 +350,7 @@ export async function encryptExtendedBackup(
   const encoder = new TextEncoder()
   const payloadJson = JSON.stringify(payload)
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
     key,
     encoder.encode(payloadJson)
   )

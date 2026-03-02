@@ -10,9 +10,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@blocknote/core": "^0.24.2",
-    "@blocknote/mantine": "^0.24.2",
-    "@blocknote/react": "^0.24.2",
+    "@blocknote/core": "^0.47.0",
+    "@blocknote/mantine": "^0.47.0",
+    "@blocknote/react": "^0.47.0",
     "@dashevo/evo-sdk": "3.1.0-dev.1",
     "@dicebear/collection": "^9.2.4",
     "@dicebear/core": "^9.2.4",
@@ -20,7 +20,9 @@
     "@emoji-mart/react": "^1.1.1",
     "@headlessui/react": "^1.7.18",
     "@heroicons/react": "^2.1.1",
-    "@mantine/core": "^7.17.8",
+    "@mantine/core": "^8.3.11",
+    "@mantine/hooks": "^8.3.11",
+    "@mantine/utils": "^6.0.22",
     "@noble/ciphers": "^2.1.1",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",

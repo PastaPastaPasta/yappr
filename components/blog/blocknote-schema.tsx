@@ -6,12 +6,11 @@ import {
   BlockNoteSchema,
   defaultBlockSpecs,
   defaultProps,
-  filterSuggestionItems,
-  insertOrUpdateBlock,
   type BlockSchema,
   type InlineContentSchema,
   type StyleSchema,
 } from '@blocknote/core'
+import { filterSuggestionItems, insertOrUpdateBlockForSlashMenu } from '@blocknote/core/extensions'
 import {
   createReactBlockSpec,
   getDefaultReactSlashMenuItems,
@@ -720,18 +719,18 @@ const imageBlock = createReactBlockSpec(
 export const blogBlockNoteSchema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
-    image: imageBlock,
-    video: videoBlock,
-    backgroundSection: backgroundSectionBlock,
-    callout: calloutBlock,
-    divider: dividerBlock,
-    spacer: spacerBlock,
-    tableOfContents: tableOfContentsBlock,
-    codeBlock,
-    videoEmbed: videoEmbedBlock,
-    simpleTable: simpleTableBlock,
-    columnLayout: columnLayoutBlock,
-    footnote: footnoteBlock,
+    image: imageBlock(),
+    video: videoBlock(),
+    backgroundSection: backgroundSectionBlock(),
+    callout: calloutBlock(),
+    divider: dividerBlock(),
+    spacer: spacerBlock(),
+    tableOfContents: tableOfContentsBlock(),
+    codeBlock: codeBlock(),
+    videoEmbed: videoEmbedBlock(),
+    simpleTable: simpleTableBlock(),
+    columnLayout: columnLayoutBlock(),
+    footnote: footnoteBlock(),
   },
 })
 
@@ -750,7 +749,7 @@ export function getBlogSlashMenuItems<
       group: 'Blog blocks',
       icon: <ListBulletIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, { type: 'tableOfContents' } as never)
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, { type: 'tableOfContents' } as never)
       },
     },
     {
@@ -760,7 +759,7 @@ export function getBlogSlashMenuItems<
       group: 'Blog blocks',
       icon: <CodeBracketIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'codeBlock',
           props: { language: 'javascript', code: '' },
         } as never)
@@ -773,7 +772,7 @@ export function getBlogSlashMenuItems<
       group: 'Blog blocks',
       icon: <FilmIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'videoEmbed',
           props: { url: '' },
         } as never)
@@ -786,7 +785,7 @@ export function getBlogSlashMenuItems<
       group: 'Blog blocks',
       icon: <TableCellsIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'simpleTable',
           props: {
             rows: 3,
@@ -803,7 +802,7 @@ export function getBlogSlashMenuItems<
       group: 'Blog blocks',
       icon: <ViewColumnsIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'columnLayout',
           props: { columns: '2' },
           content: 'Column 1 | Column 2',
@@ -817,7 +816,7 @@ export function getBlogSlashMenuItems<
       group: 'Blog blocks',
       icon: <HashtagIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'footnote',
           props: { noteId: '' },
           content: 'Footnote text',
@@ -831,7 +830,7 @@ export function getBlogSlashMenuItems<
       group: 'Basic blocks',
       icon: <SwatchIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'backgroundSection',
           content: 'Write highlighted content...',
         } as never)
@@ -844,7 +843,7 @@ export function getBlogSlashMenuItems<
       group: 'Basic blocks',
       icon: <InformationCircleIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, {
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, {
           type: 'callout',
           content: 'Write callout text...',
         } as never)
@@ -857,7 +856,7 @@ export function getBlogSlashMenuItems<
       group: 'Basic blocks',
       icon: <MinusIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, { type: 'divider' } as never)
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, { type: 'divider' } as never)
       },
     },
     {
@@ -867,7 +866,7 @@ export function getBlogSlashMenuItems<
       group: 'Basic blocks',
       icon: <ArrowsUpDownIcon className="h-4 w-4" />,
       onItemClick: () => {
-        insertOrUpdateBlock(editor as unknown as BlockNoteEditor, { type: 'spacer' } as never)
+        insertOrUpdateBlockForSlashMenu(editor as unknown as BlockNoteEditor, { type: 'spacer' } as never)
       },
     },
   ]
