@@ -74,8 +74,13 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     try {
       const result = await upload(file)
       insertImageBlock(`ipfs://${result.cid}`, file.name)
-    } catch {
-      // Error state is already set by useImageUpload hook and displayed in the UI.
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Image upload failed'
+      if (msg.toLowerCase().includes('provider')) {
+        toast.error('No storage provider connected. Set one up in Settings to upload images.')
+      } else {
+        toast.error(msg)
+      }
     }
   }, [clearError, insertImageBlock, upload])
 
