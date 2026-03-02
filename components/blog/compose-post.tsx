@@ -48,6 +48,18 @@ function loadDraft(identityId: string, blogId: string): DraftData | null {
   }
 }
 
+function resolveCommentsEnabled(editPost?: BlogPost, savedDraft?: DraftData | null, blog?: Blog): boolean {
+  if (editPost) return Boolean(editPost.commentsEnabled ?? true)
+  if (savedDraft) return Boolean(savedDraft.commentsEnabled ?? true)
+  return Boolean(blog?.commentsEnabledDefault ?? true)
+}
+
+function resolveInitialBlocks(editPost?: BlogPost, savedDraft?: DraftData | null): unknown[] {
+  if (editPost && Array.isArray(editPost.content)) return editPost.content
+  if (savedDraft && Array.isArray(savedDraft.blocks)) return savedDraft.blocks
+  return []
+}
+
 export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: ComposePostProps) {
   const isEditing = Boolean(editPost)
   const { user } = useAuth()
@@ -67,14 +79,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
   const [labels, setLabels] = useState(editPost?.labels ?? savedDraft?.labels ?? '')
   const [customLabel, setCustomLabel] = useState('')
   const [commentsEnabled, setCommentsEnabled] = useState(
-    editPost ? Boolean(editPost.commentsEnabled ?? true)
-      : savedDraft ? Boolean(savedDraft.commentsEnabled ?? true)
-      : Boolean(blog.commentsEnabledDefault ?? true)
+    resolveCommentsEnabled(editPost, savedDraft, blog)
   )
   const [blocks, setBlocks] = useState<unknown[]>(
-    editPost && Array.isArray(editPost.content) ? editPost.content
-      : savedDraft && Array.isArray(savedDraft.blocks) ? savedDraft.blocks
-      : []
+    resolveInitialBlocks(editPost, savedDraft)
   )
   const [isPublishing, setIsPublishing] = useState(false)
   const [compressedBytes, setCompressedBytes] = useState(0)

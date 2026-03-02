@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { estimateReadingTime, getPostExcerpt, decodeSummary, parseLabels } from '@/lib/blog/content-utils'
+import { estimateReadingTime, getPostExcerpt, parseLabels } from '@/lib/blog/content-utils'
 import type { BlogPostWithAuthor } from '@/lib/types'
 
 interface BlogPostCardProps {
@@ -12,7 +12,6 @@ interface BlogPostCardProps {
 
 export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogPostCardProps) {
   const isDisabled = !post.authorUsername || !post.slug
-  const { text: subtitleText } = decodeSummary(post.subtitle)
   const excerpt = getPostExcerpt(post, 150)
 
   return (
@@ -55,9 +54,9 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 line-clamp-1">
             {post.title || 'Untitled'}
           </p>
-          {(subtitleText || excerpt) && (
+          {excerpt && (
             <p className="text-sm text-gray-500 line-clamp-2 mt-0.5">
-              {subtitleText || excerpt}
+              {excerpt}
             </p>
           )}
           {post.labels && (
