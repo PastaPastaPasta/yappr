@@ -172,7 +172,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     >
       <div className="relative">
         {/* Main article column */}
-        <article className="mx-auto max-w-[900px]">
+        <article className="mx-auto max-w-5xl">
           <h1
             className="text-3xl font-bold leading-tight tracking-tight sm:text-4xl"
             style={{ color: 'var(--blog-heading)', fontFamily: 'var(--blog-heading-font)' }}
@@ -321,7 +321,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         </article>
 
         {/* Floating action sidebar -- xl+ only */}
-        <aside className="absolute left-[calc(50%+370px)] top-0 hidden xl:block">
+        <aside className="absolute left-[calc(50%+540px)] top-0 hidden xl:block">
           <div className="sticky top-24 flex flex-col items-center gap-4">
             <button type="button" className={SIDEBAR_BUTTON_CLASS} aria-label="Like">
               <HeartIcon className="h-5 w-5 text-gray-400 transition group-hover:text-red-500" />
