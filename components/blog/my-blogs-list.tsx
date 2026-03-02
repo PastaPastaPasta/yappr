@@ -42,7 +42,7 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
   return (
     <div className="mb-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-300">My Blogs</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">My Blogs</h2>
         <Button onClick={() => setOpenCreate(true)}>
           <PlusIcon className="mr-2 h-4 w-4" />
           Create Blog
@@ -57,10 +57,10 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
             <button
               key={blog.id}
               onClick={() => onSelectBlog?.(blog)}
-              className="w-full rounded-xl border border-gray-800 bg-neutral-950 p-4 text-left hover:border-gray-700"
+              className="w-full rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-gray-300 dark:border-gray-800 dark:bg-neutral-950 dark:hover:border-gray-700"
             >
               <p className="text-lg font-semibold">{blog.name}</p>
-              {blog.description && <p className="mt-1 text-sm text-gray-400">{blog.description}</p>}
+              {blog.description && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{blog.description}</p>}
               <p className="mt-2 text-xs text-gray-500">{counts[blog.id] || 0} posts</p>
             </button>
           ))}
