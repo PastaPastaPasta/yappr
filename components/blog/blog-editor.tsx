@@ -45,7 +45,11 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     }
 
     debounceRef.current = setTimeout(() => {
-      reportBytes(getCompressedSize(blocks))
+      try {
+        reportBytes(getCompressedSize(blocks))
+      } catch {
+        reportBytes(0)
+      }
     }, 500)
   }, [editor, onChange, reportBytes])
 
@@ -100,7 +104,11 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
   })
 
   useEffect(() => {
-    reportBytes(getCompressedSize(editor.document as unknown[]))
+    try {
+      reportBytes(getCompressedSize(editor.document as unknown[]))
+    } catch {
+      reportBytes(0)
+    }
 
     return () => {
       if (debounceRef.current) {

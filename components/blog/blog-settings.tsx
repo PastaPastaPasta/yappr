@@ -57,6 +57,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   const persistLabels = async (nextLabels: string[]) => {
     setIsSavingLabels(true)
     const csv = labelsToCsv(nextLabels)
+    const previous = labels
     setLabels(csv)
 
     try {
@@ -66,6 +67,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
       onUpdated?.(updated)
       toast.success('Labels updated')
     } catch (err) {
+      setLabels(previous)
       logger.error('Failed to add label:', err)
       toast.error('Failed to update labels')
     } finally {

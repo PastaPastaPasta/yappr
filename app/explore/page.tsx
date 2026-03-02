@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -17,7 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
-import type { Post, BlogPostWithAuthor } from '@/lib/types'
+import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
 interface RawPostDocument {
@@ -43,6 +43,7 @@ export default function ExplorePage() {
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
+  const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
 
   // Load trending hashtags
   useEffect(() => {
@@ -80,6 +81,7 @@ export default function ExplorePage() {
 
         const blogMap = new Map(allBlogs.map(b => [b.id, b]))
         const blogIds = allBlogs.map(b => b.id)
+        blogCacheRef.current = { blogIds, blogMap }
         const recentPosts = await blogPostService.getRecentPosts(blogIds, 10)
 
         if (recentPosts.length === 0) {
@@ -155,16 +157,22 @@ export default function ExplorePage() {
 
         setSearchResults(filtered)
 
-        // Search blog posts
-        const { blogService, blogPostService } = await import('@/lib/services')
+        // Search blog posts — reuse cached blog data from mount when available
+        const { blogPostService } = await import('@/lib/services')
 
-        const allBlogs = await blogService.getAllBlogs()
-        if (allBlogs.length > 0) {
+        let cached = blogCacheRef.current
+        if (!cached) {
+          const { blogService } = await import('@/lib/services')
+          const allBlogs = await blogService.getAllBlogs()
           const blogMap = new Map(allBlogs.map(b => [b.id, b]))
           const blogIds = allBlogs.map(b => b.id)
-          const matchingBlogPosts = await blogPostService.searchPosts(blogIds, searchQuery, 10)
+          cached = { blogIds, blogMap }
+          blogCacheRef.current = cached
+        }
 
-          const blogResults = await enrichBlogPostsWithAuthors(matchingBlogPosts, blogMap)
+        if (cached.blogIds.length > 0) {
+          const matchingBlogPosts = await blogPostService.searchPosts(cached.blogIds, searchQuery, 10)
+          const blogResults = await enrichBlogPostsWithAuthors(matchingBlogPosts, cached.blogMap)
           setBlogSearchResults(blogResults)
         } else {
           setBlogSearchResults([])
