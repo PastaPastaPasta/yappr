@@ -172,7 +172,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     >
       <div className="relative">
         {/* Main article column */}
-        <article className="mx-auto max-w-[680px]">
+        <article className="mx-auto max-w-[900px]">
           <h1
             className="text-3xl font-bold leading-tight tracking-tight sm:text-4xl"
             style={{ color: 'var(--blog-heading)', fontFamily: 'var(--blog-heading-font)' }}
