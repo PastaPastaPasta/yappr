@@ -146,8 +146,9 @@ const calloutBlock = createReactBlockSpec(
     content: 'inline',
   },
   {
-    render: ({ block, contentRef }) => {
+    render: ({ block, contentRef, editor }) => {
       const variant = block.props.variant
+      const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
       const variantClassMap: Record<string, string> = {
         info: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100',
         warning: 'border-amber-500/40 bg-amber-500/10 text-amber-100',
@@ -172,7 +173,19 @@ const calloutBlock = createReactBlockSpec(
         <div className={`rounded-xl border p-3 ${variantClassMap[variant] || variantClassMap.info}`}>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
             {iconMap[variant] || iconMap.info}
-            <span>{block.props.title || labelMap[variant] || 'Info'}</span>
+            {editable ? (
+              <select
+                value={variant}
+                className="cursor-pointer appearance-none border-none bg-transparent text-xs font-semibold uppercase tracking-wider text-inherit outline-none"
+                onChange={(e) => updateBlockProps(editor, block, { variant: e.target.value })}
+              >
+                {(['info', 'warning', 'tip', 'note'] as const).map((v) => (
+                  <option key={v} value={v} className="bg-gray-900 text-white">{labelMap[v]}</option>
+                ))}
+              </select>
+            ) : (
+              <span>{block.props.title || labelMap[variant] || 'Info'}</span>
+            )}
           </div>
           <div ref={contentRef} className="min-h-[24px] text-sm leading-relaxed" />
         </div>
