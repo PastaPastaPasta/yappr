@@ -157,95 +157,53 @@ function CheckoutPage() {
   })
 
   const validateCheckoutReadiness = useCallback(async (storeToValidate: Store | null): Promise<CheckoutReadinessState> => {
-    const currentStore = storeToValidate
-    if (!currentStore) {
-      const state: CheckoutReadinessState = {
+    function blocked(
+      blocker: CheckoutReadinessBlocker,
+      buyerEncryptionPrivateKey: Uint8Array | null = null
+    ): CheckoutReadinessState {
+      return {
         isReady: false,
-        blocker: 'no-payment-methods',
-        blockerMessage: getCheckoutReadinessMessage('no-payment-methods'),
+        blocker,
+        blockerMessage: getCheckoutReadinessMessage(blocker),
         sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
+        buyerEncryptionPrivateKey
       }
-      setCheckoutReadiness(state)
-      return state
     }
 
-    if (!currentStore.paymentUris || currentStore.paymentUris.length === 0) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'no-payment-methods',
-        blockerMessage: getCheckoutReadinessMessage('no-payment-methods'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
-      }
+    if (!storeToValidate?.paymentUris?.length) {
+      const state = blocked('no-payment-methods')
       setCheckoutReadiness(state)
       return state
     }
 
     if (!user?.identityId) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'missing-buyer-key',
-        blockerMessage: getCheckoutReadinessMessage('missing-buyer-key'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
-      }
+      const state = blocked('missing-buyer-key')
       setCheckoutReadiness(state)
       return state
     }
 
     const buyerPrivateKey = getEncryptionKeyBytes(user.identityId)
     if (!buyerPrivateKey) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'missing-buyer-key',
-        blockerMessage: getCheckoutReadinessMessage('missing-buyer-key'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
-      }
+      const state = blocked('missing-buyer-key')
       setCheckoutReadiness(state)
       return state
     }
 
     try {
-      const sellerIdentity = await identityService.getIdentity(currentStore.ownerId)
-      if (!sellerIdentity) {
-        const state: CheckoutReadinessState = {
-          isReady: false,
-          blocker: 'missing-seller-key',
-          blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
-          sellerEncryptionPublicKey: null,
-          buyerEncryptionPrivateKey: buyerPrivateKey
-        }
-        setCheckoutReadiness(state)
-        return state
-      }
-
-      const encryptionKey = sellerIdentity.publicKeys.find(
+      const sellerIdentity = await identityService.getIdentity(storeToValidate.ownerId)
+      const encryptionKey = sellerIdentity?.publicKeys.find(
         (key) => key.purpose === 1 && key.type === 0 && !key.disabledAt
       )
 
       if (!encryptionKey?.data) {
-        const state: CheckoutReadinessState = {
-          isReady: false,
-          blocker: 'missing-seller-key',
-          blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
-          sellerEncryptionPublicKey: null,
-          buyerEncryptionPrivateKey: buyerPrivateKey
-        }
+        const state = blocked('missing-seller-key', buyerPrivateKey)
         setCheckoutReadiness(state)
         return state
       }
 
       const sellerEncryptionPublicKey = normalizeKeyData(encryptionKey.data)
       if (!sellerEncryptionPublicKey) {
-        const state: CheckoutReadinessState = {
-          isReady: false,
-          blocker: 'invalid-seller-key',
-          blockerMessage: getCheckoutReadinessMessage('invalid-seller-key'),
-          sellerEncryptionPublicKey: null,
-          buyerEncryptionPrivateKey: buyerPrivateKey
-        }
+        const state = blocked('invalid-seller-key', buyerPrivateKey)
         setCheckoutReadiness(state)
         return state
       }
@@ -260,15 +218,9 @@ function CheckoutPage() {
       setCheckoutReadiness(state)
       return state
     } catch (err) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'missing-seller-key',
-        blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: buyerPrivateKey
-      }
-      setCheckoutReadiness(state)
       logger.error('Failed to validate checkout readiness:', err)
+      const state = blocked('missing-seller-key', buyerPrivateKey)
+      setCheckoutReadiness(state)
       return state
     }
   }, [user?.identityId])
@@ -296,11 +248,7 @@ function CheckoutPage() {
 
         setStore(storeData)
         setCartItems(items)
-
-        // Parse store policies
-        if (storeData) {
-          setStorePolicies(parseStorePolicies(storeData.policies))
-        }
+        setStorePolicies(parseStorePolicies(storeData.policies))
 
         // Select first payment URI by default
         if (storeData.paymentUris && storeData.paymentUris.length > 0) {
@@ -763,15 +711,23 @@ function CheckoutPage() {
           <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
-                onClick={() => step === 'address' ? router.back() : setStep(
-                  step === 'shipping' ? 'address' :
-                  step === 'policies' ? 'shipping' : 'policies'
-                )}
+                onClick={() => {
+                  if (step === 'address') { router.back(); return }
+                  if (step === 'shipping') { setStep('address'); return }
+                  if (step === 'policies') { setStep('shipping'); return }
+                  setStep('policies')
+                }}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
               <h1 className="text-xl font-bold">Checkout</h1>
+              <button
+                onClick={() => router.push('/cart')}
+                className="ml-auto text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Cancel
+              </button>
             </div>
 
             {/* Progress Steps */}
@@ -786,11 +742,11 @@ function CheckoutPage() {
                   <div key={s} className="flex items-center flex-1 last:flex-none">
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${
-                        isCurrent
-                          ? 'bg-yappr-500 text-white'
-                          : isComplete
-                            ? 'bg-green-500 text-white'
-                            : 'bg-gray-200 dark:bg-gray-800 text-gray-500'
+                        (() => {
+                          if (isCurrent) return 'bg-yappr-500 text-white'
+                          if (isComplete) return 'bg-green-500 text-white'
+                          return 'bg-gray-200 dark:bg-gray-800 text-gray-500'
+                        })()
                       }`}
                     >
                       {i + 1}
