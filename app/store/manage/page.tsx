@@ -18,6 +18,7 @@ import {
   KeyIcon,
   CreditCardIcon,
   ArrowUpTrayIcon,
+  ArrowDownTrayIcon,
   TableCellsIcon
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -38,6 +39,7 @@ import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { identityService } from '@/lib/services/identity-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 
 function StoreManagePage() {
@@ -232,6 +234,42 @@ function StoreManagePage() {
     } catch (error) {
       logger.error('Failed to add payment method:', error)
       toast.error('Failed to add payment method')
+    }
+  }
+
+  const [isImporting, setIsImporting] = useState(false)
+
+  const handleImportFromProfile = async () => {
+    if (!user?.identityId || !store?.id) return
+
+    try {
+      setIsImporting(true)
+      const profileUris = await unifiedProfileService.getPaymentUris(user.identityId)
+
+      if (profileUris.length === 0) {
+        toast('No payment addresses found on your profile', { icon: 'ℹ️' })
+        return
+      }
+
+      const currentUris = store.paymentUris || []
+      const currentUriSet = new Set(currentUris.map(u => u.uri))
+      const newUris = profileUris.filter(u => !currentUriSet.has(u.uri))
+
+      if (newUris.length === 0) {
+        toast('All profile payment methods already added', { icon: 'ℹ️' })
+        return
+      }
+
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: [...currentUris, ...newUris]
+      })
+      setStore(updatedStore)
+      toast.success(`Imported ${newUris.length} payment method${newUris.length !== 1 ? 's' : ''} from profile`)
+    } catch (error) {
+      logger.error('Failed to import payment methods:', error)
+      toast.error('Failed to import payment methods')
+    } finally {
+      setIsImporting(false)
     }
   }
 
@@ -635,10 +673,16 @@ function StoreManagePage() {
               <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-medium">Payment Methods</h3>
-                  <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
-                    <PlusIcon className="h-4 w-4 mr-1" />
-                    Add
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={handleImportFromProfile} disabled={isImporting}>
+                      <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
+                      {isImporting ? 'Importing...' : 'Import from Profile'}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
+                      <PlusIcon className="h-4 w-4 mr-1" />
+                      Add
+                    </Button>
+                  </div>
                 </div>
                 {store.paymentUris && store.paymentUris.length > 0 ? (
                   <div className="space-y-2">
