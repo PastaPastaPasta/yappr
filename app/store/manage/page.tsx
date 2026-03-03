@@ -241,8 +241,8 @@ function StoreManagePage() {
   const handleImportFromProfile = async () => {
     if (!user?.identityId || !store?.id) return
 
+    setIsImporting(true)
     try {
-      setIsImporting(true)
       const profileUris = await unifiedProfileService.getPaymentUris(user.identityId)
 
       if (profileUris.length === 0) {

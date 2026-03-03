@@ -16,7 +16,7 @@ const PAYMENT_SCHEMES = [
   { scheme: 'litecoin:', label: 'Litecoin', placeholder: 'ltc1qxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Litecoin wallet address' },
   { scheme: 'monero:', label: 'Monero', placeholder: '4xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Monero wallet address' },
   { scheme: 'dogecoin:', label: 'Dogecoin', placeholder: 'Dxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Dogecoin wallet address' },
-  { scheme: 'bitcoincash:', label: 'Bitcoin Cash', placeholder: 'bitcoincash:qxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Bitcoin Cash wallet address' },
+  { scheme: 'bitcoincash:', label: 'Bitcoin Cash', placeholder: 'qxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Bitcoin Cash wallet address' },
   { scheme: 'zcash:', label: 'Zcash', placeholder: 't1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Zcash wallet address' },
   { scheme: 'stellar:', label: 'Stellar', placeholder: 'Gxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Stellar (XLM) wallet address' },
   { scheme: 'ripple:', label: 'XRP', placeholder: 'rxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your XRP wallet address' },
@@ -26,6 +26,16 @@ const PAYMENT_SCHEMES = [
   { scheme: 'tron:', label: 'Tron', placeholder: 'Txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Tron (TRX) wallet address' },
   { scheme: 'lightning:', label: 'Lightning', placeholder: 'lnbc1xxxxxxxxxxxxxxxxx', hint: 'Your Lightning address or invoice' },
 ] as const
+
+function parseCustomUri(uri: string): { scheme: string; address: string } | null {
+  const colonIndex = uri.indexOf(':')
+  if (colonIndex <= 0) return null
+  const s = uri.substring(0, colonIndex + 1).toLowerCase()
+  const addr = uri.substring(colonIndex + 1)
+  if (!addr.trim()) return null
+  if (!APPROVED_PAYMENT_SCHEMES.includes(s as typeof APPROVED_PAYMENT_SCHEMES[number])) return null
+  return { scheme: s, address: addr.trim() }
+}
 
 interface PaymentMethodModalProps {
   isOpen: boolean
@@ -49,16 +59,6 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   if (!isOpen) return null
 
   const selectedScheme = PAYMENT_SCHEMES.find(s => s.scheme === scheme) || PAYMENT_SCHEMES[0]
-
-  const parseCustomUri = (uri: string): { scheme: string; address: string } | null => {
-    const colonIndex = uri.indexOf(':')
-    if (colonIndex <= 0) return null
-    const s = uri.substring(0, colonIndex + 1).toLowerCase()
-    const addr = uri.substring(colonIndex + 1)
-    if (!addr.trim()) return null
-    if (!APPROVED_PAYMENT_SCHEMES.includes(s as typeof APPROVED_PAYMENT_SCHEMES[number])) return null
-    return { scheme: s, address: addr.trim() }
-  }
 
   const handleSubmit = async () => {
     let resolvedScheme: string
