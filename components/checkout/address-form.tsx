@@ -17,7 +17,6 @@ interface AddressFormProps {
   onSavedAddressSelect?: (id: string | null) => void
   onManageSavedAddresses?: () => void
   // Optional shipping toggle
-  optional?: boolean
   includeShipping?: boolean
   onIncludeShippingChange?: (include: boolean) => void
 }
@@ -32,7 +31,6 @@ export function AddressForm({
   selectedSavedAddressId,
   onSavedAddressSelect,
   onManageSavedAddresses,
-  optional,
   includeShipping,
   onIncludeShippingChange
 }: AddressFormProps) {
@@ -70,7 +68,7 @@ export function AddressForm({
       )}
 
       {/* Optional shipping toggle */}
-      {optional && onIncludeShippingChange && (
+      {onIncludeShippingChange && (
         <div className="px-4 pt-4">
           <label className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50">
             <input

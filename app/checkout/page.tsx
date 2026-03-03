@@ -311,13 +311,13 @@ function CheckoutPage() {
 
   // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
-    if (!includeShipping || !sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) {
-      if (!includeShipping) {
-        setMatchedZone(null)
-        setShippingCost(0)
-      }
+    if (!includeShipping) {
+      setMatchedZone(null)
+      setShippingCost(0)
       return
     }
+
+    if (!sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) return
 
     const calculateShipping = async () => {
       try {
@@ -788,11 +788,10 @@ function CheckoutPage() {
               onAddressChange={setShippingAddress}
               onContactChange={setBuyerContact}
               onSubmit={handleDetailsSubmit}
-              savedAddresses={includeShipping ? savedAddresses : undefined}
-              selectedSavedAddressId={includeShipping ? selectedSavedAddressId : undefined}
-              onSavedAddressSelect={includeShipping ? handleSavedAddressSelect : undefined}
-              onManageSavedAddresses={includeShipping ? () => setShowAddressModal(true) : undefined}
-              optional
+              savedAddresses={savedAddresses}
+              selectedSavedAddressId={selectedSavedAddressId}
+              onSavedAddressSelect={handleSavedAddressSelect}
+              onManageSavedAddresses={() => setShowAddressModal(true)}
               includeShipping={includeShipping}
               onIncludeShippingChange={setIncludeShipping}
             />
