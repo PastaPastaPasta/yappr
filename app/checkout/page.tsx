@@ -857,7 +857,7 @@ function CheckoutPage() {
             </div>
           )}
           {step === 'review' && checkoutReadiness.isReady && (
-            <div className="space-y-0">
+            <div>
               <OrderReview
                 store={store}
                 items={cartItems}
