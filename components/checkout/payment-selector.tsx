@@ -13,7 +13,7 @@ interface PaymentSelectorProps {
   onSelect: (uri: ParsedPaymentUri | null) => void
   txid: string
   onTxidChange: (txid: string) => void
-  onSubmit: () => void
+  onSubmit?: () => void
   orderTotal?: number
   orderCurrency?: string
 }
@@ -132,13 +132,15 @@ export function PaymentSelector({
         </div>
       )}
 
-      <Button
-        className="w-full"
-        onClick={onSubmit}
-        disabled={!selected}
-      >
-        Review Order
-      </Button>
+      {onSubmit && (
+        <Button
+          className="w-full"
+          onClick={onSubmit}
+          disabled={!selected}
+        >
+          Review Order
+        </Button>
+      )}
     </div>
   )
 }

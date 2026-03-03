@@ -108,7 +108,7 @@ function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
-  const [step, setStep] = useState<'address' | 'shipping' | 'policies' | 'payment' | 'review'>('address')
+  const [step, setStep] = useState<'address' | 'shipping' | 'policies' | 'review'>('address')
   const [error, setError] = useState<string | null>(null)
 
   // Policies
@@ -599,7 +599,7 @@ function CheckoutPage() {
         .then((readiness) => {
           if (readiness.isReady) {
             setError(null)
-            setStep('payment')
+            setStep('review')
             return
           }
           setError(readiness.blockerMessage)
@@ -615,7 +615,7 @@ function CheckoutPage() {
     setError(null)
     const readiness = await validateCheckoutReadiness(store)
     if (readiness.isReady) {
-      setStep('payment')
+      setStep('review')
       return
     }
 
@@ -628,11 +628,6 @@ function CheckoutPage() {
     if (readiness.blockerMessage) {
       setError(readiness.blockerMessage)
     }
-  }
-
-  const handlePaymentSubmit = () => {
-    if (!selectedPaymentUri) return
-    setStep('review')
   }
 
   const handlePolicyAgreementChange = (index: number, agreed: boolean) => {
@@ -770,8 +765,7 @@ function CheckoutPage() {
               <button
                 onClick={() => step === 'address' ? router.back() : setStep(
                   step === 'shipping' ? 'address' :
-                  step === 'policies' ? 'shipping' :
-                  step === 'payment' ? 'policies' : 'payment'
+                  step === 'policies' ? 'shipping' : 'policies'
                 )}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
@@ -782,8 +776,8 @@ function CheckoutPage() {
 
             {/* Progress Steps */}
             <div className="flex items-center px-4 pb-4">
-              {['address', 'shipping', 'policies', 'payment', 'review'].map((s, i) => {
-                const steps = ['address', 'shipping', 'policies', 'payment', 'review']
+              {['address', 'shipping', 'policies', 'review'].map((s, i) => {
+                const steps = ['address', 'shipping', 'policies', 'review']
                 const currentIndex = steps.indexOf(step)
                 const isComplete = currentIndex > i
                 const isCurrent = step === s
@@ -801,7 +795,7 @@ function CheckoutPage() {
                     >
                       {i + 1}
                     </div>
-                    {i < 4 && (
+                    {i < 3 && (
                       <div
                         className={`flex-1 h-0.5 mx-2 ${
                           isComplete ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800'
@@ -881,20 +875,8 @@ function CheckoutPage() {
             />
           )}
 
-          {/* Payment Step */}
-          {step === 'payment' && checkoutReadiness.isReady && (
-            <PaymentSelector
-              paymentUris={store?.paymentUris || []}
-              selected={selectedPaymentUri}
-              onSelect={setSelectedPaymentUri}
-              txid={txid}
-              onTxidChange={setTxid}
-              onSubmit={handlePaymentSubmit}
-              orderTotal={total}
-              orderCurrency={currency}
-            />
-          )}
-          {step === 'payment' && !checkoutReadiness.isReady && (
+          {/* Review & Pay Step */}
+          {step === 'review' && !checkoutReadiness.isReady && (
             <div className="p-4 space-y-4">
               <div className="p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
                 <p className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">
@@ -918,25 +900,68 @@ function CheckoutPage() {
               </Button>
             </div>
           )}
+          {step === 'review' && checkoutReadiness.isReady && (
+            <div className="space-y-0">
+              <OrderReview
+                store={store}
+                items={cartItems}
+                shippingAddress={shippingAddress}
+                shippingCost={shippingCost}
+                subtotal={subtotal}
+                total={total}
+                currency={currency}
+              />
 
-          {/* Review Step */}
-          {step === 'review' && (
-            <OrderReview
-              store={store}
-              items={cartItems}
-              shippingAddress={shippingAddress}
-              shippingCost={shippingCost}
-              subtotal={subtotal}
-              total={total}
-              currency={currency}
-              notes={notes}
-              onNotesChange={setNotes}
-              refundAddress={refundAddress}
-              onRefundAddressChange={setRefundAddress}
-              paymentScheme={selectedPaymentUri?.scheme}
-              onSubmit={handlePlaceOrder}
-              isSubmitting={isSubmitting}
-            />
+              <PaymentSelector
+                paymentUris={store?.paymentUris || []}
+                selected={selectedPaymentUri}
+                onSelect={setSelectedPaymentUri}
+                txid={txid}
+                onTxidChange={setTxid}
+                orderTotal={total}
+                orderCurrency={currency}
+              />
+
+              <div className="p-4 space-y-4">
+                {/* Notes */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Any special instructions for the seller"
+                    rows={2}
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+                  />
+                </div>
+
+                {/* Refund Address */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Refund Address (optional){selectedPaymentUri?.scheme && <span className="text-gray-500 font-normal"> - {selectedPaymentUri.scheme}</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={refundAddress}
+                    onChange={(e) => setRefundAddress(e.target.value)}
+                    placeholder={`Your ${selectedPaymentUri?.scheme || 'crypto'} address for refunds`}
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
+                  />
+                </div>
+
+                <Button
+                  className="w-full"
+                  onClick={handlePlaceOrder}
+                  disabled={!selectedPaymentUri || isSubmitting}
+                >
+                  {isSubmitting ? 'Placing Order...' : 'Place Order'}
+                </Button>
+
+                <p className="text-xs text-center text-gray-500">
+                  Your order details will be encrypted and sent securely to the seller.
+                </p>
+              </div>
+            </div>
           )}
         </main>
       </div>

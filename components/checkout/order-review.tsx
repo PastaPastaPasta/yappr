@@ -14,13 +14,13 @@ interface OrderReviewProps {
   subtotal: number
   total: number
   currency: string
-  notes: string
-  onNotesChange: (notes: string) => void
-  refundAddress: string
-  onRefundAddressChange: (addr: string) => void
+  notes?: string
+  onNotesChange?: (notes: string) => void
+  refundAddress?: string
+  onRefundAddressChange?: (addr: string) => void
   paymentScheme?: string
-  onSubmit: () => void
-  isSubmitting: boolean
+  onSubmit?: () => void
+  isSubmitting?: boolean
 }
 
 export function OrderReview({
@@ -111,42 +111,50 @@ export function OrderReview({
       </div>
 
       {/* Notes */}
-      <div>
-        <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
-        <textarea
-          value={notes}
-          onChange={(e) => onNotesChange(e.target.value)}
-          placeholder="Any special instructions for the seller"
-          rows={2}
-          className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
-        />
-      </div>
+      {onNotesChange && (
+        <div>
+          <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
+          <textarea
+            value={notes}
+            onChange={(e) => onNotesChange(e.target.value)}
+            placeholder="Any special instructions for the seller"
+            rows={2}
+            className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+          />
+        </div>
+      )}
 
       {/* Refund Address */}
-      <div>
-        <label className="block text-sm font-medium mb-1">
-          Refund Address (optional){paymentScheme && <span className="text-gray-500 font-normal"> - {paymentScheme}</span>}
-        </label>
-        <input
-          type="text"
-          value={refundAddress}
-          onChange={(e) => onRefundAddressChange(e.target.value)}
-          placeholder={`Your ${paymentScheme || 'crypto'} address for refunds`}
-          className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
-        />
-      </div>
+      {onRefundAddressChange && (
+        <div>
+          <label className="block text-sm font-medium mb-1">
+            Refund Address (optional){paymentScheme && <span className="text-gray-500 font-normal"> - {paymentScheme}</span>}
+          </label>
+          <input
+            type="text"
+            value={refundAddress}
+            onChange={(e) => onRefundAddressChange(e.target.value)}
+            placeholder={`Your ${paymentScheme || 'crypto'} address for refunds`}
+            className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
+          />
+        </div>
+      )}
 
-      <Button
-        className="w-full"
-        onClick={onSubmit}
-        disabled={isSubmitting}
-      >
-        {isSubmitting ? 'Placing Order...' : 'Place Order'}
-      </Button>
+      {onSubmit && (
+        <>
+          <Button
+            className="w-full"
+            onClick={onSubmit}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? 'Placing Order...' : 'Place Order'}
+          </Button>
 
-      <p className="text-xs text-center text-gray-500">
-        Your order details will be encrypted and sent securely to the seller.
-      </p>
+          <p className="text-xs text-center text-gray-500">
+            Your order details will be encrypted and sent securely to the seller.
+          </p>
+        </>
+      )}
     </div>
   )
 }
