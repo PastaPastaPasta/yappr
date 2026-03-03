@@ -238,7 +238,7 @@ function CheckoutPage() {
         setIsLoading(true)
         const [storeData, items] = await Promise.all([
           storeService.getById(storeId),
-          Promise.resolve(cartService.getItemsForStore(storeId))
+          cartService.getItemsForStore(storeId)
         ])
 
         if (!storeData || items.length === 0) {
@@ -712,10 +712,12 @@ function CheckoutPage() {
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => {
-                  if (step === 'address') { router.back(); return }
-                  if (step === 'shipping') { setStep('address'); return }
-                  if (step === 'policies') { setStep('shipping'); return }
-                  setStep('policies')
+                  switch (step) {
+                    case 'address': router.back(); break
+                    case 'shipping': setStep('address'); break
+                    case 'policies': setStep('shipping'); break
+                    case 'review': setStep('policies'); break
+                  }
                 }}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
@@ -732,22 +734,19 @@ function CheckoutPage() {
 
             {/* Progress Steps */}
             <div className="flex items-center px-4 pb-4">
-              {['address', 'shipping', 'policies', 'review'].map((s, i) => {
-                const steps = ['address', 'shipping', 'policies', 'review']
+              {(['address', 'shipping', 'policies', 'review'] as const).map((s, i, steps) => {
                 const currentIndex = steps.indexOf(step)
                 const isComplete = currentIndex > i
                 const isCurrent = step === s
 
+                let stepClass = 'bg-gray-200 dark:bg-gray-800 text-gray-500'
+                if (isCurrent) stepClass = 'bg-yappr-500 text-white'
+                else if (isComplete) stepClass = 'bg-green-500 text-white'
+
                 return (
                   <div key={s} className="flex items-center flex-1 last:flex-none">
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${
-                        (() => {
-                          if (isCurrent) return 'bg-yappr-500 text-white'
-                          if (isComplete) return 'bg-green-500 text-white'
-                          return 'bg-gray-200 dark:bg-gray-800 text-gray-500'
-                        })()
-                      }`}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${stepClass}`}
                     >
                       {i + 1}
                     </div>
