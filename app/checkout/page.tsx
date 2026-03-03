@@ -107,7 +107,7 @@ function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
-  const [step, setStep] = useState<'details' | 'policies' | 'payment' | 'review'>('details')
+  const [step, setStep] = useState<'details' | 'policies' | 'payment'>('details')
   const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -730,7 +730,6 @@ function CheckoutPage() {
                     case 'details': router.back(); break
                     case 'policies': setStep('details'); break
                     case 'payment': setStep('policies'); break
-                    case 'review': setStep('payment'); break
                   }
                 }}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
@@ -748,7 +747,7 @@ function CheckoutPage() {
 
             {/* Progress Steps */}
             <div className="flex items-center px-4 pb-4">
-              {(['details', 'policies', 'payment', 'review'] as const).map((s, i, steps) => {
+              {(['details', 'policies', 'payment'] as const).map((s, i, steps) => {
                 const currentIndex = steps.indexOf(step)
                 const isComplete = currentIndex > i
                 const isCurrent = step === s
@@ -764,7 +763,7 @@ function CheckoutPage() {
                     >
                       {i + 1}
                     </div>
-                    {i < 3 && (
+                    {i < 2 && (
                       <div
                         className={`flex-1 h-0.5 mx-2 ${
                           isComplete ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800'
@@ -883,21 +882,8 @@ function CheckoutPage() {
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
                   />
                 </div>
-
-                <Button
-                  className="w-full"
-                  onClick={() => setStep('review')}
-                  disabled={!selectedPaymentUri}
-                >
-                  Continue to Review
-                </Button>
               </div>
-            </div>
-          )}
 
-          {/* Review & Place Order Step */}
-          {step === 'review' && (
-            <div>
               <OrderReview
                 store={store}
                 items={cartItems}
@@ -924,7 +910,7 @@ function CheckoutPage() {
                 <Button
                   className="w-full"
                   onClick={handlePlaceOrder}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !selectedPaymentUri}
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
                 </Button>
