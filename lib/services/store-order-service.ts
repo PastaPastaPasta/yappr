@@ -128,7 +128,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
    */
   buildOrderPayload(
     cartItems: CartItem[],
-    shippingAddress: ShippingAddress,
+    shippingAddress: ShippingAddress | undefined,
     buyerContact: BuyerContact,
     shippingCost: number,
     paymentUri: string,

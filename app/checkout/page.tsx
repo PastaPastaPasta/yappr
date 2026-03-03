@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
   AddressForm,
-  ShippingSelector,
   PaymentSelector,
   PolicyAgreement,
   OrderReview,
@@ -108,7 +107,8 @@ function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
-  const [step, setStep] = useState<'address' | 'shipping' | 'policies' | 'review'>('address')
+  const [step, setStep] = useState<'details' | 'policies' | 'payment' | 'review'>('details')
+  const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Policies
@@ -309,9 +309,15 @@ function CheckoutPage() {
     loadSavedAddresses().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
-  // Calculate shipping when address changes
+  // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
-    if (!sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) return
+    if (!includeShipping || !sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) {
+      if (!includeShipping) {
+        setMatchedZone(null)
+        setShippingCost(0)
+      }
+      return
+    }
 
     const calculateShipping = async () => {
       try {
@@ -350,7 +356,7 @@ function CheckoutPage() {
     }
 
     calculateShipping().catch((error) => logger.error(error))
-  }, [sdkReady, storeId, shippingAddress, cartItems])
+  }, [includeShipping, sdkReady, storeId, shippingAddress, cartItems])
 
   const subtotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
@@ -362,10 +368,15 @@ function CheckoutPage() {
 
   const currency = cartItems[0]?.currency || 'USD'
 
-  const handleAddressSubmit = () => {
-    // If using a saved address, go directly to shipping
+  const handleDetailsSubmit = () => {
+    if (!includeShipping) {
+      setStep('policies')
+      return
+    }
+
+    // If using a saved address, validate shipping then go to policies
     if (selectedSavedAddressId) {
-      setStep('shipping')
+      handleShippingValidation()
       return
     }
 
@@ -373,7 +384,7 @@ function CheckoutPage() {
     if (userHasEncryptionKey && userEncryptionPubKey) {
       setShowSavePrompt(true)
     } else {
-      setStep('shipping')
+      handleShippingValidation()
     }
   }
 
@@ -422,12 +433,12 @@ function CheckoutPage() {
 
       setSavedAddresses((prev) => [...prev, newAddress])
       setShowSavePrompt(false)
-      setStep('shipping')
+      handleShippingValidation()
     } catch (error) {
       logger.error('Failed to save address:', error)
       // Continue anyway
       setShowSavePrompt(false)
-      setStep('shipping')
+      handleShippingValidation()
     } finally {
       setIsSavingAddress(false)
     }
@@ -435,7 +446,7 @@ function CheckoutPage() {
 
   const handleSkipSave = () => {
     setShowSavePrompt(false)
-    setStep('shipping')
+    handleShippingValidation()
   }
 
   // Modal handlers for managing saved addresses
@@ -532,7 +543,7 @@ function CheckoutPage() {
     }
   }
 
-  const handleShippingSubmit = () => {
+  const handleShippingValidation = () => {
     // Allow checkout if: zone matched, zones failed to load, or store has no zones
     if (!matchedZone && !zonesLoadFailed && !hasNoZones) {
       setError('We cannot ship to this address. Please check your shipping address.')
@@ -547,7 +558,7 @@ function CheckoutPage() {
         .then((readiness) => {
           if (readiness.isReady) {
             setError(null)
-            setStep('review')
+            setStep('payment')
             return
           }
           setError(readiness.blockerMessage)
@@ -563,7 +574,7 @@ function CheckoutPage() {
     setError(null)
     const readiness = await validateCheckoutReadiness(store)
     if (readiness.isReady) {
-      setStep('review')
+      setStep('payment')
       return
     }
 
@@ -599,7 +610,7 @@ function CheckoutPage() {
     try {
       const payload = storeOrderService.buildOrderPayload(
         cartItems,
-        shippingAddress,
+        includeShipping ? shippingAddress : undefined,
         buyerContact,
         shippingCost,
         selectedPaymentUri.uri,
@@ -713,10 +724,10 @@ function CheckoutPage() {
               <button
                 onClick={() => {
                   switch (step) {
-                    case 'address': router.back(); break
-                    case 'shipping': setStep('address'); break
-                    case 'policies': setStep('shipping'); break
-                    case 'review': setStep('policies'); break
+                    case 'details': router.back(); break
+                    case 'policies': setStep('details'); break
+                    case 'payment': setStep('policies'); break
+                    case 'review': setStep('payment'); break
                   }
                 }}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
@@ -734,7 +745,7 @@ function CheckoutPage() {
 
             {/* Progress Steps */}
             <div className="flex items-center px-4 pb-4">
-              {(['address', 'shipping', 'policies', 'review'] as const).map((s, i, steps) => {
+              {(['details', 'policies', 'payment', 'review'] as const).map((s, i, steps) => {
                 const currentIndex = steps.indexOf(step)
                 const isComplete = currentIndex > i
                 const isCurrent = step === s
@@ -769,23 +780,26 @@ function CheckoutPage() {
             </div>
           )}
 
-          {/* Address Step */}
-          {step === 'address' && !showSavePrompt && (
+          {/* Details Step */}
+          {step === 'details' && !showSavePrompt && (
             <AddressForm
               address={shippingAddress}
               contact={buyerContact}
               onAddressChange={setShippingAddress}
               onContactChange={setBuyerContact}
-              onSubmit={handleAddressSubmit}
-              savedAddresses={savedAddresses}
-              selectedSavedAddressId={selectedSavedAddressId}
-              onSavedAddressSelect={handleSavedAddressSelect}
-              onManageSavedAddresses={() => setShowAddressModal(true)}
+              onSubmit={handleDetailsSubmit}
+              savedAddresses={includeShipping ? savedAddresses : undefined}
+              selectedSavedAddressId={includeShipping ? selectedSavedAddressId : undefined}
+              onSavedAddressSelect={includeShipping ? handleSavedAddressSelect : undefined}
+              onManageSavedAddresses={includeShipping ? () => setShowAddressModal(true) : undefined}
+              optional
+              includeShipping={includeShipping}
+              onIncludeShippingChange={setIncludeShipping}
             />
           )}
 
           {/* Save Address Prompt */}
-          {step === 'address' && showSavePrompt && (
+          {step === 'details' && showSavePrompt && (
             <div className="p-4">
               <div className="mb-4">
                 <h2 className="text-lg font-medium">Shipping to:</h2>
@@ -806,20 +820,6 @@ function CheckoutPage() {
             </div>
           )}
 
-          {/* Shipping Step */}
-          {step === 'shipping' && (
-            <ShippingSelector
-              matchedZone={matchedZone}
-              shippingCost={shippingCost}
-              currency={currency}
-              city={shippingAddress.city}
-              country={shippingAddress.country}
-              zonesLoadFailed={zonesLoadFailed}
-              hasNoZones={hasNoZones}
-              onSubmit={handleShippingSubmit}
-            />
-          )}
-
           {/* Policies Step */}
           {step === 'policies' && (
             <PolicyAgreement
@@ -830,8 +830,8 @@ function CheckoutPage() {
             />
           )}
 
-          {/* Review & Pay Step */}
-          {step === 'review' && !checkoutReadiness.isReady && (
+          {/* Payment Step */}
+          {step === 'payment' && !checkoutReadiness.isReady && (
             <div className="p-4 space-y-4">
               <div className="p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
                 <p className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">
@@ -855,18 +855,8 @@ function CheckoutPage() {
               </Button>
             </div>
           )}
-          {step === 'review' && checkoutReadiness.isReady && (
+          {step === 'payment' && checkoutReadiness.isReady && (
             <div>
-              <OrderReview
-                store={store}
-                items={cartItems}
-                shippingAddress={shippingAddress}
-                shippingCost={shippingCost}
-                subtotal={subtotal}
-                total={total}
-                currency={currency}
-              />
-
               <PaymentSelector
                 paymentUris={store?.paymentUris || []}
                 selected={selectedPaymentUri}
@@ -878,18 +868,6 @@ function CheckoutPage() {
               />
 
               <div className="p-4 space-y-4">
-                {/* Notes */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
-                  <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Any special instructions for the seller"
-                    rows={2}
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
-                  />
-                </div>
-
                 {/* Refund Address */}
                 <div>
                   <label className="block text-sm font-medium mb-1">
@@ -906,8 +884,45 @@ function CheckoutPage() {
 
                 <Button
                   className="w-full"
+                  onClick={() => setStep('review')}
+                  disabled={!selectedPaymentUri}
+                >
+                  Continue to Review
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Review & Place Order Step */}
+          {step === 'review' && (
+            <div>
+              <OrderReview
+                store={store}
+                items={cartItems}
+                shippingAddress={includeShipping ? shippingAddress : undefined}
+                shippingCost={shippingCost}
+                subtotal={subtotal}
+                total={total}
+                currency={currency}
+              />
+
+              <div className="p-4 space-y-4">
+                {/* Notes */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Any special instructions for the seller"
+                    rows={2}
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+                  />
+                </div>
+
+                <Button
+                  className="w-full"
                   onClick={handlePlaceOrder}
-                  disabled={!selectedPaymentUri || isSubmitting}
+                  disabled={isSubmitting}
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
                 </Button>

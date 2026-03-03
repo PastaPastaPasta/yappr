@@ -6,7 +6,7 @@ import type { CartItem, ShippingAddress, Store } from '@/lib/types'
 interface OrderReviewProps {
   store: Store | null
   items: CartItem[]
-  shippingAddress: ShippingAddress
+  shippingAddress?: ShippingAddress
   shippingCost: number
   subtotal: number
   total: number
@@ -69,13 +69,15 @@ export function OrderReview({
       </div>
 
       {/* Shipping Address */}
-      <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
-        <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
-        <p>{shippingAddress.name}</p>
-        <p>{shippingAddress.street}</p>
-        <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}</p>
-        <p>{shippingAddress.country}</p>
-      </div>
+      {shippingAddress && (
+        <div className="p-4 border border-gray-200 dark:border-gray-800 rounded-lg">
+          <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
+          <p>{shippingAddress.name}</p>
+          <p>{shippingAddress.street}</p>
+          <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}</p>
+          <p>{shippingAddress.country}</p>
+        </div>
+      )}
 
       {/* Totals */}
       <div className="space-y-2 pt-4">
@@ -83,10 +85,12 @@ export function OrderReview({
           <span className="text-gray-500">Subtotal</span>
           <span>{formatPrice(subtotal, currency)}</span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Shipping</span>
-          <span>{formatPrice(shippingCost, currency)}</span>
-        </div>
+        {shippingCost > 0 && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Shipping</span>
+            <span>{formatPrice(shippingCost, currency)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-200 dark:border-gray-800">
           <span>Total</span>
           <span>{formatPrice(total, currency)}</span>

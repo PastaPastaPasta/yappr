@@ -250,7 +250,7 @@ export interface OrderItem {
 // Encrypted order payload structure
 export interface OrderPayload {
   items: OrderItem[]
-  shippingAddress: ShippingAddress
+  shippingAddress?: ShippingAddress
   buyerContact: BuyerContact
   subtotal: number
   shippingCost: number
