@@ -61,43 +61,40 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   }
 
   const handleSubmit = async () => {
+    let resolvedScheme: string
+    let resolvedAddress: string
+
     if (customMode) {
       const parsed = parseCustomUri(customUri.trim())
       if (!parsed) return
-      setIsSubmitting(true)
-      try {
-        await onSave({
-          scheme: parsed.scheme,
-          address: parsed.address,
-          label: label.trim() || undefined
-        })
-        setCustomUri('')
-        setLabel('')
-        setCustomError('')
-        setCustomMode(false)
-      } finally {
-        setIsSubmitting(false)
-      }
-      return
+      resolvedScheme = parsed.scheme
+      resolvedAddress = parsed.address
+    } else {
+      if (!address.trim()) return
+      resolvedScheme = scheme
+      resolvedAddress = address.trim()
     }
-
-    if (!address.trim()) return
 
     setIsSubmitting(true)
     try {
       await onSave({
-        scheme,
-        address: address.trim(),
+        scheme: resolvedScheme,
+        address: resolvedAddress,
         label: label.trim() || undefined
       })
-      // Reset form
       setAddress('')
       setLabel('')
       setScheme('tdash:')
+      setCustomUri('')
+      setCustomError('')
+      setCustomMode(false)
     } finally {
       setIsSubmitting(false)
     }
   }
+
+  const toggleActiveClass = 'bg-yappr-500 text-white'
+  const toggleInactiveClass = 'bg-white dark:bg-neutral-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-neutral-750'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -126,30 +123,20 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
             <button
               type="button"
               onClick={() => setCustomMode(false)}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                !customMode
-                  ? 'bg-yappr-500 text-white'
-                  : 'bg-white dark:bg-neutral-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-neutral-750'
-              }`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${!customMode ? toggleActiveClass : toggleInactiveClass}`}
             >
               Select Type
             </button>
             <button
               type="button"
               onClick={() => setCustomMode(true)}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                customMode
-                  ? 'bg-yappr-500 text-white'
-                  : 'bg-white dark:bg-neutral-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-neutral-750'
-              }`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${customMode ? toggleActiveClass : toggleInactiveClass}`}
             >
               Custom URI
             </button>
           </div>
 
           {customMode ? (
-            <>
-              {/* Custom URI input */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Payment URI *
@@ -185,7 +172,6 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                   </p>
                 )}
               </div>
-            </>
           ) : (
             <>
               {/* Payment type grid */}

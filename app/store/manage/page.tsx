@@ -70,6 +70,7 @@ function StoreManagePage() {
   const [deleteZoneId, setDeleteZoneId] = useState<string | null>(null)
   const [deletePaymentIndex, setDeletePaymentIndex] = useState<number | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
 
   // Load store data
   useEffect(() => {
@@ -236,8 +237,6 @@ function StoreManagePage() {
       toast.error('Failed to add payment method')
     }
   }
-
-  const [isImporting, setIsImporting] = useState(false)
 
   const handleImportFromProfile = async () => {
     if (!user?.identityId || !store?.id) return
