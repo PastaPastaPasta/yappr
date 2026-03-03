@@ -314,6 +314,9 @@ function CheckoutPage() {
     if (!includeShipping) {
       setMatchedZone(null)
       setShippingCost(0)
+      setHasNoZones(false)
+      setZonesLoadFailed(false)
+      setShowSavePrompt(false)
       return
     }
 

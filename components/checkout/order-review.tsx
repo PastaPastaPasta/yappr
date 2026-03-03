@@ -74,7 +74,7 @@ export function OrderReview({
           <p className="text-sm font-medium text-gray-500 mb-1">Ship to:</p>
           <p>{shippingAddress.name}</p>
           <p>{shippingAddress.street}</p>
-          <p>{shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}</p>
+          <p>{shippingAddress.city}{shippingAddress.state ? `, ${shippingAddress.state}` : ''} {shippingAddress.postalCode}</p>
           <p>{shippingAddress.country}</p>
         </div>
       )}
