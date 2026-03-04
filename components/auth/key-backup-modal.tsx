@@ -12,6 +12,7 @@ import { vaultService } from '@/lib/services/vault-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import {
   validateBackupPassword,
+  benchmarkPbkdf2,
   MIN_PASSWORD_LENGTH,
   MIN_KDF_ITERATIONS,
   MAX_KDF_ITERATIONS
@@ -48,10 +49,7 @@ export function KeyBackupModal() {
     setIsBenchmarking(true)
     try {
       // Benchmark for 2 seconds to get a baseline
-      const benchmarkFn = vaultService.isConfigured()
-        ? vaultService.benchmarkDevice.bind(vaultService)
-        : encryptedKeyService.benchmarkDevice.bind(encryptedKeyService)
-      const result = await benchmarkFn(2000)
+      const result = await benchmarkPbkdf2(2000)
       const rate = result.iterations / result.estimatedMs
       setIterationsPerMs(rate)
       setIterations(result.iterations)

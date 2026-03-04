@@ -108,6 +108,20 @@ async function aesGcmDecrypt(key: CryptoKey, data: Uint8Array): Promise<Uint8Arr
   return new Uint8Array(plaintext);
 }
 
+/**
+ * Derive an AES-256 key from a raw private key via SHA-256 hash.
+ */
+async function deriveAesKeyFromPrivateKey(privateKey: Uint8Array): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.digest('SHA-256', privateKey.buffer as ArrayBuffer);
+  return crypto.subtle.importKey(
+    'raw',
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
 // ---------- Service ----------
 
 class VaultService extends BaseDocumentService<VaultDocument> {
@@ -298,16 +312,7 @@ class VaultService extends BaseDocumentService<VaultDocument> {
       throw new Error('Vault contract is not configured');
     }
 
-    // Use the encryption private key as AES key material via SHA-256
-    const keyMaterial = await crypto.subtle.digest('SHA-256', encryptionPrivateKey.buffer as ArrayBuffer);
-    const aesKey = await crypto.subtle.importKey(
-      'raw',
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-
+    const aesKey = await deriveAesKeyFromPrivateKey(encryptionPrivateKey);
     const encoder = new TextEncoder();
     const encrypted = await aesGcmEncrypt(aesKey, encoder.encode(JSON.stringify(payload)));
 
@@ -327,15 +332,7 @@ class VaultService extends BaseDocumentService<VaultDocument> {
     if (!vault?.encryptedData) return null;
 
     try {
-      const keyMaterial = await crypto.subtle.digest('SHA-256', encryptionPrivateKey.buffer as ArrayBuffer);
-      const aesKey = await crypto.subtle.importKey(
-        'raw',
-        keyMaterial,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt']
-      );
-
+      const aesKey = await deriveAesKeyFromPrivateKey(encryptionPrivateKey);
       const decrypted = await aesGcmDecrypt(aesKey, vault.encryptedData);
       const decoder = new TextDecoder();
       return JSON.parse(decoder.decode(decrypted)) as VaultPayload;
