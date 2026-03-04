@@ -214,7 +214,8 @@ export function useKeyRegistration(
 
       // Start polling for key registration
       const checkKeys = async () => {
-        if (abortControllerRef.current?.signal.aborted) {
+        // Check if aborted OR cleanup already ran (ref set to null)
+        if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
           return
         }
 
@@ -226,8 +227,8 @@ export function useKeyRegistration(
             encryptionPublicKey
           )
 
-          // Post-await abort check
-          if (abortControllerRef.current?.signal.aborted) {
+          // Post-await: check again (cleanup may have run while awaiting)
+          if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
             return
           }
 
