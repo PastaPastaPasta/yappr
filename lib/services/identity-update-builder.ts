@@ -9,6 +9,7 @@
  */
 
 import { getEvoSdk } from './evo-sdk-service'
+import { YAPPR_VAULT_CONTRACT_ID } from '../constants'
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
 import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -159,11 +160,17 @@ export async function buildUnsignedKeyRegistrationTransition(
   const authKeyData = useHash160 ? hash160(authPublicKey) : authPublicKey
   const encryptionKeyData = useHash160 ? hash160(encryptionPublicKey) : encryptionPublicKey
 
+  // Contract bounds for encryption key (binds it to vault contract)
+  const hasVaultContract = YAPPR_VAULT_CONTRACT_ID && !YAPPR_VAULT_CONTRACT_ID.includes('PLACEHOLDER')
+  const encryptionContractBounds = hasVaultContract
+    ? wasm.ContractBounds.SingleContract(YAPPR_VAULT_CONTRACT_ID)
+    : undefined
+
   // Step 1: Create keys with empty signatures initially and get signable bytes
   let authSignature: Uint8Array = new Uint8Array(0)
   let encryptionSignature: Uint8Array = new Uint8Array(0)
 
-  console.log(`IdentityUpdateBuilder: Creating keys (${keyType})`)
+  console.log(`IdentityUpdateBuilder: Creating keys (${keyType})${hasVaultContract ? ' with vault contract bounds' : ''}`)
   const authKey = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'AUTHENTICATION',
@@ -182,6 +189,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     isReadOnly: false,
     data: encryptionKeyData,
     signature: new Uint8Array(0),
+    ...(encryptionContractBounds ? { contractBounds: encryptionContractBounds } : {}),
   })
 
   try {
@@ -241,6 +249,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     isReadOnly: false,
     data: encryptionKeyData,
     signature: encryptionSignature,
+    ...(encryptionContractBounds ? { contractBounds: encryptionContractBounds } : {}),
   })
 
   let transitionBytes: Uint8Array

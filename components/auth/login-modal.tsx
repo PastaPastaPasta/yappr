@@ -158,13 +158,26 @@ export function LoginModal() {
           dpnsUsername
         })
 
-        if (encryptedKeyService.isConfigured()) {
-          encryptedKeyService.hasBackup(identityId)
-            .then(hasBackup => setHasOnchainBackup(hasBackup))
-            .catch(() => setHasOnchainBackup(false))
-        } else {
-          setHasOnchainBackup(false)
-        }
+        // Check vault contract first, then fall back to old encrypted-key-backup contract
+        import('@/lib/services/vault-service').then(async ({ vaultService }) => {
+          try {
+            if (vaultService.isConfigured()) {
+              const hasVaultBackup = await vaultService.hasPasswordBackup(identityId)
+              if (hasVaultBackup) {
+                setHasOnchainBackup(true)
+                return
+              }
+            }
+            if (encryptedKeyService.isConfigured()) {
+              const hasBackup = await encryptedKeyService.hasBackup(identityId)
+              setHasOnchainBackup(hasBackup)
+            } else {
+              setHasOnchainBackup(false)
+            }
+          } catch {
+            setHasOnchainBackup(false)
+          }
+        }).catch(() => setHasOnchainBackup(false))
       } catch (err) {
         logger.error('Identity lookup error:', err)
         setLookupError('Failed to lookup identity')

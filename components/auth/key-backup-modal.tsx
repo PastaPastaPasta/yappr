@@ -8,6 +8,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
+import { vaultService } from '@/lib/services/vault-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import {
   validateBackupPassword,
@@ -47,7 +48,10 @@ export function KeyBackupModal() {
     setIsBenchmarking(true)
     try {
       // Benchmark for 2 seconds to get a baseline
-      const result = await encryptedKeyService.benchmarkDevice(2000)
+      const benchmarkFn = vaultService.isConfigured()
+        ? vaultService.benchmarkDevice.bind(vaultService)
+        : encryptedKeyService.benchmarkDevice.bind(encryptedKeyService)
+      const result = await benchmarkFn(2000)
       const rate = result.iterations / result.estimatedMs
       setIterationsPerMs(rate)
       setIterations(result.iterations)
@@ -108,12 +112,13 @@ export function KeyBackupModal() {
 
     setIsSubmitting(true)
     try {
-      const result = await encryptedKeyService.createBackup(
-        identityId,
-        privateKey,
-        password,
-        iterations
-      )
+      // Use vault service for new backups when available, fall back to old contract
+      let result: { success: boolean; error?: string }
+      if (vaultService.isConfigured()) {
+        result = await vaultService.savePasswordBackup(identityId, privateKey, password, iterations)
+      } else {
+        result = await encryptedKeyService.createBackup(identityId, privateKey, password, iterations)
+      }
 
       if (!result.success) {
         setError(result.error || 'Failed to create backup')

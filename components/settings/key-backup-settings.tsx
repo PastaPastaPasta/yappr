@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
+import { vaultService } from '@/lib/services/vault-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import {
@@ -61,17 +62,33 @@ export function KeyBackupSettings() {
     const runId = ++latestRunIdRef.current
 
     try {
-      const configured = encryptedKeyService.isConfigured()
+      const vaultConfigured = vaultService.isConfigured()
+      const oldConfigured = encryptedKeyService.isConfigured()
+      const configured = vaultConfigured || oldConfigured
       if (runId !== latestRunIdRef.current) return
       setIsConfigured(configured)
 
       if (configured) {
         try {
-          const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
-          if (runId !== latestRunIdRef.current) return
-          setHasBackup(!!backup)
-          if (backup) {
-            setBackupDate(new Date(backup.$createdAt))
+          // Check vault contract first
+          let foundBackup = false
+          if (vaultConfigured) {
+            const hasVaultBackup = await vaultService.hasPasswordBackup(user.identityId)
+            if (runId !== latestRunIdRef.current) return
+            if (hasVaultBackup) {
+              setHasBackup(true)
+              foundBackup = true
+              // Vault documents don't have $createdAt exposed the same way, skip date
+            }
+          }
+          // Fall back to old contract
+          if (!foundBackup && oldConfigured) {
+            const backup = await encryptedKeyService.getBackupByIdentityId(user.identityId)
+            if (runId !== latestRunIdRef.current) return
+            setHasBackup(!!backup)
+            if (backup) {
+              setBackupDate(new Date(backup.$createdAt))
+            }
           }
         } catch (err) {
           logger.error('Error checking backup status:', err)
@@ -124,8 +141,17 @@ export function KeyBackupSettings() {
 
     setIsDeleting(true)
     try {
-      const success = await encryptedKeyService.deleteBackup(user.identityId)
-      if (success) {
+      // Delete from vault contract if configured
+      let deleted = false
+      if (vaultService.isConfigured()) {
+        deleted = await vaultService.deleteVault(user.identityId)
+      }
+      // Also delete from old contract if it exists
+      if (encryptedKeyService.isConfigured()) {
+        const oldDeleted = await encryptedKeyService.deleteBackup(user.identityId)
+        deleted = deleted || oldDeleted
+      }
+      if (deleted) {
         setHasBackup(false)
         setBackupDate(null)
         toast.success('Backup deleted successfully')

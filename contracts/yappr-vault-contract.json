@@ -1,0 +1,50 @@
+{
+  "config": {
+    "requiresIdentityEncryptionBoundedKey": "unique"
+  },
+  "documents": {
+    "vault": {
+      "indices": [
+        {
+          "name": "byOwner",
+          "unique": true,
+          "properties": [
+            { "$ownerId": "asc" }
+          ]
+        }
+      ],
+      "required": [],
+      "additionalProperties": false,
+      "mutable": true,
+      "properties": {
+        "encryptedData": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 0
+        },
+        "passwordEncryptedData": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 1
+        },
+        "pbkdf2Salt": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "position": 2
+        },
+        "pbkdf2Iterations": {
+          "type": "integer",
+          "minimum": 100000,
+          "maximum": 10000000,
+          "position": 3
+        }
+      }
+    }
+  }
+}

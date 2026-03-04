@@ -162,7 +162,7 @@ async function attemptEncryptionKeyDerivation(
     const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
 
     // Check if it matches the identity's key
-    const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId, 1)
+    const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId)
 
     if (matches) {
       // Check if session is still active before storing keys
@@ -325,9 +325,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const { privateKey: authPrivateKeyBytes } = parsePrivateKey(privateKey)
 
           // Check if identity has encryption key (purpose=1)
-          const hasEncryptionKeyOnIdentity = authUser.publicKeys.some(
-            (key) => key.purpose === 1 && key.type === 0
-          )
+          const { hasEncryptionKeyOnIdentity: checkEncKey } = await import('@/lib/crypto/encryption-key-lookup')
+          const hasEncryptionKeyOnIdentity = checkEncKey(authUser.publicKeys)
 
           if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
             // Try to derive encryption key
@@ -437,15 +436,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null)
 
     try {
-      // Use the encrypted key service to decrypt credentials
-      const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
+      let result: { identityId: string; privateKey: string } | null = null
 
-      if (!encryptedKeyService.isConfigured()) {
-        throw new Error('Password login is not yet configured')
+      // Try vault service first (new contract with contract-bound keys)
+      const { vaultService } = await import('@/lib/services/vault-service')
+      if (vaultService.isConfigured()) {
+        try {
+          result = await vaultService.loginWithPassword(username, password)
+        } catch {
+          // Vault didn't have a backup or decryption failed — fall through to old contract
+        }
       }
 
-      // Decrypt credentials from backup
-      const result = await encryptedKeyService.loginWithPassword(username, password)
+      // Fall back to old encrypted-key-backup contract
+      if (!result) {
+        const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
+        if (!encryptedKeyService.isConfigured()) {
+          throw new Error('Password login is not yet configured')
+        }
+        const oldResult = await encryptedKeyService.loginWithPassword(username, password)
+        result = { identityId: oldResult.identityId, privateKey: oldResult.privateKey }
+      }
 
       // Continue with normal login flow using decrypted credentials
       // Skip username check since we know they have one (they logged in with it)
