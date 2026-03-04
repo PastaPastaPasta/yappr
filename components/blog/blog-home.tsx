@@ -60,12 +60,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       }
     }
 
-    load().catch(() => {
-      if (!cancelled) {
-        setLoading(false)
-        setError('Failed to load posts')
-      }
-    })
+    load().catch(() => {})
 
     return () => { cancelled = true }
   }, [blog.id])

@@ -44,12 +44,7 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
       }
     }
 
-    load().catch(() => {
-      if (!cancelled) {
-        setLoading(false)
-        setError('Failed to load blogs')
-      }
-    })
+    load().catch(() => {})
 
     return () => { cancelled = true }
   }, [ownerId])

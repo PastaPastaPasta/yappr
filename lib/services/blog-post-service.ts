@@ -33,6 +33,10 @@ export interface UpdateBlogPostData {
   publishedAt?: number
 }
 
+function appendTimestampSuffix(slug: string): string {
+  return `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
+}
+
 class BlogPostService extends BaseDocumentService<BlogPost> {
   constructor() {
     super('blogPost', YAPPR_BLOG_CONTRACT_ID)
@@ -103,7 +107,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     // Check for collision and append suffix if needed
     const existing = await this.getPostBySlug(data.blogId, slug)
     if (existing) {
-      slug = `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
+      slug = appendTimestampSuffix(slug)
     }
 
     const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
@@ -131,7 +135,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       // Retry once with a fresh timestamp suffix on duplicate slug rejection
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('duplicate') || message.includes('already exists') || message.includes('unique')) {
-        slug = `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
+        slug = appendTimestampSuffix(slug)
         return this.create(ownerId, buildPayload(slug))
       }
       throw error
