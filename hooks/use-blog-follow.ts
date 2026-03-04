@@ -28,8 +28,9 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
 
   const cacheKey = user?.identityId ? `blog:${user.identityId}:${blogId}` : ''
 
-  const checkStatus = useCallback(async () => {
+  useEffect(() => {
     if (!user?.identityId || !blogId) {
+      setIsFollowing(false)
       setIsLoading(false)
       return
     }
@@ -47,22 +48,27 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
       }
     }
 
+    let cancelled = false
     setIsLoading(true)
-    try {
-      const { blogFollowService } = await import('@/lib/services/blog-follow-service')
-      const following = await blogFollowService.isFollowingBlog(user.identityId, blogId)
-      if (cacheKey) setBlogFollowStatus(cacheKey, following)
-      setIsFollowing(following)
-    } catch (error) {
-      logger.error('useBlogFollow: Error checking status:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [user?.identityId, blogId, cacheKey, initialFollowing])
 
-  useEffect(() => {
-    checkStatus()
-  }, [checkStatus])
+    const check = async () => {
+      try {
+        const { blogFollowService } = await import('@/lib/services/blog-follow-service')
+        const following = await blogFollowService.isFollowingBlog(user.identityId, blogId)
+        if (cancelled) return
+        if (cacheKey) setBlogFollowStatus(cacheKey, following)
+        setIsFollowing(following)
+      } catch (error) {
+        if (cancelled) return
+        logger.error('useBlogFollow: Error checking status:', error)
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+
+    check()
+    return () => { cancelled = true }
+  }, [user?.identityId, blogId, cacheKey, initialFollowing])
 
   useEffect(() => {
     if (!blogId) return

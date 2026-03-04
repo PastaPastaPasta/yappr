@@ -340,6 +340,7 @@ function UserProfileContent() {
           const ownerBlogs = await blogService.getBlogsByOwner(userId)
 
           if (ownerBlogs.length > 0) {
+            // Dash Platform has no count API; fetching up to 100 posts is an intentional cap for Phase 1
             const results = await Promise.allSettled(ownerBlogs.map(async (blog) => {
               const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
               return {

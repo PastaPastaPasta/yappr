@@ -235,9 +235,9 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     const trimmedSummary = summary.trim()
     const postFields = {
       title: title.trim(),
-      subtitle: trimmedSummary ? encodeSummary(trimmedSummary, summaryHidden) : undefined,
-      coverImage: coverImage || undefined,
-      labels: labels || undefined,
+      subtitle: trimmedSummary ? encodeSummary(trimmedSummary, summaryHidden) : '',
+      coverImage: coverImage || '',
+      labels: labels || '',
       commentsEnabled,
       content: blocks,
     }

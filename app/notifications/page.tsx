@@ -386,17 +386,18 @@ function NotificationsPage() {
                         </div>
 
                         {(() => {
+                          const notifUrl = getNotificationUrl(notification)
+                          if (!notifUrl) return null
                           const post = notification.post
-                          const postUrl = post && getNotificationUrl(notification)
-                          return postUrl && post ? (
+                          return (
                             <Link
-                              href={postUrl}
+                              href={notifUrl}
                               onClick={(e) => e.stopPropagation()}
                               className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
                             >
-                              {post.content}
+                              {post ? post.content : 'View blog post'}
                             </Link>
-                          ) : null
+                          )
                         })()}
                       </div>
                     </div>

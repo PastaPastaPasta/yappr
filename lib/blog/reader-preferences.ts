@@ -70,7 +70,12 @@ export function getAppThemeForReadingMode(
 
   // 'author' — detect from the blog bg colour
   if (authorBg) {
-    const hex = authorBg.replace('#', '')
+    let hex = authorBg.replace('#', '')
+    // Normalize shorthand: #RGB → RRGGBB, #RGBA → RRGGBB
+    if (hex.length === 3 || hex.length === 4) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]
+    }
+    // For 8-char (RRGGBBAA), use first 6 chars only
     if (hex.length >= 6) {
       const r = parseInt(hex.slice(0, 2), 16)
       const g = parseInt(hex.slice(2, 4), 16)

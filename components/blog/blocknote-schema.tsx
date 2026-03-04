@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   BlockNoteEditor,
   BlockNoteSchema,
@@ -352,6 +352,15 @@ function VideoEmbedPlayer({ url }: { url: string }) {
   const [thumbnailUrl, setThumbnailUrl] = useState(
     youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/maxresdefault.jpg` : ''
   )
+
+  useEffect(() => {
+    if (youtubeVideoId) {
+      setThumbnailUrl(`https://img.youtube.com/vi/${youtubeVideoId}/maxresdefault.jpg`)
+      setIsPlaying(false)
+    } else {
+      setThumbnailUrl('')
+    }
+  }, [youtubeVideoId])
 
   if (!embedUrl) {
     return <p className="text-sm text-gray-400">Add a supported video URL to preview embed.</p>
