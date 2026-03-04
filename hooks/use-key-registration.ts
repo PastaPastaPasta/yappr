@@ -91,8 +91,8 @@ export function useKeyRegistration(
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Cleanup function
-  const cleanup = useCallback(() => {
+  // Cleanup timers and abort controller (preserves key refs for retry)
+  const cleanupTimers = useCallback(() => {
     // Abort any pending operations
     abortControllerRef.current?.abort()
     abortControllerRef.current = null
@@ -107,7 +107,14 @@ export function useKeyRegistration(
       pollIntervalRef.current = null
     }
 
-    // Clear sensitive key material from refs
+    startTimeRef.current = null
+  }, [])
+
+  // Full cleanup including sensitive key material
+  const cleanup = useCallback(() => {
+    cleanupTimers()
+
+    // Clear sensitive key material from refs (these are our internal copies)
     if (authKeyRef.current) {
       authKeyRef.current.fill(0)
       authKeyRef.current = null
@@ -117,9 +124,7 @@ export function useKeyRegistration(
       encryptionKeyRef.current = null
     }
     identityIdRef.current = null
-
-    startTimeRef.current = null
-  }, [])
+  }, [cleanupTimers])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -138,13 +143,13 @@ export function useKeyRegistration(
     authKey: Uint8Array,
     encryptionKey: Uint8Array
   ) => {
-    // Clean up any previous attempt
+    // Clean up any previous attempt (full cleanup including old key copies)
     cleanup()
 
-    // Store for retry
+    // Store copies for retry (never mutate caller-supplied arrays)
     identityIdRef.current = identityId
-    authKeyRef.current = authKey
-    encryptionKeyRef.current = encryptionKey
+    authKeyRef.current = new Uint8Array(authKey)
+    encryptionKeyRef.current = new Uint8Array(encryptionKey)
 
     // Set up new abort controller
     abortControllerRef.current = new AbortController()
@@ -199,8 +204,8 @@ export function useKeyRegistration(
           setRemainingTime(remaining)
 
           if (remaining === 0) {
-            // Timeout
-            cleanup()
+            // Timeout — preserve key refs so retry() works
+            cleanupTimers()
             setError('Request timed out. Please try again.')
             setState('error')
           }
@@ -261,7 +266,8 @@ export function useKeyRegistration(
       }, DEFAULT_POLL_INTERVAL_MS)
 
     } catch (err) {
-      cleanup()
+      // Preserve key refs so retry() works; only clean timers
+      cleanupTimers()
 
       if (err instanceof Error) {
         if (err.message === 'Cancelled') {
@@ -274,7 +280,7 @@ export function useKeyRegistration(
       }
       setState('error')
     }
-  }, [network, cleanup, onComplete])
+  }, [network, cleanup, cleanupTimers, onComplete])
 
   /**
    * Cancel the current registration attempt.

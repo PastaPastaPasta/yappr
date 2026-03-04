@@ -65,6 +65,8 @@ export function KeyExchangeLoginModal() {
   // Start the login flow when modal opens (no identity needed)
   useEffect(() => {
     if (isOpen && state === 'idle') {
+      setLoginError(null)
+      setIsCompleting(false)
       start()
     }
   }, [isOpen, state, start])
@@ -78,6 +80,8 @@ export function KeyExchangeLoginModal() {
 
   // Handle close
   const handleClose = useCallback(() => {
+    setLoginError(null)
+    setIsCompleting(false)
     cancel()
     close()
   }, [cancel, close])
