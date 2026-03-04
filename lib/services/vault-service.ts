@@ -147,6 +147,19 @@ class VaultService extends BaseDocumentService<VaultDocument> {
     };
   }
 
+  /**
+   * Override extractContentFields to convert Uint8Array fields to number[] for platform serialization.
+   * Without this, the merge path in BaseDocumentService.update would send raw Uint8Array values.
+   */
+  protected extractContentFields(doc: VaultDocument): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    if (doc.encryptedData) result.encryptedData = Array.from(doc.encryptedData);
+    if (doc.passwordEncryptedData) result.passwordEncryptedData = Array.from(doc.passwordEncryptedData);
+    if (doc.pbkdf2Salt) result.pbkdf2Salt = Array.from(doc.pbkdf2Salt);
+    if (doc.pbkdf2Iterations !== undefined) result.pbkdf2Iterations = doc.pbkdf2Iterations;
+    return result;
+  }
+
   // ---- CRUD ----
 
   async getVault(identityId: string): Promise<VaultDocument | null> {

@@ -443,8 +443,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (vaultService.isConfigured()) {
         try {
           result = await vaultService.loginWithPassword(username, password)
-        } catch {
+        } catch (vaultErr) {
           // Vault didn't have a backup or decryption failed — fall through to old contract
+          logger.info('Auth: Vault login failed, falling back to old contract:', vaultErr instanceof Error ? vaultErr.message : vaultErr)
         }
       }
 
