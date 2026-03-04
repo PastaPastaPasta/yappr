@@ -26,7 +26,7 @@ export default function RootLayout({
       <head>
         <meta
           httpEquiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss: https://44.240.98.102:1443; worker-src 'self' blob:; child-src 'self' blob:; media-src 'self' https: blob:; frame-src 'self' blob: https:"
+          content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss: https://44.240.98.102:1443; worker-src 'self' blob:; child-src 'self' blob:; media-src 'self' https: blob:; frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com"
         />
       </head>
       <body className="font-sans h-full bg-white dark:bg-neutral-900">

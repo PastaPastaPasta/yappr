@@ -20,6 +20,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
   const [posts, setPosts] = useState<BlogPost[]>([])
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [activeLabel, setActiveLabel] = useState<string>('All')
   const pageSize = 10
@@ -32,6 +33,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
 
     const load = async () => {
       setLoading(true)
+      setError(null)
       try {
         const result = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
         if (cancelled) return
@@ -51,12 +53,19 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
         if (cancelled) return
 
         setCommentCounts(Object.fromEntries(counts))
+      } catch {
+        if (!cancelled) setError('Failed to load posts')
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
 
-    load().catch(() => { if (!cancelled) setLoading(false) })
+    load().catch(() => {
+      if (!cancelled) {
+        setLoading(false)
+        setError('Failed to load posts')
+      }
+    })
 
     return () => { cancelled = true }
   }, [blog.id])
@@ -143,6 +152,8 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
 
       {loading ? (
         <p className="text-sm text-[var(--blog-text)]/70">Loading posts...</p>
+      ) : error ? (
+        <p className="text-sm text-red-500">{error}</p>
       ) : pagedPosts.length === 0 ? (
         <div className="rounded-xl border border-dashed border-[var(--blog-border)] p-8 text-center text-[var(--blog-text)]/65">No posts yet.</div>
       ) : (

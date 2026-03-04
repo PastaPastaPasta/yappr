@@ -385,9 +385,9 @@ function BlogPageContent() {
       <div className="min-h-screen bg-white dark:bg-neutral-950 transition-colors">
         <nav className="sticky top-0 z-50 border-b border-gray-200 bg-white/80 backdrop-blur-xl dark:border-gray-800 dark:bg-neutral-950/80">
           <div className="mx-auto flex items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-            <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors">
+            <button onClick={() => router.push(postSlugParam && blogIdParam ? `/blog?blog=${blogIdParam}` : '/blog')} className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors">
               <ArrowLeftIcon className="h-4 w-4" />
-              Posts
+              {postSlugParam ? 'Posts' : 'Blogs'}
             </button>
             <Link href="/" className="text-sm font-bold text-gray-900 dark:text-white">
               Yappr

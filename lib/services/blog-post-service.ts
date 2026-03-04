@@ -107,22 +107,35 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     }
 
     const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
-    const payload: Record<string, unknown> = {
-      blogId: requireIdentifierBytes(data.blogId, 'blogId'),
-      title: data.title,
-      data0: chunks[0],
-      slug,
-      publishedAt: data.publishedAt ?? Date.now(),
+    const buildPayload = (finalSlug: string): Record<string, unknown> => {
+      const payload: Record<string, unknown> = {
+        blogId: requireIdentifierBytes(data.blogId, 'blogId'),
+        title: data.title,
+        data0: chunks[0],
+        slug: finalSlug,
+        publishedAt: data.publishedAt ?? Date.now(),
+      }
+      for (let i = 1; i < chunks.length; i++) {
+        payload[`data${i}`] = chunks[i]
+      }
+      if (data.subtitle !== undefined) payload.subtitle = data.subtitle
+      if (data.coverImage !== undefined) payload.coverImage = data.coverImage
+      if (data.labels !== undefined) payload.labels = data.labels
+      if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
+      return payload
     }
-    for (let i = 1; i < chunks.length; i++) {
-      payload[`data${i}`] = chunks[i]
-    }
-    if (data.subtitle !== undefined) payload.subtitle = data.subtitle
-    if (data.coverImage !== undefined) payload.coverImage = data.coverImage
-    if (data.labels !== undefined) payload.labels = data.labels
-    if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
 
-    return this.create(ownerId, payload)
+    try {
+      return await this.create(ownerId, buildPayload(slug))
+    } catch (error) {
+      // Retry once with a fresh timestamp suffix on duplicate slug rejection
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('duplicate') || message.includes('already exists') || message.includes('unique')) {
+        slug = `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
+        return this.create(ownerId, buildPayload(slug))
+      }
+      throw error
+    }
   }
 
   async updatePost(postId: string, ownerId: string, data: UpdateBlogPostData): Promise<BlogPost> {

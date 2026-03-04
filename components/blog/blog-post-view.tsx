@@ -32,7 +32,8 @@ import { APP_URL } from '@/lib/constants'
 const X_ICON_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z'
 
 const DROPDOWN_ITEM_CLASS = 'flex items-center gap-2 px-4 py-2 text-sm outline-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800'
-const SIDEBAR_BUTTON_CLASS = 'group rounded-full p-2 transition hover:bg-black/5 dark:hover:bg-white/10'
+const SIDEBAR_BUTTON_ACTIVE_CLASS = 'group rounded-full p-2 transition hover:bg-black/5 dark:hover:bg-white/10'
+const SIDEBAR_BUTTON_PASSIVE_CLASS = 'rounded-full p-2 cursor-default opacity-40'
 
 interface BlogPostViewProps {
   blog: Blog
@@ -78,13 +79,15 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   )
   const relativeTime = useRelativeTime(post.createdAt)
 
+  // Capture the original app theme once before we override it (during render, not in an effect)
+  if (savedThemeRef.current === undefined && theme !== undefined) {
+    savedThemeRef.current = theme
+  }
+
   // Sync reading mode → app theme so nav/comments/buttons match
   useEffect(() => {
-    if (!savedThemeRef.current && theme !== undefined) {
-      savedThemeRef.current = theme
-    }
     setTheme(getAppThemeForReadingMode(readingMode, authorBg))
-  }, [readingMode, authorBg, setTheme, theme])
+  }, [readingMode, authorBg, setTheme])
 
   // Restore original theme on unmount
   useEffect(() => {
@@ -323,20 +326,20 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         {/* Floating action sidebar -- xl+ only */}
         <aside className="absolute left-[calc(50%+540px)] top-0 hidden xl:block">
           <div className="sticky top-24 flex flex-col items-center gap-4">
-            <button type="button" className={SIDEBAR_BUTTON_CLASS} aria-label="Like">
-              <HeartIcon className="h-5 w-5 text-gray-400 transition group-hover:text-red-500" />
+            <button type="button" className={SIDEBAR_BUTTON_PASSIVE_CLASS} aria-label="Like" aria-disabled="true">
+              <HeartIcon className="h-5 w-5 text-gray-400" />
             </button>
-            <button type="button" className={SIDEBAR_BUTTON_CLASS} aria-label="Jump to comments" onClick={scrollToComments}>
+            <button type="button" className={SIDEBAR_BUTTON_ACTIVE_CLASS} aria-label="Jump to comments" onClick={scrollToComments}>
               <ChatBubbleLeftIcon className="h-5 w-5 text-gray-400 transition group-hover:text-blue-500" />
               {commentCount > 0 && (
                 <span className="mt-0.5 block text-center text-[10px] text-gray-400">{commentCount}</span>
               )}
             </button>
-            <button type="button" className={SIDEBAR_BUTTON_CLASS} aria-label="Bookmark">
-              <BookmarkIcon className="h-5 w-5 text-gray-400 transition group-hover:text-yellow-500" />
+            <button type="button" className={SIDEBAR_BUTTON_PASSIVE_CLASS} aria-label="Bookmark" aria-disabled="true">
+              <BookmarkIcon className="h-5 w-5 text-gray-400" />
             </button>
-            <button type="button" className={SIDEBAR_BUTTON_CLASS} aria-label="Share on X" onClick={handleShareX}>
-              <svg className="h-5 w-5 text-gray-400 transition group-hover:text-gray-700 dark:group-hover:text-white" viewBox="0 0 24 24" fill="currentColor"><path d={X_ICON_PATH} /></svg>
+            <button type="button" className={SIDEBAR_BUTTON_ACTIVE_CLASS} aria-label="Share on X" onClick={handleShareX}>
+              <svg className="h-5 w-5 text-gray-400 transition-colors group-hover:text-gray-700 dark:group-hover:text-white" viewBox="0 0 24 24" fill="currentColor"><path d={X_ICON_PATH} /></svg>
             </button>
           </div>
         </aside>

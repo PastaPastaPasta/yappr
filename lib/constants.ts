@@ -64,6 +64,7 @@ export const DOCUMENT_TYPES = {
   BLOG: 'blog',
   BLOG_POST: 'blogPost',
   BLOG_COMMENT: 'blogComment',
+  BLOG_FOLLOW: 'blogFollow',
 } as const
 
 // Storefront document types (separate contract)

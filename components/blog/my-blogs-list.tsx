@@ -16,27 +16,42 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
   const [blogs, setBlogs] = useState<Blog[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [openCreate, setOpenCreate] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
+
     const load = async () => {
       setLoading(true)
+      setError(null)
       try {
         const result = await blogService.getBlogsByOwner(ownerId)
+        if (cancelled) return
         setBlogs(result)
 
         const countEntries = await Promise.all(result.map(async (blog) => {
-          const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
+          const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 }).catch(() => [])
           return [blog.id, posts.length] as const
         }))
+        if (cancelled) return
 
         setCounts(Object.fromEntries(countEntries))
+      } catch {
+        if (!cancelled) setError('Failed to load blogs')
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
-    load().catch(() => setLoading(false))
+    load().catch(() => {
+      if (!cancelled) {
+        setLoading(false)
+        setError('Failed to load blogs')
+      }
+    })
+
+    return () => { cancelled = true }
   }, [ownerId])
 
   return (
@@ -51,6 +66,8 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
 
       {loading ? (
         <p className="text-sm text-gray-500">Loading blogs...</p>
+      ) : error ? (
+        <p className="text-sm text-red-500">{error}</p>
       ) : blogs.length === 0 ? null : (
         <div className="space-y-3">
           {blogs.map((blog) => (

@@ -12,6 +12,11 @@ import {
   type BlogThemeConfig,
 } from '@/lib/blog/theme-types'
 
+// Module-level ref counts for shared Google Font <link> elements.
+// Multiple BlogThemeProvider instances may share the same font — only remove from
+// DOM when the last consumer unmounts.
+const fontLinkRefCounts = new Map<string, number>()
+
 interface BlogThemeProviderProps {
   themeConfig?: BlogThemeConfig
   blogName: string
@@ -157,19 +162,26 @@ export function BlogThemeProvider({
     const families = Array.from(new Set([headingFont.googleFamily, bodyFont.googleFamily]))
     if (families.length === 0) return
 
-    const link = document.createElement('link')
-    link.rel = 'stylesheet'
-    link.id = `blog-theme-fonts-${families.join('-')}`
-    link.href = `https://fonts.googleapis.com/css2?${families.map((family) => `family=${family}`).join('&')}&display=swap`
+    const linkId = `blog-theme-fonts-${families.join('-')}`
+    const href = `https://fonts.googleapis.com/css2?${families.map((family) => `family=${family}`).join('&')}&display=swap`
 
-    const existing = document.getElementById(link.id)
-    if (!existing) {
+    // Add the link if not present, then increment ref count
+    if (!document.getElementById(linkId)) {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.id = linkId
+      link.href = href
       document.head.appendChild(link)
     }
+    fontLinkRefCounts.set(linkId, (fontLinkRefCounts.get(linkId) || 0) + 1)
 
     return () => {
-      if (!existing && link.parentNode) {
-        link.parentNode.removeChild(link)
+      const count = (fontLinkRefCounts.get(linkId) || 1) - 1
+      if (count <= 0) {
+        fontLinkRefCounts.delete(linkId)
+        document.getElementById(linkId)?.remove()
+      } else {
+        fontLinkRefCounts.set(linkId, count)
       }
     }
   }, [bodyFont.googleFamily, headingFont.googleFamily])
