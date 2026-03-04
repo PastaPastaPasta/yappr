@@ -2,6 +2,8 @@ import { BaseDocumentService, type QueryOptions } from './document-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireIdentifierBytes } from './sdk-helpers'
+import { getEvoSdk } from './evo-sdk-service'
+import { paginateCount } from './pagination-utils'
 
 export interface BlogCommentQueryOptions {
   limit?: number
@@ -64,6 +66,28 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     }
     const result = await this.query(queryOptions)
     return result.documents
+  }
+
+  async countCommentsByPost(blogPostId: string): Promise<number> {
+    try {
+      const sdk = await getEvoSdk()
+      const { count } = await paginateCount(sdk, () => ({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [['blogPostId', '==', blogPostId]],
+        orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']],
+      }))
+      return count
+    } catch {
+      return 0
+    }
+  }
+
+  async countCommentsByPostBatch(postIds: string[]): Promise<Map<string, number>> {
+    const counts = await Promise.all(
+      postIds.map(async (id) => [id, await this.countCommentsByPost(id)] as const)
+    )
+    return new Map(counts)
   }
 
   async getCommentsByOwner(ownerId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {

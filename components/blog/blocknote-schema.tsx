@@ -37,6 +37,8 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { extractInlineText } from '@/lib/blog/content-utils'
 
+const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'] as const
+
 function getHeadingLinks(documentBlocks: unknown[]): Array<{ id: string; text: string }> {
   let index = 0
 
@@ -298,7 +300,7 @@ const codeBlock = createReactBlockSpec(
       ...defaultProps,
       language: {
         default: 'javascript',
-        values: ['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'] as const,
+        values: CODE_LANGUAGES,
       },
       code: { default: '' },
     },
@@ -327,7 +329,7 @@ const codeBlock = createReactBlockSpec(
               className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-200"
               onChange={(event) => updateBlockProps(editor, block, { language: event.target.value })}
             >
-              {['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'].map((language) => (
+              {CODE_LANGUAGES.map((language) => (
                 <option key={language} value={language}>{language}</option>
               ))}
             </select>

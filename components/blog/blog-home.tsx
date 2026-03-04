@@ -40,19 +40,10 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
 
         setPosts(result)
 
-        const counts = await Promise.all(
-          result.map(async (post) => {
-            try {
-              const comments = await blogCommentService.getCommentsByPost(post.id, { limit: 100 })
-              return [post.id, comments.length] as const
-            } catch {
-              return [post.id, 0] as const
-            }
-          })
-        )
+        const countMap = await blogCommentService.countCommentsByPostBatch(result.map(p => p.id))
         if (cancelled) return
 
-        setCommentCounts(Object.fromEntries(counts))
+        setCommentCounts(Object.fromEntries(countMap))
       } catch {
         if (!cancelled) setError('Failed to load posts')
       } finally {

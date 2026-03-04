@@ -118,13 +118,8 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
   const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
   const ownerIds = Array.from(new Set(posts.map((p) => p.ownerId)))
-  const [usernameEntries, profileEntries] = await Promise.all([
-    Promise.all(
-      ownerIds.map(async (id) => {
-        const name = await dpnsService.resolveUsername(id).catch(() => null)
-        return [id, name] as const
-      }),
-    ),
+  const [usernameMap, profileEntries] = await Promise.all([
+    dpnsService.resolveUsernamesBatch(ownerIds),
     Promise.all(
       ownerIds.map(async (id) => {
         const profile = await unifiedProfileService.getProfile(id).catch(() => null)
@@ -133,7 +128,6 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
     ),
   ])
 
-  const usernameMap = new Map(usernameEntries)
   const profileMap = new Map(profileEntries)
 
   return posts.map((post) => ({
