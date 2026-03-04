@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
   AddressForm,
-  ShippingSelector,
   PaymentSelector,
   PolicyAgreement,
   OrderReview,
@@ -72,6 +71,7 @@ type CheckoutReadinessBlocker =
   | 'missing-buyer-key'
   | 'missing-seller-key'
   | 'invalid-seller-key'
+  | 'service-error'
 
 type CheckoutReadinessState = {
   isReady: boolean
@@ -88,7 +88,8 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
     'no-payment-methods': 'This store has not configured any payment methods.',
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
     'missing-seller-key': 'This store has not published an active encryption key.',
-    'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner."
+    'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner.",
+    'service-error': 'Could not verify store encryption key. Please try again later.'
   }
 
   return messages[blocker]
@@ -108,7 +109,8 @@ function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
-  const [step, setStep] = useState<'address' | 'shipping' | 'policies' | 'payment' | 'review'>('address')
+  const [step, setStep] = useState<'details' | 'policies' | 'payment'>('details')
+  const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Policies
@@ -157,95 +159,53 @@ function CheckoutPage() {
   })
 
   const validateCheckoutReadiness = useCallback(async (storeToValidate: Store | null): Promise<CheckoutReadinessState> => {
-    const currentStore = storeToValidate
-    if (!currentStore) {
-      const state: CheckoutReadinessState = {
+    function blocked(
+      blocker: CheckoutReadinessBlocker,
+      buyerEncryptionPrivateKey: Uint8Array | null = null
+    ): CheckoutReadinessState {
+      return {
         isReady: false,
-        blocker: 'no-payment-methods',
-        blockerMessage: getCheckoutReadinessMessage('no-payment-methods'),
+        blocker,
+        blockerMessage: getCheckoutReadinessMessage(blocker),
         sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
+        buyerEncryptionPrivateKey
       }
-      setCheckoutReadiness(state)
-      return state
     }
 
-    if (!currentStore.paymentUris || currentStore.paymentUris.length === 0) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'no-payment-methods',
-        blockerMessage: getCheckoutReadinessMessage('no-payment-methods'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
-      }
+    if (!storeToValidate?.paymentUris?.length) {
+      const state = blocked('no-payment-methods')
       setCheckoutReadiness(state)
       return state
     }
 
     if (!user?.identityId) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'missing-buyer-key',
-        blockerMessage: getCheckoutReadinessMessage('missing-buyer-key'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
-      }
+      const state = blocked('missing-buyer-key')
       setCheckoutReadiness(state)
       return state
     }
 
     const buyerPrivateKey = getEncryptionKeyBytes(user.identityId)
     if (!buyerPrivateKey) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'missing-buyer-key',
-        blockerMessage: getCheckoutReadinessMessage('missing-buyer-key'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: null
-      }
+      const state = blocked('missing-buyer-key')
       setCheckoutReadiness(state)
       return state
     }
 
     try {
-      const sellerIdentity = await identityService.getIdentity(currentStore.ownerId)
-      if (!sellerIdentity) {
-        const state: CheckoutReadinessState = {
-          isReady: false,
-          blocker: 'missing-seller-key',
-          blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
-          sellerEncryptionPublicKey: null,
-          buyerEncryptionPrivateKey: buyerPrivateKey
-        }
-        setCheckoutReadiness(state)
-        return state
-      }
-
-      const encryptionKey = sellerIdentity.publicKeys.find(
+      const sellerIdentity = await identityService.getIdentity(storeToValidate.ownerId)
+      const encryptionKey = sellerIdentity?.publicKeys.find(
         (key) => key.purpose === 1 && key.type === 0 && !key.disabledAt
       )
 
       if (!encryptionKey?.data) {
-        const state: CheckoutReadinessState = {
-          isReady: false,
-          blocker: 'missing-seller-key',
-          blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
-          sellerEncryptionPublicKey: null,
-          buyerEncryptionPrivateKey: buyerPrivateKey
-        }
+        const state = blocked('missing-seller-key', buyerPrivateKey)
         setCheckoutReadiness(state)
         return state
       }
 
       const sellerEncryptionPublicKey = normalizeKeyData(encryptionKey.data)
       if (!sellerEncryptionPublicKey) {
-        const state: CheckoutReadinessState = {
-          isReady: false,
-          blocker: 'invalid-seller-key',
-          blockerMessage: getCheckoutReadinessMessage('invalid-seller-key'),
-          sellerEncryptionPublicKey: null,
-          buyerEncryptionPrivateKey: buyerPrivateKey
-        }
+        const state = blocked('invalid-seller-key', buyerPrivateKey)
         setCheckoutReadiness(state)
         return state
       }
@@ -260,15 +220,9 @@ function CheckoutPage() {
       setCheckoutReadiness(state)
       return state
     } catch (err) {
-      const state: CheckoutReadinessState = {
-        isReady: false,
-        blocker: 'missing-seller-key',
-        blockerMessage: getCheckoutReadinessMessage('missing-seller-key'),
-        sellerEncryptionPublicKey: null,
-        buyerEncryptionPrivateKey: buyerPrivateKey
-      }
+      logger.error('Failed to validate checkout readiness', err)
+      const state = blocked('service-error', buyerPrivateKey)
       setCheckoutReadiness(state)
-      logger.error('Failed to validate checkout readiness:', err)
       return state
     }
   }, [user?.identityId])
@@ -286,7 +240,7 @@ function CheckoutPage() {
         setIsLoading(true)
         const [storeData, items] = await Promise.all([
           storeService.getById(storeId),
-          Promise.resolve(cartService.getItemsForStore(storeId))
+          cartService.getItemsForStore(storeId)
         ])
 
         if (!storeData || items.length === 0) {
@@ -296,11 +250,7 @@ function CheckoutPage() {
 
         setStore(storeData)
         setCartItems(items)
-
-        // Parse store policies
-        if (storeData) {
-          setStorePolicies(parseStorePolicies(storeData.policies))
-        }
+        setStorePolicies(parseStorePolicies(storeData.policies))
 
         // Select first payment URI by default
         if (storeData.paymentUris && storeData.paymentUris.length > 0) {
@@ -361,13 +311,25 @@ function CheckoutPage() {
     loadSavedAddresses().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
-  // Calculate shipping when address changes
+  // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
+    if (!includeShipping) {
+      setMatchedZone(null)
+      setShippingCost(0)
+      setHasNoZones(false)
+      setZonesLoadFailed(false)
+      setShowSavePrompt(false)
+      return
+    }
+
     if (!sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) return
 
     const calculateShipping = async () => {
       try {
         setZonesLoadFailed(false)
+        setMatchedZone(null)
+        setShippingCost(0)
+        setHasNoZones(false)
 
         // First try to get zones to check if store has any configured
         const zones = await shippingZoneService.getByStore(storeId)
@@ -402,7 +364,7 @@ function CheckoutPage() {
     }
 
     calculateShipping().catch((error) => logger.error(error))
-  }, [sdkReady, storeId, shippingAddress, cartItems])
+  }, [includeShipping, sdkReady, storeId, shippingAddress, cartItems])
 
   const subtotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
@@ -414,10 +376,15 @@ function CheckoutPage() {
 
   const currency = cartItems[0]?.currency || 'USD'
 
-  const handleAddressSubmit = () => {
-    // If using a saved address, go directly to shipping
+  const handleDetailsSubmit = () => {
+    if (!includeShipping) {
+      setStep('policies')
+      return
+    }
+
+    // If using a saved address, validate shipping then go to policies
     if (selectedSavedAddressId) {
-      setStep('shipping')
+      handleShippingValidation()
       return
     }
 
@@ -425,7 +392,7 @@ function CheckoutPage() {
     if (userHasEncryptionKey && userEncryptionPubKey) {
       setShowSavePrompt(true)
     } else {
-      setStep('shipping')
+      handleShippingValidation()
     }
   }
 
@@ -474,12 +441,12 @@ function CheckoutPage() {
 
       setSavedAddresses((prev) => [...prev, newAddress])
       setShowSavePrompt(false)
-      setStep('shipping')
+      handleShippingValidation()
     } catch (error) {
       logger.error('Failed to save address:', error)
       // Continue anyway
       setShowSavePrompt(false)
-      setStep('shipping')
+      handleShippingValidation()
     } finally {
       setIsSavingAddress(false)
     }
@@ -487,7 +454,7 @@ function CheckoutPage() {
 
   const handleSkipSave = () => {
     setShowSavePrompt(false)
-    setStep('shipping')
+    handleShippingValidation()
   }
 
   // Modal handlers for managing saved addresses
@@ -584,12 +551,13 @@ function CheckoutPage() {
     }
   }
 
-  const handleShippingSubmit = () => {
+  const handleShippingValidation = () => {
     // Allow checkout if: zone matched, zones failed to load, or store has no zones
     if (!matchedZone && !zonesLoadFailed && !hasNoZones) {
       setError('We cannot ship to this address. Please check your shipping address.')
       return
     }
+    setError(null)
     setStep('policies')
   }
 
@@ -630,11 +598,6 @@ function CheckoutPage() {
     }
   }
 
-  const handlePaymentSubmit = () => {
-    if (!selectedPaymentUri) return
-    setStep('review')
-  }
-
   const handlePolicyAgreementChange = (index: number, agreed: boolean) => {
     setAgreedPolicies((prev) => {
       const next = new Set(prev)
@@ -656,7 +619,7 @@ function CheckoutPage() {
     try {
       const payload = storeOrderService.buildOrderPayload(
         cartItems,
-        shippingAddress,
+        includeShipping ? shippingAddress : undefined,
         buyerContact,
         shippingCost,
         selectedPaymentUri.uri,
@@ -768,40 +731,51 @@ function CheckoutPage() {
           <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
-                onClick={() => step === 'address' ? router.back() : setStep(
-                  step === 'shipping' ? 'address' :
-                  step === 'policies' ? 'shipping' :
-                  step === 'payment' ? 'policies' : 'payment'
-                )}
+                onClick={() => {
+                  switch (step) {
+                    case 'details':
+                      if (showSavePrompt) {
+                        setShowSavePrompt(false)
+                      } else {
+                        router.back()
+                      }
+                      break
+                    case 'policies': setStep('details'); break
+                    case 'payment': setStep('policies'); break
+                  }
+                }}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
               <h1 className="text-xl font-bold">Checkout</h1>
+              <button
+                onClick={() => router.push('/cart')}
+                className="ml-auto text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Cancel
+              </button>
             </div>
 
             {/* Progress Steps */}
             <div className="flex items-center px-4 pb-4">
-              {['address', 'shipping', 'policies', 'payment', 'review'].map((s, i) => {
-                const steps = ['address', 'shipping', 'policies', 'payment', 'review']
+              {(['details', 'policies', 'payment'] as const).map((s, i, steps) => {
                 const currentIndex = steps.indexOf(step)
                 const isComplete = currentIndex > i
                 const isCurrent = step === s
 
+                let stepClass = 'bg-gray-200 dark:bg-gray-800 text-gray-500'
+                if (isCurrent) stepClass = 'bg-yappr-500 text-white'
+                else if (isComplete) stepClass = 'bg-green-500 text-white'
+
                 return (
                   <div key={s} className="flex items-center flex-1 last:flex-none">
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${
-                        isCurrent
-                          ? 'bg-yappr-500 text-white'
-                          : isComplete
-                            ? 'bg-green-500 text-white'
-                            : 'bg-gray-200 dark:bg-gray-800 text-gray-500'
-                      }`}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${stepClass}`}
                     >
                       {i + 1}
                     </div>
-                    {i < 4 && (
+                    {i < 2 && (
                       <div
                         className={`flex-1 h-0.5 mx-2 ${
                           isComplete ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800'
@@ -820,23 +794,25 @@ function CheckoutPage() {
             </div>
           )}
 
-          {/* Address Step */}
-          {step === 'address' && !showSavePrompt && (
+          {/* Details Step */}
+          {step === 'details' && !showSavePrompt && (
             <AddressForm
               address={shippingAddress}
               contact={buyerContact}
               onAddressChange={setShippingAddress}
               onContactChange={setBuyerContact}
-              onSubmit={handleAddressSubmit}
+              onSubmit={handleDetailsSubmit}
               savedAddresses={savedAddresses}
               selectedSavedAddressId={selectedSavedAddressId}
               onSavedAddressSelect={handleSavedAddressSelect}
               onManageSavedAddresses={() => setShowAddressModal(true)}
+              includeShipping={includeShipping}
+              onIncludeShippingChange={setIncludeShipping}
             />
           )}
 
           {/* Save Address Prompt */}
-          {step === 'address' && showSavePrompt && (
+          {step === 'details' && showSavePrompt && (
             <div className="p-4">
               <div className="mb-4">
                 <h2 className="text-lg font-medium">Shipping to:</h2>
@@ -857,20 +833,6 @@ function CheckoutPage() {
             </div>
           )}
 
-          {/* Shipping Step */}
-          {step === 'shipping' && (
-            <ShippingSelector
-              matchedZone={matchedZone}
-              shippingCost={shippingCost}
-              currency={currency}
-              city={shippingAddress.city}
-              country={shippingAddress.country}
-              zonesLoadFailed={zonesLoadFailed}
-              hasNoZones={hasNoZones}
-              onSubmit={handleShippingSubmit}
-            />
-          )}
-
           {/* Policies Step */}
           {step === 'policies' && (
             <PolicyAgreement
@@ -882,18 +844,6 @@ function CheckoutPage() {
           )}
 
           {/* Payment Step */}
-          {step === 'payment' && checkoutReadiness.isReady && (
-            <PaymentSelector
-              paymentUris={store?.paymentUris || []}
-              selected={selectedPaymentUri}
-              onSelect={setSelectedPaymentUri}
-              txid={txid}
-              onTxidChange={setTxid}
-              onSubmit={handlePaymentSubmit}
-              orderTotal={total}
-              orderCurrency={currency}
-            />
-          )}
           {step === 'payment' && !checkoutReadiness.isReady && (
             <div className="p-4 space-y-4">
               <div className="p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
@@ -918,25 +868,70 @@ function CheckoutPage() {
               </Button>
             </div>
           )}
+          {step === 'payment' && checkoutReadiness.isReady && (
+            <div>
+              <PaymentSelector
+                paymentUris={store?.paymentUris || []}
+                selected={selectedPaymentUri}
+                onSelect={setSelectedPaymentUri}
+                txid={txid}
+                onTxidChange={setTxid}
+                orderTotal={total}
+                orderCurrency={currency}
+              />
 
-          {/* Review Step */}
-          {step === 'review' && (
-            <OrderReview
-              store={store}
-              items={cartItems}
-              shippingAddress={shippingAddress}
-              shippingCost={shippingCost}
-              subtotal={subtotal}
-              total={total}
-              currency={currency}
-              notes={notes}
-              onNotesChange={setNotes}
-              refundAddress={refundAddress}
-              onRefundAddressChange={setRefundAddress}
-              paymentScheme={selectedPaymentUri?.scheme}
-              onSubmit={handlePlaceOrder}
-              isSubmitting={isSubmitting}
-            />
+              <div className="p-4 space-y-4">
+                {/* Refund Address */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Refund Address (optional){selectedPaymentUri?.scheme && <span className="text-gray-500 font-normal"> - {selectedPaymentUri.scheme}</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={refundAddress}
+                    onChange={(e) => setRefundAddress(e.target.value)}
+                    placeholder={`Your ${selectedPaymentUri?.scheme || 'crypto'} address for refunds`}
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
+                  />
+                </div>
+              </div>
+
+              <OrderReview
+                store={store}
+                items={cartItems}
+                shippingAddress={includeShipping ? shippingAddress : undefined}
+                shippingCost={shippingCost}
+                subtotal={subtotal}
+                total={total}
+                currency={currency}
+              />
+
+              <div className="p-4 space-y-4">
+                {/* Notes */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Any special instructions for the seller"
+                    rows={2}
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
+                  />
+                </div>
+
+                <Button
+                  className="w-full"
+                  onClick={handlePlaceOrder}
+                  disabled={isSubmitting || !selectedPaymentUri}
+                >
+                  {isSubmitting ? 'Placing Order...' : 'Place Order'}
+                </Button>
+
+                <p className="text-xs text-center text-gray-500">
+                  Your order details will be encrypted and sent securely to the seller.
+                </p>
+              </div>
+            </div>
           )}
         </main>
       </div>

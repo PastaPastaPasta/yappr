@@ -8,6 +8,7 @@ import {
   ArrowLeftIcon,
   BuildingStorefrontIcon,
   ChatBubbleLeftIcon,
+  ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   MapPinIcon,
   ShoppingCartIcon,
@@ -21,6 +22,7 @@ import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisp
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
+import { identityService } from '@/lib/services/identity-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
@@ -72,6 +74,7 @@ function StoreDetailContent() {
   const [cartItemCount, setCartItemCount] = useState(0)
   const [ownerDisplayName, setOwnerDisplayName] = useState<string | null>(null)
   const [ownerUsername, setOwnerUsername] = useState<string | null>(null)
+  const [sellerHasEncryptionKey, setSellerHasEncryptionKey] = useState<boolean | null>(null)
 
   // Search, filter, sort state
   const [searchQuery, setSearchQuery] = useState('')
@@ -113,6 +116,13 @@ function StoreDetailContent() {
       restoredFromCache.current = true
       pendingScrollY.current = cached.scrollY
       setIsLoading(false)
+
+      // Re-check encryption key even on cache path (it may have changed)
+      if (cached.store?.ownerId) {
+        identityService.hasEncryptionKey(cached.store.ownerId)
+          .then(setSellerHasEncryptionKey)
+          .catch(() => setSellerHasEncryptionKey(null))
+      }
       return
     }
 
@@ -139,6 +149,11 @@ function StoreDetailContent() {
         // Parse store policies
         if (storeData) {
           setStorePolicies(parseStorePolicies(storeData.policies))
+
+          // Check if seller has encryption key for orders
+          identityService.hasEncryptionKey(storeData.ownerId)
+            .then(setSellerHasEncryptionKey)
+            .catch(() => setSellerHasEncryptionKey(null))
 
           // Fetch owner profile and username
           try {
@@ -446,6 +461,17 @@ function StoreDetailContent() {
               )}
             </div>
           </div>
+
+          {/* Encryption key warning */}
+          {sellerHasEncryptionKey === false && (
+            <div className="mx-4 my-3 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">
+              <ExclamationTriangleIcon className="h-6 w-6 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+              <div>
+                <p className="font-semibold text-amber-800 dark:text-amber-200">This store is not accepting orders</p>
+                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">The store owner has not published an encryption key. Orders cannot be submitted until this is resolved.</p>
+              </div>
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="flex border-b border-gray-200 dark:border-gray-800">

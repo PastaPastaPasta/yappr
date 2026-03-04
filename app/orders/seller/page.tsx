@@ -304,15 +304,17 @@ function SellerOrdersPage() {
                             />
 
                             {/* Shipping Address */}
-                            <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
-                              <p className="text-sm font-medium mb-2">Shipping Address</p>
-                              <p className="text-sm">{payload.shippingAddress.name}</p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.street}</p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">
-                                {payload.shippingAddress.city}{payload.shippingAddress.state ? `, ${payload.shippingAddress.state}` : ''} {payload.shippingAddress.postalCode}
-                              </p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.country}</p>
-                            </div>
+                            {payload.shippingAddress && (
+                              <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+                                <p className="text-sm font-medium mb-2">Shipping Address</p>
+                                <p className="text-sm">{payload.shippingAddress.name}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.street}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                  {payload.shippingAddress.city}{payload.shippingAddress.state ? `, ${payload.shippingAddress.state}` : ''} {payload.shippingAddress.postalCode}
+                                </p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.country}</p>
+                              </div>
+                            )}
 
                             {/* Contact Info */}
                             {(payload.buyerContact.email || payload.buyerContact.phone) && (

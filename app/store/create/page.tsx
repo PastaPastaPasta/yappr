@@ -15,6 +15,8 @@ import { storeService } from '@/lib/services/store-service'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
 import { PoliciesEditor } from '@/components/store/policies-editor'
 import { parseStorePolicies, serializeStorePolicies, isPoliciesWithinLimit } from '@/lib/utils/policies'
+import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
+import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import type { SocialLink, ParsedPaymentUri, StorePolicy } from '@/lib/types'
 
 function CreateStorePage() {
@@ -213,27 +215,48 @@ function CreateStorePage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Logo URL</label>
+              <div className="space-y-4">
+                <ProfileImageUpload
+                  currentUrl={logoUrl || undefined}
+                  onUpload={(ipfsUrl) => setLogoUrl(ipfsToGatewayUrl(ipfsUrl))}
+                  onClear={() => setLogoUrl('')}
+                  aspectRatio="square"
+                  label="Store Logo"
+                  placeholder="Upload logo image"
+                />
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
+                    Or paste a URL
+                  </summary>
                   <input
                     type="url"
                     value={logoUrl}
                     onChange={(e) => setLogoUrl(e.target.value)}
                     placeholder="https://..."
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="mt-2 w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Banner URL</label>
+                </details>
+
+                <ProfileImageUpload
+                  currentUrl={bannerUrl || undefined}
+                  onUpload={(ipfsUrl) => setBannerUrl(ipfsToGatewayUrl(ipfsUrl))}
+                  onClear={() => setBannerUrl('')}
+                  aspectRatio="banner"
+                  label="Store Banner"
+                  placeholder="Upload banner image"
+                />
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
+                    Or paste a URL
+                  </summary>
                   <input
                     type="url"
                     value={bannerUrl}
                     onChange={(e) => setBannerUrl(e.target.value)}
                     placeholder="https://..."
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    className="mt-2 w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
-                </div>
+                </details>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

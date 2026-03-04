@@ -17,6 +17,9 @@ import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
+import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
+import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
@@ -304,7 +307,7 @@ function AddItemPage() {
                 <div className="grid grid-cols-4 gap-2 mb-3">
                   {imageUrls.map((url, index) => (
                     <div key={index} className="relative aspect-square bg-gray-100 dark:bg-gray-900 rounded-lg overflow-hidden">
-                      <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover" />
+                      <IpfsImage src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
                         onClick={() => handleRemoveImage(index)}
@@ -318,23 +321,40 @@ function AddItemPage() {
               )}
 
               {imageUrls.length < 4 && (
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={newImageUrl}
-                    onChange={(e) => setNewImageUrl(e.target.value)}
-                    placeholder="Enter image URL"
-                    className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleAddImage}
-                    disabled={!newImageUrl}
-                  >
-                    <PlusIcon className="h-5 w-5" />
-                  </Button>
-                </div>
+                <ProfileImageUpload
+                  onUpload={(ipfsUrl) => {
+                    const gatewayUrl = ipfsToGatewayUrl(ipfsUrl)
+                    setImageUrls(prev => [...prev, gatewayUrl].slice(0, 4))
+                  }}
+                  aspectRatio="square"
+                  label=""
+                  placeholder="Upload product image"
+                />
+              )}
+
+              {imageUrls.length < 4 && (
+                <details className="text-sm mt-2">
+                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
+                    Or paste a URL
+                  </summary>
+                  <div className="flex gap-2 mt-2">
+                    <input
+                      type="url"
+                      value={newImageUrl}
+                      onChange={(e) => setNewImageUrl(e.target.value)}
+                      placeholder="Enter image URL"
+                      className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleAddImage}
+                      disabled={!newImageUrl}
+                    >
+                      <PlusIcon className="h-5 w-5" />
+                    </Button>
+                  </div>
+                </details>
               )}
             </div>
 
