@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -19,7 +20,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
-import { formatTime, formatNumber } from '@/lib/utils'
+import { formatNumber } from '@/lib/utils'
+import { useRelativeTime } from '@/hooks/use-relative-time'
 import { IconButton } from '@/components/ui/icon-button'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
@@ -32,7 +34,8 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
-import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
+import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
+import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
@@ -83,6 +86,33 @@ function hasRealProfile(displayName: string | undefined): boolean {
   return true
 }
 
+/**
+ * Reusable tooltip wrapper for action buttons.
+ * Reduces boilerplate for the repetitive Tooltip.Root/Trigger/Portal/Content pattern.
+ */
+interface ActionTooltipProps {
+  label: string
+  children: React.ReactNode
+}
+
+function ActionTooltip({ label, children }: ActionTooltipProps): React.ReactElement {
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        {children}
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+          sideOffset={5}
+        >
+          {label}
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  )
+}
+
 // Enrichment data from progressive loading
 export interface ProgressiveEnrichment {
   username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
@@ -101,15 +131,13 @@ interface PostCardProps {
   isOwnPost?: boolean
   /** Progressive enrichment data - use this when available for faster rendering */
   enrichment?: ProgressiveEnrichment
-  /** Hide the "Replying to" annotation (used on post detail pages where structure makes it clear) */
-  hideReplyTo?: boolean
   /** For replies to private posts, the root post owner ID to check access against */
   rootPostOwnerId?: string
   /** Callback when post is successfully deleted - parent component should remove post from list */
   onDelete?: (postId: string) => void
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, hideReplyTo = false, rootPostOwnerId, onDelete }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, rootPostOwnerId, onDelete }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
@@ -143,10 +171,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const initialReposted = progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false
   const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
 
-  // Posts no longer have replyTo information - replies are a separate document type
-  // This is kept for the hideReplyTo prop and future reply card compatibility
-  const replyTo: Post | undefined = undefined
-  const replyToDisplay = { text: '', showAt: false }
 
   // Memoize enriched post for use in compose/tip modals and caching
   // Includes all resolved values so cached posts display correctly
@@ -206,7 +230,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      navigator.clipboard.writeText(post.author.id).catch(console.error)
+                      navigator.clipboard.writeText(post.author.id).catch((error) => logger.error(error))
                       toast.success('Identity ID copied')
                     }}
                     className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 truncate font-mono text-xs"
@@ -306,6 +330,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const isTipPost = !!tipInfo
+  const createdAtLabel = useRelativeTime(post.createdAt)
 
   const handleLike = async () => {
     if (hideAvatar) {
@@ -338,7 +363,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       // Rollback on error
       setLiked(wasLiked)
       setLikes(prevLikes)
-      console.error('Like error:', error)
+      logger.error('Like error:', error)
       toast.error('Failed to update like. Please try again.')
     } finally {
       setLikeLoading(false)
@@ -371,7 +396,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       // Rollback on error
       setReposted(wasReposted)
       setReposts(prevReposts)
-      console.error('Repost error:', error)
+      logger.error('Repost error:', error)
       toast.error('Failed to update repost. Please try again.')
     } finally {
       setRepostLoading(false)
@@ -407,7 +432,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     } catch (error) {
       // Rollback on error
       setBookmarked(wasBookmarked)
-      console.error('Bookmark error:', error)
+      logger.error('Bookmark error:', error)
       toast.error('Failed to update bookmark. Please try again.')
     } finally {
       setBookmarkLoading(false)
@@ -427,7 +452,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleShare = () => {
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`).catch(console.error)
+    navigator.clipboard.writeText(`${baseUrl}/post?id=${post.id}`).catch((error) => logger.error(error))
     toast.success('Link copied to clipboard')
   }
 
@@ -591,7 +616,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <LockClosedIcon className="h-3.5 w-3.5" />
                 </span>
               )}
-              <span className="text-gray-500 text-sm">{formatTime(post.createdAt)}</span>
+              <span className="text-gray-500 text-sm">{createdAtLabel}</span>
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton onClick={(e: React.MouseEvent) => e.stopPropagation()}>
@@ -605,7 +630,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   sideOffset={5}
                 >
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); toggleFollow().catch(console.error); }}
+                    onClick={(e) => { e.stopPropagation(); toggleFollow().catch((error) => logger.error(error)); }}
                     disabled={followLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none disabled:opacity-50"
                   >
@@ -630,7 +655,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     </DropdownMenu.Item>
                   )}
                   <DropdownMenu.Item
-                    onClick={(e) => { e.stopPropagation(); toggleBlock().catch(console.error); }}
+                    onClick={(e) => { e.stopPropagation(); toggleBlock().catch((error) => logger.error(error)); }}
                     disabled={blockLoading}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500 disabled:opacity-50"
                   >
@@ -692,47 +717,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Quoted post - show skeleton while loading, then actual content */}
           {post.quotedPostId && !post.quotedPost && (
-            <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 animate-pulse">
-              <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700" />
-                <div className="h-3 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-3 w-16 bg-gray-200 dark:bg-gray-700 rounded" />
-              </div>
-              <div className="mt-2 space-y-2">
-                <div className="h-3 w-full bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-3 w-3/4 bg-gray-200 dark:bg-gray-700 rounded" />
-              </div>
-            </div>
+            <EmbeddedPostSkeleton />
           )}
 
           {post.quotedPost && (
-            isQuotedPostPrivate(post.quotedPost) ? (
-              // PRD §5.3: Private quoted posts are decrypted separately
-              <PrivateQuotedPostContent quotedPost={post.quotedPost} />
-            ) : (
-              <Link
-                href={`/post?id=${post.quotedPost.id}`}
-                onClick={(e) => e.stopPropagation()}
-                className="mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer"
-              >
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <UserAvatar userId={post.quotedPost.author.id} size="sm" alt={post.quotedPost.author.displayName} />
-                  <span className="font-semibold text-gray-900 dark:text-gray-100">
-                    {post.quotedPost.author.displayName}
-                  </span>
-                  {post.quotedPost.author.username && !post.quotedPost.author.username.startsWith('user_') ? (
-                    <span className="text-gray-500">@{post.quotedPost.author.username}</span>
-                  ) : (
-                    <span className="text-gray-500 font-mono text-xs">
-                      {post.quotedPost.author.id.slice(0, 8)}...
-                    </span>
-                  )}
-                  <span>·</span>
-                  <span>{formatTime(post.quotedPost.createdAt)}</span>
-                </div>
-                <PostContent content={post.quotedPost.content} className="mt-1 text-sm" />
-              </Link>
-            )
+            isEmbeddedBlogPostLike(post.quotedPost)
+              ? <EmbeddedBlogPostCard post={post.quotedPost} />
+              : <EmbeddedPostCard post={post.quotedPost} />
           )}
 
           {post.media && post.media.length > 0 && (
@@ -764,43 +755,33 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           <div className="flex items-center justify-between mt-3 -ml-2">
             <Tooltip.Provider>
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleReply(); }}
-                    disabled={!canReplyToPrivate}
-                    className={cn(
-                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
-                      !canReplyToPrivate
-                        ? "opacity-50 cursor-not-allowed"
-                        : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
-                    )}
-                  >
-                    <ChatBubbleOvalLeftIcon className={cn(
-                      "h-5 w-5 transition-colors",
-                      !canReplyToPrivate
-                        ? "text-gray-400"
-                        : "text-gray-500 group-hover:text-yappr-500"
-                    )} />
-                    <span className={cn(
-                      "text-sm transition-colors",
-                      !canReplyToPrivate
-                        ? "text-gray-400"
-                        : "text-gray-500 group-hover:text-yappr-500"
-                    )}>
-                      {statsReplies > 0 && formatNumber(statsReplies)}
-                    </span>
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                    sideOffset={5}
-                  >
-                    {cantReplyReason || 'Reply'}
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+              <ActionTooltip label={cantReplyReason || 'Reply'}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleReply(); }}
+                  disabled={!canReplyToPrivate}
+                  className={cn(
+                    "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                    !canReplyToPrivate
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-yappr-50 dark:hover:bg-yappr-950"
+                  )}
+                >
+                  <ChatBubbleOvalLeftIcon className={cn(
+                    "h-5 w-5 transition-colors",
+                    !canReplyToPrivate
+                      ? "text-gray-400"
+                      : "text-gray-500 group-hover:text-yappr-500"
+                  )} />
+                  <span className={cn(
+                    "text-sm transition-colors",
+                    !canReplyToPrivate
+                      ? "text-gray-400"
+                      : "text-gray-500 group-hover:text-yappr-500"
+                  )}>
+                    {statsReplies > 0 && formatNumber(statsReplies)}
+                  </span>
+                </button>
+              </ActionTooltip>
 
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
@@ -835,7 +816,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     onClick={(e) => e.stopPropagation()}
                   >
                     <DropdownMenu.Item
-                      onClick={(e) => { e.stopPropagation(); handleRepost().catch(console.error); }}
+                      onClick={(e) => { e.stopPropagation(); handleRepost().catch((error) => logger.error(error)); }}
                       className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
                     >
                       <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
@@ -852,122 +833,82 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
 
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleLike().catch(console.error); }}
-                    disabled={likeLoading}
-                    className={cn(
-                      'group flex items-center gap-1 p-2 rounded-full transition-colors',
-                      likeLoading && 'opacity-50 cursor-wait',
-                      liked
-                        ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-950'
-                        : 'hover:bg-red-50 dark:hover:bg-red-950'
+              <ActionTooltip label="Like">
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleLike().catch((error) => logger.error(error)); }}
+                  disabled={likeLoading}
+                  className={cn(
+                    'group flex items-center gap-1 p-2 rounded-full transition-colors',
+                    likeLoading && 'opacity-50 cursor-wait',
+                    liked
+                      ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-950'
+                      : 'hover:bg-red-50 dark:hover:bg-red-950'
+                  )}
+                >
+                  <motion.div
+                    whileTap={{ scale: 0.8 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                  >
+                    {liked ? (
+                      <HeartIconSolid className="h-5 w-5 text-red-500" />
+                    ) : (
+                      <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />
                     )}
-                  >
-                    <motion.div
-                      whileTap={{ scale: 0.8 }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
-                    >
-                      {liked ? (
-                        <HeartIconSolid className="h-5 w-5 text-red-500" />
-                      ) : (
-                        <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />
-                      )}
-                    </motion.div>
-                    <span className={cn(
-                      'text-sm transition-colors',
-                      liked ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500'
-                    )}>
-                      {likes > 0 && formatNumber(likes)}
-                    </span>
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                    sideOffset={5}
-                  >
-                    Like
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+                  </motion.div>
+                  <span className={cn(
+                    'text-sm transition-colors',
+                    liked ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500'
+                  )}>
+                    {likes > 0 && formatNumber(likes)}
+                  </span>
+                </button>
+              </ActionTooltip>
 
               {/* Tip button - disabled for own posts */}
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); if (!isOwnPost) handleTip(); }}
-                    disabled={isOwnPost}
-                    className={cn(
-                      "group flex items-center gap-1 p-2 rounded-full transition-colors",
-                      isOwnPost
-                        ? "opacity-40 cursor-not-allowed"
-                        : "hover:bg-amber-50 dark:hover:bg-amber-950"
-                    )}
-                  >
-                    <CurrencyDollarIcon className={cn(
-                      "h-5 w-5 transition-colors",
-                      isOwnPost ? "text-gray-400" : "text-gray-500 group-hover:text-amber-500"
-                    )} />
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                    sideOffset={5}
-                  >
-                    {isOwnPost ? "Can't tip yourself" : "Tip"}
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+              <ActionTooltip label={isOwnPost ? "Can't tip yourself" : "Tip"}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (!isOwnPost) handleTip(); }}
+                  disabled={isOwnPost}
+                  className={cn(
+                    "group flex items-center gap-1 p-2 rounded-full transition-colors",
+                    isOwnPost
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:bg-amber-50 dark:hover:bg-amber-950"
+                  )}
+                >
+                  <CurrencyDollarIcon className={cn(
+                    "h-5 w-5 transition-colors",
+                    isOwnPost ? "text-gray-400" : "text-gray-500 group-hover:text-amber-500"
+                  )} />
+                </button>
+              </ActionTooltip>
 
               <div className="flex items-center gap-1">
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleBookmark().catch(console.error); }}
-                      disabled={bookmarkLoading}
-                      className={cn(
-                        'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
-                        bookmarkLoading && 'opacity-50 cursor-wait'
-                      )}
-                    >
-                      {bookmarked ? (
-                        <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
-                      ) : (
-                        <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
-                      )}
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                      sideOffset={5}
-                    >
-                      Bookmark
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
+                <ActionTooltip label="Bookmark">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleBookmark().catch((error) => logger.error(error)); }}
+                    disabled={bookmarkLoading}
+                    className={cn(
+                      'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
+                      bookmarkLoading && 'opacity-50 cursor-wait'
+                    )}
+                  >
+                    {bookmarked ? (
+                      <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
+                    ) : (
+                      <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                    )}
+                  </button>
+                </ActionTooltip>
 
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleShare(); }}
-                      className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
-                    >
-                      <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                      sideOffset={5}
-                    >
-                      Share
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
+                <ActionTooltip label="Share">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleShare(); }}
+                    className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
+                  >
+                    <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                  </button>
+                </ActionTooltip>
               </div>
             </Tooltip.Provider>
           </div>

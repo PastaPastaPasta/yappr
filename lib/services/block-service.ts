@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
 import { identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
@@ -49,7 +50,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
     const blockedId = rawBlockedId ? identifierToBase58(rawBlockedId) : ''
     if (rawBlockedId && !blockedId) {
-      console.error('BlockService: Invalid blockedId format:', rawBlockedId)
+      logger.error('BlockService: Invalid blockedId format:', rawBlockedId)
     }
 
     return {
@@ -112,7 +113,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       return result
     } catch (error) {
-      console.error('Error blocking user:', error)
+      logger.error('Error blocking user:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to block user'
@@ -148,20 +149,20 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       }
 
       // Revoke their access
-      console.log(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
+      logger.info(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
       const revokeResult = await privateFeedService.revokeFollower(blockerId, targetUserId)
 
       if (revokeResult.success) {
-        console.log(`Successfully auto-revoked private feed access for: ${targetUserId}`)
+        logger.info(`Successfully auto-revoked private feed access for: ${targetUserId}`)
         return true
       } else {
         // Log the error but don't fail the block operation
-        console.error(`Failed to auto-revoke private feed access: ${revokeResult.error}`)
+        logger.error(`Failed to auto-revoke private feed access: ${revokeResult.error}`)
         return false
       }
     } catch (error) {
       // Auto-revocation failure should not prevent block from succeeding
-      console.error('Error during auto-revoke of private feed access:', error)
+      logger.error('Error during auto-revoke of private feed access:', error)
       return false
     }
   }
@@ -194,7 +195,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       return result
     } catch (error) {
-      console.error('Error unblocking user:', error)
+      logger.error('Error unblocking user:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to unblock user'
@@ -216,7 +217,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       })
       return result.documents[0] || null
     } catch (error) {
-      console.error('Error getting block:', error)
+      logger.error('Error getting block:', error)
       return null
     }
   }
@@ -233,7 +234,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       })
       return result.documents
     } catch (error) {
-      console.error('Error getting user blocks:', error)
+      logger.error('Error getting user blocks:', error)
       return []
     }
   }
@@ -262,7 +263,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       const data = (doc.data || doc) as Record<string, unknown>
       const bytes = toUint8Array(data.filterData)
       if (!bytes) {
-        console.error('Unknown filterData format:', typeof data.filterData)
+        logger.error('Unknown filterData format:', typeof data.filterData)
         return null
       }
 
@@ -272,7 +273,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         revision: ((doc.$revision || doc.revision || 0) as number)
       }
     } catch (error) {
-      console.error('Error getting bloom filter:', error)
+      logger.error('Error getting bloom filter:', error)
       return null
     }
   }
@@ -310,7 +311,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         result.set(ownerId, new BloomFilter(bytes, (data.itemCount as number) || 0))
       }
     } catch (error) {
-      console.error('Error getting bloom filters batch:', error)
+      logger.error('Error getting bloom filters batch:', error)
     }
 
     return result
@@ -357,7 +358,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         )
       }
     } catch (error) {
-      console.error('Error adding to bloom filter:', error)
+      logger.error('Error adding to bloom filter:', error)
       // Non-fatal - block still succeeded
     }
   }
@@ -393,7 +394,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         followedUserIds
       }
     } catch (error) {
-      console.error('Error getting block follow:', error)
+      logger.error('Error getting block follow:', error)
       return null
     }
   }
@@ -485,7 +486,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         return result
       }
     } catch (error) {
-      console.error('Error following user blocks:', error)
+      logger.error('Error following user blocks:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to follow blocks'
@@ -547,7 +548,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         return result
       }
     } catch (error) {
-      console.error('Error unfollowing user blocks:', error)
+      logger.error('Error unfollowing user blocks:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to unfollow blocks'
@@ -643,7 +644,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
             }
           }
         } catch (err) {
-          console.error(`Error checking block from ${blockerId}:`, err)
+          logger.error(`Error checking block from ${blockerId}:`, err)
         }
         return null
       })
@@ -655,7 +656,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         if (result) return result
       }
     } catch (error) {
-      console.error('Error checking inherited blocks:', error)
+      logger.error('Error checking inherited blocks:', error)
     }
 
     return null
@@ -770,7 +771,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       addConfirmedBlocksBatch(viewerId, batchResults)
     } catch (error) {
-      console.error('Error in batch block check:', error)
+      logger.error('Error in batch block check:', error)
       // On error, assume not blocked for unchecked
       for (const targetId of possiblePositives) {
         if (!result.has(targetId)) {
@@ -841,7 +842,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
           })
           return normalizeSDKResponse(response)
         } catch (err) {
-          console.error(`Error querying blocks for blocker ${blockerId}:`, err)
+          logger.error(`Error querying blocks for blocker ${blockerId}:`, err)
           return []
         }
       })
@@ -860,7 +861,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         }
       }
     } catch (error) {
-      console.error('Error querying inherited blocks batch:', error)
+      logger.error('Error querying inherited blocks batch:', error)
     }
 
     return result
@@ -912,7 +913,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         setMergedBloomFilter(userId, mergedFilter, filterUserIds)
       }
     } catch (error) {
-      console.error('Error initializing block data:', error)
+      logger.error('Error initializing block data:', error)
     }
   }
 

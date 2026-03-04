@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 /**
  * Storacha Credential Storage
  *
@@ -49,7 +50,7 @@ function set(key: string, value: unknown): void {
   try {
     storage.setItem(PREFIX + key, JSON.stringify(value))
   } catch (e) {
-    console.error('StorachaCredentialStorage: Failed to store value:', e)
+    logger.error('StorachaCredentialStorage: Failed to store value:', e)
   }
 }
 
@@ -151,7 +152,7 @@ export function hasStorachaCredentials(identityId: string): boolean {
   const hasEmail = has(`email_${identityId}`)
   const hasAgent = has(`agent_${identityId}`)
   const hasSpace = has(`space_${identityId}`)
-  console.log('[Storacha Storage] hasCredentials check:', { identityId, hasEmail, hasAgent, hasSpace })
+  logger.info('[Storacha Storage] hasCredentials check:', { identityId, hasEmail, hasAgent, hasSpace })
   return hasEmail && hasAgent && hasSpace
 }
 
@@ -174,11 +175,11 @@ export function getStorachaCredentials(identityId: string): StorachaCredentials 
  * Store all Storacha credentials for an identity
  */
 export function storeStorachaCredentials(identityId: string, credentials: StorachaCredentials): void {
-  console.log('[Storacha Storage] Storing credentials for identity:', identityId)
+  logger.info('[Storacha Storage] Storing credentials for identity:', identityId)
   storeStorachaEmail(identityId, credentials.email)
   storeStorachaAgent(identityId, credentials.agentData)
   storeStorachaSpace(identityId, credentials.spaceDid)
-  console.log('[Storacha Storage] Credentials stored successfully')
+  logger.info('[Storacha Storage] Credentials stored successfully')
 }
 
 /**

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Centralized cache management for yappr
  * Provides coordinated caching with proper invalidation strategies
@@ -232,7 +233,7 @@ export class CacheManager {
       })
     }
 
-    console.log(`Cache cleanup: removed ${cleaned} expired entries`)
+    logger.info(`Cache cleanup: removed ${cleaned} expired entries`)
     return cleaned
   }
 

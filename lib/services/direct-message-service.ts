@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
@@ -16,6 +17,7 @@ import {
 } from '../message-encryption'
 import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID } from '../constants'
+import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 
 /**
@@ -51,7 +53,8 @@ class DirectMessageService {
       // 2. Get sender's private key
       const privateKey = getPrivateKey(senderId)
       if (!privateKey) {
-        return { success: false, error: 'Please log in again to send messages' }
+        promptForAuthKey()
+        throw new Error('Private key not found. Please re-enter your key.')
       }
 
       // 3. Get recipient's public key (from identity or their invite)
@@ -92,7 +95,7 @@ class DirectMessageService {
         )
 
         if (!inviteResult.success) {
-          console.warn('Failed to create conversation invite:', inviteResult.error)
+          logger.warn('Failed to create conversation invite:', inviteResult.error)
           // Continue anyway - message is more important
         }
       }
@@ -131,7 +134,7 @@ class DirectMessageService {
         }
       }
     } catch (error) {
-      console.error('Error sending message:', error)
+      logger.error('Error sending message:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to send message'
@@ -142,8 +145,12 @@ class DirectMessageService {
   /**
    * Get all conversations for a user
    */
-  async getConversations(userId: string): Promise<Conversation[]> {
+  async getConversations(
+    userId: string,
+    options?: { includeParticipantInfo?: boolean }
+  ): Promise<Conversation[]> {
     try {
+      const includeParticipantInfo = options?.includeParticipantInfo ?? true
       const sdk = await getEvoSdk()
 
       // 1. Get invites where I'm the recipient (inbox)
@@ -233,16 +240,18 @@ class DirectMessageService {
           // Get participant username and display name
           let participantUsername: string | undefined
           let participantDisplayName: string | undefined
-          try {
-            participantUsername = await dpnsService.resolveUsername(data.participantId) || undefined
-          } catch {
-            // Ignore DPNS errors
-          }
-          try {
-            const profile = await unifiedProfileService.getProfile(data.participantId)
-            participantDisplayName = profile?.displayName
-          } catch {
-            // Ignore profile errors
+          if (includeParticipantInfo) {
+            const [usernameResult, profileResult] = await Promise.allSettled([
+              dpnsService.resolveUsername(data.participantId),
+              unifiedProfileService.getProfile(data.participantId)
+            ])
+
+            if (usernameResult.status === 'fulfilled') {
+              participantUsername = usernameResult.value || undefined
+            }
+            if (profileResult.status === 'fulfilled') {
+              participantDisplayName = profileResult.value?.displayName
+            }
           }
 
           // Decrypt latest message for preview
@@ -272,7 +281,7 @@ class DirectMessageService {
             updatedAt: latestDoc ? new Date(latestDoc.$createdAt as number) : new Date()
           })
         } catch (err) {
-          console.error(`Error processing conversation ${convId}:`, err)
+          logger.error(`Error processing conversation ${convId}:`, err)
         }
       }
 
@@ -281,7 +290,7 @@ class DirectMessageService {
         b.updatedAt.getTime() - a.updatedAt.getTime()
       )
     } catch (error) {
-      console.error('Error getting conversations:', error)
+      logger.error('Error getting conversations:', error)
       return []
     }
   }
@@ -312,7 +321,7 @@ class DirectMessageService {
           const msg = await this.decryptMessage(doc, userId, otherPartyId || '')
           if (msg) messages.push(msg)
         } catch (err) {
-          console.error('Error decrypting message:', err)
+          logger.error('Error decrypting message:', err)
           messages.push({
             id: doc.$id as string,
             senderId: doc.$ownerId as string,
@@ -326,7 +335,7 @@ class DirectMessageService {
 
       return messages
     } catch (error) {
-      console.error('Error getting conversation messages:', error)
+      logger.error('Error getting conversation messages:', error)
       return []
     }
   }
@@ -358,7 +367,7 @@ class DirectMessageService {
       }
       return messages
     } catch (error) {
-      console.error('Error polling messages:', error)
+      logger.error('Error polling messages:', error)
       return []
     }
   }
@@ -394,7 +403,7 @@ class DirectMessageService {
 
       return this.extractDocuments(response)
     } catch (error) {
-      console.error('Error getting raw messages:', error)
+      logger.error('Error getting raw messages:', error)
       return []
     }
   }
@@ -429,7 +438,7 @@ class DirectMessageService {
         )
       }
     } catch (error) {
-      console.error('Error marking as read:', error)
+      logger.error('Error marking as read:', error)
     }
   }
 
@@ -465,8 +474,8 @@ class DirectMessageService {
   ): Promise<DirectMessage | null> {
     const privateKey = getPrivateKey(currentUserId)
     if (!privateKey) {
-      console.warn('No private key available for decryption')
-      return null
+      promptForAuthKey()
+      throw new Error('Private key not found. Please re-enter your key.')
     }
 
     const senderId = doc.$ownerId as string
@@ -479,7 +488,7 @@ class DirectMessageService {
     )
 
     if (!otherPubKey) {
-      console.warn('Could not get public key for decryption')
+      logger.warn('Could not get public key for decryption')
       return null
     }
 
@@ -568,7 +577,7 @@ class DirectMessageService {
 
       return this.extractPublicKeyBytes(ecdsaKey)
     } catch (error) {
-      console.error('Error getting public key from identity:', error)
+      logger.error('Error getting public key from identity:', error)
       return null
     }
   }

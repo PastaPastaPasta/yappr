@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
@@ -7,7 +8,8 @@ import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid
 import { Post } from '@/lib/types'
 import { PostContent } from './post-content'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { cn, formatTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { useRelativeTime } from '@/hooks/use-relative-time'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { useAuth } from '@/contexts/auth-context'
 
@@ -38,6 +40,7 @@ export function PrivateQuotedPostContent({
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = quotedPost.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
+  const createdAtLabel = useRelativeTime(quotedPost.createdAt)
 
   // Get display name for author
   const authorDisplay = getAuthorDisplay(quotedPost.author)
@@ -127,7 +130,7 @@ export function PrivateQuotedPostContent({
         setState({ status: 'locked' })
       }
     } catch (error) {
-      console.error('Error decrypting quoted private post:', error)
+      logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
     }
   }, [quotedPost, user])
@@ -141,9 +144,15 @@ export function PrivateQuotedPostContent({
   // Attempt decryption on mount
   useEffect(() => {
     if (state.status === 'idle') {
-      attemptDecryption()
+      attemptDecryption().catch((err) => logger.error('Decryption failed:', err))
     }
   }, [state.status, attemptDecryption])
+
+  // Common link wrapper class for all states
+  const linkClass = cn(
+    'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
+    className
+  )
 
   // Common header for quoted post
   const renderHeader = () => (
@@ -160,22 +169,25 @@ export function PrivateQuotedPostContent({
         </span>
       )}
       <span>·</span>
-      <span>{formatTime(quotedPost.createdAt)}</span>
+      <span>{createdAtLabel}</span>
       <LockClosedIcon className="h-3.5 w-3.5 ml-1" />
+    </div>
+  )
+
+  // Locked content indicator (used in locked and error states)
+  const renderLockedIndicator = () => (
+    <div className="mt-2 flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+      <LockClosedIconSolid className="h-4 w-4 text-gray-500" />
+      <span className="text-sm text-gray-600 dark:text-gray-400">
+        Private post from {authorDisplay}
+      </span>
     </div>
   )
 
   // Loading state
   if (state.status === 'idle' || state.status === 'loading') {
     return (
-      <Link
-        href={`/post?id=${quotedPost.id}`}
-        onClick={(e) => e.stopPropagation()}
-        className={cn(
-          'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
-          className
-        )}
-      >
+      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
         {renderHeader()}
         <div className="mt-2 flex items-center gap-2 text-gray-500">
           <LockOpenIcon className="h-4 w-4 animate-pulse" />
@@ -193,24 +205,15 @@ export function PrivateQuotedPostContent({
   // Decrypted state
   if (state.status === 'decrypted') {
     return (
-      <Link
-        href={`/post?id=${quotedPost.id}`}
-        onClick={(e) => e.stopPropagation()}
-        className={cn(
-          'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
-          className
-        )}
-      >
+      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
         {renderHeader()}
-        {/* Show teaser if present */}
         {hasTeaser && (
           <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
             {quotedPost.content}
           </div>
         )}
-        {/* Decrypted content */}
         <div className="mt-1">
-          <PostContent content={state.content} className="text-sm line-clamp-3" />
+          <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed />
         </div>
       </Link>
     )
@@ -219,49 +222,23 @@ export function PrivateQuotedPostContent({
   // Locked state - per PRD §5.3: Non-followers see "[Private post from @user]"
   if (state.status === 'locked') {
     return (
-      <Link
-        href={`/post?id=${quotedPost.id}`}
-        onClick={(e) => e.stopPropagation()}
-        className={cn(
-          'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
-          className
-        )}
-      >
+      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
         {renderHeader()}
-        {/* Show teaser if present */}
         {hasTeaser && (
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
             {quotedPost.content}
           </div>
         )}
-        {/* Locked content indicator */}
-        <div className="mt-2 flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
-          <LockClosedIconSolid className="h-4 w-4 text-gray-500" />
-          <span className="text-sm text-gray-600 dark:text-gray-400">
-            Private post from {authorDisplay}
-          </span>
-        </div>
+        {renderLockedIndicator()}
       </Link>
     )
   }
 
   // Error state - show as locked
   return (
-    <Link
-      href={`/post?id=${quotedPost.id}`}
-      onClick={(e) => e.stopPropagation()}
-      className={cn(
-        'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
-        className
-      )}
-    >
+    <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
       {renderHeader()}
-      <div className="mt-2 flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
-        <LockClosedIconSolid className="h-4 w-4 text-gray-500" />
-        <span className="text-sm text-gray-600 dark:text-gray-400">
-          Private post from {authorDisplay}
-        </span>
-      </div>
+      {renderLockedIndicator()}
     </Link>
   )
 }

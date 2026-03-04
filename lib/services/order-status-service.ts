@@ -12,7 +12,7 @@ import type {
   OrderStatusUpdate,
   OrderStatusUpdateDocument,
   OrderStatus
-} from '../types';
+} from '../../types';
 
 class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
   constructor() {

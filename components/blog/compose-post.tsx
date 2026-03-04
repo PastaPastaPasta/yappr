@@ -1,0 +1,598 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { XMarkIcon, Cog6ToothIcon, PhotoIcon, LinkIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { IpfsImage } from '@/components/ui/ipfs-image'
+import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
+import { blogPostService, blogService } from '@/lib/services'
+import { getCompressedSize } from '@/lib/utils/compression'
+import { validateHttpUrl } from '@/lib/utils'
+import { labelsToCsv, parseLabels, decodeSummary, encodeSummary } from '@/lib/blog/content-utils'
+import { useImageUpload } from '@/hooks/use-image-upload'
+import { useFileDrop } from '@/hooks/use-file-drop'
+import type { Blog, BlogPost } from '@/lib/types'
+import { BlogEditor } from './blog-editor'
+import { useAuth } from '@/contexts/auth-context'
+import { logger } from '@/lib/logger'
+import toast from 'react-hot-toast'
+
+interface ComposePostProps {
+  blog: Blog
+  onBack?: () => void
+  onPublished?: (post: BlogPost) => void
+  editPost?: BlogPost
+  ownerId?: string
+}
+
+interface DraftData {
+  title: string
+  subtitle: string
+  coverImage: string
+  labels: string
+  commentsEnabled: boolean
+  blocks: unknown[]
+  summaryHidden?: boolean
+}
+
+function loadDraft(identityId: string, blogId: string): DraftData | null {
+  try {
+    const raw = localStorage.getItem(`yappr:blog-draft:${identityId}:${blogId}:new`)
+    if (!raw) return null
+    return JSON.parse(raw) as DraftData
+  } catch {
+    return null
+  }
+}
+
+function resolveCommentsEnabled(editPost?: BlogPost, savedDraft?: DraftData | null, blog?: Blog): boolean {
+  if (editPost) return Boolean(editPost.commentsEnabled ?? true)
+  if (savedDraft) return Boolean(savedDraft.commentsEnabled ?? true)
+  return Boolean(blog?.commentsEnabledDefault ?? true)
+}
+
+function resolveInitialBlocks(editPost?: BlogPost, savedDraft?: DraftData | null): unknown[] {
+  if (editPost && Array.isArray(editPost.content)) return editPost.content
+  if (savedDraft && Array.isArray(savedDraft.blocks)) return savedDraft.blocks
+  return []
+}
+
+export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: ComposePostProps) {
+  const isEditing = Boolean(editPost)
+  const { user } = useAuth()
+
+  // Load draft synchronously so BlogEditor gets correct initialBlocks on first render
+  const savedDraft = useMemo(() => {
+    if (isEditing || !user?.identityId) return null
+    return loadDraft(user.identityId, blog.id)
+  }, [isEditing, user?.identityId, blog.id])
+
+  const editDecoded = useMemo(() => decodeSummary(editPost?.subtitle), [editPost?.subtitle])
+
+  const [title, setTitle] = useState(editPost?.title ?? savedDraft?.title ?? '')
+  const [summary, setSummary] = useState(editDecoded.text || savedDraft?.subtitle || '')
+  const [summaryHidden, setSummaryHidden] = useState(editDecoded.hidden || savedDraft?.summaryHidden || false)
+  const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? savedDraft?.coverImage ?? '')
+  const [labels, setLabels] = useState(editPost?.labels ?? savedDraft?.labels ?? '')
+  const [customLabel, setCustomLabel] = useState('')
+  const [commentsEnabled, setCommentsEnabled] = useState(
+    resolveCommentsEnabled(editPost, savedDraft, blog)
+  )
+  const [blocks, setBlocks] = useState<unknown[]>(
+    resolveInitialBlocks(editPost, savedDraft)
+  )
+  const [isPublishing, setIsPublishing] = useState(false)
+  const [compressedBytes, setCompressedBytes] = useState(0)
+  const [showSettings, setShowSettings] = useState(false)
+  const [draftSaved, setDraftSaved] = useState(false)
+
+  const labelInputRef = useRef<HTMLInputElement>(null)
+  const coverFileRef = useRef<HTMLInputElement>(null)
+  const { upload: uploadImage, isUploading: isUploadingCover, progress: uploadProgress, isProviderConnected, checkProvider } = useImageUpload()
+  const [coverUrlInput, setCoverUrlInput] = useState('')
+  const [showCoverUrlInput, setShowCoverUrlInput] = useState(false)
+
+  useEffect(() => {
+    checkProvider().catch(() => {})
+  }, [checkProvider])
+
+  const processCoverFile = useCallback(async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be smaller than 5MB')
+      return
+    }
+
+    try {
+      const result = await uploadImage(file)
+      setCoverImage(`ipfs://${result.cid}`)
+    } catch {
+      toast.error('Failed to upload cover image')
+    }
+  }, [uploadImage])
+
+  const handleCoverFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await processCoverFile(file)
+    if (coverFileRef.current) coverFileRef.current.value = ''
+  }, [processCoverFile])
+
+  const { isDragging: isDraggingCover, dropZoneProps: coverDropProps } = useFileDrop({
+    disabled: isUploadingCover || !isProviderConnected,
+    onDrop: processCoverFile,
+  })
+
+  const handleCoverClick = useCallback(() => {
+    if (!isProviderConnected) {
+      toast.error('Connect a storage provider in Settings to upload images')
+      return
+    }
+    coverFileRef.current?.click()
+  }, [isProviderConnected])
+
+  const handleCoverUrlSubmit = useCallback(() => {
+    const validated = validateHttpUrl(coverUrlInput)
+    if (!validated) {
+      toast.error('Please enter a valid http or https URL')
+      return
+    }
+    setCoverImage(validated)
+    setCoverUrlInput('')
+    setShowCoverUrlInput(false)
+  }, [coverUrlInput])
+
+  const [pendingLabelFocus, setPendingLabelFocus] = useState(false)
+
+  const handleAddLabel = () => {
+    setShowSettings(true)
+    setPendingLabelFocus(true)
+  }
+
+  useEffect(() => {
+    if (pendingLabelFocus && showSettings) {
+      labelInputRef.current?.focus()
+      setPendingLabelFocus(false)
+    }
+  }, [pendingLabelFocus, showSettings])
+
+  const availableLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
+  const selectedLabels = useMemo(() => parseLabels(labels), [labels])
+
+  const draftKey = useMemo(() => {
+    if (!user?.identityId) return ''
+    return `yappr:blog-draft:${user.identityId}:${blog.id}:new`
+  }, [blog.id, user?.identityId])
+
+  useEffect(() => {
+    if (!draftKey || isEditing) return
+
+    setDraftSaved(false)
+    const timeout = setTimeout(() => {
+      const draft: DraftData = {
+        title,
+        subtitle: summary,
+        coverImage,
+        labels,
+        commentsEnabled,
+        blocks,
+        summaryHidden,
+      }
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(draft))
+        setDraftSaved(true)
+      } catch (err) {
+        logger.warn('Auto-save draft failed:', err)
+      }
+    }, 700)
+
+    return () => clearTimeout(timeout)
+  }, [blocks, commentsEnabled, coverImage, draftKey, isEditing, labels, summary, summaryHidden, title])
+
+  const toggleLabel = (label: string) => {
+    if (selectedLabels.includes(label)) {
+      setLabels(labelsToCsv(selectedLabels.filter((item) => item !== label)))
+      return
+    }
+    setLabels(labelsToCsv([...selectedLabels, label]))
+  }
+
+  const addCustomLabel = () => {
+    const trimmed = customLabel.trim()
+    if (!trimmed) return
+    if (selectedLabels.includes(trimmed)) {
+      setCustomLabel('')
+      return
+    }
+    setLabels(labelsToCsv([...selectedLabels, trimmed]))
+    setCustomLabel('')
+  }
+
+  const handleSubmit = async () => {
+    if (!user?.identityId) return
+    if (!title.trim()) {
+      toast.error('Title is required')
+      return
+    }
+    let estimatedBytes: number
+    try {
+      estimatedBytes = getCompressedSize(blocks)
+    } catch {
+      estimatedBytes = BLOG_POST_SIZE_LIMIT + 1
+    }
+
+    if (estimatedBytes > BLOG_POST_SIZE_LIMIT) {
+      toast.error('Post is too large after compression')
+      return
+    }
+
+    const trimmedSummary = summary.trim()
+    const postFields = {
+      title: title.trim(),
+      subtitle: trimmedSummary ? encodeSummary(trimmedSummary, summaryHidden) : '',
+      coverImage: coverImage || '',
+      labels: labels || '',
+      commentsEnabled,
+      content: blocks,
+    }
+
+    setIsPublishing(true)
+    try {
+      if (isEditing && editPost) {
+        if (!ownerId) {
+          toast.error('Cannot update post: missing owner ID')
+          return
+        }
+        const updated = await blogPostService.updatePost(editPost.id, ownerId, postFields)
+        toast.success('Post updated')
+        onPublished?.(updated)
+      } else {
+        const created = await blogPostService.createPost(user.identityId, {
+          blogId: blog.id,
+          ...postFields,
+        })
+
+        if (draftKey) {
+          localStorage.removeItem(draftKey)
+        }
+        toast.success('Post published')
+        onPublished?.(created)
+        setTitle('')
+        setSummary('')
+        setSummaryHidden(false)
+        setCoverImage('')
+        setLabels('')
+        setCustomLabel('')
+        setBlocks([])
+        setCommentsEnabled(Boolean(blog.commentsEnabledDefault ?? true))
+      }
+
+      // Register any new post labels to the blog so they appear as filter pills
+      const postLabels = parseLabels(labels)
+      if (postLabels.length > 0) {
+        const existingBlogLabels = parseLabels(blog.labels)
+        const newLabels = postLabels.filter((l) => !existingBlogLabels.includes(l))
+        if (newLabels.length > 0) {
+          const allLabels = labelsToCsv([...existingBlogLabels, ...newLabels])
+          blogService.updateBlog(blog.id, user.identityId, { labels: allLabels }).catch((err) => {
+            logger.warn('Failed to register new labels to blog:', err)
+          })
+        }
+      }
+    } catch {
+      toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
+    } finally {
+      setIsPublishing(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-0 flex-col">
+      {/* Compose top bar */}
+      <div className="flex items-center justify-between border-b border-gray-800/40 px-4 py-2.5">
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-sm text-gray-500 transition-colors hover:text-gray-300"
+            >
+              &larr;
+            </button>
+          )}
+          {draftSaved && !isEditing && (
+            <span className="flex items-center gap-1.5 text-xs text-gray-600">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500/70" />
+              Saved
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSettings((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800/60 hover:text-gray-300"
+          >
+            <Cog6ToothIcon className="h-3.5 w-3.5" />
+            Settings
+          </button>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isPublishing || !title.trim()}
+          >
+            {isPublishing
+              ? isEditing ? 'Saving...' : 'Publishing...'
+              : isEditing ? 'Save Changes' : 'Publish'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Settings panel — collapsible */}
+      {showSettings && (
+        <div className="border-b border-gray-800/40 bg-gray-900/20 px-4 py-4">
+          <div className="mx-auto max-w-[640px] space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-gray-300">Post settings</p>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                aria-label="Close settings"
+                className="rounded p-1 text-gray-500 transition-colors hover:text-gray-300"
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Labels */}
+            <div>
+              <p className="mb-2 text-xs text-gray-500">Labels</p>
+              {(availableLabels.length > 0 || selectedLabels.length > 0) && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {availableLabels.map((label) => {
+                    const selected = selectedLabels.includes(label)
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => toggleLabel(label)}
+                        aria-pressed={selected}
+                        className={`rounded-full px-2.5 py-0.5 text-xs transition-all ${
+                          selected
+                            ? 'bg-yappr-500/20 text-yappr-300 ring-1 ring-yappr-500/40'
+                            : 'bg-gray-800/60 text-gray-400 hover:bg-gray-800 hover:text-gray-300'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  ref={labelInputRef}
+                  value={customLabel}
+                  onChange={(e) => setCustomLabel(e.target.value)}
+                  maxLength={40}
+                  placeholder="Add a label..."
+                  className="h-8 text-xs"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      addCustomLabel()
+                    }
+                  }}
+                />
+                <Button type="button" variant="outline" size="sm" onClick={addCustomLabel} disabled={!customLabel.trim()}>
+                  Add
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
+                <span className="text-xs text-gray-400">Allow comments</span>
+              </div>
+              <span className="text-xs tabular-nums text-gray-600">
+                {compressedBytes.toLocaleString()} / {BLOG_POST_SIZE_LIMIT.toLocaleString()} bytes
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden file input for cover image */}
+      <input
+        ref={coverFileRef}
+        type="file"
+        accept="image/*"
+        onChange={handleCoverFileSelect}
+        className="hidden"
+      />
+
+      {/* Writing canvas */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[640px] px-4 pt-8 pb-[60vh]">
+          {/* Header area — invisible cover image drop zone */}
+          <div
+            {...coverDropProps}
+            className={`relative rounded-lg transition-colors ${
+              isDraggingCover ? 'ring-2 ring-yappr-500/60 bg-yappr-500/5' : ''
+            }`}
+          >
+            {isDraggingCover && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/30">
+                <p className="text-sm font-medium text-yappr-400">
+                  {coverImage ? 'Drop to replace cover' : 'Drop to set cover image'}
+                </p>
+              </div>
+            )}
+
+            {/* Cover image banner */}
+            {coverImage && (
+              <div className="relative mb-6 aspect-[3/1] overflow-hidden rounded-lg">
+                <IpfsImage src={coverImage} alt="Cover" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setCoverImage('')}
+                  className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 transition-colors hover:bg-black/70"
+                  title="Remove cover image"
+                  aria-label="Remove cover image"
+                >
+                  <XMarkIcon className="h-4 w-4 text-white" />
+                </button>
+              </div>
+            )}
+
+            {/* Title + cover image actions — min-h prevents layout shift when swapping title ↔ URL input */}
+            <div className="flex min-h-[44px] items-center gap-2">
+              {showCoverUrlInput ? (
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <input
+                    type="url"
+                    value={coverUrlInput}
+                    onChange={(e) => setCoverUrlInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); handleCoverUrlSubmit() }
+                      if (e.key === 'Escape') { setShowCoverUrlInput(false); setCoverUrlInput('') }
+                    }}
+                    placeholder="https://example.com/image.jpg"
+                    className="h-8 min-w-0 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-sm text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCoverUrlSubmit}
+                    className="shrink-0 rounded bg-gray-800 px-2.5 py-1 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
+                    aria-label="Cancel URL input"
+                    className="shrink-0 rounded p-1 text-gray-500 hover:text-gray-300"
+                  >
+                    <XMarkIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  maxLength={128}
+                  placeholder="Title"
+                  className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
+                />
+              )}
+              <div className="flex shrink-0 items-center gap-1">
+                {!showCoverUrlInput && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoverUrlInput(true)}
+                    className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400"
+                    title="Paste cover image URL"
+                    aria-label="Paste cover image URL"
+                  >
+                    <LinkIcon className="h-5 w-5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCoverClick}
+                  disabled={isUploadingCover}
+                  className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400 disabled:opacity-50"
+                  title={coverImage ? 'Change cover image' : 'Upload cover image'}
+                  aria-label={coverImage ? 'Change cover image' : 'Upload cover image'}
+                >
+                  {isUploadingCover ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <PhotoIcon className="h-5 w-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Upload progress */}
+            {isUploadingCover && (
+              <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-800/40">
+                <div
+                  className="h-full bg-yappr-500 transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            )}
+
+            {/* Summary */}
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="text"
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                maxLength={255}
+                placeholder="Add a summary..."
+                className="min-w-0 flex-1 bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
+              />
+              {summary.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setSummaryHidden((prev) => !prev)}
+                  className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                    summaryHidden
+                      ? 'bg-gray-800/60 text-gray-500'
+                      : 'bg-yappr-500/20 text-yappr-300'
+                  }`}
+                >
+                  {summaryHidden ? 'Hidden from post' : 'Visible on post'}
+                </button>
+              )}
+            </div>
+
+            {/* Inline labels — always visible */}
+            <div className="mt-4 flex flex-wrap items-center gap-1.5">
+              {selectedLabels.map((label) => (
+                <span
+                  key={label}
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-400"
+                >
+                  {label}
+                  <button
+                    type="button"
+                    onClick={() => toggleLabel(label)}
+                    className="text-gray-600 hover:text-gray-300"
+                  >
+                    <XMarkIcon className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                aria-label="Add labels"
+                onClick={handleAddLabel}
+                className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          {/* Editor — the writing space (handles its own image drops) */}
+          <div className="compose-canvas mt-6">
+            <BlogEditor initialBlocks={blocks} onChange={setBlocks} onBytesChange={setCompressedBytes} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

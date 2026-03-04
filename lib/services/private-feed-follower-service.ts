@@ -1,5 +1,6 @@
 'use client';
 
+import { logger } from '@/lib/logger';
 /**
  * PrivateFeedFollowerService
  *
@@ -133,7 +134,7 @@ class PrivateFeedFollowerService {
         documentData.publicKey = Array.from(publicKey);
       }
 
-      console.log('Creating FollowRequest:', { targetId: ownerId });
+      logger.info('Creating FollowRequest:', { targetId: ownerId });
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -151,10 +152,10 @@ class PrivateFeedFollowerService {
       // separate notification documents, which would fail anyway due to ownership constraints.
       // The feed owner's client will find this request when polling for notifications.
 
-      console.log('Follow request created successfully');
+      logger.info('Follow request created successfully');
       return { success: true };
     } catch (error) {
-      console.error('Error requesting access:', error);
+      logger.error('Error requesting access:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -191,10 +192,10 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to delete follow request' };
       }
 
-      console.log('Follow request cancelled successfully');
+      logger.info('Follow request cancelled successfully');
       return { success: true };
     } catch (error) {
-      console.error('Error cancelling request:', error);
+      logger.error('Error cancelling request:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -243,7 +244,7 @@ class PrivateFeedFollowerService {
 
       return requests;
     } catch (error) {
-      console.error('Error fetching follow requests for owner:', error);
+      logger.error('Error fetching follow requests for owner:', error);
       return [];
     }
   }
@@ -282,7 +283,7 @@ class PrivateFeedFollowerService {
         publicKey: doc.publicKey ? this.normalizeBytes(doc.publicKey) : undefined,
       };
     } catch (error) {
-      console.error('Error fetching follow request:', error);
+      logger.error('Error fetching follow request:', error);
       return null;
     }
   }
@@ -320,7 +321,7 @@ class PrivateFeedFollowerService {
         encryptedPayload: this.normalizeBytes(doc.encryptedPayload),
       };
     } catch (error) {
-      console.error('Error fetching grant:', error);
+      logger.error('Error fetching grant:', error);
       return null;
     }
   }
@@ -458,7 +459,7 @@ class PrivateFeedFollowerService {
         throw decryptError;
       }
     } catch (error) {
-      console.error('Error decrypting post:', error);
+      logger.error('Error decrypting post:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Decryption failed',
@@ -519,10 +520,10 @@ class PrivateFeedFollowerService {
         }
       }
 
-      console.log(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
+      logger.info(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
       return { success: true };
     } catch (error) {
-      console.error('Error catching up:', error);
+      logger.error('Error catching up:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Catch-up failed',
@@ -658,7 +659,7 @@ class PrivateFeedFollowerService {
 
       return { success: true };
     } catch (error) {
-      console.error('Error applying rekey:', error);
+      logger.error('Error applying rekey:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Rekey application failed',
@@ -703,7 +704,7 @@ class PrivateFeedFollowerService {
 
       return documents;
     } catch (error) {
-      console.error('Error fetching rekey documents:', error);
+      logger.error('Error fetching rekey documents:', error);
       return [];
     }
   }
@@ -764,18 +765,18 @@ class PrivateFeedFollowerService {
       const catchUpResult = await this.catchUp(ownerId, myId);
       if (!catchUpResult.success) {
         // Log but don't fail - we have initial keys at least
-        console.warn('Failed to catch up after recovery:', catchUpResult.error);
+        logger.warn('Failed to catch up after recovery:', catchUpResult.error);
       }
 
       // 7. Clean up stale FollowRequest if it exists (PRD §4.5)
       this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
-        console.warn('Failed to cleanup stale follow request after recovery:', err);
+        logger.warn('Failed to cleanup stale follow request after recovery:', err);
       });
 
-      console.log(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
+      logger.info(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
       return { success: true };
     } catch (error) {
-      console.error('Error recovering follower keys:', error);
+      logger.error('Error recovering follower keys:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Recovery failed',
@@ -811,7 +812,7 @@ class PrivateFeedFollowerService {
           // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
           if (autoCleanup) {
             this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
-              console.warn('Failed to cleanup stale follow request:', err);
+              logger.warn('Failed to cleanup stale follow request:', err);
             });
           }
           return 'approved';
@@ -842,7 +843,7 @@ class PrivateFeedFollowerService {
             // Request was created before any revocation, meaning this user
             // was approved (which would have happened after the request)
             // and then later revoked. Return 'revoked' state.
-            console.log(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
+            logger.info(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
             return 'revoked';
           }
         }
@@ -854,7 +855,7 @@ class PrivateFeedFollowerService {
 
       return 'none';
     } catch (error) {
-      console.error('Error getting access status:', error);
+      logger.error('Error getting access status:', error);
       return 'none';
     }
   }
@@ -882,7 +883,7 @@ class PrivateFeedFollowerService {
       }
 
       // Delete the stale request
-      console.log('Cleaning up stale FollowRequest for approved user:', myId);
+      logger.info('Cleaning up stale FollowRequest for approved user:', myId);
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
         DOCUMENT_TYPES.FOLLOW_REQUEST,
@@ -894,10 +895,10 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to delete stale follow request' };
       }
 
-      console.log('Successfully cleaned up stale FollowRequest');
+      logger.info('Successfully cleaned up stale FollowRequest');
       return { success: true };
     } catch (error) {
-      console.error('Error cleaning up stale follow request:', error);
+      logger.error('Error cleaning up stale follow request:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Cleanup failed',
@@ -945,11 +946,11 @@ class PrivateFeedFollowerService {
       const followedOwners = privateFeedKeyStore.getFollowedFeedOwners();
 
       if (followedOwners.length === 0) {
-        console.log('PrivateFeedSync: No followed private feeds to sync');
+        logger.info('PrivateFeedSync: No followed private feeds to sync');
         return { synced, failed, upToDate };
       }
 
-      console.log(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
+      logger.info(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
 
       // Process each feed owner in parallel (with limited concurrency)
       const CONCURRENCY_LIMIT = 3;
@@ -978,15 +979,15 @@ class PrivateFeedFollowerService {
             }
           } else {
             // Promise rejected - shouldn't happen but handle gracefully
-            console.error('PrivateFeedSync: Promise rejected:', settledResult.reason);
+            logger.error('PrivateFeedSync: Promise rejected:', settledResult.reason);
           }
         }
       }
 
-      console.log(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
+      logger.info(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
       return { synced, failed, upToDate };
     } catch (error) {
-      console.error('PrivateFeedSync: Error syncing feeds:', error);
+      logger.error('PrivateFeedSync: Error syncing feeds:', error);
       return { synced, failed, upToDate };
     }
   }
@@ -1021,7 +1022,7 @@ class PrivateFeedFollowerService {
       }
 
       // Need to catch up
-      console.log(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
+      logger.info(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
       const catchUpResult = await this.catchUp(ownerId, myId);
 
       if (catchUpResult.success) {
@@ -1030,7 +1031,7 @@ class PrivateFeedFollowerService {
         return { status: 'failed', error: catchUpResult.error };
       }
     } catch (error) {
-      console.error(`PrivateFeedSync: Error syncing feed ${ownerId}:`, error);
+      logger.error(`PrivateFeedSync: Error syncing feed ${ownerId}:`, error);
       return {
         status: 'failed',
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -1065,7 +1066,7 @@ class PrivateFeedFollowerService {
         }
       }
     }
-    console.warn('Unable to normalize bytes:', value);
+    logger.warn('Unable to normalize bytes:', value);
     return new Uint8Array(0);
   }
 }

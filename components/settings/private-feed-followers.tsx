@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -17,12 +18,9 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { TREE_CAPACITY } from '@/lib/services'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
 
-interface PrivateFollower {
-  id: string
-  username?: string
-  displayName: string
-  hasDpns: boolean
+interface PrivateFollower extends UserDetails {
   grantedAt: Date
   leafIndex: number
 }
@@ -55,8 +53,6 @@ export function PrivateFeedFollowers() {
     try {
       setIsLoading(true)
       const { privateFeedService } = await import('@/lib/services')
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
       // Check if user has private feed enabled
       const hasFeed = await privateFeedService.hasPrivateFeed(user.identityId)
@@ -78,37 +74,9 @@ export function PrivateFeedFollowers() {
       // Resolve usernames and profiles for followers
       const followersWithDetails = await Promise.all(
         grants.map(async (grant) => {
-          const followerId = grant.recipientId
-          let username: string | undefined
-          let displayName = `User ${followerId.slice(-6)}`
-          let hasDpns = false
-
-          // Try to get DPNS username
-          try {
-            const resolvedUsername = await dpnsService.resolveUsername(followerId)
-            if (resolvedUsername) {
-              username = resolvedUsername
-              hasDpns = true
-            }
-          } catch {
-            // DPNS resolution is optional
-          }
-
-          // Try to get profile display name
-          try {
-            const profile = await unifiedProfileService.getProfile(followerId)
-            if (profile?.displayName) {
-              displayName = profile.displayName
-            }
-          } catch {
-            // Profile is optional
-          }
-
+          const details = await resolveUserDetails(grant.recipientId)
           return {
-            id: followerId,
-            username,
-            displayName,
-            hasDpns,
+            ...details,
             grantedAt: new Date(grant.grantedAt),
             leafIndex: grant.leafIndex,
           }
@@ -120,7 +88,7 @@ export function PrivateFeedFollowers() {
       setFollowers(followersWithDetails)
       setFilteredFollowers(followersWithDetails)
     } catch (error) {
-      console.error('Error loading private followers:', error)
+      logger.error('Error loading private followers:', error)
       toast.error('Failed to load private followers')
     } finally {
       setIsLoading(false)
@@ -128,7 +96,7 @@ export function PrivateFeedFollowers() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadFollowers().catch((err) => console.error('Failed to load private followers:', err))
+    loadFollowers().catch((err) => logger.error('Failed to load private followers:', err))
   }, [loadFollowers, refreshKey])
 
   // Filter followers based on search query
@@ -194,7 +162,7 @@ export function PrivateFeedFollowers() {
         throw new Error(result.error || 'Failed to revoke access')
       }
     } catch (error) {
-      console.error('Error revoking follower:', error)
+      logger.error('Error revoking follower:', error)
       toast.error('Failed to revoke access')
     } finally {
       setRevokingId(null)

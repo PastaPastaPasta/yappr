@@ -1,16 +1,18 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { useEncryptionKeyModal, getEncryptionKeyActionDescription } from '@/hooks/use-encryption-key-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { AddEncryptionKeyModal } from './add-encryption-key-modal'
 import { LostEncryptionKeyModal } from './lost-encryption-key-modal'
+import { identityService } from '@/lib/services/identity-service'
 import toast from 'react-hot-toast'
 
 type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
@@ -59,6 +61,16 @@ export function EncryptionKeyModal() {
     setAutoRecoveryMessage('Checking for backup...')
 
     try {
+      // If identity has no active encryption key configured yet, launch add-key flow directly.
+      const hasIdentityEncryptionKey = await identityService.hasEncryptionKey(user.identityId)
+      if (!hasIdentityEncryptionKey) {
+        if (!isModalActiveRef.current) return
+        setAutoRecoveryStatus('failed')
+        setAutoRecoveryMessage('')
+        setShowAddKeyModal(true)
+        return
+      }
+
       // Get auth key from secure storage
       const { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
       const authKeyWif = getPrivateKey(user.identityId)
@@ -116,7 +128,7 @@ export function EncryptionKeyModal() {
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('Auto-recovery not available. Please enter your key manually.')
     } catch (err) {
-      console.error('Auto-recovery error:', err)
+      logger.error('Auto-recovery error:', err)
       if (!isModalActiveRef.current) return
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
@@ -126,7 +138,7 @@ export function EncryptionKeyModal() {
   // Trigger auto-recovery when modal opens
   useEffect(() => {
     if (isOpen && user && autoRecoveryStatus === 'idle') {
-      attemptAutoRecovery()
+      attemptAutoRecovery().catch((err) => logger.error('Auto-recovery failed:', err))
     }
   }, [isOpen, user, autoRecoveryStatus, attemptAutoRecovery])
 
@@ -181,7 +193,7 @@ export function EncryptionKeyModal() {
         onSuccess()
       }
     } catch (err) {
-      console.error('Error validating encryption key:', err)
+      logger.error('Error validating encryption key:', err)
       setError(err instanceof Error ? err.message : 'Failed to validate key')
     } finally {
       setIsValidating(false)
@@ -257,7 +269,7 @@ export function EncryptionKeyModal() {
                           {autoRecoveryStatus === 'found' ? (
                             <CheckCircleIcon className="h-6 w-6 text-green-500" />
                           ) : (
-                            <ArrowPathIcon className="h-6 w-6 text-yappr-500 animate-spin" />
+                            <Spinner size="sm" className="h-6 w-6" />
                           )}
                           {autoRecoveryStatus === 'found' ? 'Key Recovered!' : 'Recovering Key...'}
                         </Dialog.Title>
@@ -271,7 +283,7 @@ export function EncryptionKeyModal() {
                         <div className="flex flex-col items-center justify-center py-8">
                           {autoRecoveryStatus === 'checking' ? (
                             <>
-                              <Loader2 className="h-12 w-12 text-yappr-500 animate-spin mb-4" />
+                              <Spinner size="lg" className="mb-4" />
                               <p className="text-sm text-gray-500">{autoRecoveryMessage}</p>
                             </>
                           ) : (
@@ -285,7 +297,7 @@ export function EncryptionKeyModal() {
                     )}
 
                     {/* Manual entry state (idle or failed) */}
-                    {(autoRecoveryStatus === 'idle' || autoRecoveryStatus === 'failed') && (
+                    {(autoRecoveryStatus === 'idle' || autoRecoveryStatus === 'failed') && !showAddKeyModal && (
                       <>
                         <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
                           <KeyIcon className="h-6 w-6 text-yappr-500" />
@@ -367,7 +379,7 @@ export function EncryptionKeyModal() {
                           >
                             {isValidating ? (
                               <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                <Spinner size="xs" className="mr-2" />
                                 Validating...
                               </>
                             ) : (

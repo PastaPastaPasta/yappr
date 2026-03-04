@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, memo } from 'react'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from './ipfs-image'
@@ -37,7 +38,7 @@ async function fetchBannerUrl(userId: string): Promise<string | null> {
       bannerCache.set(userId, { url: bannerUri, timestamp: Date.now() })
       return bannerUri
     } catch (error) {
-      console.error('BannerImage: Error fetching banner:', error)
+      logger.error('BannerImage: Error fetching banner:', error)
       bannerCache.set(userId, { url: null, timestamp: Date.now() })
       return null
     } finally {
@@ -111,7 +112,7 @@ export const BannerImage = memo(function BannerImage({
         setIsLoading(false)
       }
     }).catch(err => {
-      console.error('Failed to fetch banner URL:', err)
+      logger.error('Failed to fetch banner URL:', err)
       if (mounted) {
         setIsLoading(false)
       }

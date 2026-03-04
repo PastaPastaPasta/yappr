@@ -1,10 +1,11 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
-import * as Switch from '@radix-ui/react-switch'
+import { SettingsSwitch } from '@/components/settings/settings-switch'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 
@@ -101,7 +102,7 @@ export function BlockListSettings() {
 
       setFollowedUsers(users)
     } catch (error) {
-      console.error('Error loading block list settings:', error)
+      logger.error('Error loading block list settings:', error)
       toast.error('Failed to load block lists')
     } finally {
       setIsLoading(false)
@@ -109,7 +110,7 @@ export function BlockListSettings() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadData().catch(err => console.error('Failed to load block list data:', err))
+    loadData().catch(err => logger.error('Failed to load block list data:', err))
   }, [loadData])
 
   const handleToggle = async (targetUserId: string, currentlyFollowing: boolean) => {
@@ -150,7 +151,7 @@ export function BlockListSettings() {
           u.id === targetUserId ? { ...u, isFollowingBlocks: currentlyFollowing } : u
         )
       )
-      console.error('Error toggling block follow:', error)
+      logger.error('Error toggling block follow:', error)
       toast.error('Failed to update block list')
     } finally {
       setTogglingId(null)
@@ -222,16 +223,12 @@ export function BlockListSettings() {
                     )}
                   </div>
                 </Link>
-                <Switch.Root
+                <SettingsSwitch
                   checked={followedUser.isFollowingBlocks}
                   onCheckedChange={() => handleToggle(followedUser.id, followedUser.isFollowingBlocks)}
                   disabled={togglingId === followedUser.id}
-                  className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ml-3 ${
-                    followedUser.isFollowingBlocks ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-                  } ${togglingId === followedUser.id ? 'opacity-50' : ''}`}
-                >
-                  <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-                </Switch.Root>
+                  className="flex-shrink-0 ml-3"
+                />
               </div>
             ))}
           </div>

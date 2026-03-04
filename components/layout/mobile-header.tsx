@@ -20,7 +20,7 @@ export function MobileHeader() {
 
   return (
     <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-900">
-      <Link href="/" className="flex items-center gap-2">
+      <Link href="/welcome" className="flex items-center gap-2">
         <span className="text-xl font-bold text-gradient">Yappr</span>
         <Image
           src="/pbde-light.png"

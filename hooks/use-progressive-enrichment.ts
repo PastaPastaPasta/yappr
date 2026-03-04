@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
@@ -149,7 +150,7 @@ export function useProgressiveEnrichment(
         ...prev,
         usernames: mergeMaps(prev.usernames, usernames)
       }))
-    }).catch(err => console.error('Progressive enrichment: usernames failed', err))
+    }).catch(err => logger.error('Progressive enrichment: usernames failed', err))
 
     // Priority 1: Profiles (display names)
     const profilePromise = unifiedProfileService.getProfilesByIdentityIds(authorIds)
@@ -172,7 +173,7 @@ export function useProgressiveEnrichment(
         ...prev,
         profiles: mergeMaps(prev.profiles, profileMap)
       }))
-    }).catch(err => console.error('Progressive enrichment: profiles failed', err))
+    }).catch(err => logger.error('Progressive enrichment: profiles failed', err))
 
     // Priority 2: Avatars
     const avatarPromise = unifiedProfileService.getAvatarUrlsBatch(authorIds)
@@ -182,7 +183,7 @@ export function useProgressiveEnrichment(
         ...prev,
         avatars: mergeMaps(prev.avatars, avatars)
       }))
-    }).catch(err => console.error('Progressive enrichment: avatars failed', err))
+    }).catch(err => logger.error('Progressive enrichment: avatars failed', err))
 
     // Priority 3: Stats
     const statsPromise = postService.getBatchPostStats(postIds)
@@ -192,7 +193,7 @@ export function useProgressiveEnrichment(
         ...prev,
         stats: mergeMaps(prev.stats, stats)
       }))
-    }).catch(err => console.error('Progressive enrichment: stats failed', err))
+    }).catch(err => logger.error('Progressive enrichment: stats failed', err))
 
     // Priority 4: User interactions (only if logged in)
     const interactionsPromise = currentUserId
@@ -206,7 +207,7 @@ export function useProgressiveEnrichment(
           ...prev,
           interactions: mergeMaps(prev.interactions, interactions)
         }))
-      }).catch(err => console.error('Progressive enrichment: interactions failed', err))
+      }).catch(err => logger.error('Progressive enrichment: interactions failed', err))
 
       // Priority 5: Block status (always query for filtering)
       const blockPromise = blockService.checkBlockedBatch(currentUserId, authorIds)
@@ -217,7 +218,7 @@ export function useProgressiveEnrichment(
           ...prev,
           blockStatus: mergeMaps(prev.blockStatus, blockStatus)
         }))
-      }).catch(err => console.error('Progressive enrichment: block status failed', err))
+      }).catch(err => logger.error('Progressive enrichment: block status failed', err))
 
       // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
       if (!skipFollowStatus) {
@@ -229,7 +230,7 @@ export function useProgressiveEnrichment(
             ...prev,
             followStatus: mergeMaps(prev.followStatus, followStatus)
           }))
-        }).catch(err => console.error('Progressive enrichment: follow status failed', err))
+        }).catch(err => logger.error('Progressive enrichment: follow status failed', err))
       } else {
         // On Following tab, mark all authors as followed
         const followStatus = new Map<string, boolean>()

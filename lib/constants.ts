@@ -13,6 +13,13 @@ export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID || 'AqbY1qAo6V7M1xUYeQgMGhZh1mvSLNBpt9t8VQNjktoG' // Key exchange protocol contract
+export const YAPPR_BLOG_CONTRACT_ID = '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
+export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_value_size
+export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
+export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
+
+// App URL (custom domain on GitHub Pages)
+export const APP_URL = 'https://yap.pr'
 
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
@@ -56,7 +63,11 @@ export const DOCUMENT_TYPES = {
   PRIVATE_FEED_REKEY: 'privateFeedRekey',
   PRIVATE_FEED_STATE: 'privateFeedState',
   // Key exchange protocol document types (separate contract)
-  LOGIN_KEY_RESPONSE: 'loginKeyResponse'
+  LOGIN_KEY_RESPONSE: 'loginKeyResponse',
+  BLOG: 'blog',
+  BLOG_POST: 'blogPost',
+  BLOG_COMMENT: 'blogComment',
+  BLOG_FOLLOW: 'blogFollow',
 } as const
 
 // Storefront document types (separate contract)

@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { logger } from '@/lib/logger';
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Eye, EyeOff } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -63,7 +66,25 @@ export function LoginModal() {
   // Form states
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isShaking, setIsShaking] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
+
+  const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setErrorWithShake = (msg: string | null) => {
+    setError(msg)
+    if (msg) {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+      setIsShaking(true)
+      shakeTimerRef.current = setTimeout(() => setIsShaking(false), 500)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+    }
+  }, [])
 
   const { login, loginWithPassword } = useAuth()
   const openBackupModal = useKeyBackupModal((state) => state.open)
@@ -145,7 +166,7 @@ export function LoginModal() {
           setHasOnchainBackup(false)
         }
       } catch (err) {
-        console.error('Identity lookup error:', err)
+        logger.error('Identity lookup error:', err)
         setLookupError('Failed to lookup identity')
       } finally {
         setIsLookingUp(false)
@@ -191,7 +212,7 @@ export function LoginModal() {
         setKeyValidationResult(result)
         setKeyValidationStatus(result.isValid ? 'valid' : 'invalid')
       } catch (err) {
-        console.error('Key validation error:', err)
+        logger.error('Key validation error:', err)
         setKeyValidationStatus('invalid')
         setKeyValidationResult({
           isValid: false,
@@ -220,7 +241,7 @@ export function LoginModal() {
 
       if (detectedCredentialType === 'key') {
         if (keyValidationStatus !== 'valid') {
-          setError('Private key does not match this identity')
+          setErrorWithShake('Private key does not match this identity')
           setIsLoading(false)
           return
         }
@@ -241,7 +262,7 @@ export function LoginModal() {
 
       close()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to login')
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login')
     } finally {
       setIsLoading(false)
     }
@@ -322,10 +343,7 @@ export function LoginModal() {
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3">
                       {isLookingUp && (
-                        <svg className="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
+                        <Spinner size="sm" className="text-gray-400" />
                       )}
                       {!isLookingUp && resolvedIdentity && (
                         <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -333,15 +351,21 @@ export function LoginModal() {
                         </svg>
                       )}
                       {!isLookingUp && lookupError && (
-                        <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button type="button" aria-label={lookupError} className="flex items-center text-red-500 cursor-help">
+                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{lookupError}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                   </div>
-                  {lookupError && (
-                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{lookupError}</p>
-                  )}
                 </div>
 
                 {/* Password or Private Key Input */}
@@ -349,17 +373,57 @@ export function LoginModal() {
                   <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     {hasOnchainBackup ? 'Password or Private Key' : 'Private Key (High or Critical)'}
                   </label>
-                  <div className="relative">
+                  <motion.div
+                    className="relative"
+                    animate={isShaking ? { x: [0, -8, 8, -5, 5, -2, 2, 0] } : { x: 0 }}
+                    transition={{ duration: 0.4 }}
+                  >
                     <input
                       id="loginCredential"
                       type={showCredential ? 'text' : 'password'}
                       value={credential}
                       onChange={(e) => setCredential(e.target.value)}
                       placeholder="Enter your password or private key..."
-                      className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className={`w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors ${
+                        error
+                          ? 'border-red-400 dark:border-red-500'
+                          : isLoading
+                          ? 'border-yappr-400 dark:border-yappr-500'
+                          : 'border-gray-200 dark:border-gray-800'
+                      }`}
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
+                      {isLoading ? (
+                        <Spinner size="sm" className="text-yappr-400" />
+                      ) : (
+                        <>
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'validating' && (
+                            <Spinner size="sm" className="text-gray-400" />
+                          )}
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'valid' && (
+                            <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'invalid' && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" aria-label={keyValidationResult?.error ?? 'Invalid private key'} className="flex items-center text-red-500 cursor-help">
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {keyValidationResult?.error || 'Invalid private key'}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => setShowCredential(!showCredential)}
@@ -368,56 +432,10 @@ export function LoginModal() {
                       >
                         {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                       </button>
-                      {detectedCredentialType === 'key' && keyValidationStatus === 'validating' && (
-                        <svg className="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      )}
-                      {detectedCredentialType === 'key' && keyValidationStatus === 'valid' && (
-                        <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      )}
-                      {detectedCredentialType === 'key' && keyValidationStatus === 'invalid' && (
-                        <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      )}
                     </div>
-                  </div>
-                  {credential && detectedCredentialType && (
-                    <p className={`mt-1 text-sm ${
-                      (detectedCredentialType === 'key' && keyValidationStatus === 'invalid') ||
-                      (detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup)
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-gray-500 dark:text-gray-400'
-                    }`}>
-                      {detectedCredentialType === 'key' ? (
-                        !resolvedIdentity
-                          ? 'Detected as private key - waiting for identity...'
-                          : keyValidationStatus === 'valid'
-                          ? 'Valid private key for this identity'
-                          : keyValidationStatus === 'validating'
-                          ? 'Validating key...'
-                          : keyValidationStatus === 'invalid' && keyValidationResult?.error
-                          ? keyValidationResult.error
-                          : 'Detected as private key'
-                      ) : !resolvedIdentity ? (
-                        credential.length < 16
-                          ? `Detected as password (${credential.length}/16 characters) - waiting for identity...`
-                          : 'Detected as password - waiting for identity...'
-                      ) : hasOnchainBackup ? (
-                        credential.length < 16
-                          ? `Password must be at least 16 characters (${credential.length}/16)`
-                          : 'Will use as backup password'
-                      ) : (
-                        'No backup found - please enter your private key'
-                      )}
-                    </p>
-                  )}
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    🔒 Your keys never leave this device. All signing happens locally.
+                  </motion.div>
+                  <p className={`mt-2 text-xs transition-colors ${error ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                    {error ? `⚠ ${error}` : '🔒 Your keys never leave this device. All signing happens locally.'}
                   </p>
                 </div>
 
@@ -444,12 +462,6 @@ export function LoginModal() {
                   </button>
                 </div>
 
-                {error && (
-                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-600 rounded-lg p-3">
-                    <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-                  </div>
-                )}
-
                 <Button
                   type="submit"
                   disabled={!canSubmit}
@@ -458,10 +470,7 @@ export function LoginModal() {
                 >
                   {isLoading ? (
                     <span className="flex items-center justify-center">
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
+                      <Spinner size="sm" className="-ml-1 mr-3 border-white" />
                       Signing in...
                     </span>
                   ) : (

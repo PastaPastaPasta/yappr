@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Post } from '@/lib/types'
 import { extractMentions } from '@/lib/post-helpers'
@@ -61,7 +62,7 @@ export function useMentionValidation(post: Post | null): MentionValidationState 
       })
       .catch(err => {
         if (cancelled) return
-        console.error('Mention validation failed:', err)
+        logger.error('Mention validation failed:', err)
         // On error, mark all as valid (fail open - don't show false negatives)
         setValidations(new Map(mentions.map(m => [m, 'valid' as const])))
       })
@@ -93,7 +94,7 @@ export function useMentionValidation(post: Post | null): MentionValidationState 
         setValidations(results)
       })
       .catch(err => {
-        console.error('Mention revalidation failed:', err)
+        logger.error('Mention revalidation failed:', err)
         setValidations(new Map(mentions.map(m => [m, 'valid' as const])))
       })
       .finally(() => {

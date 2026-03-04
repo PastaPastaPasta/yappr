@@ -1,7 +1,8 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { queryDocuments, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -15,6 +16,64 @@ export interface DocumentResult<T> {
   documents: T[];
   nextCursor?: string;
   prevCursor?: string;
+}
+
+/**
+ * Query raw documents through the shared document-service path.
+ * This keeps SDK query behavior centralized in one layer.
+ */
+export async function queryRawDocuments(options: QueryDocumentsOptions): Promise<Record<string, unknown>[]> {
+  const sdk = await getEvoSdk();
+  return queryDocuments(sdk, options);
+}
+
+/**
+ * Query posts by owner IDs newer than a timestamp.
+ */
+export async function queryPostsByOwnersSince(
+  ownerIds: string[],
+  sinceTimestamp: number,
+  limit = 50,
+  contractId = YAPPR_CONTRACT_ID
+): Promise<Record<string, unknown>[]> {
+  if (ownerIds.length === 0) return [];
+
+  return queryRawDocuments({
+    dataContractId: contractId,
+    documentTypeName: 'post',
+    where: [
+      ['$ownerId', 'in', ownerIds],
+      ['$createdAt', '>', sinceTimestamp],
+    ],
+    orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
+    limit,
+  });
+}
+
+/**
+ * Query all posts newer than a timestamp.
+ */
+export async function queryPostsSince(
+  sinceTimestamp: number,
+  limit = 50,
+  language = 'en',
+  contractId = YAPPR_CONTRACT_ID
+): Promise<Record<string, unknown>[]> {
+  const where: DocumentWhereClause[] = [['$createdAt', '>', sinceTimestamp]];
+  const orderBy: DocumentOrderByClause[] = [['$createdAt', 'desc']];
+
+  if (language) {
+    where.unshift(['language', '==', language]);
+    orderBy.unshift(['language', 'asc']);
+  }
+
+  return queryRawDocuments({
+    dataContractId: contractId,
+    documentTypeName: 'post',
+    where,
+    orderBy,
+    limit,
+  });
 }
 
 export abstract class BaseDocumentService<T> {
@@ -35,7 +94,7 @@ export abstract class BaseDocumentService<T> {
     try {
       const sdk = await getEvoSdk();
 
-      console.log(`Querying ${this.documentType} documents:`, {
+      logger.info(`Querying ${this.documentType} documents:`, {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         ...options
@@ -51,7 +110,7 @@ export abstract class BaseDocumentService<T> {
         startAt: options.startAt,
       });
 
-      console.log(`${this.documentType} query returned ${rawDocuments.length} documents`);
+      logger.info(`${this.documentType} query returned ${rawDocuments.length} documents`);
 
       const documents = rawDocuments.map(doc => this.transformDocument(doc));
 
@@ -61,7 +120,7 @@ export abstract class BaseDocumentService<T> {
         prevCursor: undefined
       };
     } catch (error) {
-      console.error(`Error querying ${this.documentType} documents:`, error);
+      logger.error(`Error querying ${this.documentType} documents:`, error);
       throw error;
     }
   }
@@ -89,8 +148,8 @@ export abstract class BaseDocumentService<T> {
         return null;
       }
 
-      // Document has toJSON method
-      const docData = typeof response.toJSON === 'function' ? response.toJSON() : response;
+      // Document has toJSON method — cast to Record for transformDocument
+      const docData = (typeof response.toJSON === 'function' ? response.toJSON() : response) as Record<string, unknown>;
       const transformed = this.transformDocument(docData);
 
       // Cache the result
@@ -101,7 +160,7 @@ export abstract class BaseDocumentService<T> {
 
       return transformed;
     } catch (error) {
-      console.error(`Error getting ${this.documentType} document:`, error);
+      logger.error(`Error getting ${this.documentType} document:`, error);
       return null;
     }
   }
@@ -111,7 +170,7 @@ export abstract class BaseDocumentService<T> {
    */
   async create(ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
-      console.log(`Creating ${this.documentType} document:`, data);
+      logger.info(`Creating ${this.documentType} document:`, data);
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -127,11 +186,37 @@ export abstract class BaseDocumentService<T> {
       // Clear relevant caches
       this.clearCache();
 
-      return this.transformDocument(result.document);
+      const transformed = this.transformDocument(result.document);
+
+      // Preserve creation confirmation status for callers that need UX handling.
+      if (typeof result.confirmed === 'boolean' && transformed && typeof transformed === 'object') {
+        (transformed as Record<string, unknown>).__createConfirmed = result.confirmed;
+      }
+
+      return transformed;
     } catch (error) {
-      console.error(`Error creating ${this.documentType} document:`, error);
+      logger.error(`Error creating ${this.documentType} document:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Extract content fields from a transformed document, stripping system metadata.
+   * Used to build the full document data for replacements (updates).
+   * Subclasses can override for custom extraction logic.
+   */
+  protected extractContentFields(doc: T): Record<string, unknown> {
+    const systemFields = new Set([
+      'id', 'ownerId', 'createdAt', 'updatedAt',
+      '$id', '$ownerId', '$createdAt', '$updatedAt', '$revision', '$type', 'revision',
+    ]);
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
+      if (!systemFields.has(key) && value !== undefined) {
+        result[key] = value;
+      }
+    }
+    return result;
   }
 
   /**
@@ -139,25 +224,34 @@ export abstract class BaseDocumentService<T> {
    */
   async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
-      console.log(`Updating ${this.documentType} document ${documentId}:`, data);
+      logger.info(`Updating ${this.documentType} document ${documentId}:`, data);
 
       // Clear cache to ensure we get fresh revision from network
       this.cache.delete(documentId);
 
-      // Get current document to find revision
+      // Get current document to find revision and existing data
       const currentDoc = await this.get(documentId);
       if (!currentDoc) {
         throw new Error('Document not found');
       }
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
-      console.log(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
+      logger.info(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
+
+      // Merge existing document data with partial update.
+      // Document replacement requires ALL fields, not just the changed ones.
+      const existingData = this.extractContentFields(currentDoc);
+      const mergedData = { ...existingData, ...data };
+      // Strip undefined values — they represent intentionally cleared optional fields
+      for (const key of Object.keys(mergedData)) {
+        if (mergedData[key] === undefined) delete mergedData[key];
+      }
 
       const result = await stateTransitionService.updateDocument(
         this.contractId,
         this.documentType,
         documentId,
         ownerId,
-        data,
+        mergedData,
         revision
       );
 
@@ -170,7 +264,7 @@ export abstract class BaseDocumentService<T> {
 
       return this.transformDocument(result.document);
     } catch (error) {
-      console.error(`Error updating ${this.documentType} document:`, error);
+      logger.error(`Error updating ${this.documentType} document:`, error);
       throw error;
     }
   }
@@ -180,7 +274,7 @@ export abstract class BaseDocumentService<T> {
    */
   async delete(documentId: string, ownerId: string): Promise<boolean> {
     try {
-      console.log(`Deleting ${this.documentType} document ${documentId}`);
+      logger.info(`Deleting ${this.documentType} document ${documentId}`);
 
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
@@ -198,7 +292,7 @@ export abstract class BaseDocumentService<T> {
 
       return true;
     } catch (error) {
-      console.error(`Error deleting ${this.documentType} document:`, error);
+      logger.error(`Error deleting ${this.documentType} document:`, error);
       return false;
     }
   }

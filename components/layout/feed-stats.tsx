@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useEffect, useState, useRef } from 'react'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
 import { formatNumber } from '@/lib/utils'
@@ -110,7 +111,7 @@ export function FeedStats() {
           cacheManager.set('sidebar', cacheKey, newStats, { ttl: 120000 })
         }
       } catch (error) {
-        console.error('Error fetching user stats:', error)
+        logger.error('Error fetching user stats:', error)
         if (!cancelled) {
           setStats({ posts: 0, followers: 0, following: 0 })
         }
@@ -121,7 +122,7 @@ export function FeedStats() {
       }
     }
 
-    fetchStats().catch(err => console.error('Failed to fetch stats:', err))
+    fetchStats().catch(err => logger.error('Failed to fetch stats:', err))
 
     return () => {
       cancelled = true
@@ -160,7 +161,7 @@ export function FeedStats() {
           cacheManager.set('sidebar', cacheKey, newGlobalStats, { ttl: 300000 })
         }
       } catch (error) {
-        console.error('Error fetching global stats:', error)
+        logger.error('Error fetching global stats:', error)
         if (!cancelled) {
           setGlobalStats({ totalPosts: 0, activeUsers: 0 })
         }
@@ -171,7 +172,7 @@ export function FeedStats() {
       }
     }
 
-    fetchGlobalStats().catch(err => console.error('Failed to fetch global stats:', err))
+    fetchGlobalStats().catch(err => logger.error('Failed to fetch global stats:', err))
 
     return () => {
       cancelled = true

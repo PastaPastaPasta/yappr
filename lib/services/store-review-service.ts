@@ -12,7 +12,7 @@ import type {
   StoreReview,
   StoreReviewDocument,
   StoreRatingSummary
-} from '../types';
+} from '../../types';
 
 class StoreReviewService extends BaseDocumentService<StoreReview> {
   constructor() {

@@ -128,20 +128,22 @@ class SignerService {
     await ensureWasmReady();
 
     // Normalize the key data to match the expected JSON format
-    // The fromJSON method expects camelCase fields
+    // v3.1: SDK consistently returns camelCase, requires $version field
     const normalizedKeyData = {
+      $version: '0',
       id: keyData.id,
       type: keyData.type,
       purpose: keyData.purpose,
-      securityLevel: keyData.securityLevel ?? keyData.security_level ?? SecurityLevel.HIGH,
-      readOnly: keyData.readOnly ?? keyData.read_only ?? (keyData.purpose === KeyPurpose.TRANSFER),
-      data: keyData.data, // Should be base64 encoded string
-      disabledAt: keyData.disabledAt ?? keyData.disabled_at,
-      contractBounds: keyData.contractBounds ?? keyData.contract_bounds,
+      securityLevel: keyData.securityLevel ?? SecurityLevel.HIGH,
+      readOnly: keyData.readOnly ?? (keyData.purpose === KeyPurpose.TRANSFER),
+      data: typeof keyData.data === 'string' ? keyData.data : Buffer.from(keyData.data).toString('base64'),
+      disabledAt: keyData.disabledAt,
+      contractBounds: keyData.contractBounds as object | undefined,
     };
 
     // Use the fromJSON method which handles proper deserialization
-    const identityKey = IdentityPublicKey.fromJSON(normalizedKeyData);
+    // Cast needed: TS can't narrow the ternary on data to string
+    const identityKey = IdentityPublicKey.fromJSON(normalizedKeyData as Parameters<typeof IdentityPublicKey.fromJSON>[0]);
 
     return identityKey;
   }
@@ -163,14 +165,15 @@ class SignerService {
     requiredSecurityLevel: number = SecurityLevel.HIGH,
     keyId?: number
   ): IdentityPublicKeyType | null {
-    // Filter out disabled keys (check both camelCase and snake_case variants)
-    const activeKeys = publicKeys.filter(k => !k.disabledAt && !k.disabled_at);
+    // Filter out disabled keys
+    // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
+    const activeKeys = publicKeys.filter(k => !k.disabledAt);
 
     if (keyId !== undefined) {
       // Find specific key by ID
       const key = activeKeys.find(k => k.id === keyId);
       if (key) {
-        const level = key.securityLevel ?? key.security_level ?? SecurityLevel.MEDIUM;
+        const level = key.securityLevel ?? SecurityLevel.MEDIUM;
         if (level <= requiredSecurityLevel) {
           return key;
         }
@@ -183,14 +186,15 @@ class SignerService {
     const authKeys = activeKeys.filter(k => k.purpose === KeyPurpose.AUTHENTICATION);
 
     // Sort by security level (lower = more secure) and find first that meets requirement
+    // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
     const sortedKeys = authKeys.sort((a, b) => {
-      const levelA = a.securityLevel ?? a.security_level ?? SecurityLevel.MEDIUM;
-      const levelB = b.securityLevel ?? b.security_level ?? SecurityLevel.MEDIUM;
+      const levelA = a.securityLevel ?? SecurityLevel.MEDIUM;
+      const levelB = b.securityLevel ?? SecurityLevel.MEDIUM;
       return levelA - levelB;
     });
 
     for (const key of sortedKeys) {
-      const level = key.securityLevel ?? key.security_level ?? SecurityLevel.MEDIUM;
+      const level = key.securityLevel ?? SecurityLevel.MEDIUM;
       if (level <= requiredSecurityLevel) {
         return key;
       }
@@ -228,13 +232,13 @@ class SignerService {
    * Create signer and identity key from a WASM public key
    *
    * This is the preferred method for creating signing credentials from
-   * identity keys obtained via identity.getPublicKeys().
+   * identity keys obtained via identity.publicKeys.
    *
    * The WASM key is used directly since it's already the correct type
    * for SDK state transition operations.
    *
    * @param privateKeyWif - The private key in WIF format
-   * @param wasmKey - The WASM IdentityPublicKey from identity.getPublicKeys()
+   * @param wasmKey - The WASM IdentityPublicKey from identity.publicKeys
    * @returns Object containing signer and identityKey
    */
   async createSignerFromWasmKey(

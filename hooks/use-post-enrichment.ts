@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
@@ -85,7 +86,7 @@ export function usePostEnrichment(
         onEnrichedRef.current?.(enriched)
         return enriched
       } catch (error) {
-        console.error('usePostEnrichment: Failed to enrich posts:', error)
+        logger.error('usePostEnrichment: Failed to enrich posts:', error)
         return posts
       } finally {
         enrichingRef.current = false

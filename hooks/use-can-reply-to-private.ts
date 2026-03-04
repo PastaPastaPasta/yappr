@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
@@ -81,7 +82,7 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
         const canDecryptPost = await privateFeedFollowerService.canDecrypt(feedOwnerId)
         if (!aborted) setCanDecrypt(canDecryptPost)
       } catch (error) {
-        console.error('Error checking private post access:', error)
+        logger.error('Error checking private post access:', error)
         if (!aborted) setCanDecrypt(false)
       } finally {
         if (!aborted) setIsLoading(false)
@@ -89,7 +90,7 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
     }
 
     checkAccess().catch(error => {
-      console.error('Error in checkAccess:', error)
+      logger.error('Error in checkAccess:', error)
       if (!aborted) {
         setCanDecrypt(false)
         setIsLoading(false)

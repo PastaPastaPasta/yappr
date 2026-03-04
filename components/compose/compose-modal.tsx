@@ -1,17 +1,16 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useRef, useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   XMarkIcon,
   PlusIcon,
-  TrashIcon,
   EyeIcon,
   EyeSlashIcon,
   ExclamationTriangleIcon,
-  PhotoIcon,
 } from '@heroicons/react/24/outline'
-import { useAppStore, useSettingsStore, ThreadPost, PostVisibility } from '@/lib/store'
+import { useAppStore, useSettingsStore, PostVisibility } from '@/lib/store'
 import type { Post } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -19,13 +18,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
-import { usePlatformDetection } from '@/hooks/use-platform-detection'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
-import { MarkdownContent } from '@/components/ui/markdown-content'
 import {
   PostingProgress,
   PostButtonContent,
@@ -33,446 +30,20 @@ import {
   PostingProgressBar,
   QuotedPostPreview,
   ReplyContext,
-  getModalTitle,
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
+import { Spinner } from '@/components/ui/spinner'
+import { ThreadPostEditor, CHARACTER_LIMIT } from './thread-post-editor'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
 import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import type { EncryptionSource } from '@/lib/services/post-service'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
-import { MentionAutocomplete } from './mention-autocomplete'
-import { EmojiPicker } from './emoji-picker'
 import { ImageAttachment } from './image-attachment'
+import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
-import Link from 'next/link'
-import { CloudArrowUpIcon } from '@heroicons/react/24/outline'
-
-const CHARACTER_LIMIT = 500
-
-// Formatting button component
-function FormatButton({
-  onClick,
-  title,
-  children,
-  disabled = false,
-}: {
-  onClick: () => void
-  title: string
-  children: React.ReactNode
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className="p-1.5 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-    >
-      {children}
-    </button>
-  )
-}
-
-// Character counter component with ready-to-post indicator
-function CharacterCounter({ current, limit }: { current: number; limit: number }) {
-  const remaining = limit - current
-  const percentage = Math.min((current / limit) * 100, 100)
-  const isWarning = remaining <= 50 && remaining > 20
-  const isDanger = remaining <= 20
-  const isValid = current > 0 && current <= limit
-
-  // Calculate circle properties
-  const radius = 10
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference * (1 - percentage / 100)
-
-  function getProgressColor(): string {
-    if (isDanger) return 'text-red-500'
-    if (isWarning) return 'text-amber-500'
-    return 'text-yappr-500'
-  }
-
-  if (current === 0) {
-    return <div className="flex items-center gap-2" />
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <div className="relative w-6 h-6">
-        <svg className="w-6 h-6 -rotate-90" viewBox="0 0 24 24">
-          {/* Background circle */}
-          <circle
-            cx="12"
-            cy="12"
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="text-gray-200 dark:text-gray-700"
-          />
-          {/* Progress circle */}
-          <circle
-            cx="12"
-            cy="12"
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-            className={getProgressColor()}
-          />
-        </svg>
-        {/* Checkmark when valid and not in danger zone */}
-        {isValid && !isDanger && !isWarning && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <svg className="w-3 h-3 text-yappr-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-        )}
-      </div>
-      {isDanger && (
-        <span
-          className={`text-xs font-medium tabular-nums ${
-            remaining < 0 ? 'text-red-500' : 'text-amber-500'
-          }`}
-        >
-          {remaining}
-        </span>
-      )}
-    </div>
-  )
-}
-
-// Thread post editor component
-function ThreadPostEditor({
-  post,
-  index,
-  isActive,
-  isOnly,
-  showPreview,
-  onActivate,
-  onRemove,
-  onContentChange,
-  textareaRef,
-}: {
-  post: ThreadPost
-  index: number
-  isActive: boolean
-  isOnly: boolean
-  showPreview: boolean
-  onActivate: () => void
-  onRemove: () => void
-  onContentChange: (content: string) => void
-  textareaRef?: React.RefObject<HTMLTextAreaElement>
-}) {
-  const localRef = useRef<HTMLTextAreaElement>(null)
-  const ref = textareaRef || localRef
-
-  useEffect(() => {
-    if (isActive && ref.current) {
-      ref.current.focus()
-    }
-  }, [isActive, ref])
-
-  // Auto-resize textarea
-  const adjustHeight = useCallback(() => {
-    const textarea = ref.current
-    if (textarea) {
-      textarea.style.height = 'auto'
-      textarea.style.height = `${Math.max(80, textarea.scrollHeight)}px`
-    }
-  }, [ref])
-
-  useEffect(() => {
-    adjustHeight()
-  }, [post.content, adjustHeight])
-
-  const handleInsertEmoji = (emoji: string) => {
-    const textarea = ref.current
-    if (!textarea) return
-
-    const start = textarea.selectionStart
-    const end = textarea.selectionEnd
-    const content = post.content
-
-    const newContent = content.substring(0, start) + emoji + content.substring(end)
-    const newCursorPos = start + emoji.length
-
-    onContentChange(newContent)
-
-    requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(newCursorPos, newCursorPos)
-    })
-  }
-
-  const handleInsertFormat = (prefix: string, suffix: string = prefix) => {
-    const textarea = ref.current
-    if (!textarea) return
-
-    const start = textarea.selectionStart
-    const end = textarea.selectionEnd
-    const content = post.content
-    const selectedText = content.substring(start, end)
-
-    // Check if we should toggle OFF the formatting
-    let shouldRemove = false
-    let removeStart = start
-    let removeEnd = end
-
-    if (selectedText) {
-      // Case 1: Selected text is already wrapped with the formatting
-      if (selectedText.startsWith(prefix) && selectedText.endsWith(suffix)) {
-        shouldRemove = true
-        removeStart = start
-        removeEnd = end
-      }
-      // Case 2: Selection is inside formatted text
-      else if (
-        start >= prefix.length &&
-        content.substring(start - prefix.length, start) === prefix &&
-        content.substring(end, end + suffix.length) === suffix
-      ) {
-        shouldRemove = true
-        removeStart = start - prefix.length
-        removeEnd = end + suffix.length
-      }
-    } else {
-      // No selection - check if cursor is inside formatted text
-      const beforeCursor = content.substring(0, start)
-      const afterCursor = content.substring(start)
-
-      const prefixIndex = beforeCursor.lastIndexOf(prefix)
-      if (prefixIndex !== -1) {
-        const suffixIndex = afterCursor.indexOf(suffix)
-        if (suffixIndex !== -1) {
-          const textBetweenPrefixAndCursor = beforeCursor.substring(prefixIndex + prefix.length)
-          const textBetweenCursorAndSuffix = afterCursor.substring(0, suffixIndex)
-
-          if (!textBetweenPrefixAndCursor.includes(suffix) && !textBetweenCursorAndSuffix.includes(prefix)) {
-            shouldRemove = true
-            removeStart = prefixIndex
-            removeEnd = start + suffixIndex + suffix.length
-          }
-        }
-      }
-    }
-
-    let newContent: string
-    let newCursorPos: number
-
-    if (shouldRemove) {
-      // Remove the formatting
-      const innerText = content.substring(removeStart + prefix.length, removeEnd - suffix.length)
-      newContent = content.substring(0, removeStart) + innerText + content.substring(removeEnd)
-      newCursorPos = removeStart + innerText.length
-    } else {
-      // Add the formatting
-      const insertText = prefix + selectedText + suffix
-      newContent = content.substring(0, start) + insertText + content.substring(end)
-      newCursorPos = selectedText
-        ? start + insertText.length
-        : start + prefix.length
-    }
-
-    // Update content via React state
-    onContentChange(newContent)
-
-    // Restore focus and cursor position after React re-renders
-    requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(newCursorPos, newCursorPos)
-    })
-  }
-
-  const isPosted = !!post.postedPostId
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10, height: 0 }}
-      transition={{ duration: 0.2 }}
-      className={`relative ${index > 0 ? 'mt-0' : ''}`}
-    >
-      {/* Thread connector line */}
-      {index > 0 && (
-        <div className={`absolute left-5 -top-3 w-0.5 h-3 bg-gradient-to-b ${
-          isPosted
-            ? 'from-green-300 to-green-400 dark:from-green-700 dark:to-green-600'
-            : 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600'
-        }`} />
-      )}
-
-      <div
-        onClick={isPosted ? undefined : onActivate}
-        className={`relative rounded-xl border-2 transition-all ${
-          isPosted
-            ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 cursor-default'
-            : isActive
-            ? 'border-yappr-500 bg-white dark:bg-neutral-900 shadow-sm cursor-pointer'
-            : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950 hover:border-gray-300 dark:hover:border-gray-700 cursor-pointer'
-        }`}
-      >
-        {/* Post number/status indicator - only show for threads (multiple posts) or posted status */}
-        {(!isOnly || isPosted) && (
-          <div className={`absolute -left-2 top-3 flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-semibold shadow-sm ${
-            isPosted ? 'bg-green-500' : 'bg-yappr-500'
-          }`}>
-            {isPosted ? (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              index + 1
-            )}
-          </div>
-        )}
-
-        <div className="p-4 pl-8">
-          {/* Posted status badge */}
-          {isPosted && (
-            <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
-              <span>Posted</span>
-            </div>
-          )}
-
-          {/* Formatting toolbar - only show when active and not posted */}
-          {isActive && !showPreview && !isPosted && (
-            <div className="flex items-center gap-1 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
-              <FormatButton
-                onClick={() => handleInsertFormat('**')}
-                title="Bold (Ctrl+B)"
-              >
-                <span className="font-bold text-sm">B</span>
-              </FormatButton>
-              <FormatButton
-                onClick={() => handleInsertFormat('*')}
-                title="Italic (Ctrl+I)"
-              >
-                <span className="italic text-sm">I</span>
-              </FormatButton>
-              <FormatButton
-                onClick={() => handleInsertFormat('`')}
-                title="Code"
-              >
-                <span className="font-mono text-xs">&lt;/&gt;</span>
-              </FormatButton>
-              <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
-              <FormatButton
-                onClick={() => handleInsertFormat('@', '')}
-                title="Mention someone"
-              >
-                <span className="text-sm">@</span>
-              </FormatButton>
-              <FormatButton
-                onClick={() => handleInsertFormat('#', '')}
-                title="Add hashtag"
-              >
-                <span className="text-sm">#</span>
-              </FormatButton>
-              <EmojiPicker onEmojiSelect={handleInsertEmoji} />
-
-              {/* Remove button for thread posts */}
-              {!isOnly && (
-                <>
-                  <div className="flex-1" />
-                  <FormatButton onClick={onRemove} title="Remove this post">
-                    <TrashIcon className="w-4 h-4 text-red-500" />
-                  </FormatButton>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Content area */}
-          {showPreview || isPosted ? (
-            <div className={`min-h-[60px] whitespace-pre-wrap break-words ${
-              isPosted
-                ? 'text-gray-600 dark:text-gray-400'
-                : 'text-gray-900 dark:text-gray-100'
-            }`}>
-              {post.content ? (
-                <MarkdownContent content={post.content} />
-              ) : (
-                <span className="text-gray-400 dark:text-gray-600 italic">
-                  Nothing to preview
-                </span>
-              )}
-            </div>
-          ) : (
-            <div className="relative">
-              <textarea
-                ref={ref}
-                value={post.content}
-                onChange={(e) => onContentChange(e.target.value)}
-                onFocus={onActivate}
-                onKeyDown={(e) => {
-                  // Formatting shortcuts
-                  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-                    e.preventDefault()
-                    handleInsertFormat('**')
-                  } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
-                    e.preventDefault()
-                    handleInsertFormat('*')
-                  }
-                }}
-                placeholder={
-                  index === 0
-                    ? "What's on your mind?"
-                    : 'Continue your thread...'
-                }
-                className="w-full min-h-[80px] text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
-                style={{ height: 'auto' }}
-              />
-              <MentionAutocomplete
-                textareaRef={ref}
-                content={post.content}
-                onSelect={(username, start, end) => {
-                  // Replace @partial with @username (keep the @, add space after)
-                  const newContent =
-                    post.content.substring(0, start) +
-                    '@' + username + ' ' +
-                    post.content.substring(end)
-                  onContentChange(newContent)
-
-                  // Restore focus and position cursor after the mention
-                  requestAnimationFrame(() => {
-                    const textarea = ref.current
-                    if (textarea) {
-                      textarea.focus()
-                      const newPos = start + 1 + username.length + 1 // @username + space
-                      textarea.setSelectionRange(newPos, newPos)
-                    }
-                  })
-                }}
-              />
-            </div>
-          )}
-
-          {/* Footer with formatting hints and character count - hide for posted */}
-          {!isPosted && (
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-2 text-xs text-gray-400">
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
-              </div>
-              <CharacterCounter current={post.content.length} limit={CHARACTER_LIMIT} />
-            </div>
-          )}
-        </div>
-      </div>
-    </motion.div>
-  )
-}
 
 export function ComposeModal() {
   const {
@@ -496,7 +67,6 @@ export function ComposeModal() {
 
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
-  const isMac = usePlatformDetection()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
@@ -527,6 +97,7 @@ export function ComposeModal() {
   } | null>(null)
   const [showStorageProviderModal, setShowStorageProviderModal] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const { upload, isUploading, progress, isProviderConnected, checkProvider } = useImageUpload()
 
   // Get visibility from first post (visibility only applies to first post)
@@ -578,13 +149,13 @@ export function ComposeModal() {
             }
           }
         } catch (error) {
-          console.error('Failed to check private feed status:', error)
+          logger.error('Failed to check private feed status:', error)
           setHasPrivateFeed(false)
         } finally {
           setPrivateFeedLoading(false)
         }
       }
-      checkPrivateFeed()
+      checkPrivateFeed().catch(err => logger.error('Failed to check private feed:', err))
     }
   }, [isComposeOpen, user])
 
@@ -610,7 +181,7 @@ export function ComposeModal() {
         setInheritedEncryption(null)
       }
     } catch (error) {
-      console.error('Failed to check inherited encryption:', error)
+      logger.error('Failed to check inherited encryption:', error)
       // Error fetching encryption source for private post - block posting
       if (isPrivatePost(postToCheck)) {
         setInheritedEncryptionError(true)
@@ -646,7 +217,7 @@ export function ComposeModal() {
             setInheritedEncryption(null)
           }
         } catch (error) {
-          console.error('Failed to check inherited encryption:', error)
+          logger.error('Failed to check inherited encryption:', error)
           if (cancelled) return
           if (isPrivatePost(replyingTo)) {
             setInheritedEncryptionError(true)
@@ -658,7 +229,7 @@ export function ComposeModal() {
           }
         }
       }
-      doCheck().catch((err) => console.error('Failed to check inherited encryption:', err))
+      doCheck().catch((err) => logger.error('Failed to check inherited encryption:', err))
 
       // Cleanup: mark as cancelled if replyingTo changes
       return () => {
@@ -685,7 +256,7 @@ export function ComposeModal() {
   // Check upload provider status when modal opens
   useEffect(() => {
     if (isComposeOpen) {
-      checkProvider().catch(err => console.error('Failed to check upload provider:', err))
+      checkProvider().catch(err => logger.error('Failed to check upload provider:', err))
     }
   }, [isComposeOpen, checkProvider])
 
@@ -700,14 +271,27 @@ export function ComposeModal() {
 
   // Calculate totals (only for unposted posts)
   const unpostedPosts = threadPosts.filter((p) => !p.postedPostId)
+  const unpostedPostsWithContent = unpostedPosts.filter((p) => p.content.trim().length > 0)
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
-  const totalCharacters = threadPosts.reduce((sum, p) => sum + p.content.length, 0)
-  const hasValidContent = unpostedPosts.some((p) => p.content.trim().length > 0)
+  const imageUrl = attachedImage?.uploadResult?.url
+  const imageUrlExtraLength = imageUrl ? imageUrl.length + 2 : 0 // include \n\n separator
+  const firstUnpostedPostId = unpostedPostsWithContent[0]?.id
+  const hasValidContent = unpostedPostsWithContent.length > 0
 
   // For private-with-teaser, also check teaser limit
   const hasTeaserOverLimit = visibility === 'private-with-teaser' &&
     firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
-  const hasOverLimit = unpostedPosts.some((p) => p.content.length > CHARACTER_LIMIT) || hasTeaserOverLimit
+  const hasOverLimit = unpostedPostsWithContent.some((p, index) =>
+    p.content.length + (index === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT
+  ) || hasTeaserOverLimit
+  const firstUnpostedPost = unpostedPostsWithContent[0]
+  const isOverLimitDueToImage = !!firstUnpostedPost &&
+    imageUrlExtraLength > 0 &&
+    firstUnpostedPost.content.length <= CHARACTER_LIMIT &&
+    firstUnpostedPost.content.length + imageUrlExtraLength > CHARACTER_LIMIT
+  const imageOverage = isOverLimitDueToImage && firstUnpostedPost
+    ? firstUnpostedPost.content.length + imageUrlExtraLength - CHARACTER_LIMIT
+    : 0
 
   // Encrypted posts must be single posts (no threads)
   const isValidEncryptedPost = !willBeEncrypted || (unpostedPosts.length <= 1 && threadPosts.length <= 1)
@@ -718,8 +302,7 @@ export function ComposeModal() {
   // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted
   // Check if image attachment is allowed (not including provider connection status)
-  // Private posts can't have images (mediaUrl is stored publicly on chain)
-  const canAttachImage = !willBeEncrypted && !attachedImage
+  const canAttachImage = !attachedImage
 
   // Get the last posted post ID for chaining retries
   const lastPostedId = postedPosts.length > 0
@@ -782,7 +365,7 @@ export function ComposeModal() {
         toast.error(result.error || 'Failed to enable private feed')
       }
     } catch (error) {
-      console.error('Error enabling private feed:', error)
+      logger.error('Error enabling private feed:', error)
       toast.error('Failed to enable private feed')
     } finally {
       setPendingVisibility(null)
@@ -823,7 +406,15 @@ export function ComposeModal() {
     // Create preview URL
     const preview = URL.createObjectURL(file)
     setAttachedImage({ file, preview })
-  }, [])
+    upload(file)
+      .then((result) => {
+        setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
+      })
+      .catch((err) => {
+        logger.error('Failed to upload image:', err)
+        toast.error('Failed to upload image')
+      })
+  }, [upload])
 
   // Handle removing the attached image
   const handleRemoveImage = useCallback(() => {
@@ -841,6 +432,56 @@ export function ComposeModal() {
     }
     fileInputRef.current?.click()
   }, [isProviderConnected])
+
+  // Handle paste event for image upload from clipboard
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    // Find an image item in the clipboard
+    const imageItem = Array.from(items).find(item => item.type.startsWith('image/'))
+    if (!imageItem) return
+
+    // Check if we can attach an image
+    if (attachedImage) {
+      toast.error('Only one image can be attached per post')
+      return
+    }
+    if (!isProviderConnected) {
+      setShowStorageProviderModal(true)
+      return
+    }
+
+    const file = imageItem.getAsFile()
+    if (!file) return
+
+    // Validate file type (should always be image since we checked above, but just in case)
+    if (!file.type.startsWith('image/')) {
+      toast.error('Only images are supported')
+      return
+    }
+
+    // Validate file size (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image must be under 10MB')
+      return
+    }
+
+    // Prevent browser's default paste behavior (e.g., inserting data URL into textarea)
+    e.preventDefault()
+
+    // Create preview URL and set attached image
+    const preview = URL.createObjectURL(file)
+    setAttachedImage({ file, preview })
+    upload(file)
+      .then((result) => {
+        setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
+      })
+      .catch((err) => {
+        logger.error('Failed to upload image:', err)
+        toast.error('Failed to upload image')
+      })
+  }, [attachedImage, isProviderConnected, upload])
 
   const handlePost = async () => {
     const authedUser = requireAuth('post')
@@ -870,7 +511,7 @@ export function ComposeModal() {
         setAttachedImage(prev => prev ? { ...prev, uploadResult: result } : null)
         imageUrl = result.url // ipfs://CID
       } catch (err) {
-        console.error('Failed to upload image:', err)
+        logger.error('Failed to upload image:', err)
         toast.error('Failed to upload image')
         setIsPosting(false)
         setPostingProgress(null)
@@ -900,6 +541,15 @@ export function ComposeModal() {
           visibility: p.visibility,
         }))
 
+      // Guard against image URL pushing content over the limit
+      if (postsToCreate.length > 0 && postsToCreate[0].content.length > CHARACTER_LIMIT) {
+        const overBy = postsToCreate[0].content.length - CHARACTER_LIMIT
+        toast.error(`Post is ${overBy} characters over the limit once the image URL is included. Trim your text.`)
+        setIsPosting(false)
+        setPostingProgress(null)
+        return
+      }
+
       // Enforce single-post for encrypted posts
       if ((isPrivate || hasInheritedEncryption) && postsToCreate.length > 1) {
         toast.error('Encrypted posts cannot be threads. Only the first post will be published.')
@@ -925,7 +575,7 @@ export function ComposeModal() {
             : `Creating post ${i + 1} of ${postsToCreate.length}...`
         })
 
-        console.log(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
+        logger.info(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
         // Determine encryption options
         let encryptionOptions: import('@/lib/services/post-service').EncryptionOptions | undefined
@@ -966,7 +616,8 @@ export function ComposeModal() {
               const reply = await replyService.createReply(authedUser.identityId, postContent, parentId, parentOwnerId, {
                 encryption: encryptionOptions,
               })
-              return { postId: reply.id, document: reply, isReply: true }
+              const confirmed = (reply as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
+              return { postId: reply.id, document: reply, isReply: true, confirmed }
             } else {
               // Create a top-level post
               const { postService } = await import('@/lib/services')
@@ -975,7 +626,8 @@ export function ComposeModal() {
                 quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
                 encryption: encryptionOptions,
               })
-              return { postId: post.id, document: post, isReply: false }
+              const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
+              return { postId: post.id, document: post, isReply: false, confirmed }
             }
           } catch (error) {
             // Check if this is a sync required error - handle it specially
@@ -1045,7 +697,7 @@ export function ComposeModal() {
               hashtagService.createPostHashtags(postId, authedUser.identityId, hashtags)
                 .then((results) => {
                   const successCount = results.filter((r) => r).length
-                  console.log(`Post ${i + 1}: Created ${successCount}/${hashtags.length} hashtag documents`)
+                  logger.info(`Post ${i + 1}: Created ${successCount}/${hashtags.length} hashtag documents`)
 
                   results.forEach((success, tagIndex) => {
                     if (success) {
@@ -1058,7 +710,7 @@ export function ComposeModal() {
                   })
                 })
                 .catch((err) => {
-                  console.error(`Post ${i + 1}: Failed to create hashtag documents:`, err)
+                  logger.error(`Post ${i + 1}: Failed to create hashtag documents:`, err)
                 })
             }
 
@@ -1074,7 +726,7 @@ export function ComposeModal() {
               mentionService.createPostMentionsFromUsernames(postId, authedUser.identityId, mentions)
                 .then((results) => {
                   const successCount = results.filter((r) => r).length
-                  console.log(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
+                  logger.info(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
 
                   // Dispatch event for each successful mention to trigger cache invalidation
                   results.forEach((success, mentionIndex) => {
@@ -1088,7 +740,7 @@ export function ComposeModal() {
                   })
                 })
                 .catch((err) => {
-                  console.error(`Post ${i + 1}: Failed to create mention documents:`, err)
+                  logger.error(`Post ${i + 1}: Failed to create mention documents:`, err)
                 })
             }
 
@@ -1099,13 +751,21 @@ export function ComposeModal() {
               if (wasReply) {
                 window.dispatchEvent(
                   new CustomEvent('reply-created', {
-                    detail: { reply: eventData?.document },
+                    detail: {
+                      reply: eventData?.document,
+                      replyId: eventData?.postId,
+                      confirmed: eventData?.confirmed !== false,
+                    },
                   })
                 )
               } else {
                 window.dispatchEvent(
                   new CustomEvent('post-created', {
-                    detail: { post: eventData?.document },
+                    detail: {
+                      post: eventData?.document,
+                      postId: eventData?.postId,
+                      confirmed: eventData?.confirmed !== false,
+                    },
                   })
                 )
               }
@@ -1117,12 +777,12 @@ export function ComposeModal() {
             break
           }
         } else {
-          // Check if this is a timeout error - might have actually succeeded
+          // Check if this is a timeout error - the state-transition-service already
+          // tried to verify on Platform. If we still get here, it couldn't confirm.
+          // Retrying is safe — idempotency checks will prevent double-posting.
           if (isTimeoutError(result.error)) {
-            console.warn(`Post ${i + 1} timed out - may have succeeded. Continuing...`)
+            logger.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
             timeoutPosts.push({ index: i, threadPostId })
-            // Continue with last known good previousPostId for subsequent posts
-            // Timed-out posts are kept for retry - user can press Post again
             continue
           }
 
@@ -1240,7 +900,7 @@ export function ComposeModal() {
         throw failureError || new Error('Post creation failed')
       }
     } catch (error) {
-      console.error('Failed to create post:', error)
+      logger.error('Failed to create post:', error)
       toast.error(categorizeError(error))
     } finally {
       setIsPosting(false)
@@ -1265,7 +925,7 @@ export function ComposeModal() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
-      handlePost().catch(err => console.error('Failed to post:', err))
+      handlePost().catch(err => logger.error('Failed to post:', err))
     }
   }
 
@@ -1291,6 +951,7 @@ export function ComposeModal() {
                     className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                   >
                     {/* Accessibility */}
                     <Dialog.Title className="sr-only">
@@ -1301,40 +962,53 @@ export function ComposeModal() {
                     </Dialog.Description>
 
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
                       <div className="flex items-center gap-3">
                         <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
                           <XMarkIcon className="h-5 w-5" />
                         </IconButton>
-                        <div className="flex items-center gap-2">
-                          <h2 className="font-semibold text-gray-900 dark:text-gray-100">
-                            {getModalTitle(!!replyingTo, !!quotingPost, threadPosts.length)}
-                          </h2>
-                          {/* Preview toggle */}
-                          <button
-                            onClick={() => setShowPreview(!showPreview)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                              showPreview
-                                ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400'
-                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                            }`}
-                          >
-                            {showPreview ? (
-                              <>
-                                <EyeSlashIcon className="w-3.5 h-3.5" />
-                                Edit
-                              </>
-                            ) : (
-                              <>
-                                <EyeIcon className="w-3.5 h-3.5" />
-                                Preview
-                              </>
-                            )}
-                          </button>
-                        </div>
+                        {user && (
+                          <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />
+                        )}
+                        {!(replyingTo && isPrivatePost(replyingTo)) && (
+                          <VisibilitySelector
+                            visibility={visibility}
+                            onVisibilityChange={(v) => {
+                              if (firstPost) {
+                                updateThreadPostVisibility(firstPost.id, v)
+                              }
+                            }}
+                            hasPrivateFeed={hasPrivateFeed}
+                            privateFeedLoading={privateFeedLoading}
+                            privateFollowerCount={privateFollowerCount}
+                            disabled={isPosting}
+                            onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
+                          />
+                        )}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
+                        {/* Preview toggle */}
+                        <button
+                          onClick={() => setShowPreview(!showPreview)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                            showPreview
+                              ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400'
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {showPreview ? (
+                            <>
+                              <EyeSlashIcon className="w-3.5 h-3.5" />
+                              Edit
+                            </>
+                          ) : (
+                            <>
+                              <EyeIcon className="w-3.5 h-3.5" />
+                              Preview
+                            </>
+                          )}
+                        </button>
                         {/* Post button - prominent primary action */}
                         <Button
                           onClick={handlePost}
@@ -1368,36 +1042,9 @@ export function ComposeModal() {
                     {replyingTo && <ReplyContext author={replyingTo.author} />}
 
                     {/* Main content area */}
-                    <div className="p-4 max-h-[60vh] overflow-y-auto">
-                      <div className="flex gap-3">
-                        {/* User avatar */}
-                        {user && (
-                          <div className="flex-shrink-0">
-                            <UserAvatar userId={user.identityId} size="lg" alt="Your avatar" />
-                          </div>
-                        )}
-
-                        {/* Thread posts */}
-                        <div className="flex-1 space-y-4">
-                          {/* Visibility selector - show for new posts or replies to public posts
-                              Hide when replying to private posts (inherits parent encryption per PRD §5.5) */}
-                          {!(replyingTo && isPrivatePost(replyingTo)) && (
-                            <div className="flex items-center gap-3 mb-2">
-                              <VisibilitySelector
-                                visibility={visibility}
-                                onVisibilityChange={(v) => {
-                                  if (firstPost) {
-                                    updateThreadPostVisibility(firstPost.id, v)
-                                  }
-                                }}
-                                hasPrivateFeed={hasPrivateFeed}
-                                privateFeedLoading={privateFeedLoading}
-                                privateFollowerCount={privateFollowerCount}
-                                disabled={isPosting}
-                                onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
-                              />
-                            </div>
-                          )}
+                    <div ref={scrollContainerRef} className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                      {/* Full-width editors and content */}
+                      <div className="space-y-4">
 
                           {/* Inherited encryption banner for replies to private posts (PRD §5.5) */}
                           {inheritedEncryption && !isPrivatePostVisibility && (
@@ -1420,7 +1067,7 @@ export function ComposeModal() {
                               animate={{ opacity: 1 }}
                               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
                             >
-                              <div className="w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full animate-spin" />
+                              <Spinner size="sm" className="h-4 w-4 border-purple-500" />
                               <span className="text-sm text-gray-500 dark:text-gray-400">
                                 Checking encryption inheritance...
                               </span>
@@ -1532,19 +1179,40 @@ export function ComposeModal() {
                                 onRemove={() => removeThreadPost(post.id)}
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
+                                extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
+                                {...(!post.postedPostId ? {
+                                  onImageClick: handleImageButtonClick,
+                                  canAttachImage,
+                                  imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
+                                  ...(post.id === unpostedPosts[0]?.id ? { fileInputRef, onFileSelect: handleFileSelect } : {}),
+                                } : {})}
                               />
                             ))}
                           </AnimatePresence>
 
                           {/* Image attachment preview */}
                           {attachedImage && (
-                            <ImageAttachment
-                              previewUrl={attachedImage.preview}
-                              isUploading={isUploading}
-                              isUploaded={!!attachedImage.uploadResult}
-                              progress={progress}
-                              onRemove={handleRemoveImage}
-                            />
+                            <>
+                              <ImageAttachment
+                                previewUrl={attachedImage.preview}
+                                isUploading={isUploading}
+                                isUploaded={!!attachedImage.uploadResult}
+                                progress={progress}
+                                onRemove={handleRemoveImage}
+                              />
+                              {imageUrlExtraLength > 0 && (
+                                <div className={`mt-2 text-xs ${
+                                  isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'
+                                }`}>
+                                  Image URL adds {imageUrlExtraLength} characters to your post.
+                                  {isOverLimitDueToImage && (
+                                    <span className="ml-1">
+                                      Over limit by {imageOverage}. Trim your text.
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
                           )}
 
                           {/* Add thread post button */}
@@ -1552,7 +1220,12 @@ export function ComposeModal() {
                             <motion.button
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
-                              onClick={addThreadPost}
+                              onClick={() => {
+                                addThreadPost()
+                                setTimeout(() => {
+                                  scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' })
+                                }, 100)
+                              }}
                               className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
                             >
                               <PlusIcon className="w-5 h-5" />
@@ -1562,71 +1235,9 @@ export function ComposeModal() {
 
                           {/* Quoted post preview */}
                           {quotingPost && <QuotedPostPreview post={quotingPost} />}
-                        </div>
                       </div>
                     </div>
 
-                    {/* Footer - with image button and keyboard hint */}
-                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
-                      <div className="flex items-center justify-between">
-                        {/* Left side: Image button + indicators */}
-                        <div className="flex items-center gap-3">
-                          {/* Image attachment button */}
-                          <button
-                            type="button"
-                            onClick={handleImageButtonClick}
-                            disabled={!canAttachImage}
-                            className={`p-1.5 rounded-md transition-colors ${
-                              canAttachImage
-                                ? 'text-gray-500 hover:text-yappr-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                                : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
-                            }`}
-                            title={
-                              willBeEncrypted
-                                ? 'Images not supported for private posts'
-                                : attachedImage
-                                ? 'Only one image per post'
-                                : 'Attach image'
-                            }
-                          >
-                            <PhotoIcon className="w-5 h-5" />
-                          </button>
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileSelect}
-                            className="hidden"
-                          />
-
-                          {/* Private post indicator */}
-                          {isPrivatePostVisibility && (
-                            <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                              <LockClosedIcon className="w-3 h-3" />
-                              <span>
-                                {privateFollowerCount > 0
-                                  ? `Visible to ${privateFollowerCount} private follower${privateFollowerCount !== 1 ? 's' : ''}`
-                                  : 'Only visible to you (no followers yet)'}
-                              </span>
-                            </div>
-                          )}
-                          {/* Inherited encryption indicator */}
-                          {inheritedEncryption && !isPrivatePostVisibility && (
-                            <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
-                              <LinkIcon className="w-3 h-3" />
-                              <span>Reply inherits parent&apos;s encryption</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Right side: keyboard hint */}
-                        <span className="text-xs text-gray-400">
-                          {threadPosts.length > 1
-                            ? `${totalCharacters} total chars · ${isMac ? '⌘' : 'Ctrl'}+Enter to post`
-                            : `${isMac ? '⌘' : 'Ctrl'}+Enter to post`}
-                        </span>
-                      </div>
-                    </div>
                   </motion.div>
                 </Dialog.Content>
               </motion.div>
@@ -1647,72 +1258,11 @@ export function ComposeModal() {
       />
 
       {/* Storage Provider Modal - shown when trying to attach image without a provider */}
-      <Dialog.Root open={showStorageProviderModal} onOpenChange={setShowStorageProviderModal}>
-        <AnimatePresence>
-          {showStorageProviderModal && (
-            <Dialog.Portal forceMount>
-              <Dialog.Overlay asChild>
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className={`fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
-                >
-                  <Dialog.Content asChild>
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Dialog.Title className="sr-only">Connect Storage Provider</Dialog.Title>
-                      <Dialog.Description className="sr-only">
-                        You need to connect a storage provider to attach images to posts
-                      </Dialog.Description>
-
-                      <div className="p-6">
-                        <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-yappr-100 dark:bg-yappr-900/30">
-                          <CloudArrowUpIcon className="w-6 h-6 text-yappr-600 dark:text-yappr-400" />
-                        </div>
-
-                        <h3 className="text-lg font-semibold text-center text-gray-900 dark:text-gray-100 mb-2">
-                          Connect a Storage Provider
-                        </h3>
-
-                        <p className="text-sm text-center text-gray-600 dark:text-gray-400 mb-6">
-                          To attach images to your posts, you need to connect a storage provider like Storacha or Pinata. This allows your images to be stored on IPFS.
-                        </p>
-
-                        <div className="flex flex-col gap-3">
-                          <Button asChild className="w-full">
-                            <Link
-                              href="/settings?section=storage"
-                              onClick={() => {
-                                setShowStorageProviderModal(false)
-                                setComposeOpen(false)
-                              }}
-                            >
-                              Go to Settings
-                            </Link>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => setShowStorageProviderModal(false)}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    </motion.div>
-                  </Dialog.Content>
-                </motion.div>
-              </Dialog.Overlay>
-            </Dialog.Portal>
-          )}
-        </AnimatePresence>
-      </Dialog.Root>
+      <StorageProviderModal
+        open={showStorageProviderModal}
+        onOpenChange={setShowStorageProviderModal}
+        onSettingsNavigate={() => setComposeOpen(false)}
+      />
     </>
   )
 }

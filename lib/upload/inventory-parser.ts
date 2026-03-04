@@ -7,7 +7,7 @@
  * - Standard CSV parsing with proper escaping handling
  */
 
-import type { StoreItem, ItemVariants, VariantAxis, VariantCombination } from '../types'
+import type { ItemVariants, VariantAxis, VariantCombination } from '../types'
 
 // CSV column mapping to internal field names
 export interface InventoryCSVColumns {
@@ -257,7 +257,7 @@ function parseCombineShipping(value: string): { type: 'free' | 'extra' | 'no'; e
 
 /**
  * Evaluate formula-based quantities
- * Formulas can reference other SKUs: (SKU-NAME)*5 or SKU-NAME+10
+ * Formulas can reference other SKUs only when wrapped in parentheses: (SKU-NAME)*5
  */
 export function evaluateQuantityFormulas(items: GroupedInventoryItem[]): void {
   // Build SKU -> quantity map
@@ -314,7 +314,7 @@ export function evaluateQuantityFormulas(items: GroupedInventoryItem[]): void {
  */
 function evaluateSingleFormula(formula: string, skuQuantities: Record<string, number>): number | null {
   // Replace SKU references with their quantities
-  // Format: (SKU-NAME) or SKU-NAME
+  // Format: (SKU-NAME) only
   let expression = formula
 
   // Find SKU references in parentheses first: (sku-name)

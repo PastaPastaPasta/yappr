@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
@@ -39,7 +40,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     // Convert postId from base64 to base58 (byte array field)
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     if (rawPostId && !postId) {
-      console.error('HashtagService: Invalid postId format:', rawPostId);
+      logger.error('HashtagService: Invalid postId format:', rawPostId);
     }
 
     return {
@@ -58,7 +59,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     // Validate and normalize hashtag
     const normalizedTag = this.normalizeHashtag(hashtag);
     if (!normalizedTag) {
-      console.warn('Invalid hashtag:', hashtag);
+      logger.warn('Invalid hashtag:', hashtag);
       return false;
     }
 
@@ -66,7 +67,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Check if already exists (unique index on postId + hashtag)
       const existing = await this.getHashtagForPost(postId, normalizedTag);
       if (existing) {
-        console.log('Hashtag already exists for post:', normalizedTag);
+        logger.info('Hashtag already exists for post:', normalizedTag);
         return true;
       }
 
@@ -91,7 +92,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error creating hashtag:', error);
+      logger.error('Error creating hashtag:', error);
       return false;
     }
   }
@@ -140,7 +141,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
-      console.error('Error getting hashtag for post:', error);
+      logger.error('Error getting hashtag for post:', error);
       return null;
     }
   }
@@ -166,7 +167,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting hashtags for post:', error);
+      logger.error('Error getting hashtags for post:', error);
       return [];
     }
   }
@@ -197,7 +198,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return count;
     } catch (error) {
-      console.error('Error getting post count by hashtag:', error);
+      logger.error('Error getting post count by hashtag:', error);
       return 0;
     }
   }
@@ -230,7 +231,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting posts by hashtag:', error);
+      logger.error('Error getting posts by hashtag:', error);
       return [];
     }
   }
@@ -259,7 +260,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting recent hashtags:', error);
+      logger.error('Error getting recent hashtags:', error);
       return [];
     }
   }
@@ -314,7 +315,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return trending.slice(0, limit);
     } catch (error) {
-      console.error('Error calculating trending hashtags:', error);
+      logger.error('Error calculating trending hashtags:', error);
       return [];
     }
   }

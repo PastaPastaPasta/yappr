@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { BuildingStorefrontIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { RatingStars } from './rating-stars'
+import { getStoreStatusLabel, getStoreStatusBadgeClasses } from '@/lib/utils/store-status'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 
 interface StoreCardProps {
@@ -81,12 +82,8 @@ export function StoreCard({ store, rating, onClick }: StoreCardProps) {
 
           {/* Status badge */}
           {store.status !== 'active' && (
-            <span className={`inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium ${
-              store.status === 'paused'
-                ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400'
-                : 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
-            }`}>
-              {store.status === 'paused' ? 'Paused' : 'Closed'}
+            <span className={`inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium ${getStoreStatusBadgeClasses(store.status)}`}>
+              {getStoreStatusLabel(store.status)}
             </span>
           )}
         </div>

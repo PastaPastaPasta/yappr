@@ -9,7 +9,7 @@ interface PolicyAgreementProps {
   policies: StorePolicy[]
   agreedIndexes: Set<number>
   onAgreementChange: (index: number, agreed: boolean) => void
-  onSubmit: () => void
+  onSubmit: () => void | Promise<void>
 }
 
 export function PolicyAgreement({

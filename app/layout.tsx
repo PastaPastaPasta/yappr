@@ -3,11 +3,7 @@ import './globals.css'
 import { Toaster } from 'react-hot-toast'
 import { Providers } from '@/components/providers'
 import ErrorBoundary from '@/components/error-boundary'
-import { DevelopmentBanner } from '@/components/ui/development-banner'
-import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
-import { LoginModal } from '@/components/auth/login-modal'
-import { KeyExchangeLoginModal } from '@/components/auth/key-exchange-login-modal'
-import { LinkPreviewModalProvider } from '@/components/post/link-preview'
+import { AppShell } from '@/components/layout/app-shell'
 
 const basePath = process.env.BASE_PATH || ''
 
@@ -27,20 +23,20 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
+      <head>
+        <meta
+          httpEquiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss: https://44.240.98.102:1443; worker-src 'self' blob:; child-src 'self' blob:; media-src 'self' https: blob:; frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com"
+        />
+      </head>
       <body className="font-sans h-full bg-white dark:bg-neutral-900">
         <ErrorBoundary level="app">
           <Providers>
-            <LinkPreviewModalProvider>
-              <DevelopmentBanner />
-              <div className="h-[32px] sm:h-[40px]" /> {/* Spacer for fixed banner */}
+            <AppShell>
               <ErrorBoundary level="page">
                 {children}
               </ErrorBoundary>
-              <div className="h-16 md:hidden" /> {/* Spacer for mobile bottom nav */}
-              <MobileBottomNav />
-              <LoginModal />
-              <KeyExchangeLoginModal />
-            </LinkPreviewModalProvider>
+            </AppShell>
           </Providers>
         </ErrorBoundary>
         <Toaster

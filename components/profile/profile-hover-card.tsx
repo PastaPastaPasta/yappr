@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -105,7 +106,7 @@ export function ProfileHoverCard({
         followingCount
       })
     } catch (error) {
-      console.error('Failed to load profile data:', error)
+      logger.error('Failed to load profile data:', error)
       // Set minimal data so we show something
       setProfileData({
         displayName: preloadedDisplayName || 'Unknown User',
@@ -129,15 +130,15 @@ export function ProfileHoverCard({
       setIsFollowing(following)
       setHasLoadedFollowStatus(true)
     } catch (error) {
-      console.error('Failed to load follow status:', error)
+      logger.error('Failed to load follow status:', error)
     }
   }, [userId, user, hasLoadedFollowStatus, isOwnProfile])
 
   // Load data when card opens
   useEffect(() => {
     if (isOpen) {
-      loadProfileData().catch(err => console.error('Failed to load profile data:', err))
-      loadFollowStatus().catch(err => console.error('Failed to load follow status:', err))
+      loadProfileData().catch(err => logger.error('Failed to load profile data:', err))
+      loadFollowStatus().catch(err => logger.error('Failed to load follow status:', err))
     }
   }, [isOpen, loadProfileData, loadFollowStatus])
 
@@ -176,7 +177,7 @@ export function ProfileHoverCard({
     } catch (error) {
       // Rollback
       setIsFollowing(wasFollowing)
-      console.error('Follow toggle error:', error)
+      logger.error('Follow toggle error:', error)
       toast.error('Failed to update follow status')
     } finally {
       setFollowLoading(false)

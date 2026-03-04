@@ -1,8 +1,9 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
-import { User, ParsedPaymentUri, SocialLink } from '../types';
+import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 
 // Approved payment URI schemes (whitelist)
@@ -146,7 +147,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    */
   getAvatarUrlFromConfig(config: AvatarConfig): string {
     if (!config.seed) {
-      console.warn('UnifiedProfileService: getAvatarUrlFromConfig called with empty seed');
+      logger.warn('UnifiedProfileService: getAvatarUrlFromConfig called with empty seed');
       return '';
     }
     return generateAvatarDataUri(config.style, config.seed);
@@ -157,7 +158,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    */
   getDefaultAvatarUrl(userId: string): string {
     if (!userId) {
-      console.warn('UnifiedProfileService: getDefaultAvatarUrl called with empty userId');
+      logger.warn('UnifiedProfileService: getDefaultAvatarUrl called with empty userId');
       return '';
     }
     return this.getAvatarUrlFromConfig({ style: DEFAULT_AVATAR_STYLE, seed: userId });
@@ -218,7 +219,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null;
-      this.processBatch().catch(err => console.error('Failed to process avatar batch:', err));
+      this.processBatch().catch(err => logger.error('Failed to process avatar batch:', err));
     }, 5);
   }
 
@@ -254,7 +255,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    */
   async getAvatarUrl(ownerId: string): Promise<string> {
     if (!ownerId) {
-      console.warn('UnifiedProfileService: getAvatarUrl called with empty ownerId');
+      logger.warn('UnifiedProfileService: getAvatarUrl called with empty ownerId');
       return '';
     }
 
@@ -322,7 +323,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         }
       }
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting batch avatar URLs:', error);
+      logger.error('UnifiedProfileService: Error getting batch avatar URLs:', error);
       for (const userId of userIds) {
         if (!result.has(userId)) {
           result.set(userId, this.getDefaultAvatarUrl(userId));
@@ -485,11 +486,10 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       pronouns: profileDoc.pronouns,
       nsfw: profileDoc.nsfw,
       socialLinks: this.parseSocialLinks(profileDoc.socialLinks),
-      hasUnifiedProfile: true,
     };
 
     // Queue async enrichment
-    this.enrichUser(user, !!cachedUsername).catch(err => console.error('Failed to enrich user:', err));
+    this.enrichUser(user, !!cachedUsername).catch(err => logger.error('Failed to enrich user:', err));
 
     return user;
   }
@@ -511,7 +511,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       user.followers = stats.followers;
       user.following = stats.following;
     } catch (error) {
-      console.error('UnifiedProfileService: Error enriching user:', error);
+      logger.error('UnifiedProfileService: Error enriching user:', error);
     }
   }
 
@@ -532,7 +532,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       }
       return username;
     } catch (error) {
-      console.error('UnifiedProfileService: Error resolving username:', error);
+      logger.error('UnifiedProfileService: Error resolving username:', error);
       return null;
     }
   }
@@ -582,7 +582,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
       return null;
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting profile:', error);
+      logger.error('UnifiedProfileService: Error getting profile:', error);
       return null;
     }
   }
@@ -599,7 +599,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       }
       return profile;
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting profile with username:', error);
+      logger.error('UnifiedProfileService: Error getting profile with username:', error);
       return this.getProfile(ownerId);
     }
   }
@@ -719,7 +719,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       cacheManager.invalidateByTag(`user:${ownerId}`);
       return result;
     } catch (error) {
-      console.error('UnifiedProfileService: Error updating profile:', error);
+      logger.error('UnifiedProfileService: Error updating profile:', error);
       throw error;
     }
   }
@@ -747,7 +747,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
       return this.extractDocumentData(documents[0]);
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting raw profile:', error);
+      logger.error('UnifiedProfileService: Error getting raw profile:', error);
       return null;
     }
   }
@@ -786,7 +786,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       const documents = this.normalizeDocumentResponse(response);
       return documents.map(doc => this.extractDocumentData(doc));
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
+      logger.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
       return [];
     }
   }

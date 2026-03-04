@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
@@ -45,7 +46,7 @@ class RepostService {
 
     const quotedPostId = identifierToBase58(rawQuotedPostId);
     if (!quotedPostId) {
-      console.error('RepostService: Invalid quotedPostId format:', rawQuotedPostId);
+      logger.error('RepostService: Invalid quotedPostId format:', rawQuotedPostId);
       return null;
     }
 
@@ -75,7 +76,7 @@ class RepostService {
       // Check if already reposted
       const existing = await this.getRepost(postId, ownerId);
       if (existing) {
-        console.log('Post already reposted');
+        logger.info('Post already reposted');
         return true;
       }
 
@@ -101,7 +102,7 @@ class RepostService {
 
       return result.success;
     } catch (error) {
-      console.error('Error reposting:', error);
+      logger.error('Error reposting:', error);
       return false;
     }
   }
@@ -114,7 +115,7 @@ class RepostService {
     try {
       const repost = await this.getRepost(postId, ownerId);
       if (!repost) {
-        console.log('Post not reposted');
+        logger.info('Post not reposted');
         return true;
       }
 
@@ -128,7 +129,7 @@ class RepostService {
 
       return result.success;
     } catch (error) {
-      console.error('Error removing repost:', error);
+      logger.error('Error removing repost:', error);
       return false;
     }
   }
@@ -172,7 +173,7 @@ class RepostService {
 
       return null;
     } catch (error) {
-      console.error('Error getting repost:', error);
+      logger.error('Error getting repost:', error);
       return null;
     }
   }
@@ -201,7 +202,7 @@ class RepostService {
       // Filter out nulls (quote tweets with content)
       return documents.filter((d): d is RepostDocument => d !== null);
     } catch (error) {
-      console.error('Error getting post reposts:', error);
+      logger.error('Error getting post reposts:', error);
       return [];
     }
   }
@@ -232,7 +233,7 @@ class RepostService {
       // Filter out nulls (posts that aren't reposts or are quote tweets)
       return documents.filter((d): d is RepostDocument => d !== null);
     } catch (error) {
-      console.error('Error getting user reposts:', error);
+      logger.error('Error getting user reposts:', error);
       return [];
     }
   }
@@ -281,7 +282,7 @@ class RepostService {
 
       return reposts;
     } catch (error) {
-      console.error('Error getting reposts batch:', error);
+      logger.error('Error getting reposts batch:', error);
       return [];
     }
   }
@@ -322,7 +323,7 @@ class RepostService {
 
       return reposts;
     } catch (error) {
-      console.error('Error getting reposts of my posts:', error);
+      logger.error('Error getting reposts of my posts:', error);
       return [];
     }
   }

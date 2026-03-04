@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -7,14 +8,14 @@ import {
   MagnifyingGlassIcon,
   BuildingStorefrontIcon,
   PlusIcon,
-  StarIcon,
   ClipboardDocumentListIcon
 } from '@heroicons/react/24/outline'
-import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { MobileCartFab } from '@/components/store/mobile-cart-fab'
+import { RatingStars } from '@/components/store/rating-stars'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -44,7 +45,7 @@ export default function StoreBrowsePage() {
       const exists = await storeService.hasStore(user.identityId)
       setHasStore(exists)
     }
-    checkUserStore().catch(console.error)
+    checkUserStore().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
   // Load active stores
@@ -70,12 +71,12 @@ export default function StoreBrowsePage() {
         )
         setStoreRatings(ratingsMap)
       } catch (error) {
-        console.error('Failed to load stores:', error)
+        logger.error('Failed to load stores:', error)
       } finally {
         setIsLoading(false)
       }
     }
-    loadStores().catch(console.error)
+    loadStores().catch((error) => logger.error(error))
   }, [sdkReady])
 
   // Filter stores by search query
@@ -88,20 +89,6 @@ export default function StoreBrowsePage() {
 
   const handleStoreClick = (storeId: string) => {
     router.push(`/store/view?id=${storeId}`)
-  }
-
-  const renderStars = (rating: number) => {
-    const stars = []
-    for (let i = 1; i <= 5; i++) {
-      if (i <= rating) {
-        stars.push(<StarIconSolid key={i} className="h-4 w-4 text-yellow-400" />)
-      } else if (i - 0.5 <= rating) {
-        stars.push(<StarIconSolid key={i} className="h-4 w-4 text-yellow-400 opacity-50" />)
-      } else {
-        stars.push(<StarIcon key={i} className="h-4 w-4 text-gray-300" />)
-      }
-    }
-    return stars
   }
 
   return (
@@ -164,7 +151,7 @@ export default function StoreBrowsePage() {
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
             {isLoading ? (
               <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4" />
+                <Spinner className="mx-auto mb-4" />
                 <p className="text-gray-500">Loading stores...</p>
               </div>
             ) : filteredStores.length === 0 ? (
@@ -229,14 +216,11 @@ export default function StoreBrowsePage() {
                             {store.name}
                           </h3>
                           {rating && rating.reviewCount > 0 && (
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <div className="flex">
-                                {renderStars(rating.averageRating)}
-                              </div>
-                              <span className="text-sm text-gray-500">
-                                ({rating.reviewCount})
-                              </span>
-                            </div>
+                            <RatingStars
+                              rating={rating.averageRating}
+                              reviewCount={rating.reviewCount}
+                              size="sm"
+                            />
                           )}
                         </div>
 

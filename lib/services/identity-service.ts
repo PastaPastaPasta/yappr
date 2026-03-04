@@ -1,29 +1,16 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-// WASM SDK imports with dynamic initialization
-import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed';
-
-let wasmInitialized = false;
-async function ensureWasmInitialized() {
-  if (!wasmInitialized) {
-    await initWasm();
-    wasmInitialized = true;
-  }
-  return wasmSdk;
-}
+import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
 
 export interface IdentityPublicKey {
   id: number;
   type: number;
   purpose: number;
-  securityLevel: number;              // Now required (normalized in getIdentity)
-  security_level?: number;            // SDK may return snake_case variant
+  securityLevel: number;              // Required (normalized in getIdentity)
   readOnly?: boolean;
-  read_only?: boolean;                // SDK may return snake_case variant
   disabledAt?: number;
-  disabled_at?: number;               // SDK may return snake_case variant
   contractBounds?: unknown;
-  contract_bounds?: unknown;          // SDK may return snake_case variant
   data: string | Uint8Array;
 }
 
@@ -37,6 +24,37 @@ export interface IdentityInfo {
 export interface IdentityBalance {
   confirmed: number;
   total: number;
+}
+
+function safeStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+
+  try {
+    return JSON.stringify(
+      value,
+      (_key, current) => {
+        if (typeof current === 'bigint') {
+          return `${current.toString()}n`;
+        }
+
+        if (typeof current === 'object' && current !== null) {
+          if (seen.has(current)) {
+            return '[Circular]';
+          }
+          seen.add(current);
+        }
+
+        return current;
+      },
+      2
+    );
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return '[Unserializable value]';
+    }
+  }
 }
 
 class IdentityService {
@@ -58,30 +76,31 @@ class IdentityService {
       const sdk = await getEvoSdk();
 
       // Fetch identity using EvoSDK facade
-      console.log(`Fetching identity: ${identityId}`);
+      logger.info(`Fetching identity: ${identityId}`);
       const identityResponse = await sdk.identities.fetch(identityId);
       
       if (!identityResponse) {
-        console.warn(`Identity not found: ${identityId}`);
+        logger.warn(`Identity not found: ${identityId}`);
         return null;
       }
 
       // identity_fetch returns an object with a toJSON method
       const identity = identityResponse.toJSON();
       
-      console.log('Raw identity response:', JSON.stringify(identity, null, 2));
-      console.log('Public keys from identity:', identity.publicKeys);
+      logger.info('Raw identity response:', safeStringify(identity));
+      logger.info('Public keys from identity:', identity.publicKeys);
 
       // Normalize public keys to ensure all fields are present
-      const rawPublicKeys = identity.publicKeys || identity.public_keys || [];
+      // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
+      const rawPublicKeys = identity.publicKeys || [];
       const normalizedPublicKeys: IdentityPublicKey[] = rawPublicKeys.map((key: IdentityPublicKey) => ({
         id: key.id,
         type: key.type,
         purpose: key.purpose,
-        securityLevel: key.securityLevel ?? key.security_level ?? 2, // Default to HIGH (2) if missing
-        readOnly: key.readOnly ?? key.read_only ?? false,
-        disabledAt: key.disabledAt ?? key.disabled_at,
-        contractBounds: key.contractBounds ?? key.contract_bounds,
+        securityLevel: key.securityLevel ?? 2, // Default to HIGH (2) if missing
+        readOnly: key.readOnly ?? false,
+        disabledAt: key.disabledAt,
+        contractBounds: key.contractBounds,
         data: key.data
       }));
 
@@ -100,7 +119,7 @@ class IdentityService {
 
       return identityInfo;
     } catch (error) {
-      console.error('Error fetching identity:', error);
+      logger.error('Error fetching identity:', error);
       throw error;
     }
   }
@@ -118,14 +137,21 @@ class IdentityService {
 
       const sdk = await getEvoSdk();
 
-      // Fetch balance using EvoSDK facade (v3 SDK returns bigint | null)
-      console.log(`Fetching balance for: ${identityId}`);
+      // Fetch balance using EvoSDK facade (v3.1 SDK returns bigint | undefined)
+      logger.info(`Fetching balance for: ${identityId}`);
       const balanceResponse = await sdk.identities.balance(identityId);
 
-      // Convert bigint to number, handle null
-      const confirmedBalance = balanceResponse ? Number(balanceResponse) : 0;
+      // Convert bigint to number, handle undefined.
+      // Warn if the value exceeds Number.MAX_SAFE_INTEGER to avoid silent truncation.
+      let confirmedBalance = 0;
+      if (balanceResponse !== undefined && balanceResponse !== null) {
+        if (balanceResponse > BigInt(Number.MAX_SAFE_INTEGER)) {
+          logger.warn(`Balance ${balanceResponse} credits exceeds Number.MAX_SAFE_INTEGER; precision may be lost`);
+        }
+        confirmedBalance = Number(balanceResponse);
+      }
 
-      console.log(`Balance for ${identityId}: ${confirmedBalance} credits`);
+      logger.info(`Balance for ${identityId}: ${confirmedBalance} credits`);
 
       const balanceInfo: IdentityBalance = {
         confirmed: confirmedBalance,
@@ -140,7 +166,7 @@ class IdentityService {
 
       return balanceInfo;
     } catch (error) {
-      console.error('Error fetching balance:', error);
+      logger.error('Error fetching balance:', error);
       // Return zero balance on error
       return { confirmed: 0, total: 0 };
     }
@@ -154,7 +180,7 @@ class IdentityService {
       const identity = await this.getIdentity(identityId);
       return identity !== null;
     } catch (error) {
-      console.error('Error verifying identity:', error);
+      logger.error('Error verifying identity:', error);
       return false;
     }
   }
@@ -167,7 +193,7 @@ class IdentityService {
       const identity = await this.getIdentity(identityId);
       return identity?.publicKeys || [];
     } catch (error) {
-      console.error('Error fetching public keys:', error);
+      logger.error('Error fetching public keys:', error);
       return [];
     }
   }
@@ -217,7 +243,7 @@ class IdentityService {
         key => key.purpose === 1 && key.type === 0 && !key.disabledAt
       );
     } catch (error) {
-      console.error('Error checking encryption key:', error);
+      logger.error('Error checking encryption key:', error);
       return false;
     }
   }
@@ -248,11 +274,12 @@ class IdentityService {
       }
 
       // Convert identity public keys to the format expected by findMatchingKeyIndex
+      // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
       const publicKeys = identity.publicKeys.map(key => ({
         id: key.id,
         type: key.type,
         purpose: key.purpose,
-        securityLevel: key.securityLevel ?? key.security_level ?? 0,
+        securityLevel: key.securityLevel,
         data: typeof key.data === 'string'
           ? Uint8Array.from(atob(key.data), c => c.charCodeAt(0))
           : key.data as Uint8Array
@@ -265,8 +292,7 @@ class IdentityService {
         return { isValid: false, error: 'Private key does not match any key on this identity' };
       }
 
-      // For identity updates in SDK 3.0.0, we REQUIRE MASTER (0) security level
-      // The WASM SDK explicitly checks: key.security_level() == SecurityLevel::MASTER
+      // Identity modifications REQUIRE MASTER (0) security level
       // CRITICAL (1) and below are NOT sufficient for identity updates
       if (match.securityLevel !== 0) {
         const levelName = getSecurityLevelName(match.securityLevel);
@@ -284,7 +310,7 @@ class IdentityService {
         keyId: match.keyId
       };
     } catch (error) {
-      console.error('Error validating key security level:', error);
+      logger.error('Error validating key security level:', error);
       return {
         isValid: false,
         error: error instanceof Error ? error.message : 'Failed to validate key'
@@ -316,9 +342,6 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Ensure WASM module is initialized
-      const wasm = await ensureWasmInitialized();
-
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -326,7 +349,7 @@ class IdentityService {
       }
 
       // Check if encryption key already exists
-      const existingKey = identity.getPublicKeys().find(
+      const existingKey = identity.publicKeys.find(
         (key) => key.purpose === 'ENCRYPTION' && key.keyType === 'ECDSA_SECP256K1'
       );
       if (existingKey) {
@@ -334,7 +357,7 @@ class IdentityService {
       }
 
       // Get the next available key ID
-      const currentKeys = identity.getPublicKeys();
+      const currentKeys = identity.publicKeys;
       const maxKeyId = currentKeys.reduce((max, key) => Math.max(max, key.keyId), 0);
       const newKeyId = maxKeyId + 1;
 
@@ -342,107 +365,102 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
 
-      // Create IdentityPublicKeyInCreation using the constructor directly
-      // The constructor takes: (id, purpose, securityLevel, keyType, readOnly, data, signature, contractBounds)
-      // - purpose: can be number (1 = ENCRYPTION) or string ("ENCRYPTION")
-      // - securityLevel: can be number (3 = MEDIUM) or string ("MEDIUM")
-      // - keyType: can be number (0 = ECDSA_SECP256K1) or string ("ECDSA_SECP256K1")
-      // - data: must be Uint8Array (not base64 string)
-      // - signature: null for new keys
-      // - contractBounds: null or ContractBounds object
+      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // so the WASM object shares the same linear memory as sdk.identities.update().
+      logger.info(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
+      logger.info(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
-      console.log(`Public key bytes length: ${publicKeyBytes.length}`);
-
-      const newKey = new wasm.IdentityPublicKeyInCreation(
-        newKeyId,           // id
-        'ENCRYPTION',       // purpose (string format works)
-        'MEDIUM',           // securityLevel (string format works)
-        'ECDSA_SECP256K1',  // keyType (string format works)
-        false,              // readOnly
-        publicKeyBytes,     // data as Uint8Array
-        null,               // signature (null for new keys)
-        null                // contractBounds (null = no contract binding)
-      );
-      console.log('IdentityPublicKeyInCreation created successfully');
+      // v3.1: IdentityPublicKeyInCreation takes an options object
+      const newKey = new IdentityPublicKeyInCreation({
+        keyId: newKeyId,
+        purpose: 'ENCRYPTION',
+        securityLevel: 'MEDIUM',
+        keyType: 'ECDSA_SECP256K1',
+        isReadOnly: false,
+        data: publicKeyBytes,
+      });
+      logger.info('IdentityPublicKeyInCreation created successfully');
 
       // Validate signing key has sufficient security level before calling SDK
       const validation = await this.validateKeySecurityLevel(signingPrivateKeyWif, identityId);
       if (!validation.isValid) {
-        console.error('Signing key validation failed:', validation.error);
+        logger.error('Signing key validation failed:', validation.error);
         return { success: false, error: validation.error };
       }
-      console.log(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
+      logger.info(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
 
-      console.log(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
+      logger.info(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
 
       // Log identity revision for debugging
       const identityJson = identity.toJSON();
-      console.log('Identity revision before update:', identityJson.revision);
+      logger.info('Identity revision before update:', identityJson.revision);
 
-      // Create signer for the identity update using the master key
+      // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
 
+      // Also add the NEW encryption key's private key to the signer.
+      // Dash Platform requires a "key proof" signature from each new key being added,
+      // proving ownership of the private key. The SDK looks up the private key by
+      // Hash160(compressed_public_key) in the signer, so it must contain both:
+      // 1. The master key (to authorize the identity update)
+      // 2. The new key (to generate the key proof)
+      if (encryptionPrivateKey.length !== 32) {
+        return { success: false, error: `Invalid encryption private key: expected 32 bytes, got ${encryptionPrivateKey.length}` };
+      }
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+      const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
+      signer.addKey(encryptionPrivateKeyObj);
+      logger.info(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
+
       // Update the identity using typed API
-      console.log('Calling sdk.identities.update...');
+      logger.info('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({
           identity,
           addPublicKeys: [newKey],
           signer
         });
-        console.log('sdk.identities.update completed successfully');
+        logger.info('sdk.identities.update completed successfully');
       } catch (updateError) {
-        console.error('sdk.identities.update failed:', updateError);
-        // Try to extract WasmSdkError properties (they are getters in WASM)
+        logger.error('sdk.identities.update failed:', updateError);
         if (updateError && typeof updateError === 'object') {
           const wasmErr = updateError as Record<string, unknown>;
-          // WasmSdkError has getters: kind, name, message, code, retriable
-          console.error('WasmSdkError properties:');
+          logger.error('WasmSdkError properties:');
           try {
-            console.error('  - kind:', wasmErr.kind);
-            console.error('  - name:', wasmErr.name);
-            console.error('  - message:', wasmErr.message);
-            console.error('  - code:', wasmErr.code);
-            console.error('  - retriable:', wasmErr.retriable);
+            logger.error('  - kind:', wasmErr.kind);
+            logger.error('  - name:', wasmErr.name);
+            logger.error('  - message:', wasmErr.message);
+            logger.error('  - code:', wasmErr.code);
+            logger.error('  - retriable:', wasmErr.retriable);
           } catch (e) {
-            console.error('  - Could not read properties:', e);
+            logger.error('  - Could not read properties:', e);
           }
-          // List all own property names
-          console.error('  - All properties:', Object.getOwnPropertyNames(wasmErr));
-          // List all properties including inherited
-          const allProps: string[] = [];
-          let obj = wasmErr;
-          while (obj && obj !== Object.prototype) {
-            allProps.push(...Object.getOwnPropertyNames(obj));
-            obj = Object.getPrototypeOf(obj);
-          }
-          console.error('  - All props (incl. prototype):', Array.from(new Set(allProps)));
         }
         throw updateError;
       }
 
-      console.log('Encryption key added successfully');
+      logger.info('Encryption key added successfully');
 
       // Clear cache to reflect the update
       this.clearCache(identityId);
 
       return { success: true, keyId: newKeyId };
     } catch (error) {
-      console.error('Error adding encryption key:', error);
+      logger.error('Error adding encryption key:', error);
       // Extract more detailed error info
       let errorMessage = 'Unknown error';
       if (error instanceof Error) {
         errorMessage = error.message;
-        console.error('Error stack:', error.stack);
-        console.error('Error name:', error.name);
+        logger.error('Error stack:', error.stack);
+        logger.error('Error name:', error.name);
         // Check for WASM error properties
         const wasmError = error as { code?: string; data?: unknown; kind?: string | number };
-        if (wasmError.code) console.error('Error code:', wasmError.code);
-        if (wasmError.data) console.error('Error data:', JSON.stringify(wasmError.data, null, 2));
-        if (wasmError.kind !== undefined) console.error('Error kind:', wasmError.kind);
+        if (wasmError.code) logger.error('Error code:', wasmError.code);
+        if (wasmError.data) logger.error('Error data:', safeStringify(wasmError.data));
+        if (wasmError.kind !== undefined) logger.error('Error kind:', wasmError.kind);
         // Log all enumerable properties
-        console.error('Error properties:', Object.keys(error));
+        logger.error('Error properties:', Object.keys(error));
       }
       return {
         success: false,
@@ -471,9 +489,6 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Ensure WASM module is initialized
-      const wasm = await ensureWasmInitialized();
-
       // Fetch current identity
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
@@ -481,7 +496,7 @@ class IdentityService {
       }
 
       // Check if transfer key already exists (purpose='TRANSFER')
-      const existingKey = identity.getPublicKeys().find(
+      const existingKey = identity.publicKeys.find(
         (key) => key.purpose === 'TRANSFER' && key.keyType === 'ECDSA_SECP256K1'
       );
       if (existingKey) {
@@ -489,7 +504,7 @@ class IdentityService {
       }
 
       // Get the next available key ID
-      const currentKeys = identity.getPublicKeys();
+      const currentKeys = identity.publicKeys;
       const maxKeyId = currentKeys.reduce((max, key) => Math.max(max, key.keyId), 0);
       const newKeyId = maxKeyId + 1;
 
@@ -497,87 +512,98 @@ class IdentityService {
       const { privateFeedCryptoService } = await import('./index');
       const publicKeyBytes = privateFeedCryptoService.getPublicKey(transferPrivateKey);
 
-      // Create IdentityPublicKeyInCreation
-      // Transfer keys use:
-      // - purpose: 'TRANSFER' (3)
-      // - securityLevel: 'HIGH' (2) - required for credit transfers
-      // - keyType: 'ECDSA_SECP256K1' (0)
-      console.log(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=TRANSFER, securityLevel=HIGH, keyType=ECDSA_SECP256K1`);
-      console.log(`Public key bytes length: ${publicKeyBytes.length}`);
+      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // so the WASM object shares the same linear memory as sdk.identities.update().
+      logger.info(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=TRANSFER, securityLevel=HIGH, keyType=ECDSA_SECP256K1`);
+      logger.info(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      const newKey = new wasm.IdentityPublicKeyInCreation(
-        newKeyId,           // id
-        'TRANSFER',         // purpose (string format works)
-        'HIGH',             // securityLevel (HIGH for transfer operations)
-        'ECDSA_SECP256K1',  // keyType (string format works)
-        false,              // readOnly
-        publicKeyBytes,     // data as Uint8Array
-        null,               // signature (null for new keys)
-        null                // contractBounds (null = no contract binding)
-      );
-      console.log('IdentityPublicKeyInCreation created successfully');
+      // v3.1: IdentityPublicKeyInCreation takes an options object
+      const newKey = new IdentityPublicKeyInCreation({
+        keyId: newKeyId,
+        purpose: 'TRANSFER',
+        securityLevel: 'HIGH',
+        keyType: 'ECDSA_SECP256K1',
+        isReadOnly: false,
+        data: publicKeyBytes,
+      });
+      logger.info('IdentityPublicKeyInCreation created successfully');
 
       // Validate signing key has sufficient security level before calling SDK
       const validation = await this.validateKeySecurityLevel(signingPrivateKeyWif, identityId);
       if (!validation.isValid) {
-        console.error('Signing key validation failed:', validation.error);
+        logger.error('Signing key validation failed:', validation.error);
         return { success: false, error: validation.error };
       }
-      console.log(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
+      logger.info(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
 
-      console.log(`Adding transfer key (id=${newKeyId}) to identity ${identityId}...`);
+      logger.info(`Adding transfer key (id=${newKeyId}) to identity ${identityId}...`);
 
       // Log identity revision for debugging
       const identityJson = identity.toJSON();
-      console.log('Identity revision before update:', identityJson.revision);
+      logger.info('Identity revision before update:', identityJson.revision);
 
-      // Create signer for the identity update using the master key
+      // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
 
+      // Also add the NEW transfer key's private key to the signer.
+      // Dash Platform requires a "key proof" signature from each new key being added,
+      // proving ownership of the private key. The SDK looks up the private key by
+      // Hash160(compressed_public_key) in the signer, so it must contain both:
+      // 1. The master key (to authorize the identity update)
+      // 2. The new key (to generate the key proof)
+      if (transferPrivateKey.length !== 32) {
+        return { success: false, error: `Invalid transfer private key: expected 32 bytes, got ${transferPrivateKey.length}` };
+      }
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const transferKeyHex = Array.from(transferPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+      const transferPrivateKeyObj = PrivateKey.fromHex(transferKeyHex, network);
+      signer.addKey(transferPrivateKeyObj);
+      logger.info(`Signer now has ${signer.keyCount} keys (master + new transfer key)`);
+
       // Update the identity using typed API
-      console.log('Calling sdk.identities.update...');
+      logger.info('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({
           identity,
           addPublicKeys: [newKey],
           signer
         });
-        console.log('sdk.identities.update completed successfully');
+        logger.info('sdk.identities.update completed successfully');
       } catch (updateError) {
-        console.error('sdk.identities.update failed:', updateError);
+        logger.error('sdk.identities.update failed:', updateError);
         if (updateError && typeof updateError === 'object') {
           const wasmErr = updateError as Record<string, unknown>;
-          console.error('WasmSdkError properties:');
+          logger.error('WasmSdkError properties:');
           try {
-            console.error('  - kind:', wasmErr.kind);
-            console.error('  - name:', wasmErr.name);
-            console.error('  - message:', wasmErr.message);
-            console.error('  - code:', wasmErr.code);
-            console.error('  - retriable:', wasmErr.retriable);
+            logger.error('  - kind:', wasmErr.kind);
+            logger.error('  - name:', wasmErr.name);
+            logger.error('  - message:', wasmErr.message);
+            logger.error('  - code:', wasmErr.code);
+            logger.error('  - retriable:', wasmErr.retriable);
           } catch (e) {
-            console.error('  - Could not read properties:', e);
+            logger.error('  - Could not read properties:', e);
           }
         }
         throw updateError;
       }
 
-      console.log('Transfer key added successfully');
+      logger.info('Transfer key added successfully');
 
       // Clear cache to reflect the update
       this.clearCache(identityId);
 
       return { success: true, keyId: newKeyId };
     } catch (error) {
-      console.error('Error adding transfer key:', error);
+      logger.error('Error adding transfer key:', error);
       let errorMessage = 'Unknown error';
       if (error instanceof Error) {
         errorMessage = error.message;
-        console.error('Error stack:', error.stack);
-        console.error('Error name:', error.name);
+        logger.error('Error stack:', error.stack);
+        logger.error('Error name:', error.name);
         const wasmError = error as { code?: string; data?: unknown; kind?: string | number };
-        if (wasmError.code) console.error('Error code:', wasmError.code);
-        if (wasmError.data) console.error('Error data:', JSON.stringify(wasmError.data, null, 2));
-        if (wasmError.kind !== undefined) console.error('Error kind:', wasmError.kind);
+        if (wasmError.code) logger.error('Error code:', wasmError.code);
+        if (wasmError.data) logger.error('Error data:', safeStringify(wasmError.data));
+        if (wasmError.kind !== undefined) logger.error('Error kind:', wasmError.kind);
       }
       return {
         success: false,

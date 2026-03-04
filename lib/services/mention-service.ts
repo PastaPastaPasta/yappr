@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
@@ -31,10 +32,10 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     const mentionedUserId = rawMentionedUserId ? identifierToBase58(rawMentionedUserId) : '';
 
     if (rawPostId && !postId) {
-      console.error('MentionService: Invalid postId format:', rawPostId);
+      logger.error('MentionService: Invalid postId format:', rawPostId);
     }
     if (rawMentionedUserId && !mentionedUserId) {
-      console.error('MentionService: Invalid mentionedUserId format:', rawMentionedUserId);
+      logger.error('MentionService: Invalid mentionedUserId format:', rawMentionedUserId);
     }
 
     return {
@@ -51,11 +52,11 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    */
   async createPostMention(postId: string, ownerId: string, mentionedUserId: string): Promise<boolean> {
     if (!postId) {
-      console.warn('MentionService: Invalid postId');
+      logger.warn('MentionService: Invalid postId');
       return false;
     }
     if (!mentionedUserId) {
-      console.warn('MentionService: Invalid mentionedUserId');
+      logger.warn('MentionService: Invalid mentionedUserId');
       return false;
     }
 
@@ -63,7 +64,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       // Check if already exists (unique index on postId + mentionedUserId)
       const existing = await this.getMentionForPost(postId, mentionedUserId);
       if (existing) {
-        console.log('Mention already exists for post:', mentionedUserId);
+        logger.info('Mention already exists for post:', mentionedUserId);
         return true;
       }
 
@@ -74,14 +75,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       try {
         postIdBytes = stringToIdentifierBytes(postId);
       } catch (decodeError) {
-        console.error('MentionService: Invalid base58 postId:', postId, decodeError);
+        logger.error('MentionService: Invalid base58 postId:', postId, decodeError);
         return false;
       }
 
       try {
         mentionedUserIdBytes = stringToIdentifierBytes(mentionedUserId);
       } catch (decodeError) {
-        console.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
+        logger.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
         return false;
       }
 
@@ -98,7 +99,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error creating mention:', error);
+      logger.error('Error creating mention:', error);
       return false;
     }
   }
@@ -124,7 +125,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         // Resolve username to identity ID via DPNS
         const identityId = await dpnsService.resolveIdentity(username);
         if (!identityId) {
-          console.warn('MentionService: Could not resolve username:', username);
+          logger.warn('MentionService: Could not resolve username:', username);
           results.push(false);
           continue;
         }
@@ -132,7 +133,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         const result = await this.createPostMention(postId, ownerId, identityId);
         results.push(result);
       } catch (error) {
-        console.error('Error creating mention for username:', username, error);
+        logger.error('Error creating mention for username:', username, error);
         results.push(false);
       }
     }
@@ -162,7 +163,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
-      console.error('Error getting mention for post:', error);
+      logger.error('Error getting mention for post:', error);
       return null;
     }
   }
@@ -189,7 +190,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting mentions for post:', error);
+      logger.error('Error getting mentions for post:', error);
       return [];
     }
   }
@@ -220,7 +221,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting posts mentioning user:', error);
+      logger.error('Error getting posts mentioning user:', error);
       return [];
     }
   }
@@ -233,7 +234,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const mentions = await this.getPostsMentioningUser(userId);
       return mentions.length;
     } catch (error) {
-      console.error('Error counting mentions for user:', error);
+      logger.error('Error counting mentions for user:', error);
       return 0;
     }
   }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -17,6 +18,7 @@ import {
   KeyIcon,
   CreditCardIcon,
   ArrowUpTrayIcon,
+  ArrowDownTrayIcon,
   TableCellsIcon
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -24,9 +26,11 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal } from '@/components/store'
+import { Spinner } from '@/components/ui/spinner'
+import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRangeDisplay } from '@/components/store'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
+import { getStoreStatusLabel, getStoreStatusDescription } from '@/lib/utils/store-status'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -35,6 +39,7 @@ import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { identityService } from '@/lib/services/identity-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 
 function StoreManagePage() {
@@ -65,6 +70,7 @@ function StoreManagePage() {
   const [deleteZoneId, setDeleteZoneId] = useState<string | null>(null)
   const [deletePaymentIndex, setDeletePaymentIndex] = useState<number | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
 
   // Load store data
   useEffect(() => {
@@ -106,35 +112,35 @@ function StoreManagePage() {
         if (itemsResult.status === 'fulfilled') {
           setItems(itemsResult.value.items)
         } else {
-          console.error('Failed to load items:', itemsResult.reason)
+          logger.error('Failed to load items:', itemsResult.reason)
         }
 
         if (zonesResult.status === 'fulfilled') {
           setZones(zonesResult.value)
         } else {
-          console.error('Failed to load zones:', zonesResult.reason)
+          logger.error('Failed to load zones:', zonesResult.reason)
         }
 
         if (ordersResult.status === 'fulfilled') {
           setPendingOrdersCount(ordersResult.value.orders.length)
         } else {
-          console.error('Failed to load orders:', ordersResult.reason)
+          logger.error('Failed to load orders:', ordersResult.reason)
         }
 
         if (encKeyResult.status === 'fulfilled') {
           setHasEncryptionKey(encKeyResult.value)
         } else {
-          console.error('Failed to check encryption key:', encKeyResult.reason)
+          logger.error('Failed to check encryption key:', encKeyResult.reason)
           setHasEncryptionKey(false)
         }
       } catch (error) {
-        console.error('Failed to load store data:', error)
+        logger.error('Failed to load store data:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadData().catch(console.error)
+    loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, user?.identityId, router])
 
   const handleDeleteItem = async () => {
@@ -146,7 +152,7 @@ function StoreManagePage() {
       setItems(items.filter(i => i.id !== deleteItemId))
       setDeleteItemId(null)
     } catch (error) {
-      console.error('Failed to delete item:', error)
+      logger.error('Failed to delete item:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -161,7 +167,7 @@ function StoreManagePage() {
       setZones(zones.filter(z => z.id !== deleteZoneId))
       setDeleteZoneId(null)
     } catch (error) {
-      console.error('Failed to delete zone:', error)
+      logger.error('Failed to delete zone:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -182,7 +188,7 @@ function StoreManagePage() {
       setZones([...zones, newZone])
       setShowZoneModal(false)
     } catch (err) {
-      console.error('Failed to create shipping zone:', err)
+      logger.error('Failed to create shipping zone:', err)
       toast.error('Failed to create shipping zone')
     }
   }
@@ -202,7 +208,7 @@ function StoreManagePage() {
       setZones(zones.map(z => z.id === editingZone.id ? updatedZone : z))
       setEditingZone(null)
     } catch (err) {
-      console.error('Failed to update shipping zone:', err)
+      logger.error('Failed to update shipping zone:', err)
       toast.error('Failed to update shipping zone')
     }
   }
@@ -221,24 +227,53 @@ function StoreManagePage() {
         label: data.label
       }
       const currentUris = store.paymentUris || []
-      // Preserve all existing fields during update (SDK replace operation)
-      const updatedStore = await storeService.updateStore(store.id, user.identityId, {
-        name: store.name,
-        description: store.description,
-        logoUrl: store.logoUrl,
-        bannerUrl: store.bannerUrl,
-        status: store.status,
-        paymentUris: [...currentUris, newUri],
-        defaultCurrency: store.defaultCurrency,
-        policies: store.policies,
-        location: store.location,
-        contactMethods: store.contactMethods
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: [...currentUris, newUri]
       })
       setStore(updatedStore)
       setShowPaymentModal(false)
     } catch (error) {
-      console.error('Failed to add payment method:', error)
+      logger.error('Failed to add payment method:', error)
       toast.error('Failed to add payment method')
+    }
+  }
+
+  const handleImportFromProfile = async () => {
+    if (!user?.identityId || !store?.id) return
+
+    setIsImporting(true)
+    try {
+      const profileUris = await unifiedProfileService.getPaymentUris(user.identityId)
+
+      if (profileUris.length === 0) {
+        toast('No payment addresses found on your profile', { icon: 'ℹ️' })
+        return
+      }
+
+      const currentUris = store.paymentUris || []
+      const currentUriSet = new Set(currentUris.map(u => u.uri))
+      const seenUris = new Set<string>()
+      const newUris = profileUris.filter(u => {
+        if (currentUriSet.has(u.uri) || seenUris.has(u.uri)) return false
+        seenUris.add(u.uri)
+        return true
+      })
+
+      if (newUris.length === 0) {
+        toast('All profile payment methods already added', { icon: 'ℹ️' })
+        return
+      }
+
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: [...currentUris, ...newUris]
+      })
+      setStore(updatedStore)
+      toast.success(`Imported ${newUris.length} payment method${newUris.length !== 1 ? 's' : ''} from profile`)
+    } catch (error) {
+      logger.error('Failed to import payment methods:', error)
+      toast.error('Failed to import payment methods')
+    } finally {
+      setIsImporting(false)
     }
   }
 
@@ -248,23 +283,13 @@ function StoreManagePage() {
     try {
       setIsDeleting(true)
       const updatedUris = store.paymentUris.filter((_, i) => i !== deletePaymentIndex)
-      // Preserve all existing fields during update (SDK replace operation)
-      const updatedStore = await storeService.updateStore(store.id, user.identityId, {
-        name: store.name,
-        description: store.description,
-        logoUrl: store.logoUrl,
-        bannerUrl: store.bannerUrl,
-        status: store.status,
-        paymentUris: updatedUris,
-        defaultCurrency: store.defaultCurrency,
-        policies: store.policies,
-        location: store.location,
-        contactMethods: store.contactMethods
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: updatedUris
       })
       setStore(updatedStore)
       setDeletePaymentIndex(null)
     } catch (error) {
-      console.error('Failed to remove payment method:', error)
+      logger.error('Failed to remove payment method:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -276,7 +301,7 @@ function StoreManagePage() {
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+            <Spinner />
           </main>
         </div>
         <RightSidebar />
@@ -335,7 +360,7 @@ function StoreManagePage() {
               <div className="flex-1 min-w-0">
                 <h2 className="font-bold truncate">{store.name}</h2>
                 <p className="text-sm text-gray-500">
-                  {store.status === 'active' ? 'Active' : store.status === 'paused' ? 'Paused' : 'Closed'}
+                  {getStoreStatusLabel(store.status)}
                 </p>
               </div>
               <Button
@@ -505,12 +530,12 @@ function StoreManagePage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium truncate">{item.title}</h4>
-                          <p className="text-sm text-yappr-600">
-                            {priceRange.min === priceRange.max
-                              ? formatPrice(priceRange.min, item.currency)
-                              : `${formatPrice(priceRange.min, item.currency)} - ${formatPrice(priceRange.max, item.currency)}`
-                            }
-                          </p>
+                          <PriceRangeDisplay
+                            minPrice={priceRange.min}
+                            maxPrice={priceRange.max}
+                            currency={item.currency}
+                            size="sm"
+                          />
                           <p className="text-xs text-gray-500">
                             {item.status === 'active' ? 'Active' : item.status}
                             {item.stockQuantity !== undefined && ` • ${item.stockQuantity} in stock`}
@@ -613,12 +638,7 @@ function StoreManagePage() {
                       <div>
                         <h4 className="font-medium">Store Status</h4>
                         <p className="text-sm text-gray-500">
-                          {store.status === 'active'
-                            ? 'Your store is visible to buyers'
-                            : store.status === 'paused'
-                              ? 'Your store is temporarily hidden'
-                              : 'Your store is closed'
-                          }
+                          {getStoreStatusDescription(store.status)}
                         </p>
                       </div>
                       <select
@@ -626,22 +646,12 @@ function StoreManagePage() {
                         onChange={async (e) => {
                           const newStatus = e.target.value as 'active' | 'paused' | 'closed'
                           try {
-                            // Preserve all existing fields during update (SDK replace operation)
-                            const updated = await storeService.updateStore(store.id, user!.identityId, {
-                              name: store.name,
-                              description: store.description,
-                              logoUrl: store.logoUrl,
-                              bannerUrl: store.bannerUrl,
-                              status: newStatus,
-                              paymentUris: store.paymentUris,
-                              defaultCurrency: store.defaultCurrency,
-                              policies: store.policies,
-                              location: store.location,
-                              contactMethods: store.contactMethods
+                            const updated = await storeService.patchStore(store.id, user!.identityId, {
+                              status: newStatus
                             })
                             setStore(updated)
                           } catch (error) {
-                            console.error('Failed to update status:', error)
+                            logger.error('Failed to update status:', error)
                           }
                         }}
                         className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
@@ -667,10 +677,16 @@ function StoreManagePage() {
               <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-medium">Payment Methods</h3>
-                  <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
-                    <PlusIcon className="h-4 w-4 mr-1" />
-                    Add
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={handleImportFromProfile} disabled={isImporting}>
+                      <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
+                      {isImporting ? 'Importing...' : 'Import from Profile'}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
+                      <PlusIcon className="h-4 w-4 mr-1" />
+                      Add
+                    </Button>
+                  </div>
                 </div>
                 {store.paymentUris && store.paymentUris.length > 0 ? (
                   <div className="space-y-2">
@@ -751,7 +767,7 @@ function StoreManagePage() {
             if (store?.id) {
               storeItemService.getByStore(store.id, { limit: 100 })
                 .then(result => setItems(result.items))
-                .catch(console.error)
+                .catch((error) => logger.error(error))
             }
           }
         }}

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Cart Service
  *
@@ -5,7 +6,7 @@
  * No on-chain storage - purely browser-based.
  */
 
-import type { Cart, CartItem, StoreItem } from '../types';
+import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 
 const CART_STORAGE_KEY = 'yappr_cart';
@@ -37,7 +38,7 @@ class CartService {
         this.cart = { items: [], updatedAt: new Date() };
       }
     } catch {
-      console.error('Failed to load cart from localStorage');
+      logger.error('Failed to load cart from localStorage');
       this.cart = { items: [], updatedAt: new Date() };
     }
   }
@@ -53,7 +54,7 @@ class CartService {
       localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(this.cart));
       this.notifyListeners();
     } catch {
-      console.error('Failed to save cart to localStorage');
+      logger.error('Failed to save cart to localStorage');
     }
   }
 

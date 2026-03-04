@@ -1,5 +1,6 @@
 'use client';
 
+import { logger } from '@/lib/logger';
 /**
  * PrivateFeedKeyStore
  *
@@ -105,7 +106,7 @@ function setItem(key: string, value: string): void {
   try {
     localStorage.setItem(STORAGE_PREFIX + key, value);
   } catch (e) {
-    console.error('PrivateFeedKeyStore: Failed to store value:', e);
+    logger.error('PrivateFeedKeyStore: Failed to store value:', e);
   }
 }
 

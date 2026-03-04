@@ -74,7 +74,6 @@ export function FeedReplyContext({
         post={reply}
         isOwnPost={isOwnPost}
         enrichment={replyEnrichment}
-        hideReplyTo
         onDelete={onDelete}
       />
     </div>

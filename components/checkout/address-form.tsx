@@ -16,6 +16,9 @@ interface AddressFormProps {
   selectedSavedAddressId?: string | null
   onSavedAddressSelect?: (id: string | null) => void
   onManageSavedAddresses?: () => void
+  // Optional shipping toggle
+  includeShipping?: boolean
+  onIncludeShippingChange?: (include: boolean) => void
 }
 
 export function AddressForm({
@@ -27,19 +30,22 @@ export function AddressForm({
   savedAddresses,
   selectedSavedAddressId,
   onSavedAddressSelect,
-  onManageSavedAddresses
+  onManageSavedAddresses,
+  includeShipping,
+  onIncludeShippingChange
 }: AddressFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!address.name || !address.street || !address.city || !address.postalCode || !address.country) return
+    // Only validate address fields when shipping is included
+    if (includeShipping && (!address.name || !address.street || !address.city || !address.postalCode || !address.country)) return
     onSubmit()
   }
 
   // If a saved address is selected, show it as readonly
-  const isUsingSavedAddress = selectedSavedAddressId !== null && selectedSavedAddressId !== undefined
+  const isUsingSavedAddress = includeShipping && selectedSavedAddressId !== null && selectedSavedAddressId !== undefined
 
-  // Show saved addresses picker if available
-  const showSavedAddressPicker = savedAddresses && savedAddresses.length > 0 && onSavedAddressSelect && onManageSavedAddresses
+  // Show saved addresses picker if available (only when shipping is included)
+  const showSavedAddressPicker = includeShipping && savedAddresses && savedAddresses.length > 0 && onSavedAddressSelect && onManageSavedAddresses
 
   const updateAddress = (field: keyof ShippingAddress, value: string) => {
     onAddressChange({ ...address, [field]: value })
@@ -61,16 +67,36 @@ export function AddressForm({
         />
       )}
 
-      {/* Encryption notice - always visible */}
-      <div className="px-4 pt-4">
-        <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-800 dark:text-green-200">
-          <LockClosedIcon className="h-4 w-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
-          <span>Your address is encrypted and will only be shared with the merchant after you complete your order.</span>
+      {/* Optional shipping toggle */}
+      {onIncludeShippingChange && (
+        <div className="px-4 pt-4">
+          <label className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50">
+            <input
+              type="checkbox"
+              checked={includeShipping}
+              onChange={(e) => onIncludeShippingChange(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+            />
+            <div className="flex items-center gap-2">
+              <TruckIcon className="h-5 w-5 text-gray-500" />
+              <span className="font-medium">Add a shipping address</span>
+            </div>
+          </label>
         </div>
-      </div>
+      )}
 
-      {/* Show form only if not using a saved address */}
-      {!isUsingSavedAddress && (
+      {/* Encryption notice - only when shipping is included */}
+      {includeShipping && (
+        <div className="px-4 pt-4">
+          <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-800 dark:text-green-200">
+            <LockClosedIcon className="h-4 w-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <span>Your address is encrypted and will only be shared with the merchant after you complete your order.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Show form only if not using a saved address and shipping is included */}
+      {includeShipping && !isUsingSavedAddress && (
         <div className="p-4 space-y-4">
           <div className="flex items-center gap-2 text-lg font-medium">
             <TruckIcon className="h-5 w-5 text-yappr-500" />
@@ -149,37 +175,39 @@ export function AddressForm({
             </div>
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-800 pt-4 mt-4">
-            <div className="flex items-center gap-2 text-lg font-medium mb-4">
-              Contact Information
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Email</label>
-                <input
-                  type="email"
-                  value={contact.email || ''}
-                  onChange={(e) => updateContact('email', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Phone</label>
-                <input
-                  type="tel"
-                  value={contact.phone || ''}
-                  onChange={(e) => updateContact('phone', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                />
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
-      <div className="p-4">
+      {/* Contact Information - always visible */}
+      <div className="p-4 space-y-4">
+        <div className="flex items-center gap-2 text-lg font-medium">
+          Contact Information
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Email</label>
+            <input
+              type="email"
+              value={contact.email || ''}
+              onChange={(e) => updateContact('email', e.target.value)}
+              className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Phone</label>
+            <input
+              type="tel"
+              value={contact.phone || ''}
+              onChange={(e) => updateContact('phone', e.target.value)}
+              className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4 pt-0">
         <Button type="submit" className="w-full">
-          Continue to Shipping
+          Continue
         </Button>
       </div>
     </form>

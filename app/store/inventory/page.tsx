@@ -1,17 +1,18 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon,
   ArrowUpTrayIcon,
-  ArrowDownTrayIcon,
-  TableCellsIcon
+  ArrowDownTrayIcon
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { InventoryUploadModal, InventoryTable } from '@/components/store'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -32,6 +33,28 @@ function InventoryPage() {
   const [items, setItems] = useState<StoreItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showUploadModal, setShowUploadModal] = useState(false)
+
+  const loadAllItems = useCallback(async (storeId: string) => {
+    const allItems: StoreItem[] = []
+    let cursor: string | undefined
+    const MAX_BATCHES = 50
+
+    // Paginate through all items (100 per batch, up to 5000 items)
+    for (let batch = 0; batch < MAX_BATCHES; batch++) {
+      const result = await storeItemService.getByStore(storeId, {
+        limit: 100,
+        startAfter: cursor
+      })
+      for (const item of result.items) {
+        allItems.push(item)
+      }
+
+      if (result.items.length < 100) break
+      cursor = result.items[result.items.length - 1].id
+    }
+
+    setItems(allItems)
+  }, [])
 
   // Load store and items
   useEffect(() => {
@@ -63,19 +86,18 @@ function InventoryPage() {
           setStore(storeData)
         }
 
-        // Load all items
-        const itemsResult = await storeItemService.getByStore(currentStoreId, { limit: 100 })
-        setItems(itemsResult.items)
+        // Load all items for inventory management
+        await loadAllItems(currentStoreId)
       } catch (error) {
-        console.error('Failed to load inventory:', error)
+        logger.error('Failed to load inventory:', error)
         toast.error('Failed to load inventory')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadData().catch(console.error)
-  }, [sdkReady, storeId, user?.identityId, router])
+    loadData().catch((error) => logger.error(error))
+  }, [sdkReady, storeId, user?.identityId, router, loadAllItems])
 
   const handleEditItem = useCallback((item: StoreItem) => {
     router.push(`/store/item/add?itemId=${item.id}&storeId=${store?.id}`)
@@ -219,14 +241,12 @@ function InventoryPage() {
     setShowUploadModal(false)
     if (addedCount > 0) {
       toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to inventory`)
-      // Reload items
+      // Reload all items
       if (store?.id) {
-        storeItemService.getByStore(store.id, { limit: 100 })
-          .then(result => setItems(result.items))
-          .catch(console.error)
+        loadAllItems(store.id).catch((error) => logger.error(error))
       }
     }
-  }, [store?.id])
+  }, [store?.id, loadAllItems])
 
   if (isLoading) {
     return (
@@ -234,7 +254,7 @@ function InventoryPage() {
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[900px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500" />
+            <Spinner />
           </main>
         </div>
         <RightSidebar />

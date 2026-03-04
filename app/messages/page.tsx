@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -14,6 +15,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
@@ -22,6 +24,8 @@ import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
+import { EmojiPicker } from '@/components/compose/emoji-picker'
+import { isEmojiOnly } from '@/lib/utils'
 
 interface UserSearchResult {
   id: string
@@ -51,6 +55,7 @@ function MessagesPage() {
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const searchIdRef = useRef(0)
+  const participantHydrationInFlightRef = useRef(new Set<string>())
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -66,17 +71,119 @@ function MessagesPage() {
       if (!user) return
       setIsLoading(true)
       try {
-        const convos = await directMessageService.getConversations(user.identityId)
+        const convos = await directMessageService.getConversations(user.identityId, {
+          includeParticipantInfo: false
+        })
         setConversations(convos)
       } catch (error) {
-        console.error('Failed to load conversations:', error)
+        logger.error('Failed to load conversations:', error)
         toast.error('Failed to load conversations')
       } finally {
         setIsLoading(false)
       }
     }
-    loadConversations().catch(err => console.error('Failed to load conversations:', err))
+    loadConversations().catch(err => logger.error('Failed to load conversations:', err))
   }, [user])
+
+  // Progressive hydration of DPNS + profile data (non-blocking)
+  useEffect(() => {
+    if (!user || conversations.length === 0) return
+
+    const pendingUsernameIds = new Set<string>()
+    const pendingProfileIds = new Set<string>()
+
+    for (const conv of conversations) {
+      const id = conv.participantId
+      if (!id || participantHydrationInFlightRef.current.has(id)) continue
+      if (!conv.participantUsername) pendingUsernameIds.add(id)
+      if (!conv.participantDisplayName) pendingProfileIds.add(id)
+    }
+
+    const usernameIds = Array.from(pendingUsernameIds)
+    const profileIds = Array.from(pendingProfileIds)
+    const idsToHydrate = Array.from(new Set([...usernameIds, ...profileIds]))
+
+    if (idsToHydrate.length === 0) return
+
+    for (const id of idsToHydrate) { participantHydrationInFlightRef.current.add(id) }
+    let cancelled = false
+
+    const hydrate = async () => {
+      try {
+        const [usernamesResult, profilesResult] = await Promise.allSettled([
+          usernameIds.length > 0
+            ? dpnsService.resolveUsernamesBatch(usernameIds)
+            : Promise.resolve(new Map<string, string | null>()),
+          profileIds.length > 0
+            ? unifiedProfileService.getProfilesByIdentityIds(profileIds)
+            : Promise.resolve([])
+        ])
+
+        if (cancelled) return
+
+        const updates = new Map<string, { username?: string; displayName?: string }>()
+
+        if (usernamesResult.status === 'fulfilled') {
+          usernamesResult.value.forEach((username, id) => {
+            if (!username) return
+            const existing = updates.get(id) || {}
+            updates.set(id, { ...existing, username })
+          })
+        }
+
+        if (profilesResult.status === 'fulfilled') {
+          const profileMap = new Map(
+            profilesResult.value.map(profile => [profile.$ownerId, profile] as const)
+          )
+          for (const [id, profile] of Array.from(profileMap.entries())) {
+            if (!id || !profile?.displayName) continue
+            const existing = updates.get(id) || {}
+            updates.set(id, { ...existing, displayName: profile.displayName })
+          }
+        }
+
+        if (updates.size > 0) {
+          setConversations(prev => {
+            let changed = false
+            const next = prev.map(conv => {
+              const update = updates.get(conv.participantId)
+              if (!update) return conv
+              let updated = conv
+              if (update.username && !conv.participantUsername) {
+                updated = updated === conv ? { ...conv } : updated
+                updated.participantUsername = update.username
+                changed = true
+              }
+              if (update.displayName && !conv.participantDisplayName) {
+                updated = updated === conv ? { ...conv } : updated
+                updated.participantDisplayName = update.displayName
+                changed = true
+              }
+              return updated
+            })
+            return changed ? next : prev
+          })
+        }
+      } finally {
+        for (const id of idsToHydrate) { participantHydrationInFlightRef.current.delete(id) }
+      }
+    }
+
+    hydrate().catch(err => logger.error('Failed to hydrate conversation participants:', err))
+
+    return () => {
+      cancelled = true
+    }
+  }, [conversations, user])
+
+  // Keep selected conversation details in sync with list updates
+  useEffect(() => {
+    if (!selectedConversation) return
+    const updated = conversations.find(conv => conv.id === selectedConversation.id)
+    if (updated && updated !== selectedConversation) {
+      setSelectedConversation(updated)
+    }
+  }, [conversations, selectedConversation?.id])
 
   // Handle auto-starting a conversation from URL parameter
   useEffect(() => {
@@ -101,15 +208,8 @@ function MessagesPage() {
         return
       }
 
-      // Need to create a new conversation - fetch user info first
-      setIsResolvingUser(true)
+      // Need to create a new conversation entry (participant info hydrates in background)
       try {
-        // Get username and profile for the participant
-        const [username, profile] = await Promise.all([
-          dpnsService.resolveUsername(participantId),
-          unifiedProfileService.getProfile(participantId).catch(() => null)
-        ])
-
         // Create new conversation entry
         const { conversationId } = await directMessageService.getOrCreateConversation(
           user.identityId,
@@ -119,8 +219,6 @@ function MessagesPage() {
         const newConv: Conversation = {
           id: conversationId,
           participantId,
-          participantUsername: username || undefined,
-          participantDisplayName: profile?.displayName,
           unreadCount: 0,
           updatedAt: new Date()
         }
@@ -129,56 +227,57 @@ function MessagesPage() {
         setSelectedConversation(newConv)
         setMessages([])
       } catch (error) {
-        console.error('Failed to start conversation from URL:', error)
+        logger.error('Failed to start conversation from URL:', error)
         toast.error('Failed to start conversation')
       } finally {
         setIsResolvingUser(false)
       }
     }
 
-    handleStartConversation().catch(err => console.error('Failed to handle start conversation:', err))
+    handleStartConversation().catch(err => logger.error('Failed to handle start conversation:', err))
   }, [pendingStartConversation, user, isLoading, conversations])
 
   // Load messages when conversation is selected
   useEffect(() => {
     const loadMessages = async () => {
-      if (!selectedConversation || !user) return
+      const currentConversation = selectedConversationRef.current
+      if (!currentConversation || !user) return
       setIsLoadingMessages(true)
       setParticipantLastRead(null) // Reset while loading
       try {
         const msgs = await directMessageService.getConversationMessages(
-          selectedConversation.id,
+          currentConversation.id,
           user.identityId,
-          selectedConversation.participantId
+          currentConversation.participantId
         )
         setMessages(msgs)
 
         // Get when participant last read (for read receipts)
         const lastRead = await directMessageService.getParticipantLastRead(
-          selectedConversation.id,
-          selectedConversation.participantId
+          currentConversation.id,
+          currentConversation.participantId
         )
         setParticipantLastRead(lastRead)
 
         // Only mark as read if there are unread messages and read receipts are enabled
-        if (selectedConversation.unreadCount > 0 && sendReadReceipts) {
-          await directMessageService.markAsRead(selectedConversation.id, user.identityId)
+        if (currentConversation.unreadCount > 0 && sendReadReceipts) {
+          await directMessageService.markAsRead(currentConversation.id, user.identityId)
         }
 
         // Update conversation unread count in UI
         setConversations(prev => prev.map(conv =>
-          conv.id === selectedConversation.id
+          conv.id === currentConversation.id
             ? { ...conv, unreadCount: 0 }
             : conv
         ))
       } catch (error) {
-        console.error('Failed to load messages:', error)
+        logger.error('Failed to load messages:', error)
         toast.error('Failed to load messages')
       } finally {
         setIsLoadingMessages(false)
       }
     }
-    loadMessages().catch(err => console.error('Failed to load messages:', err))
+    loadMessages().catch(err => logger.error('Failed to load messages:', err))
   }, [selectedConversation, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
@@ -244,7 +343,7 @@ function MessagesPage() {
           })
         }
       } catch (error) {
-        console.debug('Message poll error:', error)
+        logger.debug('Message poll error:', error)
       }
 
       // Schedule next poll AFTER this one completes
@@ -307,7 +406,7 @@ function MessagesPage() {
           try {
             profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
           } catch (error) {
-            console.error('Failed to fetch profiles for search:', error)
+            logger.error('Failed to fetch profiles for search:', error)
           }
         }
 
@@ -339,7 +438,7 @@ function MessagesPage() {
 
         setUserSearchResults(results)
       } catch (error) {
-        console.error('User search failed:', error)
+        logger.error('User search failed:', error)
         setUserSearchResults([])
       } finally {
         if (currentSearchId === searchIdRef.current) {
@@ -390,7 +489,7 @@ function MessagesPage() {
         toast.error(result.error || 'Failed to send message')
       }
     } catch (error) {
-      console.error('Failed to send message:', error)
+      logger.error('Failed to send message:', error)
       toast.error('Failed to send message')
     } finally {
       setIsSending(false)
@@ -422,10 +521,8 @@ function MessagesPage() {
             toast.error('Identity not found')
             return
           }
-          // Try to resolve username for this identity
-          participantUsername = await dpnsService.resolveUsername(participantId) || undefined
         } catch (err) {
-          console.error('Error verifying identity:', err)
+          logger.error('Error verifying identity:', err)
           toast.error('Could not verify identity. Please check the ID.')
           return
         }
@@ -456,15 +553,6 @@ function MessagesPage() {
         return
       }
 
-      // Get participant's display name
-      let participantDisplayName: string | undefined
-      try {
-        const profile = await unifiedProfileService.getProfile(participantId)
-        participantDisplayName = profile?.displayName
-      } catch {
-        // Ignore profile errors
-      }
-
       // Create new conversation entry
       const { conversationId } = await directMessageService.getOrCreateConversation(
         user.identityId,
@@ -475,7 +563,6 @@ function MessagesPage() {
         id: conversationId,
         participantId,
         participantUsername,
-        participantDisplayName,
         unreadCount: 0,
         updatedAt: new Date()
       }
@@ -486,7 +573,7 @@ function MessagesPage() {
       setNewConversationInput('')
       setMessages([]) // Clear messages for new conversation
     } catch (error) {
-      console.error('Failed to start conversation:', error)
+      logger.error('Failed to start conversation:', error)
       toast.error('Failed to start conversation')
     } finally {
       setIsResolvingUser(false)
@@ -531,7 +618,7 @@ function MessagesPage() {
       setUserSearchResults([])
       setMessages([])
     } catch (error) {
-      console.error('Failed to start conversation:', error)
+      logger.error('Failed to start conversation:', error)
       toast.error('Failed to start conversation')
     } finally {
       setIsResolvingUser(false)
@@ -572,7 +659,7 @@ function MessagesPage() {
 
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Loading conversations...</p>
             </div>
           ) : conversations.length === 0 ? (
@@ -680,7 +767,7 @@ function MessagesPage() {
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
               {isLoadingMessages ? (
                 <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                  <Spinner size="md" />
                 </div>
               ) : messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-gray-500">
@@ -706,15 +793,22 @@ function MessagesPage() {
                       className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                     >
                       <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${isOwn ? 'order-2' : 'order-1'}`}>
-                        <div
-                          className={`px-4 py-2 rounded-2xl ${
-                            isOwn
-                              ? 'bg-yappr-500 text-white'
-                              : 'bg-gray-100 dark:bg-gray-900'
-                          }`}
-                        >
-                          <p className="text-sm">{message.content}</p>
-                        </div>
+                        {(() => {
+                          const emojiOnly = isEmojiOnly(message.content)
+                          return emojiOnly ? (
+                            <p className={`text-4xl leading-tight ${isOwn ? 'text-right' : 'text-left'}`}>{message.content}</p>
+                          ) : (
+                            <div
+                              className={`px-4 py-2 rounded-2xl ${
+                                isOwn
+                                  ? 'bg-yappr-500 text-white'
+                                  : 'bg-gray-100 dark:bg-gray-900'
+                              }`}
+                            >
+                              <p className="text-sm">{message.content}</p>
+                            </div>
+                          )
+                        })()}
                         <div className={`flex items-center gap-1 mt-1 px-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
                           <p className="text-xs text-gray-500">
                             {formatDistanceToNow(message.createdAt, { addSuffix: true })}
@@ -734,10 +828,15 @@ function MessagesPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  sendMessage().catch(err => console.error('Failed to send message:', err))
+                  sendMessage().catch(err => logger.error('Failed to send message:', err))
                 }}
                 className="flex items-center gap-2"
               >
+                <EmojiPicker
+                  onEmojiSelect={(emoji) => setNewMessage(prev => prev + emoji)}
+                  disabled={isSending}
+                />
+
                 <Input
                   type="text"
                   placeholder="Type a message..."
@@ -754,7 +853,7 @@ function MessagesPage() {
                   className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
                 >
                   {isSending ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <Spinner size="sm" className="border-white" />
                   ) : (
                     <PaperAirplaneIcon className="h-4 w-4" />
                   )}
@@ -831,7 +930,7 @@ function MessagesPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                startNewConversation().catch(err => console.error('Failed to start conversation:', err))
+                startNewConversation().catch(err => logger.error('Failed to start conversation:', err))
               }}
             >
               <div className="mb-4">
@@ -860,7 +959,7 @@ function MessagesPage() {
                 <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
                   {isSearchingUsers ? (
                     <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500"></div>
+                      <Spinner size="sm" className="border-gray-500" />
                       <span className="text-sm">Searching...</span>
                     </div>
                   ) : (
@@ -916,7 +1015,7 @@ function MessagesPage() {
                   disabled={!newConversationInput.trim() || isResolvingUser}
                 >
                   {isResolvingUser ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <Spinner size="sm" className="border-white" />
                   ) : (
                     'Start Chat'
                   )}

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
@@ -92,7 +93,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           const followers = await privateFeedService.getPrivateFollowers(user.identityId)
           setFollowerCount(followers.length)
         } catch (err) {
-          console.error('Failed to get followers from chain, using local state:', err)
+          logger.error('Failed to get followers from chain, using local state:', err)
           // Fallback to local storage if on-chain query fails
           if (privateFeedKeyStore.hasFeedSeed()) {
             const recipientMap = privateFeedKeyStore.getRecipientMap()
@@ -101,14 +102,14 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         }
       }
     } catch (error) {
-      console.error('Error checking private feed status:', error)
+      logger.error('Error checking private feed status:', error)
     } finally {
       setIsLoading(false)
     }
   }, [user])
 
   useEffect(() => {
-    checkPrivateFeedStatus().catch(err => console.error('Failed to check private feed status:', err))
+    checkPrivateFeedStatus().catch(err => logger.error('Failed to check private feed status:', err))
   }, [checkPrivateFeedStatus, refreshKey])
 
   // Handle openReset prop - open reset dialog when directed from lost key flow
@@ -180,7 +181,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         toast.error(result.error || 'Failed to enable private feed')
       }
     } catch (error) {
-      console.error('Error enabling private feed:', error)
+      logger.error('Error enabling private feed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
       setKeyError(errorMessage)
       toast.error('Failed to enable private feed')
@@ -528,7 +529,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           onSuccess={() => {
             setShowAddKeyModal(false)
             setHasEncryptionKeyOnIdentity(true)
-            checkPrivateFeedStatus().catch(err => console.error('Failed to recheck status:', err))
+            checkPrivateFeedStatus().catch(err => logger.error('Failed to recheck status:', err))
           }}
         />
       </CardContent>

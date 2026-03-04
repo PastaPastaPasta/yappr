@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
@@ -23,7 +24,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const rawPostId = data.postId || doc.postId;
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     if (rawPostId && !postId) {
-      console.error('LikeService: Invalid postId format:', rawPostId);
+      logger.error('LikeService: Invalid postId format:', rawPostId);
     }
 
     // Convert postOwnerId (optional field)
@@ -50,7 +51,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       // Check if already liked
       const existing = await this.getLike(postId, ownerId);
       if (existing) {
-        console.log('Post already liked');
+        logger.info('Post already liked');
         return true;
       }
 
@@ -74,7 +75,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error liking post:', error);
+      logger.error('Error liking post:', error);
       return false;
     }
   }
@@ -86,7 +87,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const like = await this.getLike(postId, ownerId);
       if (!like) {
-        console.log('Post not liked');
+        logger.info('Post not liked');
         return true;
       }
 
@@ -100,7 +101,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error unliking post:', error);
+      logger.error('Error unliking post:', error);
       return false;
     }
   }
@@ -135,7 +136,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
-      console.error('Error getting like:', error);
+      logger.error('Error getting like:', error);
       return null;
     }
   }
@@ -162,7 +163,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting post likes:', error);
+      logger.error('Error getting post likes:', error);
       return [];
     }
   }
@@ -204,7 +205,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting likes batch:', error);
+      logger.error('Error getting likes batch:', error);
       return [];
     }
   }
@@ -236,7 +237,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting likes on my posts:', error);
+      logger.error('Error getting likes on my posts:', error);
       return [];
     }
   }

@@ -74,3 +74,4 @@ lib/wasm-sdk/
 
 # Keep only the necessary WASM files in dash-wasm
 # (the actual SDK files we need are in lib/dash-wasm/)
+.gitignore worktrees

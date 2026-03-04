@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Post } from '@/lib/types'
 import { extractAllTags } from '@/lib/post-helpers'
@@ -61,7 +62,7 @@ export function useHashtagValidation(post: Post | null): HashtagValidationState 
       })
       .catch(err => {
         if (cancelled) return
-        console.error('Hashtag validation failed:', err)
+        logger.error('Hashtag validation failed:', err)
         // On error, mark all as valid (fail open - don't show false negatives)
         setValidations(new Map(hashtags.map(h => [h, 'valid' as const])))
       })
@@ -93,7 +94,7 @@ export function useHashtagValidation(post: Post | null): HashtagValidationState 
         setValidations(results)
       })
       .catch(err => {
-        console.error('Hashtag revalidation failed:', err)
+        logger.error('Hashtag revalidation failed:', err)
         setValidations(new Map(hashtags.map(h => [h, 'valid' as const])))
       })
       .finally(() => {

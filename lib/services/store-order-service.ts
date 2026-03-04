@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Store Order Service
  *
@@ -17,7 +18,7 @@ import type {
   ShippingAddress,
   BuyerContact,
   OrderItem
-} from '../types';
+} from '../../types';
 
 class StoreOrderService extends BaseDocumentService<StoreOrder> {
   constructor() {
@@ -127,7 +128,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
    */
   buildOrderPayload(
     cartItems: CartItem[],
-    shippingAddress: ShippingAddress,
+    shippingAddress: ShippingAddress | undefined,
     buyerContact: BuyerContact,
     shippingCost: number,
     paymentUri: string,
@@ -258,7 +259,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       } catch (e) {
         // Old order with random ephemeral key - buyer can't decrypt
         // Fall through to plain JSON fallback
-        console.warn('Buyer decryption failed (may be old order):', e);
+        logger.warn('Buyer decryption failed (may be old order):', e);
       }
     } else {
       // Seller: Standard ECIES decryption
@@ -271,7 +272,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
 
         return JSON.parse(decoder.decode(decryptedBytes)) as OrderPayload;
       } catch (e) {
-        console.warn('ECIES decryption failed:', e);
+        logger.warn('ECIES decryption failed:', e);
       }
     }
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -11,13 +12,10 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { formatTime } from '@/lib/utils'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
 
-interface FollowRequestUser {
-  id: string
+interface FollowRequestUser extends UserDetails {
   requestId: string
-  username?: string
-  displayName: string
-  hasDpns: boolean
   requestedAt: Date
   publicKey?: Uint8Array
 }
@@ -39,8 +37,6 @@ export function PrivateFeedFollowRequests() {
     try {
       setIsLoading(true)
       const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
 
       // Check if user has private feed enabled
       const hasFeed = await privateFeedService.hasPrivateFeed(user.identityId)
@@ -62,38 +58,10 @@ export function PrivateFeedFollowRequests() {
       // Resolve usernames and profiles for requesters
       const requestsWithDetails = await Promise.all(
         followRequests.map(async (request) => {
-          const requesterId = request.$ownerId
-          let username: string | undefined
-          let displayName = `User ${requesterId.slice(-6)}`
-          let hasDpns = false
-
-          // Try to get DPNS username
-          try {
-            const resolvedUsername = await dpnsService.resolveUsername(requesterId)
-            if (resolvedUsername) {
-              username = resolvedUsername
-              hasDpns = true
-            }
-          } catch {
-            // DPNS resolution is optional
-          }
-
-          // Try to get profile display name
-          try {
-            const profile = await unifiedProfileService.getProfile(requesterId)
-            if (profile?.displayName) {
-              displayName = profile.displayName
-            }
-          } catch {
-            // Profile is optional
-          }
-
+          const details = await resolveUserDetails(request.$ownerId)
           return {
-            id: requesterId,
+            ...details,
             requestId: request.$id,
-            username,
-            displayName,
-            hasDpns,
             requestedAt: new Date(request.$createdAt),
             publicKey: request.publicKey
           }
@@ -102,7 +70,7 @@ export function PrivateFeedFollowRequests() {
 
       setRequests(requestsWithDetails)
     } catch (error) {
-      console.error('Error loading follow requests:', error)
+      logger.error('Error loading follow requests:', error)
       toast.error('Failed to load follow requests')
     } finally {
       setIsLoading(false)
@@ -110,7 +78,7 @@ export function PrivateFeedFollowRequests() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadRequests().catch(err => console.error('Failed to load follow requests:', err))
+    loadRequests().catch(err => logger.error('Failed to load follow requests:', err))
   }, [loadRequests])
 
   const handleApprove = async (request: FollowRequestUser) => {
@@ -143,7 +111,7 @@ export function PrivateFeedFollowRequests() {
             }
             return bytes
           } catch {
-            console.warn('Invalid base64 encoding for key data')
+            logger.warn('Invalid base64 encoding for key data')
             return null
           }
         }
@@ -215,7 +183,7 @@ export function PrivateFeedFollowRequests() {
         throw new Error(result.error || 'Failed to approve follower')
       }
     } catch (error) {
-      console.error('Error approving follower:', error)
+      logger.error('Error approving follower:', error)
       toast.error('Failed to approve follower')
     } finally {
       setProcessingId(null)

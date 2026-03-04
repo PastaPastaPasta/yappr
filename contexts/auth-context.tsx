@@ -1,6 +1,8 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 
@@ -27,7 +29,7 @@ interface AuthContextType {
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
   loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number, options?: { rememberMe?: boolean }) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
   refreshBalance: () => Promise<void>
@@ -45,7 +47,7 @@ function updateSavedSession(updater: (sessionData: Record<string, unknown>) => v
     updater(sessionData)
     localStorage.setItem('yappr_session', JSON.stringify(sessionData))
   } catch (e) {
-    console.error('Failed to update session:', e)
+    logger.error('Failed to update session:', e)
   }
 }
 
@@ -56,7 +58,7 @@ async function setDashPlatformClientIdentity(identityId: string): Promise<void> 
     const dashClient = getDashPlatformClient()
     dashClient.setIdentity(identityId)
   } catch (err) {
-    console.error('Failed to set DashPlatformClient identity:', err)
+    logger.error('Failed to set DashPlatformClient identity:', err)
   }
 }
 
@@ -66,9 +68,9 @@ function initializePostLoginTasks(identityId: string, delayMs: number): void {
   import('@/lib/services/block-service').then(async ({ blockService }) => {
     try {
       await blockService.initializeBlockData(identityId)
-      console.log('Auth: Block data initialized')
+      logger.info('Auth: Block data initialized')
     } catch (err) {
-      console.error('Auth: Failed to initialize block data:', err)
+      logger.error('Auth: Failed to initialize block data:', err)
     }
   })
 
@@ -88,7 +90,7 @@ function initializePostLoginTasks(identityId: string, delayMs: number): void {
 
     // Check session before starting
     if (!isSessionActive()) {
-      console.log('Auth: Skipping private feed sync - session no longer active')
+      logger.info('Auth: Skipping private feed sync - session no longer active')
       return
     }
 
@@ -97,17 +99,17 @@ function initializePostLoginTasks(identityId: string, delayMs: number): void {
 
       // Check session after sync completes (results already stored by service)
       if (!isSessionActive()) {
-        console.log('Auth: Private feed sync completed but session ended - clearing keys')
+        logger.info('Auth: Private feed sync completed but session ended - clearing keys')
         const { privateFeedKeyStore } = await import('@/lib/services/private-feed-key-store')
         privateFeedKeyStore.clearAllKeys()
         return
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
-        console.log(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
+        logger.info(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
       }
     } catch (err) {
-      console.error('Auth: Failed to sync private feed keys:', err)
+      logger.error('Auth: Failed to sync private feed keys:', err)
     }
   })
 
@@ -122,7 +124,7 @@ function initializePostLoginTasks(identityId: string, delayMs: number): void {
         useDashPayContactsModal.getState().open()
       }
     } catch (err) {
-      console.error('Auth: Failed to check Dash Pay contacts:', err)
+      logger.error('Auth: Failed to check Dash Pay contacts:', err)
     }
   }, delayMs)
 }
@@ -131,7 +133,7 @@ function initializePostLoginTasks(identityId: string, delayMs: number): void {
 function AuthLoadingSpinner(): JSX.Element {
   return (
     <div className="flex items-center justify-center min-h-screen">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+      <Spinner size="md" />
     </div>
   )
 }
@@ -166,7 +168,7 @@ async function attemptEncryptionKeyDerivation(
       // Check if session is still active before storing keys
       // This prevents resurrecting keys after logout
       if (!isSessionActive()) {
-        console.log('Auth: Session ended before key derivation completed, skipping storage')
+        logger.info('Auth: Session ended before key derivation completed, skipping storage')
         return null
       }
 
@@ -175,13 +177,13 @@ async function attemptEncryptionKeyDerivation(
       const wif = privateKeyToWif(derivedKey, network, true)
       storeEncryptionKey(identityId, wif)
       storeEncryptionKeyType(identityId, 'derived')
-      console.log('Auth: Encryption key derived and stored')
+      logger.info('Auth: Encryption key derived and stored')
       return derivedKey
     }
 
     return null
   } catch (error) {
-    console.error('Auth: Failed to derive encryption key:', error)
+    logger.error('Auth: Failed to derive encryption key:', error)
     return null
   }
 }
@@ -204,26 +206,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const sessionData = JSON.parse(savedSession)
         const savedUser = sessionData.user
 
-        // Set user immediately with cached data
+        // Validate private key exists before restoring session
+        const { hasPrivateKey, clearRememberMe } = await import('@/lib/secure-storage')
+        if (!hasPrivateKey(savedUser.identityId)) {
+          logger.warn('Auth: Session found but private key missing - clearing invalid session')
+          localStorage.removeItem('yappr_session')
+          clearRememberMe()
+          return
+        }
+
+        // Set user only after validating key exists
         setUser(savedUser)
 
         // Set identity in DashPlatformClient for document operations
         await setDashPlatformClientIdentity(savedUser.identityId)
-        console.log('Auth: DashPlatformClient identity restored from session')
+        logger.info('Auth: DashPlatformClient identity restored from session')
 
         // If user doesn't have DPNS username, fetch it in background
         if (savedUser && !savedUser.dpnsUsername) {
-          console.log('Auth: Fetching DPNS username in background...')
+          logger.info('Auth: Fetching DPNS username in background...')
           import('@/lib/services/dpns-service').then(async ({ dpnsService }) => {
             try {
               const dpnsUsername = await dpnsService.resolveUsername(savedUser.identityId)
               if (dpnsUsername) {
-                console.log('Auth: Found DPNS username:', dpnsUsername)
+                logger.info('Auth: Found DPNS username:', dpnsUsername)
                 setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
                 updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = dpnsUsername })
               }
             } catch (e) {
-              console.error('Auth: Background DPNS fetch failed:', e)
+              logger.error('Auth: Background DPNS fetch failed:', e)
             }
           })
         }
@@ -231,7 +242,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Initialize background tasks (block data + DashPay contacts)
         initializePostLoginTasks(savedUser.identityId, 3000)
       } catch (e) {
-        console.error('Failed to restore session:', e)
+        logger.error('Failed to restore session:', e)
         localStorage.removeItem('yappr_session')
       }
     }
@@ -262,7 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         contractId: YAPPR_CONTRACT_ID
       })
 
-      console.log('Fetching identity with EvoSDK...')
+      logger.info('Fetching identity with EvoSDK...')
       const identityData = await identityService.getIdentity(identityId)
 
       if (!identityData) {
@@ -321,7 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
             // Try to derive encryption key
             // Pass session check callback to prevent storing keys after logout
-            console.log('Auth: Attempting encryption key derivation...')
+            logger.info('Auth: Attempting encryption key derivation...')
             const isSessionActive = () => {
               const savedSession = localStorage.getItem('yappr_session')
               if (!savedSession) return false
@@ -336,19 +347,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (!derivedEncKey) {
               // Derivation didn't match - user has external key, will need to enter it manually
-              console.log('Auth: Encryption key derivation failed - external key exists on identity')
+              logger.info('Auth: Encryption key derivation failed - external key exists on identity')
               // Note: The encryption-key-modal will handle prompting for manual entry
             }
           }
         } catch (err) {
-          console.warn('Encryption key derivation failed (non-fatal):', err)
+          logger.warn('Encryption key derivation failed (non-fatal):', err)
         }
       })()
 
       // First check if user has DPNS username (unless skipped)
-      console.log('Checking for DPNS username...')
+      logger.info('Checking for DPNS username...')
       if (!authUser.dpnsUsername && !skipUsernameCheck) {
-        console.log('No DPNS username found, opening username modal...')
+        logger.info('No DPNS username found, opening username modal...')
         // Import and use the username modal store
         const { useUsernameModal } = await import('@/hooks/use-username-modal')
         useUsernameModal.getState().open(identityId)
@@ -356,7 +367,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       // Then check if user has a profile (check new unified profile first, then old)
-      console.log('Checking for user profile...')
+      logger.info('Checking for user profile...')
       const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
       const { profileService } = await import('@/lib/services/profile-service')
       let profile = await unifiedProfileService.getProfile(identityId, authUser.dpnsUsername)
@@ -366,17 +377,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       if (profile) {
-        console.log('Profile found, redirecting to feed...')
+        logger.info('Profile found, redirecting to feed...')
         router.push('/feed')
 
         // Initialize background tasks (block data + DashPay contacts)
         initializePostLoginTasks(authUser.identityId, 2000)
       } else {
-        console.log('No profile found, redirecting to profile creation...')
+        logger.info('No profile found, redirecting to profile creation...')
         router.push('/profile/create')
       }
     } catch (err) {
-      console.error('Login error:', err)
+      logger.error('Login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login')
       throw err
     } finally {
@@ -397,11 +408,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clearEncryptionKey,
         clearEncryptionKeyType,
         clearTransferKey,
+        clearRememberMe,
       } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
       clearEncryptionKey(user.identityId)
       clearEncryptionKeyType(user.identityId)
       clearTransferKey(user.identityId)
+      clearRememberMe()
 
       const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
       invalidateBlockCache(user.identityId)
@@ -438,7 +451,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Skip username check since we know they have one (they logged in with it)
       await login(result.identityId, result.privateKey, { skipUsernameCheck: true, rememberMe })
     } catch (err) {
-      console.error('Password login error:', err)
+      logger.error('Password login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with password')
       throw err
     } finally {
@@ -530,7 +543,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = dpnsUsername })
       }
     } catch (error) {
-      console.error('Failed to refresh DPNS usernames:', error)
+      logger.error('Failed to refresh DPNS usernames:', error)
     }
   }, [user?.identityId, user?.dpnsUsername])
 
@@ -547,7 +560,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
       updateSavedSession(data => { (data.user as Record<string, unknown>).balance = balance.confirmed })
     } catch (error) {
-      console.error('Failed to refresh balance:', error)
+      logger.error('Failed to refresh balance:', error)
     }
   }, [user?.identityId])
 
@@ -566,7 +579,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
         updateSavedSession(data => { (data.user as Record<string, unknown>).balance = balance.confirmed })
       } catch (error) {
-        console.error('Failed to refresh balance:', error)
+        logger.error('Failed to refresh balance:', error)
       }
     }, FIVE_MINUTES)
 
@@ -621,22 +634,22 @@ export function withAuth<P extends object>(
       // Wait for session restoration to complete before checking auth
       if (isAuthRestoring) return
 
-      console.log('withAuth check - user:', user)
+      logger.info('withAuth check - user:', user)
 
       // Handle missing user
       if (!user) {
         if (options?.optional) {
-          console.log('No user found, but auth is optional - continuing...')
+          logger.info('No user found, but auth is optional - continuing...')
           return
         }
-        console.log('No user found, redirecting to login...')
+        logger.info('No user found, redirecting to login...')
         router.push('/login')
         return
       }
 
       // Handle missing DPNS username
       if (needsDPNS) {
-        console.log('No DPNS username found, redirecting to DPNS registration...')
+        logger.info('No DPNS username found, redirecting to DPNS registration...')
         router.push('/dpns/register')
       }
     }, [user, isAuthRestoring, router, needsDPNS])

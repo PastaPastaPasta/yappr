@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { mentionService, PostMentionDocument } from './mention-service'
 import { extractMentions, normalizeDpnsUsername } from '../post-helpers'
 import { dpnsService } from './dpns-service'
@@ -168,7 +169,7 @@ class MentionValidationService {
 
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null
-      this.processBatch().catch(err => console.error('Failed to process mention batch:', err))
+      this.processBatch().catch(err => logger.error('Failed to process mention batch:', err))
     }, this.BATCH_DELAY)
   }
 
@@ -199,7 +200,7 @@ class MentionValidationService {
         // Resolve all waiting callers
         request.resolvers.forEach(resolve => resolve(registeredMentions))
       } catch (error) {
-        console.error(`Failed to fetch mentions for post ${postId}:`, error)
+        logger.error(`Failed to fetch mentions for post ${postId}:`, error)
         // On error, return empty set (fail open)
         const emptySet = new Set<string>()
         request.resolvers.forEach(resolve => resolve(emptySet))
@@ -240,7 +241,7 @@ class MentionValidationService {
 
       return usernames
     } catch (error) {
-      console.error(`Error fetching mentions for post ${postId}:`, error)
+      logger.error(`Error fetching mentions for post ${postId}:`, error)
       // Return empty set on error (fail open - don't show false negatives)
       return new Set()
     }

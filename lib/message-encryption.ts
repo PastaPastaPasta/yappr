@@ -67,7 +67,7 @@ function deriveSharedSecret(privateKey: Uint8Array, publicKey: Uint8Array): Uint
 async function deriveAesKey(sharedSecret: Uint8Array): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    sharedSecret,
+    sharedSecret.buffer as ArrayBuffer,
     'HKDF',
     false,
     ['deriveKey']
@@ -77,8 +77,8 @@ async function deriveAesKey(sharedSecret: Uint8Array): Promise<CryptoKey> {
     {
       name: 'HKDF',
       hash: 'SHA-256',
-      salt: new TextEncoder().encode('yappr-dm-v1'),
-      info: new TextEncoder().encode('aes-key')
+      salt: new TextEncoder().encode('yappr-dm-v1').buffer as ArrayBuffer,
+      info: new TextEncoder().encode('aes-key').buffer as ArrayBuffer
     },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
@@ -118,7 +118,7 @@ export async function encryptMessage(
   // 6. Encrypt the message
   const encoder = new TextEncoder()
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
     aesKey,
     encoder.encode(message)
   )
@@ -157,7 +157,7 @@ export async function decryptMessage(
   const ciphertext = base64ToArrayBuffer(encrypted.ciphertext)
 
   const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: new Uint8Array(iv) },
+    { name: 'AES-GCM', iv },
     aesKey,
     ciphertext
   )
@@ -198,7 +198,7 @@ export async function encryptToBinary(
   // 5. Encrypt the message
   const encoder = new TextEncoder()
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
     aesKey,
     encoder.encode(message)
   )
@@ -234,7 +234,7 @@ export async function decryptFromBinary(
 
   // 5. Decrypt
   const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
     aesKey,
     ciphertext
   )

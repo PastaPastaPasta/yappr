@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * SDK helper utilities for working with the v3 EvoSDK
  *
@@ -108,6 +109,14 @@ export function base58ToBytes(value: string): Uint8Array | null {
   }
 }
 
+export function requireIdentifierBytes(id: string, fieldName: string): Uint8Array {
+  const bytes = base58ToBytes(id)
+  if (!bytes || bytes.length !== 32) {
+    throw new Error(`Invalid ${fieldName}: expected base58 identifier`)
+  }
+  return bytes
+}
+
 /**
  * Convert an array of identifier strings to array of Uint8Array
  * For use in 'in' queries on system identifier fields ($id, $ownerId)
@@ -149,7 +158,7 @@ export function base58ArrayToBytes(values: string[]): Uint8Array[] {
       }
     }
 
-    console.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
+    logger.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
   }
   return result;
 }
@@ -203,6 +212,94 @@ export function toUint8Array(data: unknown): Uint8Array | null {
     }
   }
   return null;
+}
+
+/**
+ * Normalize bytes from SDK response to Uint8Array.
+ * Handles all common SDK byte formats: Uint8Array, number[] (JSON), base64 string, and hex string.
+ * Returns null on decode failure to prevent malformed data from being treated as valid.
+ *
+ * Used for normalizing encrypted content, nonces, and other byte array fields from SDK responses.
+ */
+export function normalizeBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (Array.isArray(value) && value.every(n => typeof n === 'number')) {
+    return new Uint8Array(value);
+  }
+  if (typeof value === 'string') {
+    // Try base64 decode first using SSR-compatible helper
+    try {
+      return base64ToBytes(value);
+    } catch {
+      // Not valid base64 - try hex
+      if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
+        const bytes = new Uint8Array(value.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+          bytes[i] = parseInt(value.substr(i * 2, 2), 16);
+        }
+        return bytes;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Get current user ID from localStorage session.
+ * Returns null if not in browser or no session exists.
+ */
+export function getCurrentUserId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const savedSession = localStorage.getItem('yappr_session');
+    if (savedSession) {
+      const sessionData = JSON.parse(savedSession);
+      return sessionData.user?.identityId || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * User type with hasDpns flag for display components.
+ * Imported from lib/types to avoid circular dependencies.
+ */
+export interface DefaultUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  bio: string;
+  followers: number;
+  following: number;
+  verified: boolean;
+  joinedAt: Date;
+  hasDpns: boolean;
+}
+
+/**
+ * Create a default user object when profile not found.
+ * Sets username to empty string and hasDpns to false so display components
+ * can properly show the identity ID instead of a fake username.
+ */
+export function createDefaultUser(userId: string | undefined): DefaultUser {
+  const id = userId || 'unknown';
+  return {
+    id,
+    username: '',
+    displayName: 'Unknown User',
+    avatar: '',
+    bio: '',
+    followers: 0,
+    following: 0,
+    verified: false,
+    joinedAt: new Date(),
+    hasDpns: false
+  };
 }
 
 export interface QueryDocumentsOptions {
@@ -356,7 +453,7 @@ export function transformDocumentWithField<T extends BaseDocumentFields>(
 
   const convertedValue = rawFieldValue ? identifierToBase58(rawFieldValue) : '';
   if (rawFieldValue && !convertedValue) {
-    console.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
+    logger.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
   }
 
   return {

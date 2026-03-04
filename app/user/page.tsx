@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -12,7 +13,6 @@ import {
   NoSymbolIcon,
   Cog6ToothIcon,
   PencilIcon,
-  ArrowPathIcon,
   CurrencyDollarIcon,
   QrCodeIcon,
   EnvelopeIcon,
@@ -26,6 +26,7 @@ import { PrivateFeedAccessButton } from '@/components/profile/private-feed-acces
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
@@ -38,7 +39,6 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
-import type { MigrationStatus } from '@/lib/services/profile-migration-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
@@ -62,68 +62,82 @@ interface ProfileData {
   paymentUris?: ParsedPaymentUri[]
   socialLinks?: SocialLink[]
   nsfw?: boolean
-  hasUnifiedProfile?: boolean
   bannerUri?: string
   joinedAt?: Date
 }
 
-/**
- * Helper to fetch content by IDs, trying posts first and then replies for any not found.
- * Returns an array of Post objects (replies are converted to Post format for display).
- * Needed because quoted content can be either a post or a reply.
- */
-async function fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
-  if (ids.length === 0) return []
+interface ProfileBlog {
+  id: string
+  name: string
+  description?: string
+  postCount: number
+}
 
-  const { postService } = await import('@/lib/services')
-  const { replyService } = await import('@/lib/services/reply-service')
+function getSocialLinkUrl(platform: string, handle: string): string | null {
+  const trimmedHandle = handle.trim()
+  if (!trimmedHandle) return null
 
-  // First try to fetch as posts
-  const posts = await postService.getPostsByIds(ids)
-  const foundPostIds = new Set(posts.map(p => p.id))
+  const cleanHandle = encodeURIComponent(trimmedHandle.replace(/^@/, ''))
 
-  // Find IDs that weren't found as posts
-  const missingIds = ids.filter(id => !foundPostIds.has(id))
-
-  if (missingIds.length === 0) {
-    return posts
+  switch (platform) {
+    case 'twitter':
+      return `https://x.com/${cleanHandle}`
+    case 'github':
+      return `https://github.com/${cleanHandle}`
+    case 'telegram':
+      return `https://t.me/${cleanHandle}`
+    case 'youtube':
+      if (!cleanHandle) return null
+      return `https://www.youtube.com/@${cleanHandle}`
+    case 'twitch':
+      return `https://twitch.tv/${cleanHandle}`
+    case 'instagram':
+      return `https://instagram.com/${cleanHandle}`
+    case 'linkedin':
+      return `https://linkedin.com/in/${cleanHandle}`
+    case 'email': {
+      const emailOnly = trimmedHandle.split('?')[0]
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOnly)) return null
+      return `mailto:${encodeURIComponent(emailOnly)}`
+    }
+    case 'mastodon': {
+      const match = trimmedHandle.match(/^@?([^@]+)@([a-zA-Z0-9.-]+)$/)
+      if (match) {
+        return `https://${match[2]}/@${encodeURIComponent(match[1])}`
+      }
+      return null
+    }
+    case 'other':
+      if (trimmedHandle.startsWith('http://') || trimmedHandle.startsWith('https://')) {
+        try {
+          const url = new URL(trimmedHandle)
+          if (['http:', 'https:'].includes(url.protocol)) {
+            return trimmedHandle
+          }
+        } catch {
+          return null
+        }
+      }
+      return null
+    default:
+      return null
   }
+}
 
-  // Try to fetch missing IDs as replies
-  const replies = await replyService.getRepliesByIds(missingIds)
-
-  // Convert replies to Post format for display
-  const convertedReplies: Post[] = replies.map(reply => ({
-    id: reply.id,
-    author: reply.author,
-    content: reply.content,
-    createdAt: reply.createdAt,
-    likes: reply.likes,
-    reposts: reply.reposts,
-    replies: reply.replies,
-    views: reply.views,
-    liked: reply.liked,
-    reposted: reply.reposted,
-    bookmarked: reply.bookmarked,
-    media: reply.media,
-    encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
-    nonce: reply.nonce,
-    // Thread context fields
-    parentId: reply.parentId,
-    parentOwnerId: reply.parentOwnerId,
-    // Enrichment metadata
-    _enrichment: reply._enrichment,
-  }))
-
-  return [...posts, ...convertedReplies]
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return ['http:', 'https:'].includes(url.protocol)
+  } catch {
+    return false
+  }
 }
 
 function UserProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const userId = searchParams.get('id')
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, logout } = useAuth()
   const { requireAuth } = useRequireAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
@@ -138,7 +152,7 @@ function UserProfileContent() {
   const [isFollowing, setIsFollowing] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
-  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
+  const [profileDocumentMissing, setProfileDocumentMissing] = useState(false)
 
   // Pagination state
   const [hasMore, setHasMore] = useState(true)
@@ -175,13 +189,15 @@ function UserProfileContent() {
   // Tip modal
   const { openForUser: openTipModal } = useTipModal()
 
-  // Tab state for Posts/Mentions
-  const [activeTab, setActiveTab] = useState<'posts' | 'mentions'>('posts')
+  // Tab state for Posts/Mentions/Blog
+  const [activeTab, setActiveTab] = useState<'posts' | 'mentions' | 'blog'>('posts')
   const [postFilter, setPostFilter] = useState<'posts' | 'replies'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
   const [mentionCount, setMentionCount] = useState<number | null>(null)
+  const [blogs, setBlogs] = useState<ProfileBlog[]>([])
+  const [blogsLoading, setBlogsLoading] = useState(false)
 
   // User replies state (for replies tab)
   const [userReplies, setUserReplies] = useState<Post[]>([])
@@ -220,24 +236,22 @@ function UserProfileContent() {
     const loadProfileData = async () => {
       try {
         setIsLoading(true)
+        setProfileDocumentMissing(false)
 
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
-        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
-
-        // Check migration status for own profile
-        if (isOwnProfile) {
-          const status = await profileMigrationService.getMigrationStatus(userId)
-          setMigrationStatus(status)
-        }
 
         // Fetch profile from unified service, posts, and post count in parallel
+        let profileFetchErrored = false
         const [profileResult, postsResult, totalPostCount] = await Promise.all([
-          unifiedProfileService.getProfile(userId).catch(() => null),
+          unifiedProfileService.getProfile(userId).catch(() => { profileFetchErrored = true; return null }),
           postService.getUserPosts(userId, { limit: 50 }).catch(() => ({ documents: [], hasMore: false })),
           postService.countUserPosts(userId).catch(() => 0)
         ])
 
         setPostCount(totalPostCount)
+
+        // Track whether profile document is genuinely missing (not just a network error)
+        setProfileDocumentMissing(!profileResult && !profileFetchErrored)
 
         // Process profile
         let profileDisplayName = `User ${userId.slice(-6)}`
@@ -261,7 +275,6 @@ function UserProfileContent() {
             paymentUris: profileResult.paymentUris,
             socialLinks: profileResult.socialLinks,
             nsfw: profileResult.nsfw,
-            hasUnifiedProfile: profileResult.hasUnifiedProfile,
             bannerUri: profileResult.bannerUri,
             joinedAt: profileResult.joinedAt,
           })
@@ -295,7 +308,7 @@ function UserProfileContent() {
               setIsPrivateFollower(accessStatus === 'approved' || accessStatus === 'approved-no-keys')
             } catch (accessErr) {
               // Access status check is non-critical
-              console.error('Failed to check private feed access status:', accessErr)
+              logger.error('Failed to check private feed access status:', accessErr)
               setIsPrivateFollower(false)
             }
           } else {
@@ -304,7 +317,7 @@ function UserProfileContent() {
           }
         } catch (e) {
           // Private feed check is non-critical
-          console.error('Failed to check private feed status:', e)
+          logger.error('Failed to check private feed status:', e)
           setHasPrivateFeed(false)
           setIsPrivateFollower(false)
         }
@@ -316,8 +329,39 @@ function UserProfileContent() {
           setUserStore(store)
         } catch (e) {
           // Store check is non-critical
-          console.error('Failed to check store status:', e)
+          logger.error('Failed to check store status:', e)
           setUserStore(null)
+        }
+
+        // Check if user has blogs and load counts for Blog tab
+        setBlogsLoading(true)
+        try {
+          const { blogService, blogPostService } = await import('@/lib/services')
+          const ownerBlogs = await blogService.getBlogsByOwner(userId)
+
+          if (ownerBlogs.length > 0) {
+            // Dash Platform has no count API; fetching up to 100 posts is an intentional cap for Phase 1
+            const results = await Promise.allSettled(ownerBlogs.map(async (blog) => {
+              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
+              return {
+                id: blog.id,
+                name: blog.name,
+                description: blog.description,
+                postCount: blogPosts.length,
+              } as ProfileBlog
+            }))
+            const blogsWithCounts = results
+              .filter((r): r is PromiseFulfilledResult<ProfileBlog> => r.status === 'fulfilled')
+              .map(r => r.value)
+            setBlogs(blogsWithCounts)
+          } else {
+            setBlogs([])
+          }
+        } catch (blogError) {
+          logger.error('Failed to load blogs for profile:', blogError)
+          setBlogs([])
+        } finally {
+          setBlogsLoading(false)
         }
 
         // Process posts - postService.getUserPosts() returns already-transformed Post objects
@@ -387,7 +431,7 @@ function UserProfileContent() {
             })
           }
         } catch (repostError) {
-          console.error('Failed to fetch user reposts:', repostError)
+          logger.error('Failed to fetch user reposts:', repostError)
           // Continue without reposts - non-critical
         }
 
@@ -398,7 +442,7 @@ function UserProfileContent() {
             .map((p: any) => p.quotedPostId)
 
           if (quotedPostIds.length > 0) {
-            const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
+            const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
             const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
             for (const post of transformedPosts) {
@@ -408,7 +452,7 @@ function UserProfileContent() {
             }
           }
         } catch (quoteError) {
-          console.error('Failed to fetch quoted posts:', quoteError)
+          logger.error('Failed to fetch quoted posts:', quoteError)
           // Continue without quoted posts - non-critical
         }
 
@@ -461,16 +505,41 @@ function UserProfileContent() {
         }
 
       } catch (error) {
-        console.error('Failed to load profile:', error)
+        logger.error('Failed to load profile:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadProfileData().catch(err => console.error('Failed to load profile:', err))
+    loadProfileData().catch(err => logger.error('Failed to load profile:', err))
   // currentUser is intentionally not a dependency - we only want to reload on userId change
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
+
+  // If own profile document is missing after load, verify identity and redirect
+  useEffect(() => {
+    if (!profileDocumentMissing || !isOwnProfile || !currentUser?.identityId || isLoading) return
+
+    const checkIdentityAndRedirect = async () => {
+      try {
+        const { identityService } = await import('@/lib/services/identity-service')
+        const identity = await identityService.getIdentity(currentUser.identityId)
+
+        if (!identity) {
+          toast.error('Your identity was not found on the network. Please log in again.')
+          await logout()
+          return
+        }
+
+        router.push('/profile/create')
+      } catch (error) {
+        // Network error checking identity - don't take drastic action
+        logger.error('Failed to verify identity for profile check:', error)
+      }
+    }
+
+    checkIdentityAndRedirect().catch(err => logger.error('Identity check failed:', err))
+  }, [profileDocumentMissing, isOwnProfile, currentUser?.identityId, isLoading, logout, router])
 
   // Define handleStartEdit before the useEffect that uses it
   const handleStartEdit = useCallback(() => {
@@ -591,7 +660,7 @@ function UserProfileContent() {
             }
           }
         } catch (repostError) {
-          console.error('Failed to fetch more reposts:', repostError)
+          logger.error('Failed to fetch more reposts:', repostError)
           // Continue without reposts - non-critical
         }
       }
@@ -603,7 +672,7 @@ function UserProfileContent() {
           .map((p: any) => p.quotedPostId)
 
         if (quotedPostIds.length > 0) {
-          const quotedPosts = await fetchPostsOrReplies(quotedPostIds)
+          const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
           const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
 
           for (const post of newPosts) {
@@ -613,7 +682,7 @@ function UserProfileContent() {
           }
         }
       } catch (quoteError) {
-        console.error('Failed to fetch quoted posts:', quoteError)
+        logger.error('Failed to fetch quoted posts:', quoteError)
       }
 
       // Append to existing posts and sort
@@ -653,7 +722,7 @@ function UserProfileContent() {
         setHasMoreReposts(newRepostDocs.length >= 50)
       }
     } catch (error) {
-      console.error('Failed to load more posts:', error)
+      logger.error('Failed to load more posts:', error)
     } finally {
       setIsLoadingMore(false)
     }
@@ -690,7 +759,7 @@ function UserProfileContent() {
             }
           }
         } catch (error) {
-          console.error('Failed to fetch post:', postId, error)
+          logger.error('Failed to fetch post:', postId, error)
         }
       }
 
@@ -703,7 +772,7 @@ function UserProfileContent() {
       setMentions(enrichedPosts)
       setMentionCount(enrichedPosts.length)
     } catch (error) {
-      console.error('Failed to load mentions:', error)
+      logger.error('Failed to load mentions:', error)
       setMentions([])
     } finally {
       setMentionsLoading(false)
@@ -751,7 +820,7 @@ function UserProfileContent() {
       // Enrich with progressive data (author info, etc.)
       enrichProgressively(replyPosts)
     } catch (error) {
-      console.error('Failed to load user replies:', error)
+      logger.error('Failed to load user replies:', error)
       setUserReplies([])
     } finally {
       setRepliesLoading(false)
@@ -762,14 +831,14 @@ function UserProfileContent() {
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded) {
-      loadMentions().catch(err => console.error('Failed to load mentions:', err))
+      loadMentions().catch(err => logger.error('Failed to load mentions:', err))
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
   // Load user replies when filter is selected
   useEffect(() => {
     if (postFilter === 'replies' && !repliesLoaded) {
-      loadUserReplies().catch(err => console.error('Failed to load user replies:', err))
+      loadUserReplies().catch(err => logger.error('Failed to load user replies:', err))
     }
   }, [postFilter, repliesLoaded, loadUserReplies])
 
@@ -785,6 +854,8 @@ function UserProfileContent() {
     setHasPrivateFeed(false)
     setIsPrivateFollower(false)
     setUserStore(null)
+    setBlogs([])
+    setBlogsLoading(false)
   }, [userId])
 
   const handleFollow = async () => {
@@ -820,7 +891,7 @@ function UserProfileContent() {
         }
       }
     } catch (error) {
-      console.error('Follow error:', error)
+      logger.error('Follow error:', error)
       toast.error('Failed to update follow status')
     } finally {
       setFollowLoading(false)
@@ -871,7 +942,7 @@ function UserProfileContent() {
         setHasDpns(false)
       }
     } catch (e) {
-      console.error('Failed to refresh usernames:', e)
+      logger.error('Failed to refresh usernames:', e)
       // On error, reset to safe state
       setAllUsernames([])
       setUsername('')
@@ -915,7 +986,7 @@ function UserProfileContent() {
       setIsEditingProfile(false)
       toast.success('Profile updated!')
     } catch (error) {
-      console.error('Failed to update profile:', error)
+      logger.error('Failed to update profile:', error)
       toast.error('Failed to update profile')
     } finally {
       setIsSaving(false)
@@ -1039,7 +1110,7 @@ function UserProfileContent() {
                         <button
                           onClick={() => {
                             const profileUrl = `${window.location.origin}/user?id=${userId}`
-                            navigator.clipboard.writeText(profileUrl).catch(console.error)
+                            navigator.clipboard.writeText(profileUrl).catch((error) => logger.error(error))
                             toast.success('Profile link copied!')
                           }}
                           className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -1275,7 +1346,7 @@ function UserProfileContent() {
                               <button
                                 onClick={() => {
                                   if (userId) {
-                                    navigator.clipboard.writeText(userId).catch(console.error)
+                                    navigator.clipboard.writeText(userId).catch((error) => logger.error(error))
                                     toast.success('Identity ID copied')
                                   }
                                 }}
@@ -1387,7 +1458,7 @@ function UserProfileContent() {
                         {profile.location}
                       </span>
                     )}
-                    {profile?.website && (
+                    {profile?.website && isValidHttpUrl(profile.website) && (
                       <a
                         href={profile.website}
                         target="_blank"
@@ -1428,15 +1499,38 @@ function UserProfileContent() {
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
                       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Social</h4>
                       <div className="flex flex-wrap gap-2">
-                        {profile.socialLinks.map((link, index) => (
-                          <span
-                            key={index}
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm"
-                          >
-                            <span className="font-medium capitalize">{link.platform}:</span>
-                            <span className="text-gray-600 dark:text-gray-400">{link.handle}</span>
-                          </span>
-                        ))}
+                        {profile.socialLinks.map((link, index) => {
+                          const url = getSocialLinkUrl(link.platform, link.handle)
+                          const content = (
+                            <>
+                              <span className="font-medium capitalize">{link.platform}:</span>
+                              <span className="text-gray-600 dark:text-gray-400">{link.handle}</span>
+                            </>
+                          )
+
+                          if (url) {
+                            return (
+                              <a
+                                key={index}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                {content}
+                              </a>
+                            )
+                          }
+
+                          return (
+                            <span
+                              key={index}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm"
+                            >
+                              {content}
+                            </span>
+                          )
+                        })}
                       </div>
                     </div>
                   )}
@@ -1477,30 +1571,6 @@ function UserProfileContent() {
                 </>
               )}
             </div>
-
-            {/* Migration Prompt Banner */}
-            {isOwnProfile && migrationStatus === 'needs_migration' && (
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-y border-blue-200 dark:border-blue-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                      <ArrowPathIcon className="h-6 w-6 text-blue-500" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-blue-800 dark:text-blue-200">Migrate Your Profile</p>
-                      <p className="text-sm text-blue-700 dark:text-blue-300">Your profile is not visible to others until you migrate.</p>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => router.push('/profile/create')}
-                    className="bg-blue-500 hover:bg-blue-600"
-                  >
-                    Migrate Now
-                  </Button>
-                </div>
-              </div>
-            )}
 
             {/* Blocked User Notice */}
             {isBlockedByMe && !isOwnProfile && (
@@ -1561,6 +1631,22 @@ function UserProfileContent() {
                     <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
                   )}
                 </button>
+                {blogs.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('blog')}
+                    className={cn(
+                      'flex-1 py-4 text-center font-medium transition-colors relative',
+                      activeTab === 'blog'
+                        ? 'text-gray-900 dark:text-white'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    )}
+                  >
+                    Blog ({blogs.length})
+                    {activeTab === 'blog' && (
+                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Tab Content */}
@@ -1596,7 +1682,7 @@ function UserProfileContent() {
                   {/* Posts List */}
                   {postFilter === 'replies' && repliesLoading ? (
                     <div className="p-8 text-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                      <Spinner size="md" className="mx-auto mb-4" />
                       <p className="text-gray-500">Loading replies...</p>
                     </div>
                   ) : filteredPosts.length === 0 ? (
@@ -1629,11 +1715,11 @@ function UserProfileContent() {
                     </div>
                   )}
                 </>
-              ) : (
+              ) : activeTab === 'mentions' ? (
                 // Mentions Tab
                 mentionsLoading ? (
                   <div className="p-8 text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4"></div>
+                    <Spinner size="md" className="mx-auto mb-4" />
                     <p className="text-gray-500">Loading mentions...</p>
                   </div>
                 ) : mentions.length === 0 ? (
@@ -1652,6 +1738,33 @@ function UserProfileContent() {
                     ))}
                   </div>
                 )
+              ) : blogsLoading ? (
+                <div className="p-8 text-center">
+                  <Spinner size="md" className="mx-auto mb-4" />
+                  <p className="text-gray-500">Loading blogs...</p>
+                </div>
+              ) : blogs.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">
+                  <p>No blogs yet</p>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3">
+                  {blogs.map((blog) => (
+                    <button
+                      key={blog.id}
+                      onClick={() => {
+                        router.push(`/blog?blog=${encodeURIComponent(blog.id)}`)
+                      }}
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <p className="text-lg font-semibold">{blog.name}</p>
+                      {blog.description && (
+                        <p className="mt-1 text-sm text-gray-500">{blog.description}</p>
+                      )}
+                      <p className="mt-2 text-xs text-gray-500">{blog.postCount} posts</p>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </>
@@ -1756,7 +1869,7 @@ function UserProfileContent() {
         isOpen={isUsernameModalOpen}
         onClose={() => {
           setIsUsernameModalOpen(false)
-          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+          refreshUsernames().catch(err => logger.error('Failed to refresh usernames:', err))
         }}
         hasExistingUsernames={hasDpns}
       />
