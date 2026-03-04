@@ -1,10 +1,8 @@
 {
-  "config": {
-    "requiresIdentityEncryptionBoundedKey": 2
-  },
   "documents": {
     "vault": {
       "type": "object",
+      "requiresIdentityEncryptionBoundedKey": 2,
       "indices": [
         {
           "name": "byOwner",
