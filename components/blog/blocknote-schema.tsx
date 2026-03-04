@@ -92,7 +92,7 @@ function parseOdyseeEmbedUrl(rawUrl: string): string | null {
       return null
     }
 
-    const cleanPath = url.pathname.replace(/^\/+/, '')
+    const cleanPath = url.pathname.replace(/^\/+/, '').replace(/^\$\/embed\//, '')
     if (!cleanPath) return null
     return `https://odysee.com/$/embed/${cleanPath}`
   } catch {

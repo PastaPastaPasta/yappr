@@ -209,8 +209,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   async getRecentPosts(blogIds: string[], limit = 20): Promise<BlogPost[]> {
     if (blogIds.length === 0) return []
 
-    // Fetch a small number of posts per blog — we only need the global top N
-    const perBlogLimit = Math.min(5, limit)
+    // Fetch enough posts per blog to fill the requested limit
+    const perBlogLimit = Math.min(Math.ceil(limit / blogIds.length), limit)
     const results = await Promise.all(
       blogIds.map(blogId =>
         this.getPostsByBlog(blogId, { limit: perBlogLimit }).catch(() => [])

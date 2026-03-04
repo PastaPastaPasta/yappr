@@ -105,7 +105,7 @@ function MessagesPage() {
 
     if (idsToHydrate.length === 0) return
 
-    idsToHydrate.forEach(id => participantHydrationInFlightRef.current.add(id))
+    for (const id of idsToHydrate) { participantHydrationInFlightRef.current.add(id) }
     let cancelled = false
 
     const hydrate = async () => {
@@ -135,7 +135,7 @@ function MessagesPage() {
           const profileMap = new Map(
             profilesResult.value.map(profile => [profile.$ownerId, profile] as const)
           )
-          for (const [id, profile] of profileMap.entries()) {
+          for (const [id, profile] of Array.from(profileMap.entries())) {
             if (!id || !profile?.displayName) continue
             const existing = updates.get(id) || {}
             updates.set(id, { ...existing, displayName: profile.displayName })
@@ -165,11 +165,11 @@ function MessagesPage() {
           })
         }
       } finally {
-        idsToHydrate.forEach(id => participantHydrationInFlightRef.current.delete(id))
+        for (const id of idsToHydrate) { participantHydrationInFlightRef.current.delete(id) }
       }
     }
 
-    hydrate().catch(err => console.error('Failed to hydrate conversation participants:', err))
+    hydrate().catch(err => logger.error('Failed to hydrate conversation participants:', err))
 
     return () => {
       cancelled = true

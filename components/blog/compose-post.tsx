@@ -344,6 +344,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
               <button
                 type="button"
                 onClick={() => setShowSettings(false)}
+                aria-label="Close settings"
                 className="rounded p-1 text-gray-500 transition-colors hover:text-gray-300"
               >
                 <XMarkIcon className="h-4 w-4" />
@@ -445,6 +446,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   onClick={() => setCoverImage('')}
                   className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 transition-colors hover:bg-black/70"
                   title="Remove cover image"
+                  aria-label="Remove cover image"
                 >
                   <XMarkIcon className="h-4 w-4 text-white" />
                 </button>
@@ -477,6 +479,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   <button
                     type="button"
                     onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
+                    aria-label="Cancel URL input"
                     className="shrink-0 rounded p-1 text-gray-500 hover:text-gray-300"
                   >
                     <XMarkIcon className="h-4 w-4" />
@@ -499,6 +502,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                     onClick={() => setShowCoverUrlInput(true)}
                     className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400"
                     title="Paste cover image URL"
+                    aria-label="Paste cover image URL"
                   >
                     <LinkIcon className="h-5 w-5" />
                   </button>
@@ -509,6 +513,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   disabled={isUploadingCover}
                   className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400 disabled:opacity-50"
                   title={coverImage ? 'Change cover image' : 'Upload cover image'}
+                  aria-label={coverImage ? 'Change cover image' : 'Upload cover image'}
                 >
                   {isUploadingCover ? (
                     <Loader2 className="h-5 w-5 animate-spin" />

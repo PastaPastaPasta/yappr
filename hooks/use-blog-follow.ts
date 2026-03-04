@@ -96,10 +96,11 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     if (!blogId || isLoading) return
 
     const wasFollowing = isFollowing
+    const previousFollowerCount = followerCount
 
     // Optimistic update
     setIsFollowing(!wasFollowing)
-    setFollowerCount(prev => wasFollowing ? Math.max(0, prev - 1) : prev + 1)
+    setFollowerCount(wasFollowing ? Math.max(0, previousFollowerCount - 1) : previousFollowerCount + 1)
     setIsLoading(true)
 
     if (cacheKey) setBlogFollowStatus(cacheKey, !wasFollowing)
@@ -119,7 +120,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     } catch (error) {
       // Rollback
       setIsFollowing(wasFollowing)
-      setFollowerCount(prev => wasFollowing ? prev + 1 : Math.max(0, prev - 1))
+      setFollowerCount(previousFollowerCount)
       if (cacheKey) setBlogFollowStatus(cacheKey, wasFollowing)
       logger.error('useBlogFollow: Error toggling follow:', error)
       toast.error('Failed to update blog follow status')
