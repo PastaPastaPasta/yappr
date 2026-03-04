@@ -3,6 +3,8 @@ export * from '../types/post'
 export * from '../types/store'
 export * from '../types/notification'
 
+import type { BlogThemeConfig } from '@/lib/blog/theme-types'
+
 // V3 DM contract document types (raw from platform)
 export interface ConversationInviteDocument {
   $id: string
@@ -112,4 +114,58 @@ export interface UsernameRegistrationResult {
   success: boolean
   isContested: boolean
   error?: string
+}
+
+export interface Blog {
+  id: string
+  ownerId: string
+  createdAt: Date
+  updatedAt?: Date
+  $revision?: number
+  name: string
+  description?: string
+  headerImage?: string
+  avatar?: string
+  themeConfig?: BlogThemeConfig
+  commentsEnabledDefault?: boolean
+  labels?: string
+}
+
+export interface BlogPost {
+  id: string
+  ownerId: string
+  createdAt: Date
+  updatedAt?: Date
+  $revision?: number
+  blogId: string
+  title: string
+  subtitle?: string
+  content: Record<string, unknown>[]
+  coverImage?: string
+  labels?: string
+  commentsEnabled?: boolean
+  slug: string
+  publishedAt?: number
+}
+
+export interface BlogComment {
+  id: string
+  ownerId: string
+  createdAt: Date
+  blogPostId: string
+  blogPostOwnerId: string
+  content: string
+}
+
+export interface BlogPostWithAuthor extends BlogPost {
+  authorUsername?: string
+  authorDisplayName?: string
+  blogName?: string
+}
+
+export interface BlogFollow {
+  id: string
+  ownerId: string
+  blogId: string
+  createdAt: Date
 }

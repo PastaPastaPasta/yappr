@@ -55,6 +55,7 @@ function MessagesPage() {
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const searchIdRef = useRef(0)
+  const participantHydrationInFlightRef = useRef(new Set<string>())
 
   // Refs for polling (to avoid stale closures and dependency issues)
   const userRef = useRef(user)
@@ -70,7 +71,9 @@ function MessagesPage() {
       if (!user) return
       setIsLoading(true)
       try {
-        const convos = await directMessageService.getConversations(user.identityId)
+        const convos = await directMessageService.getConversations(user.identityId, {
+          includeParticipantInfo: false
+        })
         setConversations(convos)
       } catch (error) {
         logger.error('Failed to load conversations:', error)
@@ -81,6 +84,106 @@ function MessagesPage() {
     }
     loadConversations().catch(err => logger.error('Failed to load conversations:', err))
   }, [user])
+
+  // Progressive hydration of DPNS + profile data (non-blocking)
+  useEffect(() => {
+    if (!user || conversations.length === 0) return
+
+    const pendingUsernameIds = new Set<string>()
+    const pendingProfileIds = new Set<string>()
+
+    for (const conv of conversations) {
+      const id = conv.participantId
+      if (!id || participantHydrationInFlightRef.current.has(id)) continue
+      if (!conv.participantUsername) pendingUsernameIds.add(id)
+      if (!conv.participantDisplayName) pendingProfileIds.add(id)
+    }
+
+    const usernameIds = Array.from(pendingUsernameIds)
+    const profileIds = Array.from(pendingProfileIds)
+    const idsToHydrate = Array.from(new Set([...usernameIds, ...profileIds]))
+
+    if (idsToHydrate.length === 0) return
+
+    for (const id of idsToHydrate) { participantHydrationInFlightRef.current.add(id) }
+    let cancelled = false
+
+    const hydrate = async () => {
+      try {
+        const [usernamesResult, profilesResult] = await Promise.allSettled([
+          usernameIds.length > 0
+            ? dpnsService.resolveUsernamesBatch(usernameIds)
+            : Promise.resolve(new Map<string, string | null>()),
+          profileIds.length > 0
+            ? unifiedProfileService.getProfilesByIdentityIds(profileIds)
+            : Promise.resolve([])
+        ])
+
+        if (cancelled) return
+
+        const updates = new Map<string, { username?: string; displayName?: string }>()
+
+        if (usernamesResult.status === 'fulfilled') {
+          usernamesResult.value.forEach((username, id) => {
+            if (!username) return
+            const existing = updates.get(id) || {}
+            updates.set(id, { ...existing, username })
+          })
+        }
+
+        if (profilesResult.status === 'fulfilled') {
+          const profileMap = new Map(
+            profilesResult.value.map(profile => [profile.$ownerId, profile] as const)
+          )
+          for (const [id, profile] of Array.from(profileMap.entries())) {
+            if (!id || !profile?.displayName) continue
+            const existing = updates.get(id) || {}
+            updates.set(id, { ...existing, displayName: profile.displayName })
+          }
+        }
+
+        if (updates.size > 0) {
+          setConversations(prev => {
+            let changed = false
+            const next = prev.map(conv => {
+              const update = updates.get(conv.participantId)
+              if (!update) return conv
+              let updated = conv
+              if (update.username && !conv.participantUsername) {
+                updated = updated === conv ? { ...conv } : updated
+                updated.participantUsername = update.username
+                changed = true
+              }
+              if (update.displayName && !conv.participantDisplayName) {
+                updated = updated === conv ? { ...conv } : updated
+                updated.participantDisplayName = update.displayName
+                changed = true
+              }
+              return updated
+            })
+            return changed ? next : prev
+          })
+        }
+      } finally {
+        for (const id of idsToHydrate) { participantHydrationInFlightRef.current.delete(id) }
+      }
+    }
+
+    hydrate().catch(err => logger.error('Failed to hydrate conversation participants:', err))
+
+    return () => {
+      cancelled = true
+    }
+  }, [conversations, user])
+
+  // Keep selected conversation details in sync with list updates
+  useEffect(() => {
+    if (!selectedConversation) return
+    const updated = conversations.find(conv => conv.id === selectedConversation.id)
+    if (updated && updated !== selectedConversation) {
+      setSelectedConversation(updated)
+    }
+  }, [conversations, selectedConversation?.id])
 
   // Handle auto-starting a conversation from URL parameter
   useEffect(() => {
@@ -105,15 +208,8 @@ function MessagesPage() {
         return
       }
 
-      // Need to create a new conversation - fetch user info first
-      setIsResolvingUser(true)
+      // Need to create a new conversation entry (participant info hydrates in background)
       try {
-        // Get username and profile for the participant
-        const [username, profile] = await Promise.all([
-          dpnsService.resolveUsername(participantId),
-          unifiedProfileService.getProfile(participantId).catch(() => null)
-        ])
-
         // Create new conversation entry
         const { conversationId } = await directMessageService.getOrCreateConversation(
           user.identityId,
@@ -123,8 +219,6 @@ function MessagesPage() {
         const newConv: Conversation = {
           id: conversationId,
           participantId,
-          participantUsername: username || undefined,
-          participantDisplayName: profile?.displayName,
           unreadCount: 0,
           updatedAt: new Date()
         }
@@ -146,32 +240,33 @@ function MessagesPage() {
   // Load messages when conversation is selected
   useEffect(() => {
     const loadMessages = async () => {
-      if (!selectedConversation || !user) return
+      const currentConversation = selectedConversationRef.current
+      if (!currentConversation || !user) return
       setIsLoadingMessages(true)
       setParticipantLastRead(null) // Reset while loading
       try {
         const msgs = await directMessageService.getConversationMessages(
-          selectedConversation.id,
+          currentConversation.id,
           user.identityId,
-          selectedConversation.participantId
+          currentConversation.participantId
         )
         setMessages(msgs)
 
         // Get when participant last read (for read receipts)
         const lastRead = await directMessageService.getParticipantLastRead(
-          selectedConversation.id,
-          selectedConversation.participantId
+          currentConversation.id,
+          currentConversation.participantId
         )
         setParticipantLastRead(lastRead)
 
         // Only mark as read if there are unread messages and read receipts are enabled
-        if (selectedConversation.unreadCount > 0 && sendReadReceipts) {
-          await directMessageService.markAsRead(selectedConversation.id, user.identityId)
+        if (currentConversation.unreadCount > 0 && sendReadReceipts) {
+          await directMessageService.markAsRead(currentConversation.id, user.identityId)
         }
 
         // Update conversation unread count in UI
         setConversations(prev => prev.map(conv =>
-          conv.id === selectedConversation.id
+          conv.id === currentConversation.id
             ? { ...conv, unreadCount: 0 }
             : conv
         ))
@@ -426,8 +521,6 @@ function MessagesPage() {
             toast.error('Identity not found')
             return
           }
-          // Try to resolve username for this identity
-          participantUsername = await dpnsService.resolveUsername(participantId) || undefined
         } catch (err) {
           logger.error('Error verifying identity:', err)
           toast.error('Could not verify identity. Please check the ID.')
@@ -460,15 +553,6 @@ function MessagesPage() {
         return
       }
 
-      // Get participant's display name
-      let participantDisplayName: string | undefined
-      try {
-        const profile = await unifiedProfileService.getProfile(participantId)
-        participantDisplayName = profile?.displayName
-      } catch {
-        // Ignore profile errors
-      }
-
       // Create new conversation entry
       const { conversationId } = await directMessageService.getOrCreateConversation(
         user.identityId,
@@ -479,7 +563,6 @@ function MessagesPage() {
         id: conversationId,
         participantId,
         participantUsername,
-        participantDisplayName,
         unreadCount: 0,
         updatedAt: new Date()
       }

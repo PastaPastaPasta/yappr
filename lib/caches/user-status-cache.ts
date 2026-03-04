@@ -84,6 +84,41 @@ export function seedFollowStatusCache(
   })
 }
 
+// Blog follow status cache
+const blogFollowCache = new Map<string, { isFollowing: boolean; timestamp: number }>()
+
+export function getBlogFollowStatus(cacheKey: string): boolean | null {
+  const cached = blogFollowCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.isFollowing
+  }
+  return null
+}
+
+export function setBlogFollowStatus(cacheKey: string, isFollowing: boolean): void {
+  blogFollowCache.set(cacheKey, { isFollowing, timestamp: Date.now() })
+}
+
+export function deleteBlogFollowStatus(cacheKey: string): void {
+  blogFollowCache.delete(cacheKey)
+}
+
+export function clearBlogFollowCache(): void {
+  blogFollowCache.clear()
+}
+
+export function seedBlogFollowStatusCache(
+  userId: string,
+  statusMap: Map<string, boolean>
+): void {
+  if (!userId) return
+  const now = Date.now()
+  statusMap.forEach((isFollowing, blogId) => {
+    const cacheKey = `blog:${userId}:${blogId}`
+    blogFollowCache.set(cacheKey, { isFollowing, timestamp: now })
+  })
+}
+
 // Private feed request status cache
 // Tracks pending requests by ownerId so all posts from the same author show consistent state
 export type PrivateFeedRequestStatus = 'none' | 'pending' | 'loading' | 'error'

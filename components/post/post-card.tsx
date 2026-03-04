@@ -35,6 +35,7 @@ import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
+import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useBlock } from '@/hooks/use-block'
@@ -720,7 +721,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           )}
 
           {post.quotedPost && (
-            <EmbeddedPostCard post={post.quotedPost} />
+            isEmbeddedBlogPostLike(post.quotedPost)
+              ? <EmbeddedBlogPostCard post={post.quotedPost} />
+              : <EmbeddedPostCard post={post.quotedPost} />
           )}
 
           {post.media && post.media.length > 0 && (

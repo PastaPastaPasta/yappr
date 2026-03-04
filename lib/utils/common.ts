@@ -84,9 +84,22 @@ export function truncateId(id: string, startChars = 8, endChars = 6): string {
 }
 
 /**
- * Checks if content consists only of emoji characters (and optional whitespace).
- * Used to display emoji-only content with larger text.
+ * Validate that a string is a well-formed http(s) URL.
+ * Returns the trimmed URL on success, or null on failure.
  */
+export function validateHttpUrl(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    return trimmed
+  } catch {
+    return null
+  }
+}
+
 export function isEmojiOnly(text: string): boolean {
   const trimmed = text.trim()
   if (trimmed.length === 0) return false

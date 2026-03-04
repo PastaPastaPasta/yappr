@@ -38,20 +38,47 @@ const baseLogger = new Logger<unknown>({
   minLevel: LOG_LEVEL_PRIORITY[effectiveLogLevel],
 });
 
+/**
+ * Unwrap WASM error objects from @dashevo/evo-sdk so their message is visible.
+ * These objects only expose `__wbg_ptr` as an enumerable property, but have
+ * a `.message` getter that contains the actual error string.
+ */
+function unwrapArg(value: unknown): unknown {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    '__wbg_ptr' in value
+  ) {
+    const wasmObj = value as Record<string, unknown>;
+    try {
+      const msg = typeof wasmObj.message === 'string' ? wasmObj.message
+        : typeof (wasmObj as { getMessage?: () => string }).getMessage === 'function'
+          ? (wasmObj as { getMessage: () => string }).getMessage()
+          : undefined;
+      if (msg) return `[WASM] ${msg}`;
+    } catch {
+      // Getter may throw if the underlying WASM pointer is freed
+    }
+    return `[WASM error: ptr=${wasmObj.__wbg_ptr}]`;
+  }
+  return value;
+}
+
 function emit(level: LogLevel, message: unknown, context?: unknown, ...extra: unknown[]): void {
   const parts = context === undefined ? [message, ...extra] : [message, context, ...extra];
+  const unwrapped = parts.map(unwrapArg);
   switch (level) {
     case 'debug':
-      baseLogger.debug(...parts);
+      baseLogger.debug(...unwrapped);
       break;
     case 'info':
-      baseLogger.info(...parts);
+      baseLogger.info(...unwrapped);
       break;
     case 'warn':
-      baseLogger.warn(...parts);
+      baseLogger.warn(...unwrapped);
       break;
     case 'error':
-      baseLogger.error(...parts);
+      baseLogger.error(...unwrapped);
       break;
     default:
       break;

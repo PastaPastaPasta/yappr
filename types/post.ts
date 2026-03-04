@@ -50,6 +50,16 @@ export interface Post {
   // Reply fields (present when this Post object represents a Reply for display)
   parentId?: string        // ID of post or reply being replied to (only on replies)
   parentOwnerId?: string   // Owner of parent (only on replies)
+  // Blog quote fields (present when this Post represents a quoted blog post)
+  __isBlogPostQuote?: boolean
+  title?: string
+  subtitle?: string
+  slug?: string
+  coverImage?: string
+  blogId?: string
+  blogName?: string
+  blogUsername?: string
+  blogContent?: unknown
   // Private feed fields (present when post is encrypted)
   encryptedContent?: Uint8Array  // XChaCha20-Poly1305 ciphertext
   epoch?: number                 // Revocation epoch at post creation
