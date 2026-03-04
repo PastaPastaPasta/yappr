@@ -325,6 +325,9 @@ function CheckoutPage() {
     const calculateShipping = async () => {
       try {
         setZonesLoadFailed(false)
+        setMatchedZone(null)
+        setShippingCost(0)
+        setHasNoZones(false)
 
         // First try to get zones to check if store has any configured
         const zones = await shippingZoneService.getByStore(storeId)
@@ -552,6 +555,7 @@ function CheckoutPage() {
       setError('We cannot ship to this address. Please check your shipping address.')
       return
     }
+    setError(null)
     setStep('policies')
   }
 
@@ -727,7 +731,13 @@ function CheckoutPage() {
               <button
                 onClick={() => {
                   switch (step) {
-                    case 'details': router.back(); break
+                    case 'details':
+                      if (showSavePrompt) {
+                        setShowSavePrompt(false)
+                      } else {
+                        router.back()
+                      }
+                      break
                     case 'policies': setStep('details'); break
                     case 'payment': setStep('policies'); break
                   }

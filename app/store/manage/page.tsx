@@ -252,7 +252,12 @@ function StoreManagePage() {
 
       const currentUris = store.paymentUris || []
       const currentUriSet = new Set(currentUris.map(u => u.uri))
-      const newUris = profileUris.filter(u => !currentUriSet.has(u.uri))
+      const seenUris = new Set<string>()
+      const newUris = profileUris.filter(u => {
+        if (currentUriSet.has(u.uri) || seenUris.has(u.uri)) return false
+        seenUris.add(u.uri)
+        return true
+      })
 
       if (newUris.length === 0) {
         toast('All profile payment methods already added', { icon: 'ℹ️' })

@@ -116,6 +116,13 @@ function StoreDetailContent() {
       restoredFromCache.current = true
       pendingScrollY.current = cached.scrollY
       setIsLoading(false)
+
+      // Re-check encryption key even on cache path (it may have changed)
+      if (cached.store?.ownerId) {
+        identityService.hasEncryptionKey(cached.store.ownerId)
+          .then(setSellerHasEncryptionKey)
+          .catch(() => setSellerHasEncryptionKey(null))
+      }
       return
     }
 
@@ -146,7 +153,7 @@ function StoreDetailContent() {
           // Check if seller has encryption key for orders
           identityService.hasEncryptionKey(storeData.ownerId)
             .then(setSellerHasEncryptionKey)
-            .catch(() => setSellerHasEncryptionKey(false))
+            .catch(() => setSellerHasEncryptionKey(null))
 
           // Fetch owner profile and username
           try {
