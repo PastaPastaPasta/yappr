@@ -98,7 +98,7 @@ export async function decryptLoginKey(
   // Import shared secret as AES-256-GCM key
   const key = await crypto.subtle.importKey(
     'raw',
-    sharedSecret,
+    sharedSecret.buffer.slice(sharedSecret.byteOffset, sharedSecret.byteOffset + sharedSecret.byteLength) as ArrayBuffer,
     { name: 'AES-GCM' },
     false,
     ['decrypt']

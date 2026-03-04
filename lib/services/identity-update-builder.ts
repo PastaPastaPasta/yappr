@@ -133,8 +133,8 @@ export async function buildUnsignedKeyRegistrationTransition(
   console.log('IdentityUpdateBuilder: Current revision:', currentRevision)
 
   // Get existing keys to calculate next key IDs
-  const existingKeys = identity.getPublicKeys()
-  const maxKeyId = existingKeys.reduce((max, key) => Math.max(max, key.keyId), 0)
+  const existingKeys = identity.publicKeys
+  const maxKeyId = existingKeys.reduce((max: number, key: { keyId: number }) => Math.max(max, key.keyId), 0)
   const authKeyId = maxKeyId + 1
   const encryptionKeyId = maxKeyId + 2
   console.log('IdentityUpdateBuilder: Key IDs - auth:', authKeyId, ', encryption:', encryptionKeyId)
@@ -142,7 +142,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   // Fetch identity nonce - returns the last used nonce, so we need +1 for the next one
   console.log('IdentityUpdateBuilder: Fetching identity nonce')
   const currentNonce = await sdk.identities.nonce(identityId)
-  if (currentNonce === null) {
+  if (currentNonce === null || currentNonce === undefined) {
     throw new Error('Failed to fetch identity nonce')
   }
   const nextNonce = currentNonce + BigInt(1)
@@ -164,46 +164,44 @@ export async function buildUnsignedKeyRegistrationTransition(
   let encryptionSignature: Uint8Array = new Uint8Array(0)
 
   console.log(`IdentityUpdateBuilder: Creating keys (${keyType})`)
-  const authKey = new wasm.IdentityPublicKeyInCreation(
-    authKeyId,
-    'AUTHENTICATION',
-    'HIGH',
+  const authKey = new wasm.IdentityPublicKeyInCreation({
+    keyId: authKeyId,
+    purpose: 'AUTHENTICATION',
+    securityLevel: 'HIGH',
     keyType,
-    false,
-    authKeyData,
-    new Uint8Array(0),  // Empty signature initially
-    null
-  )
+    isReadOnly: false,
+    data: authKeyData,
+    signature: new Uint8Array(0),
+  })
 
-  const encryptionKey = new wasm.IdentityPublicKeyInCreation(
-    encryptionKeyId,
-    'ENCRYPTION',
-    'MEDIUM',
+  const encryptionKey = new wasm.IdentityPublicKeyInCreation({
+    keyId: encryptionKeyId,
+    purpose: 'ENCRYPTION',
+    securityLevel: 'MEDIUM',
     keyType,
-    false,
-    encryptionKeyData,
-    new Uint8Array(0),  // Empty signature initially
-    null
-  )
+    isReadOnly: false,
+    data: encryptionKeyData,
+    signature: new Uint8Array(0),
+  })
 
   try {
     // Step 2: Create the transition to get signable bytes
     console.log('IdentityUpdateBuilder: Creating transition for signable bytes')
-    const transition = new wasm.IdentityUpdateTransition(
+    const transition = new wasm.IdentityUpdateTransition({
       identityId,
-      newRevision,
-      nextNonce,
-      [authKey, encryptionKey],
-      new Uint32Array([]),
-      null
-    )
+      revision: newRevision,
+      nonce: nextNonce,
+      addPublicKeys: [authKey, encryptionKey],
+      disablePublicKeys: [],
+    })
 
     try {
       // ECDSA_HASH160 keys must NOT have ownership signatures (would reveal the public key).
       // Only sign when using ECDSA_SECP256K1.
       if (!useHash160) {
         // Step 3: Get signable bytes
-        const signableBytes = transition.getSignableBytes()
+        const stateTransition = transition.toStateTransition()
+        const signableBytes = stateTransition.getSignableBytes()
         console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
 
         // Step 4: Sign with each new key's private key
@@ -225,40 +223,37 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   // Step 5: Recreate keys with signatures (empty for ECDSA_HASH160)
   console.log(`IdentityUpdateBuilder: Recreating keys with ${useHash160 ? 'empty' : ''} signatures (${keyType})`)
-  const authKeyWithSig = new wasm.IdentityPublicKeyInCreation(
-    authKeyId,
-    'AUTHENTICATION',
-    'HIGH',
+  const authKeyWithSig = new wasm.IdentityPublicKeyInCreation({
+    keyId: authKeyId,
+    purpose: 'AUTHENTICATION',
+    securityLevel: 'HIGH',
     keyType,
-    false,
-    authKeyData,
-    authSignature,
-    null
-  )
+    isReadOnly: false,
+    data: authKeyData,
+    signature: authSignature,
+  })
 
-  const encryptionKeyWithSig = new wasm.IdentityPublicKeyInCreation(
-    encryptionKeyId,
-    'ENCRYPTION',
-    'MEDIUM',
+  const encryptionKeyWithSig = new wasm.IdentityPublicKeyInCreation({
+    keyId: encryptionKeyId,
+    purpose: 'ENCRYPTION',
+    securityLevel: 'MEDIUM',
     keyType,
-    false,
-    encryptionKeyData,
-    encryptionSignature,
-    null
-  )
+    isReadOnly: false,
+    data: encryptionKeyData,
+    signature: encryptionSignature,
+  })
 
   let transitionBytes: Uint8Array
   try {
     // Step 6: Create final transition with keys
     console.log('IdentityUpdateBuilder: Creating final transition')
-    const finalTransition = new wasm.IdentityUpdateTransition(
+    const finalTransition = new wasm.IdentityUpdateTransition({
       identityId,
-      newRevision,
-      nextNonce,
-      [authKeyWithSig, encryptionKeyWithSig],
-      new Uint32Array([]),
-      null
-    )
+      revision: newRevision,
+      nonce: nextNonce,
+      addPublicKeys: [authKeyWithSig, encryptionKeyWithSig],
+      disablePublicKeys: [],
+    })
 
     try {
       // Get the final transition bytes (IdentityUpdateTransition)
@@ -301,7 +296,7 @@ export async function checkKeysRegistered(
     return false
   }
 
-  const publicKeys = identity.getPublicKeys()
+  const publicKeys = identity.publicKeys
 
   // Helper to extract key data as Uint8Array from a WASM IdentityPublicKey.
   // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
@@ -336,7 +331,7 @@ export async function checkKeysRegistered(
   const encHash = hash160(encryptionPublicKey)
 
   // Check for auth key (purpose='AUTHENTICATION')
-  const authKeyExists = publicKeys.some(key => {
+  const authKeyExists = publicKeys.some((key: { purpose: string; keyType: string; data?: string; toJSON: () => { data: string | Uint8Array } }) => {
     if (key.purpose !== 'AUTHENTICATION' || key.keyType !== 'ECDSA_HASH160') {
       return false
     }
@@ -348,7 +343,7 @@ export async function checkKeysRegistered(
   })
 
   // Check for encryption key (purpose='ENCRYPTION')
-  const encKeyExists = publicKeys.some(key => {
+  const encKeyExists = publicKeys.some((key: { purpose: string; keyType: string; data?: string; toJSON: () => { data: string | Uint8Array } }) => {
     if (key.purpose !== 'ENCRYPTION' || key.keyType !== 'ECDSA_HASH160') {
       return false
     }
