@@ -1,8 +1,8 @@
 'use client'
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import { useSdk } from '@/contexts/sdk-context'
 import { blogPostService } from '@/lib/services'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { BlogPost } from '@/lib/types'
@@ -19,6 +19,7 @@ interface EmbedState {
 
 function EmbedPageContent() {
   const searchParams = useSearchParams()
+  const { isReady: sdkReady } = useSdk()
   const postId = searchParams.get('post')
   const ownerId = searchParams.get('owner')
   const themeParam = searchParams.get('theme')
@@ -32,6 +33,7 @@ function EmbedPageContent() {
   })
 
   useEffect(() => {
+    if (!sdkReady) return
     let cancelled = false
 
     const load = async () => {
@@ -82,7 +84,7 @@ function EmbedPageContent() {
     return () => {
       cancelled = true
     }
-  }, [ownerId, postId])
+  }, [sdkReady, ownerId, postId])
 
   const contentHtml = useMemo(() => {
     if (!state.post) return ''
@@ -117,7 +119,7 @@ function EmbedPageContent() {
               <div className="yappr-embed-content" dangerouslySetInnerHTML={{ __html: contentHtml }} />
 
               <footer className="yappr-embed-footer">
-                <Link href={viewPath}>View on Yappr</Link>
+                <a href={viewPath} target="_top" rel="noopener noreferrer">View on Yappr</a>
               </footer>
             </>
           ) : (

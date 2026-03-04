@@ -58,7 +58,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   async getCommentsByPost(blogPostId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
     const queryOptions: QueryOptions = {
       where: [['blogPostId', '==', blogPostId]],
-      orderBy: [['$createdAt', 'asc']],
+      orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']],
       limit: options.limit,
       startAfter: options.startAfter,
     }
@@ -69,7 +69,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   async getCommentsByOwner(ownerId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
     const queryOptions: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$createdAt', 'asc']],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
       limit: options.limit,
       startAfter: options.startAfter,
     }

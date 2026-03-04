@@ -23,7 +23,11 @@
       iframe.style.border = 'none';
       iframe.style.maxWidth = '100%';
       iframe.title = 'Yappr embedded post';
-      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      // allow-scripts + allow-same-origin: required for SDK (WASM, DAPI fetch, storage).
+      // The escape-sandbox risk only applies when parent and iframe share the same origin;
+      // embeds are loaded on third-party sites (different origin from yap.pr).
+      // allow-popups-to-navigate: lets "View on Yappr" target="_top" links work.
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups-to-navigate');
       iframe.loading = 'lazy';
 
       el.appendChild(iframe);

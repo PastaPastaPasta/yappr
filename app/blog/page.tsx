@@ -43,7 +43,7 @@ function BlogPageContent() {
   const [viewBlog, setViewBlog] = useState<Blog | null>(null)
   const [viewPost, setViewPost] = useState<BlogPost | null>(null)
   const [viewUsername, setViewUsername] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(Boolean(blogIdParam))
   const [error, setError] = useState<string | null>(null)
 
   const isViewMode = Boolean(blogIdParam)
