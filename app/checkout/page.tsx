@@ -71,6 +71,7 @@ type CheckoutReadinessBlocker =
   | 'missing-buyer-key'
   | 'missing-seller-key'
   | 'invalid-seller-key'
+  | 'service-error'
 
 type CheckoutReadinessState = {
   isReady: boolean
@@ -87,7 +88,8 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
     'no-payment-methods': 'This store has not configured any payment methods.',
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
     'missing-seller-key': 'This store has not published an active encryption key.',
-    'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner."
+    'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner.",
+    'service-error': 'Could not verify store encryption key. Please try again later.'
   }
 
   return messages[blocker]
@@ -218,8 +220,8 @@ function CheckoutPage() {
       setCheckoutReadiness(state)
       return state
     } catch (err) {
-      logger.error('Failed to validate checkout readiness:', err)
-      const state = blocked('missing-seller-key', buyerPrivateKey)
+      logger.error('Failed to validate checkout readiness', err)
+      const state = blocked('service-error', buyerPrivateKey)
       setCheckoutReadiness(state)
       return state
     }
