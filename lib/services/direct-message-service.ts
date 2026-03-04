@@ -145,8 +145,12 @@ class DirectMessageService {
   /**
    * Get all conversations for a user
    */
-  async getConversations(userId: string): Promise<Conversation[]> {
+  async getConversations(
+    userId: string,
+    options?: { includeParticipantInfo?: boolean }
+  ): Promise<Conversation[]> {
     try {
+      const includeParticipantInfo = options?.includeParticipantInfo ?? true
       const sdk = await getEvoSdk()
 
       // 1. Get invites where I'm the recipient (inbox)
@@ -236,16 +240,18 @@ class DirectMessageService {
           // Get participant username and display name
           let participantUsername: string | undefined
           let participantDisplayName: string | undefined
-          try {
-            participantUsername = await dpnsService.resolveUsername(data.participantId) || undefined
-          } catch {
-            // Ignore DPNS errors
-          }
-          try {
-            const profile = await unifiedProfileService.getProfile(data.participantId)
-            participantDisplayName = profile?.displayName
-          } catch {
-            // Ignore profile errors
+          if (includeParticipantInfo) {
+            const [usernameResult, profileResult] = await Promise.allSettled([
+              dpnsService.resolveUsername(data.participantId),
+              unifiedProfileService.getProfile(data.participantId)
+            ])
+
+            if (usernameResult.status === 'fulfilled') {
+              participantUsername = usernameResult.value || undefined
+            }
+            if (profileResult.status === 'fulfilled') {
+              participantDisplayName = profileResult.value?.displayName
+            }
           }
 
           // Decrypt latest message for preview
