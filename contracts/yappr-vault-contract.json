@@ -4,6 +4,7 @@
   },
   "documents": {
     "vault": {
+      "type": "object",
       "indices": [
         {
           "name": "byOwner",
