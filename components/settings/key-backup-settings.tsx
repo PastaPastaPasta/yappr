@@ -145,15 +145,15 @@ export function KeyBackupSettings() {
 
     setIsDeleting(true)
     try {
-      // Delete from vault contract if configured
-      let deleted = false
+      // Delete from all configured backends — fail if any configured backend fails
+      let deleted = true
       if (vaultService.isConfigured()) {
-        deleted = await vaultService.deleteVault(user.identityId)
+        const vaultDeleted = await vaultService.deleteVault(user.identityId)
+        if (!vaultDeleted) deleted = false
       }
-      // Also delete from old contract if it exists
       if (encryptedKeyService.isConfigured()) {
-        const oldDeleted = await encryptedKeyService.deleteBackup(user.identityId)
-        deleted = deleted || oldDeleted
+        const legacyDeleted = await encryptedKeyService.deleteBackup(user.identityId)
+        if (!legacyDeleted) deleted = false
       }
       if (deleted) {
         setHasBackup(false)

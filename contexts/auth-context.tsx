@@ -444,8 +444,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           result = await vaultService.loginWithPassword(username, password)
         } catch (vaultErr) {
-          // Vault didn't have a backup or decryption failed — fall through to old contract
-          logger.info('Auth: Vault login failed, falling back to old contract:', vaultErr instanceof Error ? vaultErr.message : vaultErr)
+          const msg = vaultErr instanceof Error ? vaultErr.message : ''
+          if (msg === 'Invalid password') {
+            // Vault found a backup but password was wrong — don't fall through
+            throw vaultErr
+          }
+          // No backup in vault or other error — fall through to old contract
+          logger.info('Auth: Vault login failed, falling back to old contract:', msg || vaultErr)
         }
       }
 
@@ -522,9 +527,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       storeEncryptionKey(identityId, encryptionKeyWif)
       storeEncryptionKeyType(identityId, 'derived')
     } catch (err) {
-      // Clear any partially persisted encryption key on failure
-      const { clearEncryptionKey } = await import('@/lib/secure-storage')
+      // Clear any partially persisted encryption key and type metadata on failure
+      const { clearEncryptionKey, clearEncryptionKeyType } = await import('@/lib/secure-storage')
       clearEncryptionKey(identityId)
+      clearEncryptionKeyType(identityId)
 
       console.error('Key exchange login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with key exchange')

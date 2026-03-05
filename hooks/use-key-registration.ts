@@ -90,6 +90,7 @@ export function useKeyRegistration(
   const startTimeRef = useRef<number | null>(null)
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const cancelledRef = useRef(false)
 
   // Cleanup timers and abort controller (preserves key refs for retry)
   const cleanupTimers = useCallback(() => {
@@ -151,8 +152,9 @@ export function useKeyRegistration(
     authKeyRef.current = new Uint8Array(authKey)
     encryptionKeyRef.current = new Uint8Array(encryptionKey)
 
-    // Set up new abort controller
+    // Set up new abort controller and mark flow as active
     abortControllerRef.current = new AbortController()
+    cancelledRef.current = false
 
     try {
       // Phase 1: Build unsigned transition
@@ -241,6 +243,11 @@ export function useKeyRegistration(
             // Brief delay for UI feedback
             await new Promise(resolve => setTimeout(resolve, 500))
 
+            // Guard: user may have cancelled during the delay
+            if (cancelledRef.current) {
+              return
+            }
+
             setResult({
               authKeyId: transition.authKeyId,
               encryptionKeyId: transition.encryptionKeyId
@@ -289,6 +296,7 @@ export function useKeyRegistration(
    * Cancel the current registration attempt.
    */
   const cancel = useCallback(() => {
+    cancelledRef.current = true
     cleanup()
     setState('idle')
     setUri(null)
