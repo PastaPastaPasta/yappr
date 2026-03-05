@@ -39,7 +39,7 @@
       "pbkdf2Iterations": {
         "type": "integer",
         "minimum": 100000,
-        "maximum": 10000000,
+        "maximum": 1000000000,
         "position": 3
       }
     }
