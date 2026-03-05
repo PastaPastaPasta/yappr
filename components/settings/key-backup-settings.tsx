@@ -69,6 +69,10 @@ export function KeyBackupSettings() {
       setIsConfigured(configured)
 
       if (configured) {
+        // Reset backup state to avoid showing stale values
+        setHasBackup(false)
+        setBackupDate(null)
+
         try {
           // Check vault contract first
           let foundBackup = false

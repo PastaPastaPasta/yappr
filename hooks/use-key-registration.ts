@@ -259,12 +259,14 @@ export function useKeyRegistration(
       // Initial check
       await checkKeys()
 
-      // Set up polling interval (wrap async call to handle floating promise)
-      pollIntervalRef.current = setInterval(() => {
-        checkKeys().catch(err => {
-          console.warn('KeyRegistration: Poll error:', err)
-        })
-      }, DEFAULT_POLL_INTERVAL_MS)
+      // Only set up polling if the flow is still active (keys not already found)
+      if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+        pollIntervalRef.current = setInterval(() => {
+          checkKeys().catch(err => {
+            console.warn('KeyRegistration: Poll error:', err)
+          })
+        }, DEFAULT_POLL_INTERVAL_MS)
+      }
 
     } catch (err) {
       // Preserve key refs so retry() works; only clean timers
@@ -304,7 +306,8 @@ export function useKeyRegistration(
     const encryptionKey = encryptionKeyRef.current
 
     if (identityId && authKey && encryptionKey) {
-      start(identityId, authKey, encryptionKey)
+      // Copy key material before calling start(), which calls cleanup() and zeros the refs
+      start(identityId, new Uint8Array(authKey), new Uint8Array(encryptionKey))
     }
   }, [start])
 

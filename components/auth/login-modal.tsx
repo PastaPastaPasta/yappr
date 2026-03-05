@@ -168,6 +168,10 @@ export function LoginModal() {
               return
             }
           }
+        } catch {
+          // Vault check failed — continue to legacy fallback
+        }
+        try {
           if (encryptedKeyService.isConfigured()) {
             const hasBackup = await encryptedKeyService.hasBackup(identityId)
             setHasOnchainBackup(hasBackup)

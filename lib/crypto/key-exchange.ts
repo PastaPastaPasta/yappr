@@ -111,7 +111,11 @@ export async function decryptLoginKey(
     ciphertextWithTag
   )
 
-  return new Uint8Array(decrypted)
+  const result = new Uint8Array(decrypted)
+  if (result.length !== 32) {
+    throw new Error(`Invalid decrypted login key length: expected 32, got ${result.length}`)
+  }
+  return result
 }
 
 /**

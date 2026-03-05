@@ -494,7 +494,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
       const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
       const { privateKeyToWif } = await import('@/lib/crypto/wif')
-      const { storeEncryptionKey, setRememberMe } = await import('@/lib/secure-storage')
+      const { storeEncryptionKey, storeEncryptionKeyType, setRememberMe } = await import('@/lib/secure-storage')
 
       // Decode identity ID to bytes
       const identityIdBytes = decodeIdentityId(identityId)
@@ -520,6 +520,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Only persist encryption key after successful login
       storeEncryptionKey(identityId, encryptionKeyWif)
+      storeEncryptionKeyType(identityId, 'derived')
     } catch (err) {
       // Clear any partially persisted encryption key on failure
       const { clearEncryptionKey } = await import('@/lib/secure-storage')

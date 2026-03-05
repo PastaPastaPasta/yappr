@@ -51,6 +51,7 @@ export function KeyExchangeLoginModal() {
     loginWithKeyExchange(identityId, loginKey, keyIndex)
       .then(() => {
         setTimeout(() => {
+          cancel()
           closeLoginModal()
           close()
         }, 1500)
@@ -60,7 +61,7 @@ export function KeyExchangeLoginModal() {
         setLoginError(err instanceof Error ? err.message : 'Login failed')
         setIsCompleting(false)
       })
-  }, [loginWithKeyExchange, closeLoginModal, close])
+  }, [loginWithKeyExchange, cancel, closeLoginModal, close])
 
   // Start the login flow when modal opens (no identity needed)
   useEffect(() => {

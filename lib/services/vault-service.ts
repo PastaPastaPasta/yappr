@@ -70,7 +70,7 @@ async function deriveKeyFromPasswordAndSalt(
     ['deriveBits', 'deriveKey']
   );
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt.buffer as ArrayBuffer, iterations, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength) as ArrayBuffer, iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
