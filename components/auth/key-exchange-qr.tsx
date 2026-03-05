@@ -29,11 +29,11 @@ export function KeyExchangeQR({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(uri)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Clipboard API unavailable (e.g. non-HTTPS) — silently fail
+      // Clipboard API unavailable (e.g. non-HTTPS) — no success indicator shown
     }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
   }
 
   // Format remaining time as MM:SS
