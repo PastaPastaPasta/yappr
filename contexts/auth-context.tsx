@@ -518,7 +518,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Set storage mode
       setRememberMe(rememberMe)
 
-      console.log(`Auth: Key exchange login - keyIndex=${keyIndex}`)
+      logger.info(`Auth: Key exchange login - keyIndex=${keyIndex}`)
 
       // Continue with normal login flow (login() stores authKeyWif internally)
       await login(identityId, authKeyWif, { skipUsernameCheck: false, rememberMe })
@@ -532,7 +532,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearEncryptionKey(identityId)
       clearEncryptionKeyType(identityId)
 
-      console.error('Key exchange login error:', err)
+      logger.error('Key exchange login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with key exchange')
       throw err
     } finally {

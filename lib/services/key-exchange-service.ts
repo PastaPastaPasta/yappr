@@ -11,6 +11,7 @@
  * Spec: YAPPR_DET_SIGNER_SPEC.md
  */
 
+import { logger } from '@/lib/logger'
 import bs58 from 'bs58'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { KEY_EXCHANGE_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
@@ -218,13 +219,13 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
           appEphemeralPubKeyHash
         )
 
-        console.log('Key exchange: Poll result', {
+        logger.info('Key exchange: Poll result', {
           hasResponse: !!response,
           ownerId: response?.$ownerId
         })
 
         if (response) {
-          console.log('Key exchange: Found response, attempting decryption', {
+          logger.info('Key exchange: Found response, attempting decryption', {
             walletEphemeralPubKeyLength: response.walletEphemeralPubKey?.length,
             encryptedPayloadLength: response.encryptedPayload?.length,
             keyIndex: response.keyIndex,
@@ -242,7 +243,7 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
               sharedSecret
             )
 
-            console.log('Key exchange: Decryption successful!', {
+            logger.info('Key exchange: Decryption successful!', {
               loginKeyLength: loginKey?.length,
               keyIndex: response.keyIndex,
               identityId: response.$ownerId
@@ -257,11 +258,11 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
               identityId: response.$ownerId
             }
           } catch (decryptError) {
-            console.log('Key exchange: Decryption failed, waiting for new response...', decryptError)
+            logger.info('Key exchange: Decryption failed, waiting for new response...', decryptError)
           }
         }
       } catch (queryError) {
-        console.warn('Key exchange: Poll query error:', queryError)
+        logger.warn('Key exchange: Poll query error:', queryError)
       }
 
       await this.sleep(pollIntervalMs, signal)

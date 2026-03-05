@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
@@ -57,7 +58,7 @@ export function KeyExchangeLoginModal() {
         }, 1500)
       })
       .catch((err) => {
-        console.error('Key exchange login failed:', err)
+        logger.error('Key exchange login failed:', err)
         setLoginError(err instanceof Error ? err.message : 'Login failed')
         setIsCompleting(false)
       })

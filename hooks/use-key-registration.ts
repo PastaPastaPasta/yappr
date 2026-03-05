@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { getPublicKey } from '@/lib/crypto/key-exchange'
 import { buildStateTransitionUri } from '@/lib/crypto/state-transition-uri'
@@ -166,7 +167,7 @@ export function useKeyRegistration(
       const authPublicKey = getPublicKey(authKey)
       const encryptionPublicKey = getPublicKey(encryptionKey)
 
-      console.log('KeyRegistration: Building transition for', identityId)
+      logger.info('KeyRegistration: Building transition for', identityId)
 
       // Build the state transition (new keys sign the signable bytes)
       const transition = await buildUnsignedKeyRegistrationTransition({
@@ -182,7 +183,7 @@ export function useKeyRegistration(
         return
       }
 
-      console.log('KeyRegistration: Transition built, bytes:', transition.transitionBytes.length)
+      logger.info('KeyRegistration: Transition built, bytes:', transition.transitionBytes.length)
 
       // Build the dash-st: URI
       const stUri = buildStateTransitionUri(
@@ -192,7 +193,7 @@ export function useKeyRegistration(
       )
 
       setUri(stUri)
-      console.log('KeyRegistration: URI generated')
+      logger.info('KeyRegistration: URI generated')
 
       // Phase 2: Wait for keys to be registered
       setState('waiting')
@@ -222,7 +223,7 @@ export function useKeyRegistration(
         }
 
         try {
-          console.log('KeyRegistration: Polling for keys...')
+          logger.info('KeyRegistration: Polling for keys...')
           const keysFound = await checkKeysRegistered(
             identityId,
             authPublicKey,
@@ -235,7 +236,7 @@ export function useKeyRegistration(
           }
 
           if (keysFound) {
-            console.log('KeyRegistration: Keys found!')
+            logger.info('KeyRegistration: Keys found!')
             cleanup()
 
             setState('verifying')
@@ -258,7 +259,7 @@ export function useKeyRegistration(
             onComplete?.()
           }
         } catch (pollError) {
-          console.warn('KeyRegistration: Poll error:', pollError)
+          logger.warn('KeyRegistration: Poll error:', pollError)
           // Continue polling on error
         }
       }
@@ -270,7 +271,7 @@ export function useKeyRegistration(
       if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
         pollIntervalRef.current = setInterval(() => {
           checkKeys().catch(err => {
-            console.warn('KeyRegistration: Poll error:', err)
+            logger.warn('KeyRegistration: Poll error:', err)
           })
         }, DEFAULT_POLL_INTERVAL_MS)
       }

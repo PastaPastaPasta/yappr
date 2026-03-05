@@ -8,6 +8,7 @@
  * Spec: YAPPR_DET_SIGNER_SPEC.md Section 11.5
  */
 
+import { logger } from '@/lib/logger'
 import { getEvoSdk } from './evo-sdk-service'
 import { YAPPR_VAULT_CONTRACT_ID } from '../constants'
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
@@ -123,7 +124,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   const wasm = await ensureWasmInitialized()
 
   // Fetch identity to get current revision and existing keys
-  console.log('IdentityUpdateBuilder: Fetching identity', identityId)
+  logger.info('IdentityUpdateBuilder: Fetching identity', identityId)
   const identity = await sdk.identities.fetch(identityId)
   if (!identity) {
     throw new Error(`Identity not found: ${identityId}`)
@@ -131,23 +132,23 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   const identityJson = identity.toJSON()
   const currentRevision = BigInt(identityJson.revision || 0)
-  console.log('IdentityUpdateBuilder: Current revision:', currentRevision)
+  logger.info('IdentityUpdateBuilder: Current revision:', currentRevision)
 
   // Get existing keys to calculate next key IDs
   const existingKeys = identity.publicKeys
   const maxKeyId = existingKeys.reduce((max: number, key: { keyId: number }) => Math.max(max, key.keyId), 0)
   const authKeyId = maxKeyId + 1
   const encryptionKeyId = maxKeyId + 2
-  console.log('IdentityUpdateBuilder: Key IDs - auth:', authKeyId, ', encryption:', encryptionKeyId)
+  logger.info('IdentityUpdateBuilder: Key IDs - auth:', authKeyId, ', encryption:', encryptionKeyId)
 
   // Fetch identity nonce - returns the last used nonce, so we need +1 for the next one
-  console.log('IdentityUpdateBuilder: Fetching identity nonce')
+  logger.info('IdentityUpdateBuilder: Fetching identity nonce')
   const currentNonce = await sdk.identities.nonce(identityId)
   if (currentNonce === null || currentNonce === undefined) {
     throw new Error('Failed to fetch identity nonce')
   }
   const nextNonce = currentNonce + BigInt(1)
-  console.log('IdentityUpdateBuilder: Current nonce:', currentNonce, ', next nonce:', nextNonce)
+  logger.info('IdentityUpdateBuilder: Current nonce:', currentNonce, ', next nonce:', nextNonce)
 
   const newRevision = currentRevision + BigInt(1)
 
@@ -170,7 +171,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   let authSignature: Uint8Array = new Uint8Array(0)
   let encryptionSignature: Uint8Array = new Uint8Array(0)
 
-  console.log(`IdentityUpdateBuilder: Creating keys (${keyType})${hasVaultContract ? ' with vault contract bounds' : ''}`)
+  logger.info(`IdentityUpdateBuilder: Creating keys (${keyType})${hasVaultContract ? ' with vault contract bounds' : ''}`)
   const authKey = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'AUTHENTICATION',
@@ -194,7 +195,7 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   try {
     // Step 2: Create the transition to get signable bytes
-    console.log('IdentityUpdateBuilder: Creating transition for signable bytes')
+    logger.info('IdentityUpdateBuilder: Creating transition for signable bytes')
     const transition = new wasm.IdentityUpdateTransition({
       identityId,
       revision: newRevision,
@@ -210,16 +211,16 @@ export async function buildUnsignedKeyRegistrationTransition(
         // Step 3: Get signable bytes
         const stateTransition = transition.toStateTransition()
         const signableBytes = stateTransition.getSignableBytes()
-        console.log('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
+        logger.info('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
 
         // Step 4: Sign with each new key's private key
-        console.log('IdentityUpdateBuilder: Signing with auth key')
+        logger.info('IdentityUpdateBuilder: Signing with auth key')
         authSignature = await signWithKey(authPrivateKey, signableBytes)
-        console.log('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
+        logger.info('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
 
-        console.log('IdentityUpdateBuilder: Signing with encryption key')
+        logger.info('IdentityUpdateBuilder: Signing with encryption key')
         encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
-        console.log('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
+        logger.info('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
       }
     } finally {
       transition.free()
@@ -230,7 +231,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   }
 
   // Step 5: Recreate keys with signatures (empty for ECDSA_HASH160)
-  console.log(`IdentityUpdateBuilder: Recreating keys with ${useHash160 ? 'empty' : ''} signatures (${keyType})`)
+  logger.info(`IdentityUpdateBuilder: Recreating keys with ${useHash160 ? 'empty' : ''} signatures (${keyType})`)
   const authKeyWithSig = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'AUTHENTICATION',
@@ -255,7 +256,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   let transitionBytes: Uint8Array
   try {
     // Step 6: Create final transition with keys
-    console.log('IdentityUpdateBuilder: Creating final transition')
+    logger.info('IdentityUpdateBuilder: Creating final transition')
     const finalTransition = new wasm.IdentityUpdateTransition({
       identityId,
       revision: newRevision,
@@ -267,7 +268,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     try {
       // Get the final transition bytes (IdentityUpdateTransition)
       transitionBytes = finalTransition.toBytes()
-      console.log('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
+      logger.info('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
     } finally {
       finalTransition.free()
     }
