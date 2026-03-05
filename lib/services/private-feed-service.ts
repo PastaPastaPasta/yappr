@@ -215,7 +215,7 @@ class PrivateFeedService {
    * Enable private feed for the current user (SPEC §8.1)
    *
    * Prerequisites:
-   * - User must have a contract-bound encryption key on their identity
+   * - User must have an encryption key on their identity
    *
    * @param ownerId - The identity ID of the feed owner
    * @param encryptionPrivateKey - The private key for encryption (32 bytes)
@@ -242,7 +242,7 @@ class PrivateFeedService {
       }
 
       const derivedPubKeyHex = Buffer.from(encryptionPubKey).toString('hex');
-      // Prefer the contract-bound encryption key, fall back to unbound
+      // Find the identity's encryption key
       const preferredKey = findEncryptionKey(identity.publicKeys);
       const matchesPreferred = preferredKey?.data
         ? Buffer.from(parsePublicKeyData(preferredKey.data) ?? new Uint8Array()).toString('hex') === derivedPubKeyHex
