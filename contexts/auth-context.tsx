@@ -28,6 +28,7 @@ interface AuthContextType {
   error: string | null
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
+  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number, options?: { rememberMe?: boolean }) => Promise<void>
   logout: () => Promise<void>
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
@@ -161,7 +162,7 @@ async function attemptEncryptionKeyDerivation(
     const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
 
     // Check if it matches the identity's key
-    const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId, 1)
+    const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId)
 
     if (matches) {
       // Check if session is still active before storing keys
@@ -324,9 +325,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const { privateKey: authPrivateKeyBytes } = parsePrivateKey(privateKey)
 
           // Check if identity has encryption key (purpose=1)
-          const hasEncryptionKeyOnIdentity = authUser.publicKeys.some(
-            (key) => key.purpose === 1 && key.type === 0
-          )
+          const { hasEncryptionKeyOnIdentity: checkEncKey } = await import('@/lib/crypto/encryption-key-lookup')
+          const hasEncryptionKeyOnIdentity = checkEncKey(authUser.publicKeys)
 
           if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
             // Try to derive encryption key
@@ -436,15 +436,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null)
 
     try {
-      // Use the encrypted key service to decrypt credentials
-      const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
+      let result: { identityId: string; privateKey: string } | null = null
 
-      if (!encryptedKeyService.isConfigured()) {
-        throw new Error('Password login is not yet configured')
+      // Try vault service first (new contract with contract-bound keys)
+      const { vaultService } = await import('@/lib/services/vault-service')
+      if (vaultService.isConfigured()) {
+        try {
+          result = await vaultService.loginWithPassword(username, password)
+        } catch (vaultErr) {
+          const msg = vaultErr instanceof Error ? vaultErr.message : ''
+          if (msg === 'Invalid password') {
+            // Vault found a backup but password was wrong — don't fall through
+            throw vaultErr
+          }
+          // No backup in vault or other error — fall through to old contract
+          logger.info('Auth: Vault login failed, falling back to old contract:', msg || vaultErr)
+        }
       }
 
-      // Decrypt credentials from backup
-      const result = await encryptedKeyService.loginWithPassword(username, password)
+      // Fall back to old encrypted-key-backup contract
+      if (!result) {
+        const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
+        if (!encryptedKeyService.isConfigured()) {
+          throw new Error('Password login is not yet configured')
+        }
+        const oldResult = await encryptedKeyService.loginWithPassword(username, password)
+        result = { identityId: oldResult.identityId, privateKey: oldResult.privateKey }
+      }
 
       // Continue with normal login flow using decrypted credentials
       // Skip username check since we know they have one (they logged in with it)
@@ -452,6 +470,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       logger.error('Password login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with password')
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [login])
+
+  /**
+   * Login using a key exchange login key from a wallet.
+   *
+   * This method is called after successful key exchange with a wallet app.
+   * It derives auth and encryption keys from the login key and completes login.
+   *
+   * Spec: YAPPR_DET_SIGNER_SPEC.md sections 5.2, 5.3
+   */
+  const loginWithKeyExchange = useCallback(async (
+    identityId: string,
+    loginKey: Uint8Array,
+    keyIndex: number,
+    options: { rememberMe?: boolean } = {}
+  ) => {
+    const { rememberMe = true } = options
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      // Import key derivation functions
+      const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
+      const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
+      const { privateKeyToWif } = await import('@/lib/crypto/wif')
+      const { storeEncryptionKey, storeEncryptionKeyType, setRememberMe } = await import('@/lib/secure-storage')
+
+      // Decode identity ID to bytes
+      const identityIdBytes = decodeIdentityId(identityId)
+
+      // Derive auth and encryption keys from login key
+      const authKey = deriveAuthKeyFromLogin(loginKey, identityIdBytes)
+      const encryptionKey = deriveEncryptionKeyFromLogin(loginKey, identityIdBytes)
+
+      // Get network for WIF encoding
+      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+
+      // Convert to WIF format for storage
+      const authKeyWif = privateKeyToWif(authKey, network, true)
+      const encryptionKeyWif = privateKeyToWif(encryptionKey, network, true)
+
+      // Set storage mode
+      setRememberMe(rememberMe)
+
+      logger.info(`Auth: Key exchange login - keyIndex=${keyIndex}`)
+
+      // Continue with normal login flow (login() stores authKeyWif internally)
+      await login(identityId, authKeyWif, { skipUsernameCheck: false, rememberMe })
+
+      // Only persist encryption key after successful login
+      storeEncryptionKey(identityId, encryptionKeyWif)
+      storeEncryptionKeyType(identityId, 'derived')
+    } catch (err) {
+      // Clear any partially persisted encryption key and type metadata on failure
+      const { clearEncryptionKey, clearEncryptionKeyType } = await import('@/lib/secure-storage')
+      clearEncryptionKey(identityId)
+      clearEncryptionKeyType(identityId)
+
+      logger.error('Key exchange login error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to login with key exchange')
       throw err
     } finally {
       setIsLoading(false)
@@ -531,6 +613,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       error,
       login,
       loginWithPassword,
+      loginWithKeyExchange,
       logout,
       updateDPNSUsername,
       refreshDpnsUsernames,

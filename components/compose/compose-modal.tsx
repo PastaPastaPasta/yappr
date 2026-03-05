@@ -139,10 +139,11 @@ export function ComposeModal() {
           // Check if user has encryption key on identity (for enabling private feed flow)
           if (!hasPrivate) {
             try {
+              const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup')
               const identity = await identityService.getIdentity(user.identityId)
-              const hasEncKey = identity?.publicKeys?.some(
-                (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-              ) ?? false
+              const hasEncKey = identity?.publicKeys
+                ? hasEncryptionKeyOnIdentity(identity.publicKeys)
+                : false
               setHasEncryptionKeyOnIdentity(hasEncKey)
             } catch {
               setHasEncryptionKeyOnIdentity(false)

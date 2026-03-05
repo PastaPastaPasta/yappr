@@ -24,6 +24,7 @@ import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { identityService } from '@/lib/services/identity-service'
+import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
@@ -193,9 +194,7 @@ function CheckoutPage() {
 
     try {
       const sellerIdentity = await identityService.getIdentity(storeToValidate.ownerId)
-      const encryptionKey = sellerIdentity?.publicKeys.find(
-        (key) => key.purpose === 1 && key.type === 0 && !key.disabledAt
-      )
+      const encryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
 
       if (!encryptionKey?.data) {
         const state = blocked('missing-seller-key', buyerPrivateKey)
