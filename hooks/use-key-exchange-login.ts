@@ -249,73 +249,8 @@ export function useKeyExchangeLogin(
       const authPublicKey = getPublicKey(authKey)
       const encPublicKey = getPublicKey(encryptionKey)
 
-      // Check identity for these keys
-      const { identityService } = await import('@/lib/services/identity-service')
-      const identity = await identityService.getIdentity(identityId)
-
-      if (!identity) {
-        throw new Error('Identity not found')
-      }
-
-      // Compute hash160 of public keys for ECDSA_HASH160 comparison
-      const authHash = hash160(authPublicKey)
-      const encHash = hash160(encPublicKey)
-
-      // Check if auth key exists (purpose=0, type=2/ECDSA_HASH160)
-      const authKeyExists = identity.publicKeys.some(key => {
-        if (key.purpose !== 0 || key.type !== 2 || key.disabledAt) return false
-
-        let keyData: Uint8Array
-        if (key.data instanceof Uint8Array) {
-          keyData = key.data
-        } else if (typeof key.data === 'string') {
-          if (/^[0-9a-fA-F]+$/.test(key.data)) {
-            keyData = new Uint8Array(key.data.length / 2)
-            for (let i = 0; i < keyData.length; i++) {
-              keyData[i] = parseInt(key.data.substr(i * 2, 2), 16)
-            }
-          } else {
-            const binary = atob(key.data)
-            keyData = new Uint8Array(binary.length)
-            for (let i = 0; i < binary.length; i++) {
-              keyData[i] = binary.charCodeAt(i)
-            }
-          }
-        } else {
-          return false
-        }
-
-        return keyData.length === authHash.length &&
-          keyData.every((b, i) => b === authHash[i])
-      })
-
-      // Check if encryption key exists (purpose=1, type=2/ECDSA_HASH160)
-      const encKeyExists = identity.publicKeys.some(key => {
-        if (key.purpose !== 1 || key.type !== 2 || key.disabledAt) return false
-
-        let keyData: Uint8Array
-        if (key.data instanceof Uint8Array) {
-          keyData = key.data
-        } else if (typeof key.data === 'string') {
-          if (/^[0-9a-fA-F]+$/.test(key.data)) {
-            keyData = new Uint8Array(key.data.length / 2)
-            for (let i = 0; i < keyData.length; i++) {
-              keyData[i] = parseInt(key.data.substr(i * 2, 2), 16)
-            }
-          } else {
-            const binary = atob(key.data)
-            keyData = new Uint8Array(binary.length)
-            for (let i = 0; i < binary.length; i++) {
-              keyData[i] = binary.charCodeAt(i)
-            }
-          }
-        } else {
-          return false
-        }
-
-        return keyData.length === encHash.length &&
-          keyData.every((b, i) => b === encHash[i])
-      })
+      const { checkKeysRegistered } = await import('@/lib/services/identity-update-builder')
+      const keysExist = await checkKeysRegistered(identityId, authPublicKey, encPublicKey)
 
       // Build result
       const loginResult: KeyExchangeLoginResult = {
@@ -323,7 +258,7 @@ export function useKeyExchangeLogin(
         authKey,
         encryptionKey,
         keyIndex: decrypted.keyIndex,
-        needsKeyRegistration: !authKeyExists || !encKeyExists,
+        needsKeyRegistration: !keysExist,
         identityId
       }
 
@@ -370,17 +305,28 @@ export function useKeyExchangeLogin(
   }, [network, cleanup])
 
   /**
+   * Zero out sensitive key material from a login result.
+   */
+  const clearResult = useCallback((r: KeyExchangeLoginResult | null) => {
+    if (!r) return
+    clearKeyMaterial(r.loginKey)
+    clearKeyMaterial(r.authKey)
+    clearKeyMaterial(r.encryptionKey)
+  }, [])
+
+  /**
    * Cancel the current login attempt.
    */
   const cancel = useCallback(() => {
     cleanup()
+    // Zero key material held in result state before clearing
+    setResult(prev => { clearResult(prev); return null })
     setState('idle')
     setUri(null)
     setRemainingTime(null)
     setError(null)
-    setResult(null)
     setNeedsKeyRegistration(false)
-  }, [cleanup])
+  }, [cleanup, clearResult])
 
   /**
    * Retry after timeout or error.

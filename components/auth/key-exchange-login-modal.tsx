@@ -9,6 +9,7 @@ import { useKeyExchangeLogin } from '@/hooks/use-key-exchange-login'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { clearKeyMaterial } from '@/lib/crypto/key-exchange'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
@@ -51,6 +52,12 @@ export function KeyExchangeLoginModal() {
     setIsCompleting(true)
     loginWithKeyExchange(identityId, loginKey, keyIndex)
       .then(() => {
+        // Keys have been consumed by loginWithKeyExchange — zero the copies held in result
+        if (result) {
+          clearKeyMaterial(result.loginKey)
+          clearKeyMaterial(result.authKey)
+          clearKeyMaterial(result.encryptionKey)
+        }
         setTimeout(() => {
           cancel()
           closeLoginModal()
@@ -62,7 +69,7 @@ export function KeyExchangeLoginModal() {
         setLoginError(err instanceof Error ? err.message : 'Login failed')
         setIsCompleting(false)
       })
-  }, [loginWithKeyExchange, cancel, closeLoginModal, close])
+  }, [loginWithKeyExchange, cancel, closeLoginModal, close, result])
 
   // Start the login flow when modal opens (no identity needed)
   useEffect(() => {

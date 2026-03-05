@@ -55,6 +55,10 @@ export interface UnsignedTransitionResult {
   identityRevision: bigint
 }
 
+// Dash/Bitcoin compact signature header constants
+const COMPACT_SIG_BASE = 27
+const COMPACT_SIG_COMPRESSED_FLAG = 4
+
 /**
  * Double SHA256 hash (SHA256d) - used by Dash for signing
  */
@@ -81,12 +85,11 @@ async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Ui
     prehash: false  // Don't hash again - we already did double SHA256
   })
 
-  // Encode as "compact" header for recoverable signatures:
-  // header = 27 + recoveryId (0..3) + 4 for compressed keys
+  // Encode as "compact" header for recoverable signatures.
   // This matches Dash/Bitcoin compact signature format.
   const recoveryId = signature[0]
   const result = new Uint8Array(65)
-  result[0] = recoveryId + 31 // 27 + 4 (compressed)
+  result[0] = recoveryId + COMPACT_SIG_BASE + COMPACT_SIG_COMPRESSED_FLAG
   result.set(signature.slice(1), 1)
   return result
 }

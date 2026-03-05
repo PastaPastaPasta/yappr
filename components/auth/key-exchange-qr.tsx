@@ -29,19 +29,11 @@ export function KeyExchangeQR({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(uri)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Fallback for older browsers
-      const textarea = document.createElement('textarea')
-      textarea.value = uri
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      // Clipboard API unavailable (e.g. non-HTTPS) — silently fail
     }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   // Format remaining time as MM:SS
