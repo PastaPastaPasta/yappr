@@ -22,11 +22,31 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
+import { identityService } from '@/lib/services/identity-service'
+import { privateFeedCryptoService } from '@/lib/services/private-feed-crypto-service'
 import { dpnsService } from '@/lib/services'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { ClipboardIcon } from '@heroicons/react/24/outline'
 import type { StoreOrder, OrderStatusUpdate, OrderStatus, OrderPayload } from '@/lib/types'
+
+/**
+ * Normalize key data from various formats to Uint8Array
+ */
+function normalizeKeyData(data: unknown): Uint8Array | null {
+  if (!data) return null
+  if (data instanceof Uint8Array) return data
+  if (Array.isArray(data)) return new Uint8Array(data)
+  if (typeof data === 'string') {
+    try {
+      const binaryString = atob(data)
+      return Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
+    } catch {
+      return null
+    }
+  }
+  return null
+}
 
 /**
  * Decrypt order payload using seller's encryption private key.
@@ -82,6 +102,7 @@ function SellerOrdersPage() {
   const [trackingNumber, setTrackingNumber] = useState('')
   const [trackingCarrier, setTrackingCarrier] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
+  const [attachmentUrl, setAttachmentUrl] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Load seller orders
@@ -149,11 +170,45 @@ function SellerOrdersPage() {
 
     setIsSubmitting(true)
     try {
+      // Encrypt attachment URL if provided
+      let encryptedAttachment: Uint8Array | undefined
+      if (attachmentUrl.trim()) {
+        const order = orders.find(o => o.id === orderId)
+        if (order) {
+          try {
+            // Fetch buyer's public encryption key
+            const buyerIdentity = await identityService.getIdentity(order.buyerId)
+            const buyerEncryptionKey = buyerIdentity?.publicKeys.find(
+              (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
+            )
+            const buyerPubKey = buyerEncryptionKey?.data
+              ? normalizeKeyData(buyerEncryptionKey.data)
+              : null
+
+            if (buyerPubKey) {
+              const plaintext = new TextEncoder().encode(attachmentUrl.trim())
+              const aad = new TextEncoder().encode('yappr/attachment/v1')
+              encryptedAttachment = await privateFeedCryptoService.eciesEncrypt(
+                buyerPubKey,
+                plaintext,
+                aad
+              )
+            } else {
+              toast.error('Could not find buyer encryption key. Attachment not included.')
+            }
+          } catch (encError) {
+            logger.error('Failed to encrypt attachment:', encError)
+            toast.error('Failed to encrypt attachment URL')
+          }
+        }
+      }
+
       const update = await orderStatusService.createStatusUpdate(user.identityId, orderId, {
         status: newStatus,
         trackingNumber: trackingNumber || undefined,
         trackingCarrier: trackingCarrier || undefined,
-        message: statusMessage || undefined
+        message: statusMessage || undefined,
+        encryptedAttachment
       })
 
       setOrderStatuses(prev => new Map(prev).set(orderId, update))
@@ -162,6 +217,7 @@ function SellerOrdersPage() {
       setTrackingNumber('')
       setTrackingCarrier('')
       setStatusMessage('')
+      setAttachmentUrl('')
     } catch (error) {
       logger.error('Failed to update status:', error)
     } finally {
@@ -386,6 +442,11 @@ function SellerOrdersPage() {
                                 Tracking: {status.trackingCarrier} - {status.trackingNumber}
                               </p>
                             )}
+                            {status.encryptedAttachment && (
+                              <p className="text-sm mt-1 text-purple-600 dark:text-purple-400">
+                                Digital goods attachment sent
+                              </p>
+                            )}
                             {status.message && (
                               <p className="text-sm mt-1 italic">{status.message}</p>
                             )}
@@ -420,6 +481,8 @@ function SellerOrdersPage() {
                             onTrackingCarrierChange={setTrackingCarrier}
                             message={statusMessage}
                             onMessageChange={setStatusMessage}
+                            attachmentUrl={attachmentUrl}
+                            onAttachmentUrlChange={setAttachmentUrl}
                             onSubmit={() => handleUpdateStatus(order.id)}
                             onCancel={() => {
                               setUpdateOrderId(null)
@@ -427,6 +490,7 @@ function SellerOrdersPage() {
                               setTrackingNumber('')
                               setTrackingCarrier('')
                               setStatusMessage('')
+                              setAttachmentUrl('')
                             }}
                             isSubmitting={isSubmitting}
                           />

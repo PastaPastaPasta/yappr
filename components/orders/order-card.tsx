@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ChevronDownIcon, ChevronUpIcon, BuildingStorefrontIcon, StarIcon } from '@heroicons/react/24/outline'
+import { ChevronDownIcon, ChevronUpIcon, BuildingStorefrontIcon, StarIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 import { OrderStatusBadge } from '@/components/store/order-status-badge'
 import { OrderItemsList } from './order-items-list'
 import { Button } from '@/components/ui/button'
@@ -145,6 +145,23 @@ export function OrderCard({
               </a>
             ) : null
           })()}
+        </div>
+      )}
+
+      {status?.attachmentUrl && (
+        <div className="mt-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
+          <div className="flex items-center gap-2 mb-1">
+            <ArrowDownTrayIcon className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+            <p className="text-sm font-medium text-purple-700 dark:text-purple-300">Digital Goods</p>
+          </div>
+          <a
+            href={status.attachmentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-yappr-500 hover:underline break-all"
+          >
+            {status.attachmentUrl}
+          </a>
         </div>
       )}
 

@@ -13,6 +13,8 @@ interface StatusUpdateFormProps {
   onTrackingCarrierChange: (value: string) => void
   message: string
   onMessageChange: (value: string) => void
+  attachmentUrl: string
+  onAttachmentUrlChange: (value: string) => void
   onSubmit: () => void
   onCancel: () => void
   isSubmitting: boolean
@@ -49,6 +51,8 @@ export function StatusUpdateForm({
   onTrackingCarrierChange,
   message,
   onMessageChange,
+  attachmentUrl,
+  onAttachmentUrlChange,
   onSubmit,
   onCancel,
   isSubmitting
@@ -98,6 +102,22 @@ export function StatusUpdateForm({
             />
           </div>
         </>
+      )}
+
+      {currentStatus === 'delivered' && (
+        <div>
+          <label className="block text-sm font-medium mb-1">Digital Goods Attachment</label>
+          <input
+            type="url"
+            value={attachmentUrl}
+            onChange={(e) => onAttachmentUrlChange(e.target.value)}
+            placeholder="https://example.com/download/your-file"
+            className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Optional link for digital goods. This will be encrypted so only the buyer can see it.
+          </p>
+        </div>
       )}
 
       <div>

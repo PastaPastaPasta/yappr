@@ -20,6 +20,7 @@ import { orderStatusService } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { identityService } from '@/lib/services/identity-service'
+import { privateFeedCryptoService } from '@/lib/services/private-feed-crypto-service'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload } from '@/lib/types'
 
@@ -61,15 +62,30 @@ function OrdersPage() {
   const refreshStatuses = useCallback(async (orderList: StoreOrder[]) => {
     if (orderList.length === 0) return
 
+    const buyerPrivKey = user?.identityId ? getEncryptionKeyBytes(user.identityId) : null
     const updates: Array<{ orderId: string; status: OrderStatusUpdate }> = []
     await Promise.all(
       orderList.map(async (order) => {
         try {
           const status = await orderStatusService.getLatestStatus(order.id)
           if (status) {
+            // Decrypt attachment URL if present
+            if (status.encryptedAttachment && buyerPrivKey) {
+              try {
+                const aad = new TextEncoder().encode('yappr/attachment/v1')
+                const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
+                  buyerPrivKey,
+                  status.encryptedAttachment,
+                  aad
+                )
+                status.attachmentUrl = new TextDecoder().decode(decryptedBytes)
+              } catch {
+                // Ignore decryption errors on refresh
+              }
+            }
             updates.push({ orderId: order.id, status })
           }
-        } catch (e) {
+        } catch {
           // Ignore errors - preserve existing status for this order
         }
       })
@@ -82,7 +98,7 @@ function OrdersPage() {
       }
       return merged
     })
-  }, [])
+  }, [user?.identityId])
 
   // Load orders
   useEffect(() => {
@@ -113,6 +129,20 @@ function OrdersPage() {
               ])
 
               if (status) {
+                // Decrypt attachment URL if present
+                if (status.encryptedAttachment && buyerPrivKey) {
+                  try {
+                    const aad = new TextEncoder().encode('yappr/attachment/v1')
+                    const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
+                      buyerPrivKey,
+                      status.encryptedAttachment,
+                      aad
+                    )
+                    status.attachmentUrl = new TextDecoder().decode(decryptedBytes)
+                  } catch (decryptErr) {
+                    logger.warn(`Failed to decrypt attachment for order ${order.id}:`, decryptErr)
+                  }
+                }
                 statusMap.set(order.id, status)
               }
               if (store) {
