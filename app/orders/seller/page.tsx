@@ -170,13 +170,14 @@ function SellerOrdersPage() {
 
     setIsSubmitting(true)
     try {
-      // Encrypt attachment URL if provided
-      let encryptedAttachment: Uint8Array | undefined
+      // Build message field: may include encrypted attachment packed as
+      // "DIGITAL_DELIVERY:<base64>" optionally followed by "|<plain message>"
+      let message = statusMessage || undefined
+
       if (attachmentUrl.trim()) {
         const order = orders.find(o => o.id === orderId)
         if (order) {
           try {
-            // Fetch buyer's public encryption key
             const buyerIdentity = await identityService.getIdentity(order.buyerId)
             const buyerEncryptionKey = buyerIdentity?.publicKeys.find(
               (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
@@ -188,11 +189,20 @@ function SellerOrdersPage() {
             if (buyerPubKey) {
               const plaintext = new TextEncoder().encode(attachmentUrl.trim())
               const aad = new TextEncoder().encode('yappr/attachment/v1')
-              encryptedAttachment = await privateFeedCryptoService.eciesEncrypt(
+              const encrypted = await privateFeedCryptoService.eciesEncrypt(
                 buyerPubKey,
                 plaintext,
                 aad
               )
+              // Pack into message field: base64-encode the ciphertext
+              const b64 = btoa(Array.from(encrypted, b => String.fromCharCode(b)).join(''))
+              const deliveryTag = `DIGITAL_DELIVERY:${b64}`
+
+              if (statusMessage) {
+                message = `${deliveryTag}|${statusMessage}`
+              } else {
+                message = deliveryTag
+              }
             } else {
               toast.error('Could not find buyer encryption key. Attachment not included.')
             }
@@ -207,8 +217,7 @@ function SellerOrdersPage() {
         status: newStatus,
         trackingNumber: trackingNumber || undefined,
         trackingCarrier: trackingCarrier || undefined,
-        message: statusMessage || undefined,
-        encryptedAttachment
+        message
       })
 
       setOrderStatuses(prev => new Map(prev).set(orderId, update))
@@ -442,13 +451,18 @@ function SellerOrdersPage() {
                                 Tracking: {status.trackingCarrier} - {status.trackingNumber}
                               </p>
                             )}
-                            {status.encryptedAttachment && (
+                            {status.message?.startsWith('DIGITAL_DELIVERY:') && (
                               <p className="text-sm mt-1 text-purple-600 dark:text-purple-400">
                                 Digital goods attachment sent
                               </p>
                             )}
-                            {status.message && (
+                            {status.message && !status.message.startsWith('DIGITAL_DELIVERY:') && (
                               <p className="text-sm mt-1 italic">{status.message}</p>
+                            )}
+                            {status.message?.startsWith('DIGITAL_DELIVERY:') && status.message.includes('|') && (
+                              <p className="text-sm mt-1 italic">
+                                {status.message.slice(status.message.indexOf('|') + 1)}
+                              </p>
                             )}
                           </div>
                         )}

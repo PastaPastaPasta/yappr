@@ -42,6 +42,39 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
   return null
 }
 
+const DIGITAL_DELIVERY_PREFIX = 'DIGITAL_DELIVERY:'
+
+/**
+ * Parse and decrypt a digital goods attachment from the message field.
+ * Format: "DIGITAL_DELIVERY:<base64-ecies-ciphertext>" or "DIGITAL_DELIVERY:<base64>|<plain message>"
+ * Sets status.attachmentUrl and strips the delivery tag from the displayed message.
+ */
+async function decryptAttachmentFromMessage(
+  status: OrderStatusUpdate,
+  buyerPrivKey: Uint8Array
+): Promise<void> {
+  if (!status.message?.startsWith(DIGITAL_DELIVERY_PREFIX)) return
+
+  const pipeIdx = status.message.indexOf('|')
+  const b64 = pipeIdx >= 0
+    ? status.message.slice(DIGITAL_DELIVERY_PREFIX.length, pipeIdx)
+    : status.message.slice(DIGITAL_DELIVERY_PREFIX.length)
+
+  // Extract plain message portion if present
+  const plainMessage = pipeIdx >= 0 ? status.message.slice(pipeIdx + 1) : undefined
+
+  const encrypted = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  const aad = new TextEncoder().encode('yappr/attachment/v1')
+  const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
+    buyerPrivKey,
+    encrypted,
+    aad
+  )
+  status.attachmentUrl = new TextDecoder().decode(decryptedBytes)
+  // Replace the raw message with the plain portion so the UI doesn't show ciphertext
+  status.message = plainMessage
+}
+
 function OrdersPage() {
   const router = useRouter()
   const { user } = useAuth()
@@ -69,16 +102,9 @@ function OrdersPage() {
         try {
           const status = await orderStatusService.getLatestStatus(order.id)
           if (status) {
-            // Decrypt attachment URL if present
-            if (status.encryptedAttachment && buyerPrivKey) {
+            if (buyerPrivKey) {
               try {
-                const aad = new TextEncoder().encode('yappr/attachment/v1')
-                const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
-                  buyerPrivKey,
-                  status.encryptedAttachment,
-                  aad
-                )
-                status.attachmentUrl = new TextDecoder().decode(decryptedBytes)
+                await decryptAttachmentFromMessage(status, buyerPrivKey)
               } catch {
                 // Ignore decryption errors on refresh
               }
@@ -129,16 +155,9 @@ function OrdersPage() {
               ])
 
               if (status) {
-                // Decrypt attachment URL if present
-                if (status.encryptedAttachment && buyerPrivKey) {
+                if (buyerPrivKey) {
                   try {
-                    const aad = new TextEncoder().encode('yappr/attachment/v1')
-                    const decryptedBytes = await privateFeedCryptoService.eciesDecrypt(
-                      buyerPrivKey,
-                      status.encryptedAttachment,
-                      aad
-                    )
-                    status.attachmentUrl = new TextDecoder().decode(decryptedBytes)
+                    await decryptAttachmentFromMessage(status, buyerPrivKey)
                   } catch (decryptErr) {
                     logger.warn(`Failed to decrypt attachment for order ${order.id}:`, decryptErr)
                   }

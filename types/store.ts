@@ -304,7 +304,6 @@ export interface OrderStatusUpdateDocument {
   trackingNumber?: string
   trackingCarrier?: string
   message?: string
-  encryptedAttachment?: Uint8Array
 }
 
 // Parsed order status update for UI
@@ -317,8 +316,7 @@ export interface OrderStatusUpdate {
   trackingNumber?: string
   trackingCarrier?: string
   message?: string
-  encryptedAttachment?: Uint8Array
-  // Decrypted attachment URL (only available after decryption by buyer)
+  // Decrypted attachment URL parsed from message field (only available after decryption by buyer)
   attachmentUrl?: string
 }
 

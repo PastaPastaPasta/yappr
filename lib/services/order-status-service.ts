@@ -7,7 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes, toUint8Array } from './sdk-helpers';
+import { identifierToBase58, stringToIdentifierBytes } from './sdk-helpers';
 import type {
   OrderStatusUpdate,
   OrderStatusUpdateDocument,
@@ -25,10 +25,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     // Convert orderId from byte array to base58
     const orderId = identifierToBase58(data.orderId) || '';
 
-    const encryptedAttachment = data.encryptedAttachment
-      ? toUint8Array(data.encryptedAttachment) ?? undefined
-      : undefined;
-
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
@@ -37,8 +33,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       status: data.status,
       trackingNumber: data.trackingNumber,
       trackingCarrier: data.trackingCarrier,
-      message: data.message,
-      encryptedAttachment
+      message: data.message
     };
   }
 
@@ -96,7 +91,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       trackingNumber?: string;
       trackingCarrier?: string;
       message?: string;
-      encryptedAttachment?: Uint8Array;
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
@@ -107,7 +101,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     if (data.trackingNumber) documentData.trackingNumber = data.trackingNumber;
     if (data.trackingCarrier) documentData.trackingCarrier = data.trackingCarrier;
     if (data.message) documentData.message = data.message;
-    if (data.encryptedAttachment) documentData.encryptedAttachment = Array.from(data.encryptedAttachment);
 
     return this.create(sellerId, documentData);
   }

@@ -488,13 +488,6 @@
         "position": 4,
         "maxLength": 500,
         "description": "Optional message to buyer"
-      },
-      "encryptedAttachment": {
-        "type": "array",
-        "position": 5,
-        "byteArray": true,
-        "maxItems": 4096,
-        "description": "ECIES-encrypted attachment URL for digital goods fulfillment (only buyer can decrypt)"
       }
     },
     "description": "A status update for an order (append-only history)",
