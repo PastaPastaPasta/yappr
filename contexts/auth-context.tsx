@@ -29,7 +29,7 @@ interface AuthContextType {
   error: string | null
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
-  loginWithPasskey: (identityOrUsername: string, rememberMe?: boolean) => Promise<void>
+  loginWithPasskey: (identityOrUsername?: string, rememberMe?: boolean) => Promise<void>
   loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number, options?: { rememberMe?: boolean }) => Promise<void>
   createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
   createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
@@ -789,27 +789,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [login, restoreUnlockedVaultSession])
 
-  const loginWithPasskey = useCallback(async (identityOrUsername: string, rememberMe = false) => {
+  const loginWithPasskey = useCallback(async (identityOrUsername?: string, rememberMe = false) => {
     setIsLoading(true)
     setError(null)
 
     try {
       const { authVaultService } = await import('@/lib/services/auth-vault-service')
       const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
-      const { getPrfAssertionForCredentials } = await import('@/lib/webauthn/passkey-prf')
+      const { getDefaultRpId, getPrfAssertionForCredentials } = await import('@/lib/webauthn/passkey-prf')
 
       if (!authVaultService.isConfigured()) {
         throw new Error('Passkey login is not configured')
       }
 
-      const identityId = await authVaultService.resolveIdentityId(identityOrUsername)
-      if (!identityId) {
-        throw new Error('Username not found')
+      const normalizedIdentity = identityOrUsername?.trim()
+      const currentRpId = getDefaultRpId()
+      let identityId: string | null = null
+      let accesses = [] as Awaited<ReturnType<typeof authVaultAccessService.getPasskeyAccesses>>
+
+      if (normalizedIdentity) {
+        identityId = await authVaultService.resolveIdentityId(normalizedIdentity)
+        if (!identityId) {
+          throw new Error('Username not found')
+        }
+
+        accesses = (await authVaultAccessService.getPasskeyAccesses(identityId)).filter((access) => access.rpId === currentRpId)
+      } else {
+        accesses = await authVaultAccessService.getAllActivePasskeyAccesses(currentRpId)
       }
 
-      const accesses = await authVaultAccessService.getPasskeyAccesses(identityId)
       if (accesses.length === 0) {
-        throw new Error('No passkey login is configured for this account')
+        if (normalizedIdentity) {
+          throw new Error('No passkey login is configured for this site and account')
+        }
+        throw new Error('No passkey login is configured for this site yet')
       }
 
       const descriptors = accesses.flatMap((access) => {
@@ -824,10 +837,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const assertion = await getPrfAssertionForCredentials(descriptors)
       const access = accesses.find((entry) => sameBytes(entry.credentialIdHash, assertion.credentialIdHash))
       if (!access) {
-        throw new Error('Selected passkey is not registered for this identity')
+        throw new Error('Selected passkey is not registered for this site')
       }
 
-      const unlocked = await authVaultService.unlockWithPrf(identityId, access, assertion.prfOutput)
+      const unlocked = await authVaultService.unlockWithPrf(access.$ownerId, access, assertion.prfOutput)
       await restoreUnlockedVaultSession(unlocked, rememberMe)
     } catch (err) {
       logger.error('Passkey login error:', err)

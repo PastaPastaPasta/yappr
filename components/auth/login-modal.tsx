@@ -323,13 +323,11 @@ export function LoginModal() {
   }
 
   const handlePasskeySignIn = async () => {
-    if (!resolvedIdentity) return
-
     setError(null)
     setIsLoading(true)
 
     try {
-      await loginWithPasskey(resolvedIdentity.dpnsUsername || resolvedIdentity.id, rememberMe)
+      await loginWithPasskey(undefined, rememberMe)
       close()
     } catch (err) {
       setErrorWithShake(err instanceof Error ? err.message : 'Failed to login with passkey')
@@ -551,7 +549,7 @@ export function LoginModal() {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={isLoading || !resolvedIdentity || !hasPasskeyAccess}
+                  disabled={isLoading}
                   className="w-full"
                   size="lg"
                   onClick={handlePasskeySignIn}

@@ -134,6 +134,32 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     return this.getActiveAccesses(identityId, 'passkey-prf')
   }
 
+  async getAllActivePasskeyAccesses(rpId?: string, limit = 500): Promise<AuthVaultAccessDocument[]> {
+    if (!this.isConfigured()) return []
+
+    try {
+      const result = await this.query({
+        limit,
+      })
+
+      const documents = result.documents.filter((document) => {
+        if (document.kind !== 'passkey-prf' || document.status !== 'active') return false
+        if (!document.credentialId || !document.credentialIdHash || !document.prfInput || !document.rpId) return false
+        if (rpId && document.rpId !== rpId) return false
+        return true
+      })
+
+      if (result.documents.length >= limit) {
+        logger.warn('AuthVaultAccessService: Passkey discovery query reached the configured limit and may be truncated')
+      }
+
+      return documents
+    } catch (error) {
+      logger.error('AuthVaultAccessService: Failed to load global passkey access docs:', error)
+      return []
+    }
+  }
+
   async countActivePasskeys(identityId: string): Promise<number> {
     const documents = await this.getPasskeyAccesses(identityId)
     return documents.length
