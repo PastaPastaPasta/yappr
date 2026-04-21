@@ -188,7 +188,6 @@ export function useKeyRegistration(
       // Build the dash-st: URI
       const stUri = buildStateTransitionUri(
         transition.transitionBytes,
-        'identityUpdate',
         network
       )
 

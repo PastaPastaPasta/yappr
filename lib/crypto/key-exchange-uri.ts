@@ -10,7 +10,7 @@
 import bs58 from 'bs58'
 
 // Protocol version
-export const KEY_EXCHANGE_VERSION = 2
+export const KEY_EXCHANGE_VERSION = 1
 
 // Network identifiers for URI query parameter
 export const NETWORK_IDS = {
@@ -39,7 +39,7 @@ export interface KeyExchangeRequest {
  * Field Layout:
  *   | Offset | Size | Field |
  *   |--------|------|-------|
- *   | 0 | 1 | version (0x02) |
+ *   | 0 | 1 | version (0x01) |
  *   | 1 | 33 | appEphemeralPubKey |
  *   | 34 | 32 | contractId |
  *   | 66 | 1 | labelLength |

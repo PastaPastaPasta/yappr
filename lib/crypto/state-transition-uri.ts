@@ -5,9 +5,7 @@
  * These URIs allow the wallet to sign an unsigned state transition
  * (e.g., IdentityUpdateTransition for adding keys).
  *
- * URI Format: dash-st:<base58-encoded-transition>?n=<network>&v=<version>&t=<type>
- *
- * Spec: YAPPR_DET_SIGNER_SPEC.md Section 11.5
+ * URI Format: dash-st:<base58-encoded-transition>?n=<network>&v=<version>
  */
 
 import bs58 from 'bs58'
@@ -16,24 +14,15 @@ import { NETWORK_IDS, type NetworkType } from './key-exchange-uri'
 // Protocol version for state transition URIs
 export const STATE_TRANSITION_VERSION = 1
 
-// State transition type identifiers
-export const TRANSITION_TYPES = {
-  identityUpdate: 'iu'  // Identity Update Transition
-} as const
-
-export type TransitionType = keyof typeof TRANSITION_TYPES
-
 /**
  * Build a dash-st: URI for a state transition signing request.
  *
  * @param transitionBytes - The serialized unsigned state transition
- * @param transitionType - The type of state transition (e.g., 'identityUpdate')
  * @param network - The network (mainnet, testnet, devnet)
  * @returns Complete dash-st: URI string
  */
 export function buildStateTransitionUri(
   transitionBytes: Uint8Array,
-  transitionType: TransitionType,
   network: NetworkType = 'testnet'
 ): string {
   // Base58 encode the transition bytes
@@ -42,11 +31,8 @@ export function buildStateTransitionUri(
   // Get network identifier
   const networkId = NETWORK_IDS[network]
 
-  // Get transition type identifier
-  const typeId = TRANSITION_TYPES[transitionType]
-
   // Build URI with query parameters
-  return `dash-st:${transitionData}?n=${networkId}&v=${STATE_TRANSITION_VERSION}&t=${typeId}`
+  return `dash-st:${transitionData}?n=${networkId}&v=${STATE_TRANSITION_VERSION}`
 }
 
 /**
@@ -57,7 +43,6 @@ export function buildStateTransitionUri(
  */
 export function parseStateTransitionUri(uri: string): {
   transitionBytes: Uint8Array
-  transitionType: TransitionType
   network: NetworkType
   version: number
 } | null {
@@ -81,9 +66,8 @@ export function parseStateTransitionUri(uri: string): {
     const params = new URLSearchParams(queryString)
     const networkId = params.get('n')
     const versionStr = params.get('v')
-    const typeId = params.get('t')
 
-    if (!networkId || !versionStr || !typeId) {
+    if (!networkId || !versionStr) {
       return null
     }
 
@@ -101,19 +85,11 @@ export function parseStateTransitionUri(uri: string): {
       default: return null
     }
 
-    // Map type ID back to transition type
-    let transitionType: TransitionType
-    switch (typeId) {
-      case 'iu': transitionType = 'identityUpdate'; break
-      default: return null
-    }
-
     // Decode Base58 data
     const transitionBytes = bs58.decode(transitionData)
 
     return {
       transitionBytes,
-      transitionType,
       network,
       version
     }
