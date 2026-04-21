@@ -6,6 +6,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import type { AuthVaultBundle } from '@/lib/crypto/auth-vault'
+import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 
 export interface AuthUser {
   identityId: string
@@ -222,6 +223,32 @@ function sameBytes(left?: Uint8Array, right?: Uint8Array): boolean {
     if (left[i] !== right[i]) return false
   }
   return true
+}
+
+function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'password'): Error {
+  const message = extractErrorMessage(error)
+  const normalized = message.toLowerCase()
+
+  if (isAlreadyExistsError(error)) {
+    if (methodLabel === 'passkey') {
+      return new Error('This passkey is already registered for this account on this site.')
+    }
+    return new Error('A password unlock method is already configured for this account.')
+  }
+
+  if (normalized.includes('unknown contract')) {
+    return new Error('The auth vault contract is still propagating across Dash Platform. Please try again in a moment.')
+  }
+
+  if (
+    normalized.includes('grpc error') ||
+    normalized.includes('transport error') ||
+    normalized.includes('missing response message')
+  ) {
+    return new Error(`Dash Platform could not save your ${methodLabel} unlock method right now. Please try again in a moment.`)
+  }
+
+  return error instanceof Error ? error : new Error(message)
 }
 
 
@@ -644,17 +671,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { wrapDekWithPassword } = await import('@/lib/crypto/auth-vault')
     const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
 
-    const ensured = await ensureVaultForCurrentSession(user.identityId)
-    const wrapped = await wrapDekWithPassword(ensured.dek, password, iterations, user.identityId, ensured.vault.$id)
+    try {
+      const ensured = await ensureVaultForCurrentSession(user.identityId)
+      const wrapped = await wrapDekWithPassword(ensured.dek, password, iterations, user.identityId, ensured.vault.$id)
 
-    await authVaultAccessService.upsertPasswordAccess(user.identityId, {
-      vaultId: ensured.vault.$id,
-      label: 'Password',
-      wrappedDek: wrapped.wrappedDek,
-      iv: wrapped.iv,
-      pbkdf2Salt: wrapped.pbkdf2Salt,
-      pbkdf2Iterations: iterations,
-    })
+      await authVaultAccessService.upsertPasswordAccess(user.identityId, {
+        vaultId: ensured.vault.$id,
+        label: 'Password',
+        wrappedDek: wrapped.wrappedDek,
+        iv: wrapped.iv,
+        pbkdf2Salt: wrapped.pbkdf2Salt,
+        pbkdf2Iterations: iterations,
+      })
+    } catch (error) {
+      throw toFriendlyVaultWriteError(error, 'password')
+    }
   }, [ensureVaultForCurrentSession, user?.identityId])
 
   const addPasskeyWrapper = useCallback(async (label = 'Current device') => {
@@ -666,27 +697,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { wrapDekWithPrf } = await import('@/lib/crypto/auth-vault')
     const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
 
-    const ensured = await ensureVaultForCurrentSession(user.identityId)
-    const username = user.dpnsUsername || user.identityId
-    const passkey = await createPasskeyWithPrf({
-      identityId: user.identityId,
-      username,
-      displayName: username,
-      label,
-    })
+    try {
+      const ensured = await ensureVaultForCurrentSession(user.identityId)
+      const username = user.dpnsUsername || user.identityId
+      const passkey = await createPasskeyWithPrf({
+        identityId: user.identityId,
+        username,
+        displayName: username,
+        label,
+      })
 
-    const wrapped = await wrapDekWithPrf(ensured.dek, passkey.prfOutput, user.identityId, ensured.vault.$id, passkey.rpId)
+      const wrapped = await wrapDekWithPrf(ensured.dek, passkey.prfOutput, user.identityId, ensured.vault.$id, passkey.rpId)
 
-    await authVaultAccessService.createPasskeyAccess(user.identityId, {
-      vaultId: ensured.vault.$id,
-      label: passkey.label,
-      wrappedDek: wrapped.wrappedDek,
-      iv: wrapped.iv,
-      credentialId: passkey.credentialId,
-      credentialIdHash: passkey.credentialIdHash,
-      prfInput: passkey.prfInput,
-      rpId: passkey.rpId,
-    })
+      try {
+        await authVaultAccessService.createPasskeyAccess(user.identityId, {
+          vaultId: ensured.vault.$id,
+          label: passkey.label,
+          wrappedDek: wrapped.wrappedDek,
+          iv: wrapped.iv,
+          credentialId: passkey.credentialId,
+          credentialIdHash: passkey.credentialIdHash,
+          prfInput: passkey.prfInput,
+          rpId: passkey.rpId,
+        })
+      } catch (error) {
+        const existingAccesses = await authVaultAccessService.getPasskeyAccesses(user.identityId).catch(() => [])
+        if (existingAccesses.some((access) => sameBytes(access.credentialIdHash, passkey.credentialIdHash))) {
+          return
+        }
+
+        throw error
+      }
+    } catch (error) {
+      throw toFriendlyVaultWriteError(error, 'passkey')
+    }
   }, [ensureVaultForCurrentSession, user?.dpnsUsername, user?.identityId])
 
   const logout = useCallback(async () => {
