@@ -560,12 +560,6 @@ export function LoginModal() {
                   Sign In with Passkey
                 </Button>
 
-                {(!resolvedIdentity || !hasPasskeyAccess) && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Enter your username first. Passkey sign-in appears only for accounts that already enrolled a passkey.
-                  </p>
-                )}
-
                 {resolvedIdentity && hasPasskeyAccess && (
                   <>
                     {passkeySupportMessage && (
