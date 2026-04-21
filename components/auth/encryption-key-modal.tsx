@@ -95,7 +95,7 @@ export function EncryptionKeyModal() {
       const derivedKey = deriveEncryptionKey(authPrivateKey, user.identityId)
 
       // Check if derived key matches identity's encryption key
-      const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId, 1) // purpose=1 is encryption
+      const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId)
 
       if (!isModalActiveRef.current) return
 

@@ -150,7 +150,7 @@ export function AddEncryptionKeyModal({
 
           const parsed = parsePrivateKey(authKeyWif)
           const derivedKey = deriveEncryptionKey(parsed.privateKey, user.identityId)
-          const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId, 1)
+          const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId)
 
           // Modal may have been closed while the network call was in flight
           if (!isOpenRef.current) return

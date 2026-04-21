@@ -31,6 +31,7 @@ import {
 } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
+import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { identityService } from './identity-service';
@@ -214,7 +215,7 @@ class PrivateFeedService {
    * Enable private feed for the current user (SPEC §8.1)
    *
    * Prerequisites:
-   * - User must have a contract-bound encryption key on their identity
+   * - User must have an encryption key on their identity
    *
    * @param ownerId - The identity ID of the feed owner
    * @param encryptionPrivateKey - The private key for encryption (32 bytes)
@@ -241,15 +242,19 @@ class PrivateFeedService {
       }
 
       const derivedPubKeyHex = Buffer.from(encryptionPubKey).toString('hex');
-      const matchingKey = identity.publicKeys.find(
-        key => {
-          if (key.purpose !== 1 || key.type !== 0 || key.disabledAt) return false;
-          // Properly parse the on-chain public key (handles Uint8Array, hex string, or base64)
-          const onChainPubKey = parsePublicKeyData(key.data);
-          if (!onChainPubKey) return false;
-          return Buffer.from(onChainPubKey).toString('hex') === derivedPubKeyHex;
-        }
-      );
+      // Find the identity's encryption key
+      const preferredKey = findEncryptionKey(identity.publicKeys);
+      const matchesPreferred = preferredKey?.data
+        ? Buffer.from(parsePublicKeyData(preferredKey.data) ?? new Uint8Array()).toString('hex') === derivedPubKeyHex
+        : false;
+      const matchingKey = matchesPreferred
+        ? preferredKey
+        : identity.publicKeys.find(key => {
+            if (key.purpose !== 1 || key.type !== 0 || key.disabledAt) return false;
+            const onChainPubKey = parsePublicKeyData(key.data);
+            if (!onChainPubKey) return false;
+            return Buffer.from(onChainPubKey).toString('hex') === derivedPubKeyHex;
+          });
 
       if (!matchingKey) {
         return {

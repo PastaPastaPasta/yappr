@@ -237,11 +237,10 @@ class IdentityService {
    */
   async hasEncryptionKey(identityId: string): Promise<boolean> {
     try {
+      const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup');
       const identity = await this.getIdentity(identityId);
       if (!identity) return false;
-      return identity.publicKeys.some(
-        key => key.purpose === 1 && key.type === 0 && !key.disabledAt
-      );
+      return hasEncryptionKeyOnIdentity(identity.publicKeys);
     } catch (error) {
       logger.error('Error checking encryption key:', error);
       return false;

@@ -129,13 +129,10 @@ export function PrivateFeedFollowRequests() {
 
       // If still no valid public key, try to fetch from identity
       if (!publicKey) {
+        const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
         const identity = await identityService.getIdentity(request.id)
         if (identity?.publicKeys) {
-          // Find encryption key (purpose 0 = AUTHENTICATION, 1 = ENCRYPTION)
-          // Look for secp256k1 key (type 0) with encryption purpose
-          const encryptionKey = identity.publicKeys.find(
-            (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-          )
+          const encryptionKey = findEncryptionKey(identity.publicKeys)
           if (encryptionKey?.data) {
             const normalized = normalizeKeyData(encryptionKey.data)
             if (normalized) {
