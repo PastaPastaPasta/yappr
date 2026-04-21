@@ -199,6 +199,71 @@ export const clearRememberMe = (): void => {
   localStorage.removeItem('yappr_remember_me')
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+function base64ToBytes(value: string): Uint8Array | null {
+  try {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return bytes
+  } catch {
+    return null
+  }
+}
+
+export const storeLoginKey = (identityId: string, loginKey: Uint8Array): void => {
+  secureStorage.set(`lk_${identityId}`, bytesToBase64(loginKey))
+}
+
+export const getLoginKey = (identityId: string): string | null => {
+  const value = secureStorage.get(`lk_${identityId}`)
+  return typeof value === 'string' ? value : null
+}
+
+export const getLoginKeyBytes = (identityId: string): Uint8Array | null => {
+  const value = getLoginKey(identityId)
+  return value ? base64ToBytes(value) : null
+}
+
+export const hasLoginKey = (identityId: string): boolean => {
+  return secureStorage.has(`lk_${identityId}`)
+}
+
+export const clearLoginKey = (identityId: string): boolean => {
+  return secureStorage.delete(`lk_${identityId}`)
+}
+
+export const storeAuthVaultDek = (identityId: string, dek: Uint8Array): void => {
+  secureStorage.set(`avd_${identityId}`, bytesToBase64(dek))
+}
+
+export const getAuthVaultDek = (identityId: string): string | null => {
+  const value = secureStorage.get(`avd_${identityId}`)
+  return typeof value === 'string' ? value : null
+}
+
+export const getAuthVaultDekBytes = (identityId: string): Uint8Array | null => {
+  const value = getAuthVaultDek(identityId)
+  return value ? base64ToBytes(value) : null
+}
+
+export const hasAuthVaultDek = (identityId: string): boolean => {
+  return secureStorage.has(`avd_${identityId}`)
+}
+
+export const clearAuthVaultDek = (identityId: string): boolean => {
+  return secureStorage.delete(`avd_${identityId}`)
+}
+
 // Encryption key storage for private feed operations
 // Keys are stored in WIF format for consistency with other private keys
 

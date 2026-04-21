@@ -5,6 +5,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import type { AuthVaultBundle } from '@/lib/crypto/auth-vault'
 
 export interface AuthUser {
   identityId: string
@@ -28,7 +29,19 @@ interface AuthContextType {
   error: string | null
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
+  loginWithPasskey: (identityOrUsername: string, rememberMe?: boolean) => Promise<void>
   loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number, options?: { rememberMe?: boolean }) => Promise<void>
+  createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
+  createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
+  addPasskeyWrapper: (label?: string) => Promise<void>
+  addPasswordWrapper: (password: string, iterations: number) => Promise<void>
+  mergeSecretsIntoAuthVault: (identityId: string, partialSecrets: {
+    loginKey?: Uint8Array | string
+    authKeyWif?: string
+    encryptionKeyWif?: string
+    transferKeyWif?: string
+    source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
+  }) => Promise<void>
   logout: () => Promise<void>
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
@@ -155,7 +168,7 @@ async function attemptEncryptionKeyDerivation(
   try {
     const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } =
       await import('@/lib/crypto/key-derivation')
-    const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
+    const { storeEncryptionKey, storeEncryptionKeyType, getAuthVaultDekBytes } = await import('@/lib/secure-storage')
     const { privateKeyToWif } = await import('@/lib/crypto/wif')
 
     // Derive the encryption key
@@ -177,6 +190,17 @@ async function attemptEncryptionKeyDerivation(
       const wif = privateKeyToWif(derivedKey, network, true)
       storeEncryptionKey(identityId, wif)
       storeEncryptionKeyType(identityId, 'derived')
+
+      const dek = getAuthVaultDekBytes(identityId)
+      if (dek) {
+        const { authVaultService } = await import('@/lib/services/auth-vault-service')
+        await authVaultService.mergeSecrets(identityId, dek, {
+          encryptionKeyWif: wif,
+        }).catch((mergeError) => {
+          logger.warn('Auth: Failed to merge derived encryption key into auth vault:', mergeError)
+        })
+      }
+
       logger.info('Auth: Encryption key derived and stored')
       return derivedKey
     }
@@ -186,6 +210,18 @@ async function attemptEncryptionKeyDerivation(
     logger.error('Auth: Failed to derive encryption key:', error)
     return null
   }
+}
+
+function getConfiguredNetwork(): 'testnet' | 'mainnet' {
+  return (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+}
+
+function sameBytes(left?: Uint8Array, right?: Uint8Array): boolean {
+  if (!left || !right || left.length !== right.length) return false
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false
+  }
+  return true
 }
 
 
@@ -394,6 +430,265 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [router])
 
+  const ensureVaultForCurrentSession = useCallback(async (
+    identityId: string,
+    overrides: {
+      loginKey?: Uint8Array
+      authKeyWif?: string
+      encryptionKeyWif?: string
+      transferKeyWif?: string
+      source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
+    } = {}
+  ) => {
+    const { authVaultService, createAuthVaultBundle } = await import('@/lib/services/auth-vault-service')
+    const {
+      getPrivateKey,
+      getEncryptionKey,
+      getTransferKey,
+      getLoginKeyBytes,
+      getAuthVaultDekBytes,
+      storeAuthVaultDek,
+      storeLoginKey,
+    } = await import('@/lib/secure-storage')
+
+    if (!authVaultService.isConfigured()) {
+      throw new Error('Auth vault is not configured')
+    }
+
+    const existingDek = getAuthVaultDekBytes(identityId)
+    if (existingDek) {
+      const merged = await authVaultService.mergeSecrets(identityId, existingDek, {
+        loginKey: overrides.loginKey,
+        authKeyWif: overrides.authKeyWif,
+        encryptionKeyWif: overrides.encryptionKeyWif,
+        transferKeyWif: overrides.transferKeyWif,
+        source: overrides.source,
+      })
+
+      if (merged) {
+        storeAuthVaultDek(identityId, merged.dek)
+        const mergedLoginKey = overrides.loginKey ?? getLoginKeyBytes(identityId)
+        if (mergedLoginKey) {
+          storeLoginKey(identityId, mergedLoginKey)
+        }
+        return merged
+      }
+    }
+
+    const hasExistingVault = await authVaultService.hasVault(identityId)
+    if (hasExistingVault && !existingDek) {
+      throw new Error('This auth vault must be unlocked on this device before it can be updated.')
+    }
+
+    const loginKey = overrides.loginKey ?? getLoginKeyBytes(identityId) ?? undefined
+    const authKeyWif = overrides.authKeyWif ?? getPrivateKey(identityId) ?? undefined
+    const encryptionKeyWif = overrides.encryptionKeyWif ?? getEncryptionKey(identityId) ?? undefined
+    const transferKeyWif = overrides.transferKeyWif ?? getTransferKey(identityId) ?? undefined
+
+    if (!loginKey && !authKeyWif) {
+      throw new Error('No active login secret is available for auth vault enrollment.')
+    }
+
+    const bundle = createAuthVaultBundle({
+      identityId,
+      network: getConfiguredNetwork(),
+      source: overrides.source ?? (loginKey ? 'wallet-derived' : 'direct-key'),
+      loginKey,
+      authKeyWif,
+      encryptionKeyWif,
+      transferKeyWif,
+    })
+
+    const created = await authVaultService.createOrUpdateVaultBundle(identityId, bundle, existingDek ?? undefined)
+    storeAuthVaultDek(identityId, created.dek)
+    if (loginKey) {
+      storeLoginKey(identityId, loginKey)
+    }
+    return created
+  }, [])
+
+  const restoreUnlockedVaultSession = useCallback(async (
+    unlocked: {
+      identityId: string
+      bundle: AuthVaultBundle
+      dek: Uint8Array
+    },
+    rememberMe: boolean
+  ) => {
+    const {
+      setRememberMe,
+      storeLoginKey,
+      storeAuthVaultDek,
+      storeEncryptionKey,
+      storeEncryptionKeyType,
+      storeTransferKey,
+    } = await import('@/lib/secure-storage')
+    const { privateKeyToWif, parsePrivateKey } = await import('@/lib/crypto/wif')
+
+    const identityId = unlocked.identityId
+    const network = getConfiguredNetwork()
+    let authKeyWif = unlocked.bundle.authKeyWif
+    let encryptionKeyWif = unlocked.bundle.encryptionKeyWif
+    let encryptionKeyType: 'derived' | 'external' = 'external'
+
+    if (unlocked.bundle.secretKind === 'login-key') {
+      if (!unlocked.bundle.loginKey) {
+        throw new Error('Auth vault is missing the wallet login secret.')
+      }
+
+      const { getLoginKeyBytesFromBundle } = await import('@/lib/services/auth-vault-service')
+      const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
+      const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
+
+      const loginKey = getLoginKeyBytesFromBundle(unlocked.bundle)
+      if (!loginKey) {
+        throw new Error('Failed to decode wallet login secret from auth vault.')
+      }
+
+      const identityIdBytes = decodeIdentityId(identityId)
+      const authKey = deriveAuthKeyFromLogin(loginKey, identityIdBytes)
+      const derivedEncryptionKey = deriveEncryptionKeyFromLogin(loginKey, identityIdBytes)
+
+      authKeyWif = privateKeyToWif(authKey, network, true)
+      const derivedEncryptionKeyWif = privateKeyToWif(derivedEncryptionKey, network, true)
+      encryptionKeyWif = unlocked.bundle.encryptionKeyWif ?? derivedEncryptionKeyWif
+      encryptionKeyType = !unlocked.bundle.encryptionKeyWif || unlocked.bundle.encryptionKeyWif === derivedEncryptionKeyWif
+        ? 'derived'
+        : 'external'
+
+      setRememberMe(rememberMe)
+      storeLoginKey(identityId, loginKey)
+    } else {
+      if (!authKeyWif) {
+        throw new Error('Auth vault is missing the authentication key.')
+      }
+
+      if (encryptionKeyWif) {
+        try {
+          const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
+          const parsed = parsePrivateKey(authKeyWif)
+          const derived = deriveEncryptionKey(parsed.privateKey, identityId)
+          const derivedWif = privateKeyToWif(derived, network, true)
+          encryptionKeyType = derivedWif === encryptionKeyWif ? 'derived' : 'external'
+        } catch {
+          encryptionKeyType = 'external'
+        }
+      }
+    }
+
+    storeAuthVaultDek(identityId, unlocked.dek)
+    await login(identityId, authKeyWif, { skipUsernameCheck: true, rememberMe })
+
+    if (encryptionKeyWif) {
+      storeEncryptionKey(identityId, encryptionKeyWif)
+      storeEncryptionKeyType(identityId, encryptionKeyType)
+    }
+
+    if (unlocked.bundle.transferKeyWif) {
+      storeTransferKey(identityId, unlocked.bundle.transferKeyWif)
+    }
+  }, [login])
+
+  const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
+    await ensureVaultForCurrentSession(identityId, {
+      loginKey,
+      source: 'wallet-derived',
+    })
+  }, [ensureVaultForCurrentSession])
+
+  const createOrUpdateUnifiedVaultFromAuthKey = useCallback(async (identityId: string, authKeyWif: string) => {
+    await ensureVaultForCurrentSession(identityId, {
+      authKeyWif,
+      source: 'direct-key',
+    })
+  }, [ensureVaultForCurrentSession])
+
+  const mergeSecretsIntoAuthVault = useCallback(async (
+    identityId: string,
+    partialSecrets: {
+      loginKey?: Uint8Array | string
+      authKeyWif?: string
+      encryptionKeyWif?: string
+      transferKeyWif?: string
+      source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
+    }
+  ) => {
+    const { authVaultService } = await import('@/lib/services/auth-vault-service')
+    const { getAuthVaultDekBytes, storeAuthVaultDek, storeLoginKey } = await import('@/lib/secure-storage')
+
+    if (!authVaultService.isConfigured()) {
+      return
+    }
+
+    const dek = getAuthVaultDekBytes(identityId)
+    if (!dek) {
+      return
+    }
+
+    const merged = await authVaultService.mergeSecrets(identityId, dek, partialSecrets)
+    if (!merged) {
+      return
+    }
+
+    storeAuthVaultDek(identityId, merged.dek)
+    if (partialSecrets.loginKey && partialSecrets.loginKey instanceof Uint8Array) {
+      storeLoginKey(identityId, partialSecrets.loginKey)
+    }
+  }, [])
+
+  const addPasswordWrapper = useCallback(async (password: string, iterations: number) => {
+    if (!user?.identityId) {
+      throw new Error('You must be logged in to add a password unlock method.')
+    }
+
+    const { wrapDekWithPassword } = await import('@/lib/crypto/auth-vault')
+    const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
+
+    const ensured = await ensureVaultForCurrentSession(user.identityId)
+    const wrapped = await wrapDekWithPassword(ensured.dek, password, iterations, user.identityId, ensured.vault.$id)
+
+    await authVaultAccessService.upsertPasswordAccess(user.identityId, {
+      vaultId: ensured.vault.$id,
+      label: 'Password',
+      wrappedDek: wrapped.wrappedDek,
+      iv: wrapped.iv,
+      pbkdf2Salt: wrapped.pbkdf2Salt,
+      pbkdf2Iterations: iterations,
+    })
+  }, [ensureVaultForCurrentSession, user?.identityId])
+
+  const addPasskeyWrapper = useCallback(async (label = 'Current device') => {
+    if (!user?.identityId) {
+      throw new Error('You must be logged in to add a passkey.')
+    }
+
+    const { createPasskeyWithPrf } = await import('@/lib/webauthn/passkey-prf')
+    const { wrapDekWithPrf } = await import('@/lib/crypto/auth-vault')
+    const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
+
+    const ensured = await ensureVaultForCurrentSession(user.identityId)
+    const username = user.dpnsUsername || user.identityId
+    const passkey = await createPasskeyWithPrf({
+      identityId: user.identityId,
+      username,
+      displayName: username,
+      label,
+    })
+
+    const wrapped = await wrapDekWithPrf(ensured.dek, passkey.prfOutput, user.identityId, ensured.vault.$id, passkey.rpId)
+
+    await authVaultAccessService.createPasskeyAccess(user.identityId, {
+      vaultId: ensured.vault.$id,
+      label: passkey.label,
+      wrappedDek: wrapped.wrappedDek,
+      iv: wrapped.iv,
+      credentialId: passkey.credentialId,
+      credentialIdHash: passkey.credentialIdHash,
+      prfInput: passkey.prfInput,
+      rpId: passkey.rpId,
+    })
+  }, [ensureVaultForCurrentSession, user?.dpnsUsername, user?.identityId])
+
   const logout = useCallback(async () => {
     localStorage.removeItem('yappr_session')
     sessionStorage.removeItem('yappr_dpns_username')
@@ -407,12 +702,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clearEncryptionKey,
         clearEncryptionKeyType,
         clearTransferKey,
+        clearLoginKey,
+        clearAuthVaultDek,
         clearRememberMe,
       } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
       clearEncryptionKey(user.identityId)
       clearEncryptionKeyType(user.identityId)
       clearTransferKey(user.identityId)
+      clearLoginKey(user.identityId)
+      clearAuthVaultDek(user.identityId)
       clearRememberMe()
 
       const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
@@ -438,7 +737,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       let result: { identityId: string; privateKey: string } | null = null
 
-      // Try vault service first (new contract with contract-bound keys)
+      // Try unified auth vault first.
+      const { authVaultService } = await import('@/lib/services/auth-vault-service')
+      if (authVaultService.isConfigured()) {
+        try {
+          const unlocked = await authVaultService.unlockWithPassword(username, password)
+          await restoreUnlockedVaultSession(unlocked, rememberMe)
+          return
+        } catch (authVaultErr) {
+          const msg = authVaultErr instanceof Error ? authVaultErr.message : ''
+          if (msg === 'Invalid password') {
+            throw authVaultErr
+          }
+          logger.info('Auth: Unified auth vault login failed, falling back to legacy contracts:', msg || authVaultErr)
+        }
+      }
+
+      // Try legacy vault service next.
       const { vaultService } = await import('@/lib/services/vault-service')
       if (vaultService.isConfigured()) {
         try {
@@ -446,15 +761,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (vaultErr) {
           const msg = vaultErr instanceof Error ? vaultErr.message : ''
           if (msg === 'Invalid password') {
-            // Vault found a backup but password was wrong — don't fall through
             throw vaultErr
           }
-          // No backup in vault or other error — fall through to old contract
-          logger.info('Auth: Vault login failed, falling back to old contract:', msg || vaultErr)
+          logger.info('Auth: Legacy vault login failed, falling back to old encrypted-key-backup contract:', msg || vaultErr)
         }
       }
 
-      // Fall back to old encrypted-key-backup contract
+      // Fall back to the oldest encrypted-key-backup contract.
       if (!result) {
         const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
         if (!encryptedKeyService.isConfigured()) {
@@ -474,7 +787,56 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [login])
+  }, [login, restoreUnlockedVaultSession])
+
+  const loginWithPasskey = useCallback(async (identityOrUsername: string, rememberMe = false) => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const { authVaultService } = await import('@/lib/services/auth-vault-service')
+      const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
+      const { getPrfAssertionForCredentials } = await import('@/lib/webauthn/passkey-prf')
+
+      if (!authVaultService.isConfigured()) {
+        throw new Error('Passkey login is not configured')
+      }
+
+      const identityId = await authVaultService.resolveIdentityId(identityOrUsername)
+      if (!identityId) {
+        throw new Error('Username not found')
+      }
+
+      const accesses = await authVaultAccessService.getPasskeyAccesses(identityId)
+      if (accesses.length === 0) {
+        throw new Error('No passkey login is configured for this account')
+      }
+
+      const descriptors = accesses.flatMap((access) => {
+        if (!access.credentialId || !access.prfInput || !access.rpId) return []
+        return [{
+          credentialId: access.credentialId,
+          prfInput: access.prfInput,
+          rpId: access.rpId,
+        }]
+      })
+
+      const assertion = await getPrfAssertionForCredentials(descriptors)
+      const access = accesses.find((entry) => sameBytes(entry.credentialIdHash, assertion.credentialIdHash))
+      if (!access) {
+        throw new Error('Selected passkey is not registered for this identity')
+      }
+
+      const unlocked = await authVaultService.unlockWithPrf(identityId, access, assertion.prfOutput)
+      await restoreUnlockedVaultSession(unlocked, rememberMe)
+    } catch (err) {
+      logger.error('Passkey login error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to login with passkey')
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [restoreUnlockedVaultSession])
 
   /**
    * Login using a key exchange login key from a wallet.
@@ -499,7 +861,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
       const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
       const { privateKeyToWif } = await import('@/lib/crypto/wif')
-      const { storeEncryptionKey, storeEncryptionKeyType, setRememberMe } = await import('@/lib/secure-storage')
+      const { storeEncryptionKey, storeEncryptionKeyType, storeLoginKey, setRememberMe } = await import('@/lib/secure-storage')
 
       // Decode identity ID to bytes
       const identityIdBytes = decodeIdentityId(identityId)
@@ -517,6 +879,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Set storage mode
       setRememberMe(rememberMe)
+      storeLoginKey(identityId, loginKey)
 
       logger.info(`Auth: Key exchange login - keyIndex=${keyIndex}`)
 
@@ -526,11 +889,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Only persist encryption key after successful login
       storeEncryptionKey(identityId, encryptionKeyWif)
       storeEncryptionKeyType(identityId, 'derived')
+      await createOrUpdateUnifiedVaultFromLoginKey(identityId, loginKey).catch((vaultError) => {
+        logger.warn('Auth: Failed to create or update unified auth vault after QR login:', vaultError)
+      })
+      await mergeSecretsIntoAuthVault(identityId, {
+        loginKey,
+        encryptionKeyWif,
+        source: 'wallet-derived',
+      }).catch((vaultError) => {
+        logger.warn('Auth: Failed to merge QR-derived secrets into auth vault:', vaultError)
+      })
     } catch (err) {
       // Clear any partially persisted encryption key and type metadata on failure
-      const { clearEncryptionKey, clearEncryptionKeyType } = await import('@/lib/secure-storage')
+      const { clearEncryptionKey, clearEncryptionKeyType, clearLoginKey } = await import('@/lib/secure-storage')
       clearEncryptionKey(identityId)
       clearEncryptionKeyType(identityId)
+      clearLoginKey(identityId)
 
       logger.error('Key exchange login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with key exchange')
@@ -538,7 +912,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [login])
+  }, [createOrUpdateUnifiedVaultFromLoginKey, login, mergeSecretsIntoAuthVault])
 
   const updateDPNSUsername = useCallback((username: string) => {
     if (!user) return
@@ -613,7 +987,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       error,
       login,
       loginWithPassword,
+      loginWithPasskey,
       loginWithKeyExchange,
+      createOrUpdateUnifiedVaultFromLoginKey,
+      createOrUpdateUnifiedVaultFromAuthKey,
+      addPasskeyWrapper,
+      addPasswordWrapper,
+      mergeSecretsIntoAuthVault,
       logout,
       updateDPNSUsername,
       refreshDpnsUsernames,

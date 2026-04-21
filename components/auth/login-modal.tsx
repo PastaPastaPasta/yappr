@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Eye, EyeOff } from 'lucide-react'
+import { X, Eye, EyeOff, KeyRound } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
@@ -15,9 +15,11 @@ import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
+import { authVaultService } from '@/lib/services/auth-vault-service'
 import { isLikelyWif } from '@/lib/crypto/wif'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
+import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 import { QrCode } from 'lucide-react'
 
 // Check if input looks like an Identity ID (base58, ~44 chars)
@@ -58,6 +60,8 @@ export function LoginModal() {
   const [showCredential, setShowCredential] = useState(false)
   const [detectedCredentialType, setDetectedCredentialType] = useState<CredentialType>(null)
   const [hasOnchainBackup, setHasOnchainBackup] = useState<boolean | null>(null)
+  const [hasPasskeyAccess, setHasPasskeyAccess] = useState(false)
+  const [passkeySupportMessage, setPasskeySupportMessage] = useState<string | null>(null)
 
   // Key validation states
   const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle')
@@ -86,7 +90,7 @@ export function LoginModal() {
     }
   }, [])
 
-  const { login, loginWithPassword } = useAuth()
+  const { login, loginWithPassword, loginWithPasskey } = useAuth()
   const openBackupModal = useKeyBackupModal((state) => state.open)
   const openKeyExchangeModal = useKeyExchangeModal((state) => state.open)
 
@@ -104,6 +108,8 @@ export function LoginModal() {
       setKeyValidationResult(null)
       setDetectedCredentialType(null)
       setHasOnchainBackup(null)
+      setHasPasskeyAccess(false)
+      setPasskeySupportMessage(null)
     }
   }, [isOpen])
 
@@ -121,6 +127,8 @@ export function LoginModal() {
       setLookupError(null)
       setResolvedIdentity(null)
       setHasOnchainBackup(null)
+      setHasPasskeyAccess(false)
+      setPasskeySupportMessage(null)
       setKeyValidationStatus('idle')
       setKeyValidationResult(null)
 
@@ -158,7 +166,33 @@ export function LoginModal() {
           dpnsUsername
         })
 
-        // Check vault contract first, then fall back to old encrypted-key-backup contract
+        // Check unified auth vault first.
+        try {
+          if (authVaultService.isConfigured()) {
+            const status = await authVaultService.getStatus(identityId)
+            setHasOnchainBackup(status.hasPasswordAccess)
+            setHasPasskeyAccess(status.passkeyCount > 0)
+
+            if (status.passkeyCount > 0) {
+              const support = await getPasskeyPrfSupport()
+              if (!support.likelyPrfCapable && support.blockedReason) {
+                setPasskeySupportMessage(support.blockedReason)
+              } else if (support.platformHint === 'apple') {
+                setPasskeySupportMessage('Platform passkeys are preferred here. External security-key PRF may not work on iPhone or iPad.')
+              } else {
+                setPasskeySupportMessage(null)
+              }
+            }
+
+            if (status.hasPasswordAccess || status.passkeyCount > 0) {
+              return
+            }
+          }
+        } catch {
+          // Auth vault check failed — continue to legacy fallback
+        }
+
+        // Check legacy vault contract next.
         try {
           const { vaultService } = await import('@/lib/services/vault-service')
           if (vaultService.isConfigured()) {
@@ -264,11 +298,15 @@ export function LoginModal() {
 
         await login(identityId, credential, { rememberMe })
 
-        if (encryptedKeyService.isConfigured() && !sessionStorage.getItem('yappr_backup_prompt_shown')) {
-          const hasBackup = await encryptedKeyService.hasBackup(identityId)
+        if (!sessionStorage.getItem('yappr_backup_prompt_shown')) {
+          const unifiedStatus = authVaultService.isConfigured()
+            ? await authVaultService.getStatus(identityId).catch(() => null)
+            : null
+          const hasBackup = unifiedStatus?.hasPasswordAccess
+            ?? (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
           if (!hasBackup) {
             sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
-            openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', credential, false)
+            openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', false)
           }
         }
       } else {
@@ -279,6 +317,22 @@ export function LoginModal() {
       close()
     } catch (err) {
       setErrorWithShake(err instanceof Error ? err.message : 'Failed to login')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handlePasskeySignIn = async () => {
+    if (!resolvedIdentity) return
+
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      await loginWithPasskey(resolvedIdentity.dpnsUsername || resolvedIdentity.id, rememberMe)
+      close()
+    } catch (err) {
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login with passkey')
     } finally {
       setIsLoading(false)
     }
@@ -493,6 +547,26 @@ export function LoginModal() {
                     'Sign In'
                   )}
                 </Button>
+
+                {resolvedIdentity && hasPasskeyAccess && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isLoading}
+                    className="w-full"
+                    size="lg"
+                    onClick={handlePasskeySignIn}
+                  >
+                    <KeyRound className="w-4 h-4 mr-2" />
+                    Sign In with Passkey
+                  </Button>
+                )}
+
+                {resolvedIdentity && hasPasskeyAccess && passkeySupportMessage && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {passkeySupportMessage}
+                  </p>
+                )}
 
                 {/* Wallet Login Option - available immediately without identity */}
                 <button

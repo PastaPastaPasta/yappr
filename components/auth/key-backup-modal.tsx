@@ -7,9 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useAuth } from '@/contexts/auth-context'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
-import { vaultService } from '@/lib/services/vault-service'
-import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import {
   validateBackupPassword,
   benchmarkPbkdf2,
@@ -21,7 +20,8 @@ import { useSettingsStore } from '@/lib/store'
 
 export function KeyBackupModal() {
   const router = useRouter()
-  const { isOpen, identityId, username, privateKey, redirectOnClose, close } = useKeyBackupModal()
+  const { addPasswordWrapper } = useAuth()
+  const { isOpen, identityId, username, redirectOnClose, close } = useKeyBackupModal()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [password, setPassword] = useState('')
@@ -103,25 +103,14 @@ export function KeyBackupModal() {
       return
     }
 
-    if (!identityId || !privateKey) {
-      setError('Missing identity or private key')
+    if (!identityId) {
+      setError('Missing identity')
       return
     }
 
     setIsSubmitting(true)
     try {
-      // Use vault service for new backups when available, fall back to old contract
-      let result: { success: boolean; error?: string }
-      if (vaultService.isConfigured()) {
-        result = await vaultService.savePasswordBackup(identityId, privateKey, password, iterations)
-      } else {
-        result = await encryptedKeyService.createBackup(identityId, privateKey, password, iterations)
-      }
-
-      if (!result.success) {
-        setError(result.error || 'Failed to create backup')
-        return
-      }
+      await addPasswordWrapper(password, iterations)
 
       // Success - close modal
       handleClose()
@@ -191,10 +180,10 @@ export function KeyBackupModal() {
                 </div>
               </div>
 
-              <h1 className="text-2xl font-bold text-center mb-2">Backup Your Key</h1>
+              <h1 className="text-2xl font-bold text-center mb-2">Protect Your Auth Vault</h1>
               <p className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
-                Save an encrypted copy of your key to Dash Platform.
-                This lets you sign in with just your username and password.
+                Add a password unlock method for your unified auth vault on Dash Platform.
+                This lets you sign in with your username and password without duplicating the underlying secret bundle.
               </p>
 
               {/* Key to be protected */}
@@ -207,8 +196,8 @@ export function KeyBackupModal() {
                     <Key className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
                   </div>
                   <div className="flex-1">
-                    <span className="font-medium text-gray-900 dark:text-white">Login Key</span>
-                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-xs">Required for signing in</span>
+                    <span className="font-medium text-gray-900 dark:text-white">Unified Secret Bundle</span>
+                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-xs">One blob unlocked by password or passkey</span>
                   </div>
                   <Check className="w-4 h-4 text-green-500" />
                 </div>
@@ -223,9 +212,9 @@ export function KeyBackupModal() {
                       Security Warning
                     </p>
                     <ul className="text-orange-700 dark:text-orange-300 space-y-1 list-disc list-inside">
-                      <li>Your encrypted key will be stored publicly on Dash Platform</li>
-                      <li><strong>Anyone who knows your password can access your key</strong></li>
-                      <li>This cannot be undone</li>
+                      <li>Your encrypted auth vault metadata will be stored publicly on Dash Platform</li>
+                      <li><strong>Anyone who knows your password can unlock your login secret bundle</strong></li>
+                      <li>Keep at least one fallback login method in case you lose this password</li>
                     </ul>
                   </div>
                 </div>

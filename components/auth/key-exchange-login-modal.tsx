@@ -9,6 +9,8 @@ import { useKeyExchangeLogin } from '@/hooks/use-key-exchange-login'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { authVaultService } from '@/lib/services/auth-vault-service'
+import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
@@ -27,14 +29,13 @@ import { Button } from '@/components/ui/button'
 export function KeyExchangeLoginModal() {
   const { isOpen, close } = useKeyExchangeModal()
   const closeLoginModal = useLoginModal((s) => s.close)
-  const { loginWithKeyExchange } = useAuth()
+  const { loginWithKeyExchange, addPasskeyWrapper } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const {
     state,
     uri,
     remainingTime,
-    keyIndex,
     error,
     result,
     start,
@@ -50,7 +51,26 @@ export function KeyExchangeLoginModal() {
     setLoginError(null)
     setIsCompleting(true)
     loginWithKeyExchange(identityId, loginKey, keyIndex)
-      .then(() => {
+      .then(async () => {
+        try {
+          if (authVaultService.isConfigured()) {
+            const status = await authVaultService.getStatus(identityId)
+            const support = await getPasskeyPrfSupport()
+            if (
+              status.hasVault &&
+              status.passkeyCount === 0 &&
+              support.webauthnAvailable &&
+              support.likelyPrfCapable &&
+              typeof window !== 'undefined' &&
+              window.confirm('Add a passkey for future sign-ins on this account?')
+            ) {
+              await addPasskeyWrapper('Wallet login passkey')
+            }
+          }
+        } catch (passkeyError) {
+          logger.warn('Key exchange login completed, but passkey enrollment prompt failed:', passkeyError)
+        }
+
         // cancel() zeros key material in result state via clearResult
         setTimeout(() => {
           cancel()
@@ -63,7 +83,7 @@ export function KeyExchangeLoginModal() {
         setLoginError(err instanceof Error ? err.message : 'Login failed')
         setIsCompleting(false)
       })
-  }, [loginWithKeyExchange, cancel, closeLoginModal, close])
+  }, [addPasskeyWrapper, loginWithKeyExchange, cancel, closeLoginModal, close])
 
   // Start the login flow when modal opens (no identity needed)
   useEffect(() => {

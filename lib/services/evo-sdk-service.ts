@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { EvoSDK } from '@dashevo/evo-sdk';
-import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID } from '../constants';
+import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID } from '../constants';
 
 export interface EvoSdkConfig {
   network: 'testnet' | 'mainnet';
@@ -134,6 +134,9 @@ class EvoSdkService {
     // Add Vault contract if configured
     if (YAPPR_VAULT_CONTRACT_ID && !YAPPR_VAULT_CONTRACT_ID.includes('PLACEHOLDER')) {
       contractsToFetch.push({ id: YAPPR_VAULT_CONTRACT_ID, name: 'Vault' });
+    }
+    if (YAPPR_AUTH_VAULT_CONTRACT_ID && !YAPPR_AUTH_VAULT_CONTRACT_ID.includes('PLACEHOLDER')) {
+      contractsToFetch.push({ id: YAPPR_AUTH_VAULT_CONTRACT_ID, name: 'AuthVault' });
     }
 
     // Fetch all contracts in parallel

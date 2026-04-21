@@ -40,7 +40,7 @@ export function AddEncryptionKeyModal({
   onSuccess,
   context = 'generic',
 }: AddEncryptionKeyModalProps) {
-  const { user } = useAuth()
+  const { user, mergeSecretsIntoAuthVault } = useAuth()
 
   // Context-specific messaging
   const contextMessages = {
@@ -161,6 +161,7 @@ export function AddEncryptionKeyModal({
             const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
             storeEncryptionKey(user.identityId, derivedKeyWif)
             storeEncryptionKeyType(user.identityId, 'derived')
+            await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: derivedKeyWif })
             setIsEnterExistingPath(true)
             setIsValidatingExistingKey(false)
             setStep('success')
@@ -178,7 +179,7 @@ export function AddEncryptionKeyModal({
     // Auto-derivation unavailable or failed — show manual entry form
     setIsValidatingExistingKey(false)
     setStep('enter-existing')
-  }, [user, onSuccess])
+  }, [mergeSecretsIntoAuthVault, user, onSuccess])
 
   // Validate a manually entered existing key and store it
   const validateAndStoreExistingKey = useCallback(async () => {
@@ -200,9 +201,13 @@ export function AddEncryptionKeyModal({
         return
       }
 
-      const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
+      const { getEncryptionKey, storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
       storeEncryptionKey(user.identityId, existingKeyInput.trim())
       storeEncryptionKeyType(user.identityId, 'external')
+      const normalizedEncryptionKey = getEncryptionKey(user.identityId)
+      if (normalizedEncryptionKey) {
+        await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+      }
       setIsEnterExistingPath(true)
       setIsValidatingExistingKey(false)
       setStep('success')
@@ -212,7 +217,7 @@ export function AddEncryptionKeyModal({
       setExistingKeyError(err instanceof Error ? err.message : 'Failed to validate key')
       setIsValidatingExistingKey(false)
     }
-  }, [user, existingKeyInput, onSuccess])
+  }, [mergeSecretsIntoAuthVault, user, existingKeyInput, onSuccess])
 
   // Derive encryption key from auth key using HKDF
   const deriveKey = useCallback(async () => {
@@ -282,6 +287,7 @@ export function AddEncryptionKeyModal({
         storeEncryptionKey(user.identityId, privateKeyWif)
         // Mark as derived since we derived it from auth key
         storeEncryptionKeyType(user.identityId, 'derived')
+        await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: privateKeyWif })
 
         setStep('success')
         toast.success('Encryption key added to your identity!')
@@ -298,7 +304,7 @@ export function AddEncryptionKeyModal({
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
       setStep('error')
     }
-  }, [user, privateKeyWif, privateKeyBytes, criticalKeyWif, onSuccess])
+  }, [mergeSecretsIntoAuthVault, user, privateKeyWif, privateKeyBytes, criticalKeyWif, onSuccess])
 
   // Validate the CRITICAL key before proceeding
   const validateCriticalKey = useCallback(async () => {

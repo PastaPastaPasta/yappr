@@ -30,7 +30,7 @@ type KeySource = 'prefilled' | 'manual' | null
 
 export function TipModal() {
   const { isOpen, post, recipient, close } = useTipModal()
-  const { user, refreshBalance } = useAuth()
+  const { user, refreshBalance, mergeSecretsIntoAuthVault } = useAuth()
 
   // Derive recipient info from either post.author or direct recipient
   const recipientInfo = useMemo(() => {
@@ -230,7 +230,7 @@ export function TipModal() {
   }
 
   // Handle saving the transfer key for future use
-  const handleSaveKey = () => {
+  const handleSaveKey = async () => {
     if (!user || !usedTransferKeyRef.current) {
       setState('success')
       return
@@ -239,6 +239,10 @@ export function TipModal() {
     // Store the key locally and go to success
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
+      const normalizedTransferKey = getTransferKey(user.identityId)
+      if (normalizedTransferKey) {
+        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
+      }
     } catch (err) {
       logger.error('Failed to store transfer key:', err)
     }

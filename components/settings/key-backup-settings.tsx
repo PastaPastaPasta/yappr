@@ -5,9 +5,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { vaultService } from '@/lib/services/vault-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
+import { authVaultService } from '@/lib/services/auth-vault-service'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import {
-  getPrivateKey,
   getEncryptionKey,
   getEncryptionKeyType,
   type KeyType
@@ -19,6 +19,7 @@ import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
+import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 
 interface KeyInfo {
   hasKey: boolean
@@ -26,7 +27,7 @@ interface KeyInfo {
 }
 
 export function KeyBackupSettings() {
-  const { user } = useAuth()
+  const { user, addPasskeyWrapper } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasBackup, setHasBackup] = useState(false)
@@ -36,6 +37,13 @@ export function KeyBackupSettings() {
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [encryptionKeyInfo, setEncryptionKeyInfo] = useState<KeyInfo>({ hasKey: false, type: null })
   const [hasKeyOnIdentity, setHasKeyOnIdentity] = useState<boolean | null>(null)
+  const [canEnrollPasskey, setCanEnrollPasskey] = useState(false)
+  const [isAddingPasskey, setIsAddingPasskey] = useState(false)
+  const [passkeySupportMessage, setPasskeySupportMessage] = useState<string | null>(null)
+  const [passkeyCount, setPasskeyCount] = useState(0)
+  const [secretKind, setSecretKind] = useState<'login-key' | 'auth-key' | null>(null)
+  const [hasVaultEncryptionKey, setHasVaultEncryptionKey] = useState(false)
+  const [hasVaultTransferKey, setHasVaultTransferKey] = useState(false)
   // Run token: ensures only the latest invocation of checkBackupStatus updates state
   const latestRunIdRef = useRef(0)
 
@@ -53,6 +61,18 @@ export function KeyBackupSettings() {
     refreshEncryptionKeyInfo()
   }, [refreshEncryptionKeyInfo])
 
+  useEffect(() => {
+    getPasskeyPrfSupport()
+      .then((support) => {
+        setCanEnrollPasskey(support.webauthnAvailable && support.likelyPrfCapable)
+        setPasskeySupportMessage(support.blockedReason ?? null)
+      })
+      .catch(() => {
+        setCanEnrollPasskey(false)
+        setPasskeySupportMessage('Passkey enrollment requires a PRF-capable browser and passkey provider.')
+      })
+  }, [])
+
   const checkBackupStatus = useCallback(async () => {
     if (!user) {
       setIsLoading(false)
@@ -62,9 +82,10 @@ export function KeyBackupSettings() {
     const runId = ++latestRunIdRef.current
 
     try {
+      const authVaultConfigured = authVaultService.isConfigured()
       const vaultConfigured = vaultService.isConfigured()
       const oldConfigured = encryptedKeyService.isConfigured()
-      const configured = vaultConfigured || oldConfigured
+      const configured = authVaultConfigured || vaultConfigured || oldConfigured
       if (runId !== latestRunIdRef.current) return
       setIsConfigured(configured)
 
@@ -72,11 +93,35 @@ export function KeyBackupSettings() {
         // Reset backup state to avoid showing stale values
         setHasBackup(false)
         setBackupDate(null)
+        setPasskeyCount(0)
+        setSecretKind(null)
+        setHasVaultEncryptionKey(false)
+        setHasVaultTransferKey(false)
 
         try {
-          // Check vault contract first
           let foundBackup = false
-          if (vaultConfigured) {
+
+          if (authVaultConfigured) {
+            const status = await authVaultService.getStatus(user.identityId)
+            if (runId !== latestRunIdRef.current) return
+            setHasBackup(status.hasPasswordAccess)
+            setPasskeyCount(status.passkeyCount)
+            setSecretKind(status.secretKind ?? null)
+            foundBackup = status.hasPasswordAccess
+
+            const dek = (await import('@/lib/secure-storage')).getAuthVaultDekBytes(user.identityId)
+            if (dek && status.hasVault) {
+              const unlocked = await authVaultService.decryptVault(user.identityId, dek).catch(() => null)
+              if (runId !== latestRunIdRef.current) return
+              if (unlocked) {
+                setHasVaultEncryptionKey(Boolean(unlocked.bundle.encryptionKeyWif))
+                setHasVaultTransferKey(Boolean(unlocked.bundle.transferKeyWif))
+              }
+            }
+          }
+
+          // Check legacy vault contract next
+          if (!foundBackup && vaultConfigured) {
             const hasVaultBackup = await vaultService.hasPasswordBackup(user.identityId)
             if (runId !== latestRunIdRef.current) return
             if (hasVaultBackup) {
@@ -123,17 +168,9 @@ export function KeyBackupSettings() {
   const handleCreateBackup = async () => {
     if (!user) return
 
-    // Get the private key from storage
-    const privateKey = getPrivateKey(user.identityId)
-
-    if (!privateKey) {
-      toast.error('Cannot access private key. Please log in again.')
-      return
-    }
-
-    // Open the backup modal
+    // Open the unified password wrapper modal
     const username = user.dpnsUsername || user.identityId
-    useKeyBackupModal.getState().open(user.identityId, username, privateKey, false)
+    useKeyBackupModal.getState().open(user.identityId, username, false)
   }
 
   const handleDeleteBackup = async () => {
@@ -147,6 +184,10 @@ export function KeyBackupSettings() {
     try {
       // Delete from all configured backends — fail if any configured backend fails
       let deleted = true
+      if (authVaultService.isConfigured()) {
+        const authVaultDeleted = await authVaultService.deleteVault(user.identityId)
+        if (!authVaultDeleted) deleted = false
+      }
       if (vaultService.isConfigured()) {
         const vaultDeleted = await vaultService.deleteVault(user.identityId)
         if (!vaultDeleted) deleted = false
@@ -167,6 +208,22 @@ export function KeyBackupSettings() {
       toast.error('Failed to delete backup')
     } finally {
       setIsDeleting(false)
+    }
+  }
+
+  const handleAddPasskey = async () => {
+    if (!user) return
+
+    setIsAddingPasskey(true)
+    try {
+      await addPasskeyWrapper('Settings passkey')
+      toast.success('Passkey added')
+      await checkBackupStatus()
+    } catch (error) {
+      logger.error('Error adding passkey:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to add passkey')
+    } finally {
+      setIsAddingPasskey(false)
     }
   }
 
@@ -200,17 +257,17 @@ export function KeyBackupSettings() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CloudArrowUpIcon className="h-5 w-5" />
-            On-Chain Key Backup
-          </CardTitle>
-          <CardDescription>
-            On-chain key backup is not available
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-gray-500">
-            The on-chain key backup feature is not yet configured for this network.
-          </p>
-        </CardContent>
+          Auth Vault
+        </CardTitle>
+        <CardDescription>
+          Auth vault is not available
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-500">
+          The auth vault feature is not yet configured for this network.
+        </p>
+      </CardContent>
       </Card>
     )
   }
@@ -220,10 +277,10 @@ export function KeyBackupSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <CloudArrowUpIcon className="h-5 w-5" />
-          On-Chain Key Backup
+          Auth Vault
         </CardTitle>
         <CardDescription>
-          Save encrypted copies of your keys to Dash Platform
+          One encrypted bundle with password and passkey unlock methods
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -231,15 +288,15 @@ export function KeyBackupSettings() {
         <div className="space-y-2">
           <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Keys Status</h4>
           <div className="space-y-2">
-            {/* Login Key - Always present */}
+            {/* Canonical secret */}
             <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
               <div className="flex items-center gap-2">
                 <KeyIcon className="h-4 w-4 text-gray-500" />
-                <span className="text-sm">Login Key</span>
+                <span className="text-sm">Canonical Secret</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
-                  Active
+                  {secretKind === 'login-key' ? 'Wallet login secret' : 'Private key'}
                 </span>
               </div>
             </div>
@@ -287,6 +344,38 @@ export function KeyBackupSettings() {
                 )}
               </div>
             </div>
+
+            <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="flex items-center gap-2">
+                <LockClosedIcon className="h-4 w-4 text-gray-500" />
+                <span className="text-sm">Transfer Key</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs px-2 py-0.5 rounded ${
+                  hasVaultTransferKey
+                    ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                }`}>
+                  {hasVaultTransferKey ? 'Stored in vault' : 'Not in vault'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="flex items-center gap-2">
+                <ShieldCheckIcon className="h-4 w-4 text-gray-500" />
+                <span className="text-sm">Passkeys</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs px-2 py-0.5 rounded ${
+                  passkeyCount > 0
+                    ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                }`}>
+                  {passkeyCount > 0 ? `${passkeyCount} active` : 'None'}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -297,11 +386,11 @@ export function KeyBackupSettings() {
                 <CheckCircleIcon className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                    Backup is active
+                    Password unlock is active
                   </p>
                   <p className="text-sm text-green-700 dark:text-green-300">
-                    Your encrypted key is stored on Dash Platform.
-                    You can log in with your username and password.
+                    Your auth vault can be unlocked with a password.
+                    {passkeyCount > 0 ? ` ${passkeyCount} passkey unlock method${passkeyCount === 1 ? '' : 's'} also active.` : ' Add a passkey for a stronger fallback.'}
                     {backupDate && (
                       <span className="block mt-1 text-xs">
                         Created: {backupDate.toLocaleDateString()}
@@ -326,7 +415,7 @@ export function KeyBackupSettings() {
               ) : (
                 <>
                   <TrashIcon className="h-4 w-4 mr-2" />
-                  Delete Backup
+                  Delete Vault Access
                 </>
               )}
             </Button>
@@ -338,10 +427,10 @@ export function KeyBackupSettings() {
                 <ShieldCheckIcon className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
-                    No backup found
+                    No password unlock found
                   </p>
                   <p className="text-sm text-orange-700 dark:text-orange-300">
-                    Create an encrypted backup of your login key to enable username + password login.
+                    Add a password wrapper so this auth vault can be unlocked with your username and password.
                   </p>
                 </div>
               </div>
@@ -352,29 +441,62 @@ export function KeyBackupSettings() {
               onClick={handleCreateBackup}
             >
               <CloudArrowUpIcon className="h-4 w-4 mr-2" />
-              Create Backup
+              Add Password Unlock
             </Button>
           </>
         )}
+
+        <div className="space-y-2">
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={handleAddPasskey}
+            disabled={!canEnrollPasskey || isAddingPasskey}
+          >
+            {isAddingPasskey ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Adding passkey...
+              </>
+            ) : (
+              'Add Passkey'
+            )}
+          </Button>
+          {passkeySupportMessage && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {passkeySupportMessage}
+            </p>
+          )}
+          {(Number(hasBackup) + (passkeyCount > 0 ? 1 : 0)) <= 1 && (
+            <p className="text-xs text-orange-600 dark:text-orange-400">
+              Keep at least two unlock methods if you want a realistic recovery path.
+            </p>
+          )}
+          {hasVaultEncryptionKey && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Encryption key is already captured in the auth vault.
+            </p>
+          )}
+        </div>
 
         <div className="pt-4 border-t">
           <h4 className="font-medium mb-2">How it works:</h4>
           <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              Your login key is encrypted with a strong passphrase you choose
+              One encrypted auth bundle is stored on Dash Platform
             </li>
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              The encrypted backup is stored publicly on Dash Platform
+              Passwords and passkeys each wrap the same vault key instead of duplicating secrets
             </li>
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              Your encryption key is auto-derived from your login key on each login
+              Wallet QR users keep their wallet login secret as the canonical root material
             </li>
             <li className="flex gap-2">
               <span className="text-purple-500">•</span>
-              Use a strong, unique passphrase (16+ characters)
+              Yappr captures encryption and transfer keys into the same vault once they are learned
             </li>
           </ul>
         </div>
