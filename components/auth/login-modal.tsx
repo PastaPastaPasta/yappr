@@ -302,8 +302,9 @@ export function LoginModal() {
           const unifiedStatus = authVaultService.isConfigured()
             ? await authVaultService.getStatus(identityId).catch(() => null)
             : null
-          const hasBackup = unifiedStatus?.hasPasswordAccess
-            ?? (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
+          const hasBackup = unifiedStatus
+            ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
+            : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
           if (!hasBackup) {
             sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
             openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', false)

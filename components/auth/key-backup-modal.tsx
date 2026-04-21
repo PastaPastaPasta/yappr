@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check } from 'lucide-react'
+import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check, KeyRound } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/contexts/auth-context'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
@@ -17,10 +17,11 @@ import {
   MAX_KDF_ITERATIONS
 } from '@/lib/onchain-key-encryption'
 import { useSettingsStore } from '@/lib/store'
+import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 
 export function KeyBackupModal() {
   const router = useRouter()
-  const { addPasswordWrapper } = useAuth()
+  const { addPasswordWrapper, addPasskeyWrapper } = useAuth()
   const { isOpen, identityId, username, redirectOnClose, close } = useKeyBackupModal()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
@@ -30,6 +31,10 @@ export function KeyBackupModal() {
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [consentChecked, setConsentChecked] = useState(false)
+  const [canEnrollPasskey, setCanEnrollPasskey] = useState(false)
+  const [isCheckingPasskeySupport, setIsCheckingPasskeySupport] = useState(false)
+  const [isAddingPasskey, setIsAddingPasskey] = useState(false)
+  const [passkeySupportMessage, setPasskeySupportMessage] = useState<string | null>(null)
 
   // Benchmark and iteration settings
   const [isBenchmarking, setIsBenchmarking] = useState(true)
@@ -44,6 +49,35 @@ export function KeyBackupModal() {
       runBenchmark().catch(err => logger.error('Failed to run benchmark:', err))
     }
   }, [isOpen, iterationsPerMs])
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    let cancelled = false
+    setIsCheckingPasskeySupport(true)
+
+    getPasskeyPrfSupport()
+      .then((support) => {
+        if (cancelled) return
+        setCanEnrollPasskey(support.webauthnAvailable && support.likelyPrfCapable)
+        setPasskeySupportMessage(support.blockedReason ?? null)
+      })
+      .catch((error) => {
+        logger.error('Failed to check passkey support:', error)
+        if (cancelled) return
+        setCanEnrollPasskey(false)
+        setPasskeySupportMessage('Passkey enrollment requires a PRF-capable browser and passkey provider.')
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsCheckingPasskeySupport(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen])
 
   const runBenchmark = async () => {
     setIsBenchmarking(true)
@@ -121,6 +155,25 @@ export function KeyBackupModal() {
     }
   }
 
+  const handleAddPasskey = async () => {
+    setError(null)
+
+    if (!identityId) {
+      setError('Missing identity')
+      return
+    }
+
+    setIsAddingPasskey(true)
+    try {
+      await addPasskeyWrapper('Account passkey')
+      handleClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add passkey')
+    } finally {
+      setIsAddingPasskey(false)
+    }
+  }
+
   const handleClose = () => {
     setPassword('')
     setConfirmPassword('')
@@ -182,8 +235,8 @@ export function KeyBackupModal() {
 
               <h1 className="text-2xl font-bold text-center mb-2">Protect Your Auth Vault</h1>
               <p className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
-                Add a password unlock method for your unified auth vault on Dash Platform.
-                This lets you sign in with your username and password without duplicating the underlying secret bundle.
+                Add an unlock method for your unified auth vault on Dash Platform.
+                Passkeys and passwords both unlock the same secret bundle without duplicating it.
               </p>
 
               {/* Key to be protected */}
@@ -203,24 +256,69 @@ export function KeyBackupModal() {
                 </div>
               </div>
 
-              {/* Security Warning */}
-              <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-lg p-4 mb-4">
+              <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
                 <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
-                  <div className="text-sm">
-                    <p className="font-semibold text-orange-800 dark:text-orange-200 mb-1">
-                      Security Warning
+                  <div className="w-8 h-8 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center flex-shrink-0">
+                    <KeyRound className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900 dark:text-white">Add a passkey now</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      Use a device or password-manager passkey to unlock this same auth vault on future sign-ins.
                     </p>
-                    <ul className="text-orange-700 dark:text-orange-300 space-y-1 list-disc list-inside">
-                      <li>Your encrypted auth vault metadata will be stored publicly on Dash Platform</li>
-                      <li><strong>Anyone who knows your password can unlock your login secret bundle</strong></li>
-                      <li>Keep at least one fallback login method in case you lose this password</li>
-                    </ul>
                   </div>
                 </div>
+
+                {passkeySupportMessage && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {passkeySupportMessage}
+                  </p>
+                )}
+
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={handleAddPasskey}
+                  disabled={isCheckingPasskeySupport || !canEnrollPasskey || isAddingPasskey || isSubmitting}
+                >
+                  {isAddingPasskey ? (
+                    <>
+                      <Spinner size="xs" className="mr-2" />
+                      Adding passkey...
+                    </>
+                  ) : (
+                    <>
+                      <KeyRound className="w-4 h-4 mr-2" />
+                      Add Passkey
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
+                <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">or add a password</span>
+                <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Security Warning */}
+                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-semibold text-orange-800 dark:text-orange-200 mb-1">
+                        Password Warning
+                      </p>
+                      <ul className="text-orange-700 dark:text-orange-300 space-y-1 list-disc list-inside">
+                        <li>Your encrypted auth vault metadata will be stored publicly on Dash Platform</li>
+                        <li><strong>Anyone who knows your password can unlock your login secret bundle</strong></li>
+                        <li>Keep at least one fallback login method in case you lose this password</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Password input */}
                 <div>
                   <label htmlFor="backup-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
