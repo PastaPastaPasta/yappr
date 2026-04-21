@@ -548,24 +548,32 @@ export function LoginModal() {
                   )}
                 </Button>
 
-                {resolvedIdentity && hasPasskeyAccess && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isLoading}
-                    className="w-full"
-                    size="lg"
-                    onClick={handlePasskeySignIn}
-                  >
-                    <KeyRound className="w-4 h-4 mr-2" />
-                    Sign In with Passkey
-                  </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isLoading || !resolvedIdentity || !hasPasskeyAccess}
+                  className="w-full"
+                  size="lg"
+                  onClick={handlePasskeySignIn}
+                >
+                  <KeyRound className="w-4 h-4 mr-2" />
+                  Sign In with Passkey
+                </Button>
+
+                {(!resolvedIdentity || !hasPasskeyAccess) && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Enter your username first. Passkey sign-in appears only for accounts that already enrolled a passkey.
+                  </p>
                 )}
 
-                {resolvedIdentity && hasPasskeyAccess && passkeySupportMessage && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {passkeySupportMessage}
-                  </p>
+                {resolvedIdentity && hasPasskeyAccess && (
+                  <>
+                    {passkeySupportMessage && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {passkeySupportMessage}
+                      </p>
+                    )}
+                  </>
                 )}
 
                 {/* Wallet Login Option - available immediately without identity */}
