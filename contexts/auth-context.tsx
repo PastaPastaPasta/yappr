@@ -840,7 +840,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { authVaultService } = await import('@/lib/services/auth-vault-service')
       const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
-      const { getDefaultRpId, getPrfAssertionForCredentials } = await import('@/lib/webauthn/passkey-prf')
+      const { getDefaultRpId, getPrfAssertionForCredentials, selectDiscoverablePasskey } = await import('@/lib/webauthn/passkey-prf')
 
       if (!authVaultService.isConfigured()) {
         throw new Error('Passkey login is not configured')
@@ -848,25 +848,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const normalizedIdentity = identityOrUsername?.trim()
       const currentRpId = getDefaultRpId()
-      let identityId: string | null = null
       let accesses = [] as Awaited<ReturnType<typeof authVaultAccessService.getPasskeyAccesses>>
+      let selectedCredentialHash: Uint8Array | undefined
 
       if (normalizedIdentity) {
-        identityId = await authVaultService.resolveIdentityId(normalizedIdentity)
+        const identityId = await authVaultService.resolveIdentityId(normalizedIdentity)
         if (!identityId) {
           throw new Error('Username not found')
         }
 
         accesses = (await authVaultAccessService.getPasskeyAccesses(identityId)).filter((access) => access.rpId === currentRpId)
       } else {
-        accesses = await authVaultAccessService.getAllActivePasskeyAccesses(currentRpId)
+        const selectedPasskey = await selectDiscoverablePasskey(currentRpId)
+        if (!selectedPasskey.userHandle) {
+          throw new Error('This passkey did not provide an account identifier. Try signing in with your username once, then use passkey login again.')
+        }
+
+        accesses = (await authVaultAccessService.getPasskeyAccesses(selectedPasskey.userHandle)).filter((access) => access.rpId === currentRpId)
+        selectedCredentialHash = selectedPasskey.credentialIdHash
       }
 
       if (accesses.length === 0) {
         if (normalizedIdentity) {
           throw new Error('No passkey login is configured for this site and account')
         }
-        throw new Error('No passkey login is configured for this site yet')
+        throw new Error('No passkey login is configured for this selected passkey on this site yet')
+      }
+
+      if (selectedCredentialHash) {
+        accesses = accesses.filter((access) => sameBytes(access.credentialIdHash, selectedCredentialHash))
+        if (accesses.length === 0) {
+          throw new Error('This selected passkey is not registered for this site')
+        }
       }
 
       const descriptors = accesses.flatMap((access) => {
@@ -879,7 +892,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })
 
       const assertion = await getPrfAssertionForCredentials(descriptors)
-      const access = accesses.find((entry) => sameBytes(entry.credentialIdHash, assertion.credentialIdHash))
+      const expectedCredentialHash = selectedCredentialHash ?? assertion.credentialIdHash
+      const access = accesses.find((entry) => sameBytes(entry.credentialIdHash, expectedCredentialHash))
       if (!access) {
         throw new Error('Selected passkey is not registered for this site')
       }

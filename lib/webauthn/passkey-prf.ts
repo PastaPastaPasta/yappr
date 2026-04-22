@@ -24,6 +24,10 @@ interface PublicKeyCredentialWithExtensions extends PublicKeyCredential {
   }
 }
 
+interface PublicKeyCredentialWithAssertionResponse extends PublicKeyCredential {
+  response: AuthenticatorAssertionResponse
+}
+
 export interface PasskeyCredentialDescriptor {
   credentialId: Uint8Array
   prfInput: Uint8Array
@@ -35,6 +39,13 @@ export interface PasskeyPrfAssertionResult {
   credentialIdHash: Uint8Array
   prfInput: Uint8Array
   prfOutput: Uint8Array
+  rpId: string
+}
+
+export interface DiscoverablePasskeySelectionResult {
+  credentialId: Uint8Array
+  credentialIdHash: Uint8Array
+  userHandle?: string
   rpId: string
 }
 
@@ -73,6 +84,13 @@ function base64UrlEncode(bytes: Uint8Array): string {
 function extractPrfFirst(result: BrowserPrfResult | undefined): Uint8Array | null {
   if (!result?.results?.first) return null
   return new Uint8Array(result.results.first)
+}
+
+function decodeUserHandle(userHandle: ArrayBuffer | null | undefined): string | undefined {
+  if (!userHandle) return undefined
+
+  const decoded = new TextDecoder().decode(new Uint8Array(userHandle)).trim()
+  return decoded || undefined
 }
 
 function ensureBrowserPasskeys(): void {
@@ -184,6 +202,34 @@ export async function getPrfAssertionForCredentials(credentials: PasskeyCredenti
     prfInput: descriptor.prfInput,
     prfOutput,
     rpId: descriptor.rpId,
+  }
+}
+
+export async function selectDiscoverablePasskey(rpId = getDefaultRpId()): Promise<DiscoverablePasskeySelectionResult> {
+  ensureBrowserPasskeys()
+
+  const challenge = crypto.getRandomValues(new Uint8Array(32))
+  const credential = await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      rpId,
+      timeout: 60000,
+      userVerification: 'required',
+    },
+  })
+
+  if (!(credential instanceof PublicKeyCredential)) {
+    throw new Error('Passkey assertion failed')
+  }
+
+  const assertionCredential = credential as PublicKeyCredentialWithAssertionResponse
+  const credentialId = new Uint8Array(credential.rawId)
+
+  return {
+    credentialId,
+    credentialIdHash: sha256(credentialId),
+    userHandle: decodeUserHandle(assertionCredential.response.userHandle),
+    rpId,
   }
 }
 
