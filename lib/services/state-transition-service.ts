@@ -288,7 +288,11 @@ class StateTransitionService {
     contractId: string,
     documentType: string,
     ownerId: string,
-    documentData: Record<string, unknown>
+    documentData: Record<string, unknown>,
+    options?: {
+      documentId?: string;
+      entropy?: Uint8Array;
+    }
   ): Promise<StateTransitionResult> {
     try {
       const sdk = await getEvoSdk();
@@ -316,7 +320,11 @@ class StateTransitionService {
         contractId,
         documentType,
         ownerId,
-        documentData
+        documentData,
+        {
+          id: options?.documentId,
+          entropy: options?.entropy,
+        }
       );
       const documentId = documentBuilderService.getDocumentId(document);
       logger.info(`Built document, ID: ${documentId}`);

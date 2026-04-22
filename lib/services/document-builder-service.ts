@@ -12,6 +12,7 @@
  */
 import { getEvoSdk } from './evo-sdk-service';
 import { Document } from '@dashevo/evo-sdk';
+import bs58 from 'bs58';
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -22,6 +23,22 @@ async function ensureWasmReady(): Promise<void> {
 }
 
 class DocumentBuilderService {
+  async generateDocumentIdentity(
+    contractId: string,
+    documentTypeName: string,
+    ownerId: string
+  ): Promise<{ id: string; entropy: Uint8Array }> {
+    await ensureWasmReady();
+
+    const entropy = crypto.getRandomValues(new Uint8Array(32));
+    const idBytes = Document.generateId(documentTypeName, ownerId, contractId, entropy);
+
+    return {
+      id: bs58.encode(idBytes),
+      entropy,
+    };
+  }
+
   /**
    * Build a Document object for document creation
    *
@@ -38,7 +55,11 @@ class DocumentBuilderService {
     contractId: string,
     documentTypeName: string,
     ownerId: string,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    options?: {
+      id?: string;
+      entropy?: Uint8Array;
+    }
   ): Promise<InstanceType<typeof Document>> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
@@ -50,7 +71,8 @@ class DocumentBuilderService {
       dataContractId: contractId,
       ownerId,
       revision: BigInt(1),
-      // id omitted = auto-generated from entropy
+      id: options?.id,
+      entropy: options?.entropy,
     });
 
     return document;

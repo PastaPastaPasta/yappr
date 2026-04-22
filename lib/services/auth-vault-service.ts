@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger'
 import { DOCUMENT_TYPES, YAPPR_AUTH_VAULT_CONTRACT_ID } from '@/lib/constants'
 import { BaseDocumentService } from '@/lib/services/document-service'
+import { documentBuilderService } from '@/lib/services/document-builder-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { normalizeBytes } from '@/lib/services/sdk-helpers'
 import {
@@ -12,7 +13,6 @@ import {
   decryptBundle,
   encryptBundle,
   generateDek,
-  getBundleHash,
   unwrapDekWithPassword,
   unwrapDekWithPrf,
 } from '@/lib/crypto/auth-vault'
@@ -162,17 +162,32 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
 
     let vault = existing
     if (!vault) {
-      const placeholderIv = crypto.getRandomValues(new Uint8Array(12))
-      const placeholderHash = getBundleHash(activeBundle)
-      vault = await this.create(identityId, {
+      const { id: vaultId, entropy } = await documentBuilderService.generateDocumentIdentity(
+        this.contractId,
+        this.documentType,
+        identityId,
+      )
+      const encrypted = await encryptBundle(activeBundle, dek, vaultId)
+
+      vault = await this.createWithOptions(identityId, {
         version: DEFAULT_VERSION,
         secretKind: activeBundle.secretKind,
-        ciphertext: new Uint8Array([0]),
-        iv: toDocumentBytes(placeholderIv),
-        bundleHash: toDocumentBytes(placeholderHash),
+        ciphertext: toDocumentBytes(encrypted.ciphertext),
+        iv: toDocumentBytes(encrypted.iv),
+        bundleHash: toDocumentBytes(encrypted.bundleHash),
         updatedAt: activeBundle.updatedAt,
-        active: false,
+        active: true,
+      }, {
+        documentId: vaultId,
+        entropy,
       })
+
+      return {
+        identityId,
+        vault,
+        bundle: activeBundle,
+        dek,
+      }
     }
 
     const encrypted = await encryptBundle(activeBundle, dek, vault.$id)

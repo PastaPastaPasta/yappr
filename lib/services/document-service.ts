@@ -169,6 +169,17 @@ export abstract class BaseDocumentService<T> {
    * Create a new document
    */
   async create(ownerId: string, data: Record<string, unknown>): Promise<T> {
+    return this.createWithOptions(ownerId, data)
+  }
+
+  async createWithOptions(
+    ownerId: string,
+    data: Record<string, unknown>,
+    options?: {
+      documentId?: string;
+      entropy?: Uint8Array;
+    }
+  ): Promise<T> {
     try {
       logger.info(`Creating ${this.documentType} document:`, data);
 
@@ -176,7 +187,8 @@ export abstract class BaseDocumentService<T> {
         this.contractId,
         this.documentType,
         ownerId,
-        data
+        data,
+        options
       );
 
       if (!result.success || !result.document) {
