@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger'
 import { DOCUMENT_TYPES, YAPPR_AUTH_VAULT_CONTRACT_ID } from '@/lib/constants'
 import { BaseDocumentService } from '@/lib/services/document-service'
+import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { type DocumentWhereClause, normalizeBytes, requireIdentifierBytes } from '@/lib/services/sdk-helpers'
 import bs58 from 'bs58'
 
@@ -107,7 +108,24 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     return data
   }
 
-  async getActiveAccesses(identityId: string, kind?: AuthVaultAccessKind): Promise<AuthVaultAccessDocument[]> {
+  private async recoverAndRetry<T>(
+    operation: () => Promise<T>,
+    logPrefix: string,
+    error: unknown,
+  ): Promise<T> {
+    if (await evoSdkService.handleConnectionError(error)) {
+      return operation()
+    }
+
+    logger.error(logPrefix, error)
+    throw error
+  }
+
+  async getActiveAccesses(
+    identityId: string,
+    kind?: AuthVaultAccessKind,
+    allowReconnect = true,
+  ): Promise<AuthVaultAccessDocument[]> {
     if (!this.isConfigured()) return []
 
     try {
@@ -123,8 +141,20 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
       return [...result.documents].sort((left, right) => right.$createdAt - left.$createdAt)
     } catch (error) {
-      logger.error('AuthVaultAccessService: Failed to load access docs:', error)
-      return []
+      if (!allowReconnect) {
+        logger.error('AuthVaultAccessService: Failed to load access docs:', error)
+        return []
+      }
+
+      try {
+        return await this.recoverAndRetry(
+          async () => this.getActiveAccesses(identityId, kind, false),
+          'AuthVaultAccessService: Failed to load access docs:',
+          error,
+        )
+      } catch {
+        return []
+      }
     }
   }
 
@@ -137,7 +167,11 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     return this.getActiveAccesses(identityId, 'passkey-prf')
   }
 
-  async getAllActivePasskeyAccesses(rpId?: string, limit = 500): Promise<AuthVaultAccessDocument[]> {
+  async getAllActivePasskeyAccesses(
+    rpId?: string,
+    limit = 500,
+    allowReconnect = true,
+  ): Promise<AuthVaultAccessDocument[]> {
     if (!this.isConfigured()) return []
 
     try {
@@ -178,8 +212,20 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
       return documents
     } catch (error) {
-      logger.error('AuthVaultAccessService: Failed to load global passkey access docs:', error)
-      return []
+      if (!allowReconnect) {
+        logger.error('AuthVaultAccessService: Failed to load global passkey access docs:', error)
+        return []
+      }
+
+      try {
+        return await this.recoverAndRetry(
+          async () => this.getAllActivePasskeyAccesses(rpId, limit, false),
+          'AuthVaultAccessService: Failed to load global passkey access docs:',
+          error,
+        )
+      } catch {
+        return []
+      }
     }
   }
 

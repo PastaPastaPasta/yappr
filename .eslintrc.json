@@ -40,6 +40,7 @@
     ".next/",
     "out/",
     "*.config.js",
-    "*.config.ts"
+    "*.config.ts",
+    "vendor/platform-auth/**"
   ]
 }
