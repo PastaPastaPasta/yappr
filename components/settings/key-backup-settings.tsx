@@ -46,6 +46,7 @@ export function KeyBackupSettings() {
   const [hasVaultTransferKey, setHasVaultTransferKey] = useState(false)
   // Run token: ensures only the latest invocation of checkBackupStatus updates state
   const latestRunIdRef = useRef(0)
+  const hasActiveVaultAccess = hasBackup || passkeyCount > 0
 
   const refreshEncryptionKeyInfo = useCallback(() => {
     if (!user) {
@@ -107,7 +108,7 @@ export function KeyBackupSettings() {
             setHasBackup(status.hasPasswordAccess)
             setPasskeyCount(status.passkeyCount)
             setSecretKind(status.secretKind ?? null)
-            foundBackup = status.hasPasswordAccess
+            foundBackup = status.hasPasswordAccess || status.passkeyCount > 0
 
             const dek = (await import('@/lib/secure-storage')).getAuthVaultDekBytes(user.identityId)
             if (dek && status.hasVault) {
@@ -379,18 +380,19 @@ export function KeyBackupSettings() {
           </div>
         </div>
 
-        {hasBackup ? (
+        {hasActiveVaultAccess ? (
           <>
             <div className="bg-green-50 dark:bg-green-950 p-4 rounded-lg">
               <div className="flex gap-3">
                 <CheckCircleIcon className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                    Password unlock is active
+                    {hasBackup ? 'Password unlock is active' : 'Passkey unlock is active'}
                   </p>
                   <p className="text-sm text-green-700 dark:text-green-300">
-                    Your auth vault can be unlocked with a password.
-                    {passkeyCount > 0 ? ` ${passkeyCount} passkey unlock method${passkeyCount === 1 ? '' : 's'} also active.` : ' Add a passkey for a stronger fallback.'}
+                    {hasBackup
+                      ? `Your auth vault can be unlocked with a password.${passkeyCount > 0 ? ` ${passkeyCount} passkey unlock method${passkeyCount === 1 ? '' : 's'} also active.` : ' Add a passkey for a stronger fallback.'}`
+                      : `Your auth vault can be unlocked with ${passkeyCount} passkey unlock method${passkeyCount === 1 ? '' : 's'}. Add a password wrapper if you also want username + password recovery.`}
                     {backupDate && (
                       <span className="block mt-1 text-xs">
                         Created: {backupDate.toLocaleDateString()}
