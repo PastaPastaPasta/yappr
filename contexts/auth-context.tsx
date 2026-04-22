@@ -770,6 +770,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       let result: { identityId: string; privateKey: string } | null = null
+      let sawInvalidPassword = false
+      let lastNonPasswordError: Error | null = null
 
       // Try unified auth vault first.
       const { authVaultService } = await import('@/lib/services/auth-vault-service')
@@ -781,7 +783,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (authVaultErr) {
           const msg = authVaultErr instanceof Error ? authVaultErr.message : ''
           if (msg === 'Invalid password') {
-            throw authVaultErr
+            sawInvalidPassword = true
+          } else if (authVaultErr instanceof Error) {
+            lastNonPasswordError = authVaultErr
           }
           logger.info('Auth: Unified auth vault login failed, falling back to legacy contracts:', msg || authVaultErr)
         }
@@ -795,7 +799,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (vaultErr) {
           const msg = vaultErr instanceof Error ? vaultErr.message : ''
           if (msg === 'Invalid password') {
-            throw vaultErr
+            sawInvalidPassword = true
+          } else if (vaultErr instanceof Error) {
+            lastNonPasswordError = vaultErr
           }
           logger.info('Auth: Legacy vault login failed, falling back to old encrypted-key-backup contract:', msg || vaultErr)
         }
@@ -805,10 +811,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!result) {
         const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
         if (!encryptedKeyService.isConfigured()) {
-          throw new Error('Password login is not yet configured')
+          if (sawInvalidPassword) {
+            throw new Error('Invalid password')
+          }
+          throw lastNonPasswordError ?? new Error('Password login is not yet configured')
         }
-        const oldResult = await encryptedKeyService.loginWithPassword(username, password)
-        result = { identityId: oldResult.identityId, privateKey: oldResult.privateKey }
+
+        try {
+          const oldResult = await encryptedKeyService.loginWithPassword(username, password)
+          result = { identityId: oldResult.identityId, privateKey: oldResult.privateKey }
+        } catch (encryptedKeyErr) {
+          const msg = encryptedKeyErr instanceof Error ? encryptedKeyErr.message : ''
+          if (msg === 'Invalid password') {
+            sawInvalidPassword = true
+          } else if (encryptedKeyErr instanceof Error) {
+            lastNonPasswordError = encryptedKeyErr
+          }
+          throw (sawInvalidPassword ? new Error('Invalid password') : (lastNonPasswordError ?? new Error('Failed to login with password')))
+        }
       }
 
       // Continue with normal login flow using decrypted credentials
