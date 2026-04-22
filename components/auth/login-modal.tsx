@@ -328,7 +328,8 @@ export function LoginModal() {
     setIsLoading(true)
 
     try {
-      await loginWithPasskey(undefined, rememberMe)
+      const passkeyLoginTarget = identityInput.trim() || undefined
+      await loginWithPasskey(passkeyLoginTarget, rememberMe)
       close()
     } catch (err) {
       setErrorWithShake(err instanceof Error ? err.message : 'Failed to login with passkey')
