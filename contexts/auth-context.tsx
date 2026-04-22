@@ -28,10 +28,10 @@ interface AuthContextType {
   isLoading: boolean
   isAuthRestoring: boolean
   error: string | null
-  login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
-  loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
-  loginWithPasskey: (identityOrUsername?: string, rememberMe?: boolean) => Promise<void>
-  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number, options?: { rememberMe?: boolean }) => Promise<void>
+  login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
+  loginWithPassword: (username: string, password: string) => Promise<void>
+  loginWithPasskey: (identityOrUsername?: string) => Promise<void>
+  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<void>
   createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
   createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
   addPasskeyWrapper: (label?: string) => Promise<void>
@@ -270,11 +270,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const savedUser = sessionData.user
 
         // Validate private key exists before restoring session
-        const { hasPrivateKey, clearRememberMe } = await import('@/lib/secure-storage')
+        const { hasPrivateKey } = await import('@/lib/secure-storage')
         if (!hasPrivateKey(savedUser.identityId)) {
           logger.warn('Auth: Session found but private key missing - clearing invalid session')
           localStorage.removeItem('yappr_session')
-          clearRememberMe()
           return
         }
 
@@ -315,8 +314,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean; rememberMe?: boolean } = {}) => {
-    const { skipUsernameCheck = false, rememberMe = false } = options
+  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
+    const { skipUsernameCheck = false } = options
     setIsLoading(true)
     setError(null)
 
@@ -365,11 +364,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       localStorage.setItem('yappr_session', JSON.stringify(sessionData))
 
-      // Set storage mode based on "remember me" choice
-      // - rememberMe=true: localStorage (shared across tabs, persists)
-      // - rememberMe=false: sessionStorage (single tab, cleared on close)
-      const { storePrivateKey, setRememberMe, hasEncryptionKey } = await import('@/lib/secure-storage')
-      setRememberMe(rememberMe)
+      const { storePrivateKey, hasEncryptionKey } = await import('@/lib/secure-storage')
       storePrivateKey(identityId, privateKey)
 
       setUser(authUser)
@@ -539,11 +534,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       identityId: string
       bundle: AuthVaultBundle
       dek: Uint8Array
-    },
-    rememberMe: boolean
+    }
   ) => {
     const {
-      setRememberMe,
       storeLoginKey,
       storeAuthVaultDek,
       storeEncryptionKey,
@@ -583,7 +576,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ? 'derived'
         : 'external'
 
-      setRememberMe(rememberMe)
       storeLoginKey(identityId, loginKey)
     } else {
       if (!authKeyWif) {
@@ -604,7 +596,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     storeAuthVaultDek(identityId, unlocked.dek)
-    await login(identityId, authKeyWif, { skipUsernameCheck: true, rememberMe })
+    await login(identityId, authKeyWif, { skipUsernameCheck: true })
 
     if (encryptionKeyWif) {
       storeEncryptionKey(identityId, encryptionKeyWif)
@@ -748,7 +740,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clearTransferKey,
         clearLoginKey,
         clearAuthVaultDek,
-        clearRememberMe,
       } = await import('@/lib/secure-storage')
       clearPrivateKey(user.identityId)
       clearEncryptionKey(user.identityId)
@@ -756,7 +747,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearTransferKey(user.identityId)
       clearLoginKey(user.identityId)
       clearAuthVaultDek(user.identityId)
-      clearRememberMe()
 
       const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
       invalidateBlockCache(user.identityId)
@@ -774,7 +764,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login')
   }, [router, user?.identityId])
 
-  const loginWithPassword = useCallback(async (username: string, password: string, rememberMe = false) => {
+  const loginWithPassword = useCallback(async (username: string, password: string) => {
     setIsLoading(true)
     setError(null)
 
@@ -786,7 +776,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (authVaultService.isConfigured()) {
         try {
           const unlocked = await authVaultService.unlockWithPassword(username, password)
-          await restoreUnlockedVaultSession(unlocked, rememberMe)
+          await restoreUnlockedVaultSession(unlocked)
           return
         } catch (authVaultErr) {
           const msg = authVaultErr instanceof Error ? authVaultErr.message : ''
@@ -823,7 +813,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Continue with normal login flow using decrypted credentials
       // Skip username check since we know they have one (they logged in with it)
-      await login(result.identityId, result.privateKey, { skipUsernameCheck: true, rememberMe })
+      await login(result.identityId, result.privateKey, { skipUsernameCheck: true })
     } catch (err) {
       logger.error('Password login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with password')
@@ -833,7 +823,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [login, restoreUnlockedVaultSession])
 
-  const loginWithPasskey = useCallback(async (identityOrUsername?: string, rememberMe = false) => {
+  const loginWithPasskey = useCallback(async (identityOrUsername?: string) => {
     setIsLoading(true)
     setError(null)
 
@@ -899,7 +889,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const unlocked = await authVaultService.unlockWithPrf(access.$ownerId, access, assertion.prfOutput)
-      await restoreUnlockedVaultSession(unlocked, rememberMe)
+      await restoreUnlockedVaultSession(unlocked)
     } catch (err) {
       logger.error('Passkey login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to login with passkey')
@@ -920,10 +910,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithKeyExchange = useCallback(async (
     identityId: string,
     loginKey: Uint8Array,
-    keyIndex: number,
-    options: { rememberMe?: boolean } = {}
+    keyIndex: number
   ) => {
-    const { rememberMe = true } = options
     setIsLoading(true)
     setError(null)
 
@@ -932,7 +920,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } = await import('@/lib/crypto/key-exchange')
       const { decodeIdentityId } = await import('@/lib/crypto/key-exchange-uri')
       const { privateKeyToWif } = await import('@/lib/crypto/wif')
-      const { storeEncryptionKey, storeEncryptionKeyType, storeLoginKey, setRememberMe } = await import('@/lib/secure-storage')
+      const { storeEncryptionKey, storeEncryptionKeyType, storeLoginKey } = await import('@/lib/secure-storage')
 
       // Decode identity ID to bytes
       const identityIdBytes = decodeIdentityId(identityId)
@@ -948,14 +936,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const authKeyWif = privateKeyToWif(authKey, network, true)
       const encryptionKeyWif = privateKeyToWif(encryptionKey, network, true)
 
-      // Set storage mode
-      setRememberMe(rememberMe)
       storeLoginKey(identityId, loginKey)
 
       logger.info(`Auth: Key exchange login - keyIndex=${keyIndex}`)
 
       // Continue with normal login flow (login() stores authKeyWif internally)
-      await login(identityId, authKeyWif, { skipUsernameCheck: false, rememberMe })
+      await login(identityId, authKeyWif, { skipUsernameCheck: false })
 
       // Only persist encryption key after successful login
       storeEncryptionKey(identityId, encryptionKeyWif)

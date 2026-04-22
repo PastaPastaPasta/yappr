@@ -5,13 +5,11 @@ import { parsePrivateKey, privateKeyToWif, isLikelyWif } from '@/lib/crypto/wif'
 
 /**
  * Secure storage for sensitive data like private keys
- * Supports two modes:
- * - localStorage: "Remember me" - shared across tabs, persists until logout
- * - sessionStorage: Default - isolated per tab, cleared when tab closes
+ * Uses persistent localStorage for all auth-related secrets.
+ * Falls back to sessionStorage reads only to migrate legacy session-only data.
  */
 class SecureStorage {
   private prefix = 'yappr_secure_'
-  private rememberKey = 'yappr_remember_me'
 
   private getKeysWithPrefix(storage: Storage): string[] {
     const keys: string[] = []
@@ -26,41 +24,24 @@ class SecureStorage {
 
   private getStorage(): Storage | null {
     if (typeof window === 'undefined') return null
-    // Check if "remember me" was selected
-    const remember = localStorage.getItem(this.rememberKey) === 'true'
-    return remember ? localStorage : sessionStorage
+    return localStorage
+  }
+
+  private getLegacyStorage(): Storage | null {
+    if (typeof window === 'undefined') return null
+    return sessionStorage
   }
 
   private isAvailable(): boolean {
     if (typeof window === 'undefined') return false
     try {
       const test = '__storage_test__'
-      sessionStorage.setItem(test, test)
-      sessionStorage.removeItem(test)
+      localStorage.setItem(test, test)
+      localStorage.removeItem(test)
       return true
     } catch {
       return false
     }
-  }
-
-  /**
-   * Set whether to remember the session across tabs
-   */
-  setRememberMe(remember: boolean): void {
-    if (typeof window === 'undefined') return
-    if (remember) {
-      localStorage.setItem(this.rememberKey, 'true')
-    } else {
-      localStorage.removeItem(this.rememberKey)
-    }
-  }
-
-  /**
-   * Check if "remember me" is enabled
-   */
-  isRememberMe(): boolean {
-    if (typeof window === 'undefined') return false
-    return localStorage.getItem(this.rememberKey) === 'true'
   }
 
   /**
@@ -72,6 +53,7 @@ class SecureStorage {
     if (!storage) return
     try {
       storage.setItem(this.prefix + key, JSON.stringify(value))
+      this.getLegacyStorage()?.removeItem(this.prefix + key)
     } catch (e) {
       logger.error('SecureStorage: Failed to store value:', e)
     }
@@ -82,17 +64,20 @@ class SecureStorage {
    */
   get(key: string): unknown {
     if (!this.isAvailable()) return null
-    // Check both storages - user might have switched modes
     try {
       const storage = this.getStorage()
       if (!storage) return null
       const item = storage.getItem(this.prefix + key)
       if (item) return JSON.parse(item)
 
-      // Fallback: check the other storage in case mode changed
-      const otherStorage = this.isRememberMe() ? sessionStorage : localStorage
-      const fallback = otherStorage.getItem(this.prefix + key)
-      return fallback ? JSON.parse(fallback) : null
+      const legacyStorage = this.getLegacyStorage()
+      const fallback = legacyStorage?.getItem(this.prefix + key)
+      if (!fallback) return null
+
+      const parsed = JSON.parse(fallback)
+      storage.setItem(this.prefix + key, fallback)
+      legacyStorage?.removeItem(this.prefix + key)
+      return parsed
     } catch {
       return null
     }
@@ -106,9 +91,7 @@ class SecureStorage {
     const storage = this.getStorage()
     if (!storage) return false
     if (storage.getItem(this.prefix + key) !== null) return true
-    // Check other storage as fallback
-    const otherStorage = this.isRememberMe() ? sessionStorage : localStorage
-    return otherStorage.getItem(this.prefix + key) !== null
+    return this.getLegacyStorage()?.getItem(this.prefix + key) !== null
   }
 
   /**
@@ -131,7 +114,6 @@ class SecureStorage {
 
     this.getKeysWithPrefix(localStorage).forEach(key => localStorage.removeItem(key))
     this.getKeysWithPrefix(sessionStorage).forEach(key => sessionStorage.removeItem(key))
-    localStorage.removeItem(this.rememberKey)
   }
 
   /**
@@ -184,19 +166,6 @@ export const clearAllPrivateKeys = (): void => {
   keys.filter(key => key.startsWith('pk_')).forEach(key => {
     secureStorage.delete(key)
   })
-}
-
-export const setRememberMe = (remember: boolean): void => {
-  secureStorage.setRememberMe(remember)
-}
-
-export const isRememberMe = (): boolean => {
-  return secureStorage.isRememberMe()
-}
-
-export const clearRememberMe = (): void => {
-  if (typeof window === 'undefined') return
-  localStorage.removeItem('yappr_remember_me')
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

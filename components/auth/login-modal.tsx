@@ -71,7 +71,6 @@ export function LoginModal() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isShaking, setIsShaking] = useState(false)
-  const [rememberMe, setRememberMe] = useState(true)
 
   const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -296,7 +295,7 @@ export function LoginModal() {
           return
         }
 
-        await login(identityId, credential, { rememberMe })
+        await login(identityId, credential)
 
         if (!sessionStorage.getItem('yappr_backup_prompt_shown')) {
           const unifiedStatus = authVaultService.isConfigured()
@@ -312,7 +311,7 @@ export function LoginModal() {
         }
       } else {
         const username = resolvedIdentity?.dpnsUsername || identityInput
-        await loginWithPassword(username, credential, rememberMe)
+        await loginWithPassword(username, credential)
       }
 
       close()
@@ -329,7 +328,7 @@ export function LoginModal() {
 
     try {
       const passkeyLoginTarget = identityInput.trim() || undefined
-      await loginWithPasskey(passkeyLoginTarget, rememberMe)
+      await loginWithPasskey(passkeyLoginTarget)
       close()
     } catch (err) {
       setErrorWithShake(err instanceof Error ? err.message : 'Failed to login with passkey')
@@ -507,29 +506,6 @@ export function LoginModal() {
                   <p className={`mt-2 text-xs transition-colors ${error ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
                     {error ? `⚠ ${error}` : '🔒 Your keys never leave this device. All signing happens locally.'}
                   </p>
-                </div>
-
-                {/* Remember Me Toggle */}
-                <div className="flex items-center justify-between">
-                  <label htmlFor="loginRememberMe" className="text-sm text-gray-600 dark:text-gray-400">
-                    Stay signed in across tabs
-                  </label>
-                  <button
-                    id="loginRememberMe"
-                    type="button"
-                    role="switch"
-                    aria-checked={rememberMe}
-                    onClick={() => setRememberMe(!rememberMe)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
-                      rememberMe ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-700'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        rememberMe ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
                 </div>
 
                 <Button
