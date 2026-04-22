@@ -49,6 +49,10 @@ export interface CreatePasskeyAccessInput {
   rpId: string
 }
 
+function toDocumentBytes(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(bytes)
+}
+
 class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument> {
   constructor() {
     super(DOCUMENT_TYPES.AUTH_VAULT_ACCESS, YAPPR_AUTH_VAULT_CONTRACT_ID)
@@ -84,20 +88,20 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
   protected extractContentFields(doc: AuthVaultAccessDocument): Record<string, unknown> {
     const data: Record<string, unknown> = {
-      vaultId: Array.from(doc.vaultId),
+      vaultId: toDocumentBytes(doc.vaultId),
       kind: doc.kind,
       label: doc.label,
       status: doc.status,
-      wrappedDek: Array.from(doc.wrappedDek),
-      iv: Array.from(doc.iv),
+      wrappedDek: toDocumentBytes(doc.wrappedDek),
+      iv: toDocumentBytes(doc.iv),
       kdfType: doc.kdfType,
     }
 
-    if (doc.pbkdf2Salt) data.pbkdf2Salt = Array.from(doc.pbkdf2Salt)
+    if (doc.pbkdf2Salt) data.pbkdf2Salt = toDocumentBytes(doc.pbkdf2Salt)
     if (doc.pbkdf2Iterations !== undefined) data.pbkdf2Iterations = doc.pbkdf2Iterations
-    if (doc.credentialId) data.credentialId = Array.from(doc.credentialId)
-    if (doc.credentialIdHash) data.credentialIdHash = Array.from(doc.credentialIdHash)
-    if (doc.prfInput) data.prfInput = Array.from(doc.prfInput)
+    if (doc.credentialId) data.credentialId = toDocumentBytes(doc.credentialId)
+    if (doc.credentialIdHash) data.credentialIdHash = toDocumentBytes(doc.credentialIdHash)
+    if (doc.prfInput) data.prfInput = toDocumentBytes(doc.prfInput)
     if (doc.rpId) data.rpId = doc.rpId
 
     return data
@@ -172,14 +176,14 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
     const existing = await this.getPasswordAccess(identityId)
     const data = {
-      vaultId: Array.from(requireIdentifierBytes(input.vaultId, 'vaultId')),
+      vaultId: requireIdentifierBytes(input.vaultId, 'vaultId'),
       kind: 'password',
       label: input.label,
       status: 'active',
-      wrappedDek: Array.from(input.wrappedDek),
-      iv: Array.from(input.iv),
+      wrappedDek: toDocumentBytes(input.wrappedDek),
+      iv: toDocumentBytes(input.iv),
       kdfType: 'pbkdf2-sha256',
-      pbkdf2Salt: Array.from(input.pbkdf2Salt),
+      pbkdf2Salt: toDocumentBytes(input.pbkdf2Salt),
       pbkdf2Iterations: input.pbkdf2Iterations,
     }
 
@@ -196,16 +200,16 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     }
 
     return this.create(identityId, {
-      vaultId: Array.from(requireIdentifierBytes(input.vaultId, 'vaultId')),
+      vaultId: requireIdentifierBytes(input.vaultId, 'vaultId'),
       kind: 'passkey-prf',
       label: input.label,
       status: 'active',
-      wrappedDek: Array.from(input.wrappedDek),
-      iv: Array.from(input.iv),
+      wrappedDek: toDocumentBytes(input.wrappedDek),
+      iv: toDocumentBytes(input.iv),
       kdfType: 'webauthn-prf-hkdf-sha256',
-      credentialId: Array.from(input.credentialId),
-      credentialIdHash: Array.from(input.credentialIdHash),
-      prfInput: Array.from(input.prfInput),
+      credentialId: toDocumentBytes(input.credentialId),
+      credentialIdHash: toDocumentBytes(input.credentialIdHash),
+      prfInput: toDocumentBytes(input.prfInput),
       rpId: input.rpId,
     })
   }

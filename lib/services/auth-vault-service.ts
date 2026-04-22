@@ -69,8 +69,8 @@ function isIdentityId(input: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(input.trim())
 }
 
-function toNumberArray(bytes: Uint8Array): number[] {
-  return Array.from(bytes)
+function toDocumentBytes(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(bytes)
 }
 
 function stringOrUndefined(value: string | undefined): string | undefined {
@@ -113,9 +113,9 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
     return {
       version: doc.version,
       secretKind: doc.secretKind,
-      ciphertext: toNumberArray(doc.ciphertext),
-      iv: toNumberArray(doc.iv),
-      bundleHash: toNumberArray(doc.bundleHash),
+      ciphertext: toDocumentBytes(doc.ciphertext),
+      iv: toDocumentBytes(doc.iv),
+      bundleHash: toDocumentBytes(doc.bundleHash),
       updatedAt: doc.updatedAt,
       active: doc.active,
     }
@@ -167,9 +167,9 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
       vault = await this.create(identityId, {
         version: DEFAULT_VERSION,
         secretKind: activeBundle.secretKind,
-        ciphertext: [0],
-        iv: toNumberArray(placeholderIv),
-        bundleHash: toNumberArray(placeholderHash),
+        ciphertext: new Uint8Array([0]),
+        iv: toDocumentBytes(placeholderIv),
+        bundleHash: toDocumentBytes(placeholderHash),
         updatedAt: activeBundle.updatedAt,
         active: false,
       })
@@ -179,9 +179,9 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
     const updated = await this.update(vault.$id, identityId, {
       version: DEFAULT_VERSION,
       secretKind: activeBundle.secretKind,
-      ciphertext: toNumberArray(encrypted.ciphertext),
-      iv: toNumberArray(encrypted.iv),
-      bundleHash: toNumberArray(encrypted.bundleHash),
+      ciphertext: toDocumentBytes(encrypted.ciphertext),
+      iv: toDocumentBytes(encrypted.iv),
+      bundleHash: toDocumentBytes(encrypted.bundleHash),
       updatedAt: activeBundle.updatedAt,
       active: true,
     })
