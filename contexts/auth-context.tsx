@@ -472,14 +472,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       storeAuthVaultDek,
       storeLoginKey,
     } = await import('@/lib/secure-storage')
+    const { authVaultAccessService } = await import('@/lib/services/auth-vault-access-service')
+    const { getDefaultRpId, getPrfAssertionForCredentials } = await import('@/lib/webauthn/passkey-prf')
 
     if (!authVaultService.isConfigured()) {
       throw new Error('Auth vault is not configured')
     }
 
-    const existingDek = getAuthVaultDekBytes(identityId)
-    if (existingDek) {
-      const merged = await authVaultService.mergeSecrets(identityId, existingDek, {
+    let activeDek = getAuthVaultDekBytes(identityId)
+
+    if (!activeDek) {
+      const status = await authVaultService.getStatus(identityId)
+      if (status.hasVault && status.passkeyCount > 0) {
+        const currentRpId = getDefaultRpId()
+        const passkeyAccesses = (await authVaultAccessService.getPasskeyAccesses(identityId)).filter((access) =>
+          access.rpId === currentRpId &&
+          access.credentialId &&
+          access.credentialIdHash &&
+          access.prfInput
+        )
+
+        if (passkeyAccesses.length > 0) {
+          const descriptors = passkeyAccesses.map((access) => ({
+            credentialId: access.credentialId as Uint8Array,
+            prfInput: access.prfInput as Uint8Array,
+            rpId: access.rpId as string,
+          }))
+
+          const assertion = await getPrfAssertionForCredentials(descriptors)
+          const matchingAccess = passkeyAccesses.find((access) => sameBytes(access.credentialIdHash, assertion.credentialIdHash))
+          if (!matchingAccess) {
+            throw new Error('The selected passkey is not registered for this account on this site.')
+          }
+
+          const unlocked = await authVaultService.unlockWithPrf(identityId, matchingAccess, assertion.prfOutput)
+          storeAuthVaultDek(identityId, unlocked.dek)
+          activeDek = unlocked.dek
+        } else {
+          throw new Error('This auth vault has passkeys, but none are registered for this site. Use an existing unlock method for this site before updating it.')
+        }
+      } else if (status.hasVault && status.hasPasswordAccess) {
+        throw new Error('This auth vault already has a password unlock method. Sign in once with that auth-vault password or an existing passkey on this device before adding another unlock method.')
+      }
+    }
+
+    if (activeDek) {
+      const merged = await authVaultService.mergeSecrets(identityId, activeDek, {
         loginKey: overrides.loginKey,
         authKeyWif: overrides.authKeyWif,
         encryptionKeyWif: overrides.encryptionKeyWif,
@@ -498,8 +536,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const hasExistingVault = await authVaultService.hasVault(identityId)
-    if (hasExistingVault && !existingDek) {
-      throw new Error('This auth vault must be unlocked on this device before it can be updated.')
+    if (hasExistingVault && !activeDek) {
+      throw new Error('This auth vault already exists but is not unlocked on this device. Unlock it once with its current password or passkey, then try again.')
     }
 
     const loginKey = overrides.loginKey ?? getLoginKeyBytes(identityId) ?? undefined
@@ -521,7 +559,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       transferKeyWif,
     })
 
-    const created = await authVaultService.createOrUpdateVaultBundle(identityId, bundle, existingDek ?? undefined)
+    const created = await authVaultService.createOrUpdateVaultBundle(identityId, bundle, activeDek ?? undefined)
     storeAuthVaultDek(identityId, created.dek)
     if (loginKey) {
       storeLoginKey(identityId, loginKey)
