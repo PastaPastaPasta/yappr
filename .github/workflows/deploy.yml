@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
   pages: write
   id-token: write
 
@@ -26,9 +27,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          registry-url: https://npm.pkg.github.com
+          scope: '@pastapastapasta'
 
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build
         run: npm run build

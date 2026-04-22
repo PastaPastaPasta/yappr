@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   lint:
     name: Lint
@@ -19,9 +23,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          registry-url: https://npm.pkg.github.com
+          scope: '@pastapastapasta'
 
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run ESLint
         run: npm run lint
@@ -38,9 +46,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          registry-url: https://npm.pkg.github.com
+          scope: '@pastapastapasta'
 
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run TypeScript compiler
         run: npx tsc --noEmit
@@ -57,9 +69,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          registry-url: https://npm.pkg.github.com
+          scope: '@pastapastapasta'
 
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build application
         run: npm run build
