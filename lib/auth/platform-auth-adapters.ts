@@ -10,8 +10,13 @@ import type {
   PlatformAuthDependencies,
   PlatformAuthEvent,
 } from 'platform-auth'
+import {
+  decodeYapprIdentityId,
+  deriveYapprAuthKeyFromLogin,
+  deriveYapprEncryptionKeyFromLogin,
+} from 'platform-auth'
 import { logger } from '@/lib/logger'
-import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import {
   clearAuthVaultDek,
@@ -50,14 +55,17 @@ import {
 } from '@/lib/webauthn/passkey-prf'
 import { decodeBinaryFromBase64, wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
 import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
-import { deriveAuthKeyFromLogin, deriveEncryptionKeyFromLogin } from '@/lib/crypto/key-exchange'
-import { decodeIdentityId } from '@/lib/crypto/key-exchange-uri'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { invalidateBlockCache } from '@/lib/caches/block-cache'
 import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
 import { extractErrorMessage } from '@/lib/error-utils'
+import { keyExchangeService } from '@/lib/services/key-exchange-service'
+import {
+  buildUnsignedKeyRegistrationTransition,
+  checkKeysRegistered,
+} from '@/lib/services/identity-update-builder'
 
 type LegacyAuthVaultBundle = {
   version: 1
@@ -350,9 +358,22 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       deriveEncryptionKey,
       validateDerivedKeyMatchesIdentity,
       identityHasEncryptionKey: hasEncryptionKeyOnIdentity,
-      decodeIdentityId,
-      deriveAuthKeyFromLogin,
-      deriveEncryptionKeyFromLogin,
+      decodeIdentityId: decodeYapprIdentityId,
+      deriveAuthKeyFromLogin: deriveYapprAuthKeyFromLogin,
+      deriveEncryptionKeyFromLogin: deriveYapprEncryptionKeyFromLogin,
+    },
+    yapprKeyExchangeConfig: {
+      appContractId: YAPPR_CONTRACT_ID,
+      keyExchangeContractId: KEY_EXCHANGE_CONTRACT_ID,
+      network: getConfiguredNetwork(),
+      label: 'Login to Yappr',
+    },
+    yapprKeyExchange: {
+      getResponse(contractIdBytes, appEphemeralPubKeyHash) {
+        return keyExchangeService.getResponse(contractIdBytes, appEphemeralPubKeyHash)
+      },
+      buildUnsignedKeyRegistrationTransition,
+      checkKeysRegistered,
     },
     vault: {
       isConfigured() {

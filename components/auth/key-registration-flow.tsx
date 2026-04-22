@@ -2,11 +2,12 @@
 
 import { useEffect } from 'react'
 import { CheckCircle, AlertCircle, Key } from 'lucide-react'
-import { useKeyRegistration } from '@/hooks/use-key-registration'
+import { PlatformAuthController, useYapprKeyRegistration } from 'platform-auth'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { Button } from '@/components/ui/button'
 
 interface KeyRegistrationFlowProps {
+  controller: PlatformAuthController
   /** Identity ID to register keys for */
   identityId: string
   /** Auth private key (32 bytes) */
@@ -34,6 +35,7 @@ interface KeyRegistrationFlowProps {
  * - error: Error message with retry button
  */
 export function KeyRegistrationFlow({
+  controller,
   identityId,
   authKey,
   encryptionKey,
@@ -48,7 +50,7 @@ export function KeyRegistrationFlow({
     start,
     cancel,
     retry
-  } = useKeyRegistration((process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet', onComplete)
+  } = useYapprKeyRegistration(controller, onComplete)
 
   // Start the registration flow when component mounts
   useEffect(() => {

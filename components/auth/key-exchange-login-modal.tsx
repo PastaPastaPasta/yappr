@@ -4,8 +4,8 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
+import { useYapprKeyExchangeLogin } from 'platform-auth'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
-import { useKeyExchangeLogin } from '@/hooks/use-key-exchange-login'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 export function KeyExchangeLoginModal() {
   const { isOpen, close } = useKeyExchangeModal()
   const closeLoginModal = useLoginModal((s) => s.close)
-  const { loginWithKeyExchange, addPasskeyWrapper } = useAuth()
+  const { controller, loginWithKeyExchange, addPasskeyWrapper } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const {
@@ -41,7 +41,7 @@ export function KeyExchangeLoginModal() {
     start,
     cancel,
     retry
-  } = useKeyExchangeLogin((process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet')
+  } = useYapprKeyExchangeLogin(controller)
 
   const [loginError, setLoginError] = useState<string | null>(null)
   const [isCompleting, setIsCompleting] = useState(false)
@@ -169,6 +169,7 @@ export function KeyExchangeLoginModal() {
         }
         return (
           <KeyRegistrationFlow
+            controller={controller}
             identityId={result.identityId}
             authKey={result.authKey}
             encryptionKey={result.encryptionKey}

@@ -25,6 +25,7 @@ export interface AuthUser {
 }
 
 interface AuthContextType {
+  controller: PlatformAuthController
   user: AuthUser | null
   isLoading: boolean
   isAuthRestoring: boolean
@@ -227,6 +228,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [controller])
 
   const value = useMemo<AuthContextType>(() => ({
+    controller,
     user: toExternalUser(controllerState.user),
     isLoading: controllerState.isLoading,
     isAuthRestoring: controllerState.isAuthRestoring,
@@ -247,6 +249,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }), [
     addPasskeyWrapper,
     addPasswordWrapper,
+    controller,
     controllerState.error,
     controllerState.isAuthRestoring,
     controllerState.isLoading,
