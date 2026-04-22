@@ -158,11 +158,10 @@ export function usePrivateFeedRequest({
         encryptionPublicKey = privateFeedCryptoService.getPublicKey(privateKeyBytes)
       } else {
         // Try to get from identity
+        const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
         const identity = await identityService.getIdentity(currentUserId)
         if (identity?.publicKeys) {
-          const encryptionKey = identity.publicKeys.find(
-            (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-          )
+          const encryptionKey = findEncryptionKey(identity.publicKeys)
           if (encryptionKey?.data) {
             // Convert to Uint8Array
             if (typeof encryptionKey.data === 'string') {

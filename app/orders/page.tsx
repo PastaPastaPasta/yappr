@@ -20,6 +20,7 @@ import { orderStatusService } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { identityService } from '@/lib/services/identity-service'
+import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload } from '@/lib/types'
 
@@ -127,9 +128,7 @@ function OrdersPage() {
                 try {
                   // Fetch seller's public key for decryption
                   const sellerIdentity = await identityService.getIdentity(order.sellerId)
-                  const sellerEncryptionKey = sellerIdentity?.publicKeys.find(
-                    (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-                  )
+                  const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
                   const sellerPubKey = sellerEncryptionKey?.data
                     ? normalizeKeyData(sellerEncryptionKey.data)
                     : null

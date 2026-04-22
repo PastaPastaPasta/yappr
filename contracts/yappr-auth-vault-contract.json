@@ -1,0 +1,189 @@
+{
+  "authVault": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "byOwner",
+        "unique": true,
+        "properties": [
+          { "$ownerId": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "version",
+      "secretKind",
+      "ciphertext",
+      "iv",
+      "bundleHash",
+      "updatedAt",
+      "active"
+    ],
+    "additionalProperties": false,
+    "mutable": true,
+    "properties": {
+      "version": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000,
+        "position": 0
+      },
+      "secretKind": {
+        "type": "string",
+        "enum": ["login-key", "auth-key"],
+        "maxLength": 32,
+        "position": 1
+      },
+      "ciphertext": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 8192,
+        "position": 2
+      },
+      "iv": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 12,
+        "maxItems": 12,
+        "position": 3
+      },
+      "bundleHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 4
+      },
+      "updatedAt": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9999999999999,
+        "position": 5
+      },
+      "active": {
+        "type": "boolean",
+        "position": 6
+      }
+    }
+  },
+  "authVaultAccess": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "byOwnerKindStatus",
+        "unique": false,
+        "properties": [
+          { "$ownerId": "asc" },
+          { "kind": "asc" },
+          { "status": "asc" }
+        ]
+      },
+      {
+        "name": "byOwnerCredentialIdHash",
+        "unique": true,
+        "properties": [
+          { "$ownerId": "asc" },
+          { "credentialIdHash": "asc" }
+        ]
+      }
+    ],
+    "required": [
+      "vaultId",
+      "kind",
+      "status",
+      "label",
+      "wrappedDek",
+      "iv",
+      "kdfType"
+    ],
+    "additionalProperties": false,
+    "mutable": true,
+    "properties": {
+      "vaultId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0
+      },
+      "kind": {
+        "type": "string",
+        "enum": ["password", "passkey-prf"],
+        "maxLength": 32,
+        "position": 1
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 96,
+        "position": 2
+      },
+      "status": {
+        "type": "string",
+        "enum": ["active", "revoked"],
+        "maxLength": 16,
+        "position": 3
+      },
+      "wrappedDek": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 256,
+        "position": 4
+      },
+      "iv": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 12,
+        "maxItems": 12,
+        "position": 5
+      },
+      "kdfType": {
+        "type": "string",
+        "maxLength": 32,
+        "enum": ["pbkdf2-sha256", "webauthn-prf-hkdf-sha256"],
+        "position": 6
+      },
+      "pbkdf2Salt": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 7
+      },
+      "pbkdf2Iterations": {
+        "type": "integer",
+        "minimum": 1000000,
+        "maximum": 1000000000,
+        "position": 8
+      },
+      "credentialId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 512,
+        "position": 9
+      },
+      "credentialIdHash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 10
+      },
+      "prfInput": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 11
+      },
+      "rpId": {
+        "type": "string",
+        "maxLength": 253,
+        "position": 12
+      }
+    }
+  }
+}

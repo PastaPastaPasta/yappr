@@ -29,7 +29,7 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  * 3. Show manual entry only as last resort
  */
 export function EncryptionKeyModal() {
-  const { user } = useAuth()
+  const { user, mergeSecretsIntoAuthVault } = useAuth()
   const { isOpen, action, onSuccess, close, closeWithSuccess } = useEncryptionKeyModal()
   const [encryptionKeyInput, setEncryptionKeyInput] = useState('')
   const [isValidating, setIsValidating] = useState(false)
@@ -95,7 +95,7 @@ export function EncryptionKeyModal() {
       const derivedKey = deriveEncryptionKey(authPrivateKey, user.identityId)
 
       // Check if derived key matches identity's encryption key
-      const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId, 1) // purpose=1 is encryption
+      const matches = await validateDerivedKeyMatchesIdentity(derivedKey, user.identityId)
 
       if (!isModalActiveRef.current) return
 
@@ -105,11 +105,13 @@ export function EncryptionKeyModal() {
         setAutoRecoveryStatus('found')
 
         // Convert to hex for storage
-        const { bytesToHex } = await import('@noble/hashes/utils.js')
-        const derivedKeyHex = bytesToHex(derivedKey)
+        const { privateKeyToWif } = await import('@/lib/crypto/wif')
+        const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+        const derivedKeyWif = privateKeyToWif(derivedKey, network, true)
 
-        storeEncryptionKey(user.identityId, derivedKeyHex)
+        storeEncryptionKey(user.identityId, derivedKeyWif)
         storeEncryptionKeyType(user.identityId, 'derived')
+        await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: derivedKeyWif })
 
         // Brief success message, then close (use closeWithSuccess to avoid calling onCancel)
         setTimeout(() => {
@@ -133,7 +135,7 @@ export function EncryptionKeyModal() {
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
     }
-  }, [user, close, onSuccess])
+  }, [closeWithSuccess, mergeSecretsIntoAuthVault, user, onSuccess])
 
   // Trigger auto-recovery when modal opens
   useEffect(() => {
@@ -181,8 +183,12 @@ export function EncryptionKeyModal() {
       }
 
       // Key is valid - store it (storeEncryptionKey handles conversion to WIF)
-      const { storeEncryptionKey } = await import('@/lib/secure-storage')
+      const { getEncryptionKey, storeEncryptionKey } = await import('@/lib/secure-storage')
       storeEncryptionKey(user.identityId, trimmedKey)
+      const normalizedEncryptionKey = getEncryptionKey(user.identityId)
+      if (normalizedEncryptionKey) {
+        await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+      }
 
       toast.success('Encryption key saved')
       setEncryptionKeyInput('')
@@ -198,7 +204,7 @@ export function EncryptionKeyModal() {
     } finally {
       setIsValidating(false)
     }
-  }, [user, encryptionKeyInput, close, onSuccess])
+  }, [closeWithSuccess, mergeSecretsIntoAuthVault, user, encryptionKeyInput, onSuccess])
 
   const handleClose = useCallback(() => {
     // State is reset by the useEffect when isOpen becomes false
