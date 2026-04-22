@@ -47,6 +47,7 @@ export function KeyBackupSettings() {
   // Run token: ensures only the latest invocation of checkBackupStatus updates state
   const latestRunIdRef = useRef(0)
   const hasActiveVaultAccess = hasBackup || passkeyCount > 0
+  const unlockMethodCount = (hasBackup ? 1 : 0) + Math.min(1, passkeyCount)
 
   const refreshEncryptionKeyInfo = useCallback(() => {
     if (!user) {
@@ -183,24 +184,42 @@ export function KeyBackupSettings() {
 
     setIsDeleting(true)
     try {
-      // Delete from all configured backends — fail if any configured backend fails
-      let deleted = true
+      const deletedBackends: string[] = []
+      const failedBackends: string[] = []
+
       if (authVaultService.isConfigured()) {
         const authVaultDeleted = await authVaultService.deleteVault(user.identityId)
-        if (!authVaultDeleted) deleted = false
+        if (authVaultDeleted) {
+          deletedBackends.push('primary vault')
+        } else {
+          failedBackends.push('primary vault')
+        }
       }
       if (vaultService.isConfigured()) {
         const vaultDeleted = await vaultService.deleteVault(user.identityId)
-        if (!vaultDeleted) deleted = false
+        if (vaultDeleted) {
+          deletedBackends.push('legacy vault')
+        } else {
+          failedBackends.push('legacy vault')
+        }
       }
       if (encryptedKeyService.isConfigured()) {
         const legacyDeleted = await encryptedKeyService.deleteBackup(user.identityId)
-        if (!legacyDeleted) deleted = false
+        if (legacyDeleted) {
+          deletedBackends.push('legacy encrypted backup')
+        } else {
+          failedBackends.push('legacy encrypted backup')
+        }
       }
-      if (deleted) {
-        setHasBackup(false)
-        setBackupDate(null)
+
+      if (deletedBackends.length > 0) {
+        await checkBackupStatus()
+      }
+
+      if (failedBackends.length === 0 && deletedBackends.length > 0) {
         toast.success('Backup deleted successfully')
+      } else if (deletedBackends.length > 0) {
+        toast.error(`${deletedBackends.join(', ')} deleted, but ${failedBackends.join(', ')} failed. Please retry.`)
       } else {
         toast.error('Failed to delete backup')
       }
@@ -469,7 +488,7 @@ export function KeyBackupSettings() {
               {passkeySupportMessage}
             </p>
           )}
-          {(Number(hasBackup) + (passkeyCount > 0 ? 1 : 0)) <= 1 && (
+          {unlockMethodCount <= 1 && (
             <p className="text-xs text-orange-600 dark:text-orange-400">
               Keep at least two unlock methods if you want a realistic recovery path.
             </p>

@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Eye, EyeOff, KeyRound } from 'lucide-react'
+import { X, Eye, EyeOff, KeyRound, QrCode } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
@@ -20,7 +20,6 @@ import { isLikelyWif } from '@/lib/crypto/wif'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
 import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
-import { QrCode } from 'lucide-react'
 
 // Check if input looks like an Identity ID (base58, ~44 chars)
 function isLikelyIdentityId(input: string): boolean {
@@ -187,8 +186,12 @@ export function LoginModal() {
               return
             }
           }
-        } catch {
-          // Auth vault check failed — continue to legacy fallback
+        } catch (err) {
+          logger.error('Auth vault lookup failed during login identity resolution:', err)
+          if (authVaultService.isConfigured()) {
+            setHasOnchainBackup(false)
+            return
+          }
         }
 
         // Check legacy vault contract next.
@@ -298,9 +301,22 @@ export function LoginModal() {
         await login(identityId, credential)
 
         if (!sessionStorage.getItem('yappr_backup_prompt_shown')) {
-          const unifiedStatus = authVaultService.isConfigured()
-            ? await authVaultService.getStatus(identityId).catch(() => null)
-            : null
+          let unifiedStatus = null
+          let authVaultUnavailable = false
+
+          if (authVaultService.isConfigured()) {
+            try {
+              unifiedStatus = await authVaultService.getStatus(identityId)
+            } catch (statusError) {
+              logger.error('Auth vault status lookup failed after key login:', statusError)
+              authVaultUnavailable = true
+            }
+          }
+
+          if (authVaultUnavailable) {
+            return
+          }
+
           const hasBackup = unifiedStatus
             ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
             : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
@@ -356,6 +372,11 @@ export function LoginModal() {
 
     return false
   })()
+
+  const passkeyDisabledForIdentity = Boolean(resolvedIdentity && !hasPasskeyAccess)
+  const passkeyHint = passkeyDisabledForIdentity
+    ? 'No passkey is enrolled for this identity yet.'
+    : passkeySupportMessage
 
   return (
     <AnimatePresence>
@@ -527,7 +548,7 @@ export function LoginModal() {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={isLoading}
+                  disabled={isLoading || passkeyDisabledForIdentity}
                   className="w-full"
                   size="lg"
                   onClick={handlePasskeySignIn}
@@ -536,14 +557,10 @@ export function LoginModal() {
                   Sign In with Passkey
                 </Button>
 
-                {resolvedIdentity && hasPasskeyAccess && (
-                  <>
-                    {passkeySupportMessage && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {passkeySupportMessage}
-                      </p>
-                    )}
-                  </>
+                {passkeyHint && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {passkeyHint}
+                  </p>
                 )}
 
                 {/* Wallet Login Option - available immediately without identity */}

@@ -142,6 +142,7 @@
       "kdfType": {
         "type": "string",
         "maxLength": 32,
+        "enum": ["pbkdf2-sha256", "webauthn-prf-hkdf-sha256"],
         "position": 6
       },
       "pbkdf2Salt": {

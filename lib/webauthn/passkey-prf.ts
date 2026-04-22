@@ -126,7 +126,7 @@ export async function createPasskeyWithPrf(options: EnrollPasskeyOptions): Promi
       timeout: 60000,
       attestation: 'none',
       authenticatorSelection: {
-        residentKey: 'preferred',
+        residentKey: 'required',
         userVerification: 'required',
       },
       extensions: {

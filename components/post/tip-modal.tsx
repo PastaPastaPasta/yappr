@@ -236,15 +236,23 @@ export function TipModal() {
       return
     }
 
-    // Store the key locally and go to success
+    let normalizedTransferKey: string | null = null
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
-      const normalizedTransferKey = getTransferKey(user.identityId)
-      if (normalizedTransferKey) {
-        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
-      }
+      normalizedTransferKey = getTransferKey(user.identityId)
     } catch (err) {
       logger.error('Failed to store transfer key:', err)
+      setError('Failed to save transfer key')
+      setState('error')
+      return
+    }
+
+    if (normalizedTransferKey) {
+      try {
+        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
+      } catch (err) {
+        logger.error('Failed to merge transfer key into auth vault:', err)
+      }
     }
     usedTransferKeyRef.current = null
     setState('success')

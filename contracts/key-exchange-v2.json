@@ -57,8 +57,8 @@
       "encryptedPayload": {
         "type": "array",
         "byteArray": true,
-        "minItems": 1,
-        "maxItems": 4096,
+        "minItems": 60,
+        "maxItems": 60,
         "position": 3,
         "description": "AES-GCM encrypted payload: nonce(12) || ciphertext(32) || tag(16)"
       },
