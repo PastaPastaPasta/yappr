@@ -42,8 +42,9 @@ export function KeyBackupSettings() {
   const [passkeySupportMessage, setPasskeySupportMessage] = useState<string | null>(null)
   const [passkeyCount, setPasskeyCount] = useState(0)
   const [secretKind, setSecretKind] = useState<'login-key' | 'auth-key' | null>(null)
-  const [hasVaultEncryptionKey, setHasVaultEncryptionKey] = useState(false)
-  const [hasVaultTransferKey, setHasVaultTransferKey] = useState(false)
+  const [hasVaultEncryptionKey, setHasVaultEncryptionKey] = useState<boolean | null>(null)
+  const [hasVaultTransferKey, setHasVaultTransferKey] = useState<boolean | null>(null)
+  const [vaultLockedLocally, setVaultLockedLocally] = useState(false)
   // Run token: ensures only the latest invocation of checkBackupStatus updates state
   const latestRunIdRef = useRef(0)
   const hasActiveVaultAccess = hasBackup || passkeyCount > 0
@@ -97,8 +98,9 @@ export function KeyBackupSettings() {
         setBackupDate(null)
         setPasskeyCount(0)
         setSecretKind(null)
-        setHasVaultEncryptionKey(false)
-        setHasVaultTransferKey(false)
+        setHasVaultEncryptionKey(null)
+        setHasVaultTransferKey(null)
+        setVaultLockedLocally(false)
 
         try {
           let foundBackup = false
@@ -112,12 +114,16 @@ export function KeyBackupSettings() {
             foundBackup = status.hasPasswordAccess || status.passkeyCount > 0
 
             const dek = (await import('@/lib/secure-storage')).getAuthVaultDekBytes(user.identityId)
-            if (dek && status.hasVault) {
+            if (status.hasVault && !dek) {
+              setVaultLockedLocally(true)
+            } else if (dek && status.hasVault) {
               const unlocked = await authVaultService.decryptVault(user.identityId, dek).catch(() => null)
               if (runId !== latestRunIdRef.current) return
               if (unlocked) {
                 setHasVaultEncryptionKey(Boolean(unlocked.bundle.encryptionKeyWif))
                 setHasVaultTransferKey(Boolean(unlocked.bundle.transferKeyWif))
+              } else {
+                setVaultLockedLocally(true)
               }
             }
           }
@@ -166,6 +172,22 @@ export function KeyBackupSettings() {
   useEffect(() => {
     checkBackupStatus().catch(err => logger.error('Failed to check backup status:', err))
   }, [checkBackupStatus])
+
+  const vaultStatusBadgeClass = (stored: boolean | null): string => {
+    if (stored === true) {
+      return 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+    }
+    if (stored === false) {
+      return 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+    }
+    return 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300'
+  }
+
+  const vaultStatusLabel = (stored: boolean | null): string => {
+    if (stored === true) return 'Stored in vault'
+    if (stored === false) return 'Not in vault'
+    return 'Vault locked on this device'
+  }
 
   const handleCreateBackup = async () => {
     if (!user) return
@@ -372,11 +394,9 @@ export function KeyBackupSettings() {
               </div>
               <div className="flex items-center gap-2">
                 <span className={`text-xs px-2 py-0.5 rounded ${
-                  hasVaultTransferKey
-                    ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
-                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                  vaultStatusBadgeClass(hasVaultTransferKey)
                 }`}>
-                  {hasVaultTransferKey ? 'Stored in vault' : 'Not in vault'}
+                  {vaultStatusLabel(hasVaultTransferKey)}
                 </span>
               </div>
             </div>
@@ -496,6 +516,11 @@ export function KeyBackupSettings() {
           {hasVaultEncryptionKey && (
             <p className="text-xs text-gray-500 dark:text-gray-400">
               Encryption key is already captured in the auth vault.
+            </p>
+          )}
+          {vaultLockedLocally && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Vault key contents are hidden until this device unlocks the auth vault with an existing password or passkey.
             </p>
           )}
         </div>

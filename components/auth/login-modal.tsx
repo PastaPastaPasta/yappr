@@ -313,14 +313,12 @@ export function LoginModal() {
             }
           }
 
-          if (authVaultUnavailable) {
-            return
-          }
-
-          const hasBackup = unifiedStatus
-            ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
-            : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
-          if (!hasBackup) {
+          const hasBackup = authVaultUnavailable
+            ? false
+            : unifiedStatus
+              ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
+              : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
+          if (!authVaultUnavailable && !hasBackup) {
             sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
             openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', false)
           }
@@ -375,7 +373,9 @@ export function LoginModal() {
 
   const passkeyDisabledForIdentity = Boolean(resolvedIdentity && !hasPasskeyAccess)
   const passkeyHint = passkeyDisabledForIdentity
-    ? 'No passkey is enrolled for this identity yet.'
+    ? (passkeySupportMessage
+        ? `${passkeySupportMessage} No passkey is enrolled for this identity yet.`
+        : 'No passkey is enrolled for this identity yet.')
     : passkeySupportMessage
 
   return (

@@ -1016,7 +1016,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })
     } catch (err) {
       // Clear any partially persisted encryption key and type metadata on failure
-      const { clearEncryptionKey, clearEncryptionKeyType, clearLoginKey } = await import('@/lib/secure-storage')
+      const { clearEncryptionKey, clearEncryptionKeyType, clearLoginKey, clearPrivateKey } = await import('@/lib/secure-storage')
+      clearPrivateKey(identityId)
       clearEncryptionKey(identityId)
       clearEncryptionKeyType(identityId)
       clearLoginKey(identityId)
