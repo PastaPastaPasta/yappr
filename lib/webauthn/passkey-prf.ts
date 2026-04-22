@@ -129,11 +129,19 @@ export async function createPasskeyWithPrf(options: EnrollPasskeyOptions): Promi
         residentKey: 'preferred',
         userVerification: 'required',
       },
+      extensions: {
+        prf: {},
+      } as AuthenticationExtensionsClientInputs,
     },
   })
 
   if (!(credential instanceof PublicKeyCredential)) {
     throw new Error('Failed to create passkey credential')
+  }
+
+  const createExtensions = (credential as PublicKeyCredentialWithExtensions).getClientExtensionResults()
+  if (createExtensions.prf?.enabled === false) {
+    throw new Error('This passkey/provider did not enable PRF during registration.')
   }
 
   const credentialId = new Uint8Array(credential.rawId)
