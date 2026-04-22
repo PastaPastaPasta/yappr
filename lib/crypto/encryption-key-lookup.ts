@@ -1,7 +1,10 @@
 /**
  * Shared encryption key lookup helper.
  *
- * Finds the first active encryption key (purpose=1) on an identity.
+ * Finds the active encryption key (purpose=1) on an identity.
+ *
+ * Prefers full secp256k1 public keys (type=0) because callers consume the
+ * on-chain key material directly for ECIES/private-feed flows.
  *
  * NOTE: Contract-bound key preference is disabled due to SDK/tooling bugs.
  * We accept any encryption key regardless of contractBounds.
@@ -18,18 +21,24 @@ export interface EncryptionKeyCandidate {
 }
 
 /**
- * Find the first active encryption key from a list of identity public keys.
- *
- * Accepts any key with purpose=1 that isn't disabled.
+ * Find the preferred active encryption key from a list of identity public keys.
  */
 export function findEncryptionKey<T extends EncryptionKeyCandidate>(
   publicKeys: T[]
 ): T | undefined {
+  let fallbackKey: T | undefined
+
   for (const key of publicKeys) {
     if (key.purpose !== 1 || key.disabledAt) continue
-    return key
+    if (key.type === 0) {
+      return key
+    }
+    if (!fallbackKey) {
+      fallbackKey = key
+    }
   }
-  return undefined
+
+  return fallbackKey
 }
 
 /**

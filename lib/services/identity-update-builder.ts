@@ -154,29 +154,31 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   const newRevision = currentRevision + BigInt(1)
 
-  // Key type for new keys.
-  // TODO: Switch back to 'ECDSA_SECP256K1' when SDK bug is fixed
-  const keyType = 'ECDSA_HASH160' as const
-  const useHash160 = keyType === 'ECDSA_HASH160'
+  // Keep the auth key on the existing hash160 workaround, but register the
+  // encryption key as a full secp256k1 public key so encrypted features can
+  // consume the on-chain key material directly.
+  const authKeyType = 'ECDSA_HASH160' as const
+  const encryptionKeyType = 'ECDSA_SECP256K1' as const
 
-  // ECDSA_HASH160 stores hash160(pubkey) (20 bytes); ECDSA_SECP256K1 stores full pubkey (33 bytes)
-  const authKeyData = useHash160 ? hash160(authPublicKey) : authPublicKey
-  const encryptionKeyData = useHash160 ? hash160(encryptionPublicKey) : encryptionPublicKey
+  const authKeyData = hash160(authPublicKey)
+  const encryptionKeyData = encryptionPublicKey
 
   // NOTE: Contract-bound encryption keys (ContractBounds.SingleContract) are disabled
   // due to SDK/tooling bugs. We create unbound encryption keys instead.
   const encryptionContractBounds = undefined
 
   // Step 1: Create keys with empty signatures initially and get signable bytes
-  let authSignature: Uint8Array = new Uint8Array(0)
+  const authSignature: Uint8Array = new Uint8Array(0)
   let encryptionSignature: Uint8Array = new Uint8Array(0)
 
-  logger.info(`IdentityUpdateBuilder: Creating keys (${keyType}), unbound encryption key`)
+  logger.info(
+    `IdentityUpdateBuilder: Creating keys (auth=${authKeyType}, encryption=${encryptionKeyType}), unbound encryption key`
+  )
   const authKey = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'AUTHENTICATION',
     securityLevel: 'HIGH',
-    keyType,
+    keyType: authKeyType,
     isReadOnly: false,
     data: authKeyData,
     signature: new Uint8Array(0),
@@ -186,7 +188,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     keyId: encryptionKeyId,
     purpose: 'ENCRYPTION',
     securityLevel: 'MEDIUM',
-    keyType,
+    keyType: encryptionKeyType,
     isReadOnly: false,
     data: encryptionKeyData,
     signature: new Uint8Array(0),
@@ -205,23 +207,19 @@ export async function buildUnsignedKeyRegistrationTransition(
     })
 
     try {
-      // ECDSA_HASH160 keys must NOT have ownership signatures (would reveal the public key).
-      // Only sign when using ECDSA_SECP256K1.
-      if (!useHash160) {
-        // Step 3: Get signable bytes
-        const stateTransition = transition.toStateTransition()
-        const signableBytes = stateTransition.getSignableBytes()
-        logger.info('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
+      // Step 3: Get signable bytes for any full-pubkey additions that need key proofs.
+      const stateTransition = transition.toStateTransition()
+      const signableBytes = stateTransition.getSignableBytes()
+      logger.info('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
 
-        // Step 4: Sign with each new key's private key
-        logger.info('IdentityUpdateBuilder: Signing with auth key')
-        authSignature = await signWithKey(authPrivateKey, signableBytes)
-        logger.info('IdentityUpdateBuilder: Auth signature length:', authSignature.length)
+      // ECDSA_HASH160 keys must NOT have ownership signatures because the proof
+      // would reveal the full public key. The encryption key is registered as a
+      // full secp256k1 key, so it still needs the ownership signature.
+      logger.info('IdentityUpdateBuilder: Leaving auth key signature empty for hash160 key type')
 
-        logger.info('IdentityUpdateBuilder: Signing with encryption key')
-        encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
-        logger.info('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
-      }
+      logger.info('IdentityUpdateBuilder: Signing with encryption key')
+      encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
+      logger.info('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
     } finally {
       transition.free()
     }
@@ -230,13 +228,15 @@ export async function buildUnsignedKeyRegistrationTransition(
     encryptionKey.free()
   }
 
-  // Step 5: Recreate keys with signatures (empty for ECDSA_HASH160)
-  logger.info(`IdentityUpdateBuilder: Recreating keys with ${useHash160 ? 'empty' : ''} signatures (${keyType})`)
+  // Step 5: Recreate keys with the final signatures.
+  logger.info(
+    `IdentityUpdateBuilder: Recreating keys with auth=${authKeyType} and encryption=${encryptionKeyType} signatures`
+  )
   const authKeyWithSig = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'AUTHENTICATION',
     securityLevel: 'HIGH',
-    keyType,
+    keyType: authKeyType,
     isReadOnly: false,
     data: authKeyData,
     signature: authSignature,
@@ -246,7 +246,7 @@ export async function buildUnsignedKeyRegistrationTransition(
     keyId: encryptionKeyId,
     purpose: 'ENCRYPTION',
     securityLevel: 'MEDIUM',
-    keyType,
+    keyType: encryptionKeyType,
     isReadOnly: false,
     data: encryptionKeyData,
     signature: encryptionSignature,
@@ -335,10 +335,7 @@ export async function checkKeysRegistered(
     return bytes
   }
 
-  // Compute hash160 of expected public keys for ECDSA_HASH160 comparison
-  // TODO: Switch back to ECDSA_SECP256K1 with full public key comparison when SDK bug is fixed
   const authHash = hash160(authPublicKey)
-  const encHash = hash160(encryptionPublicKey)
 
   // Check for auth key (purpose='AUTHENTICATION')
   const authKeyExists = publicKeys.some((key: { purpose: string; keyType: string; data?: string; toJSON: () => { data: string | Uint8Array } }) => {
@@ -354,14 +351,14 @@ export async function checkKeysRegistered(
 
   // Check for encryption key (purpose='ENCRYPTION')
   const encKeyExists = publicKeys.some((key: { purpose: string; keyType: string; data?: string; toJSON: () => { data: string | Uint8Array } }) => {
-    if (key.purpose !== 'ENCRYPTION' || key.keyType !== 'ECDSA_HASH160') {
+    if (key.purpose !== 'ENCRYPTION' || key.keyType !== 'ECDSA_SECP256K1') {
       return false
     }
     const keyData = getKeyData(key)
-    if (keyData.length !== encHash.length) {
+    if (keyData.length !== encryptionPublicKey.length) {
       return false
     }
-    return keyData.every((b: number, i: number) => b === encHash[i])
+    return keyData.every((b: number, i: number) => b === encryptionPublicKey[i])
   })
 
   return authKeyExists && encKeyExists
