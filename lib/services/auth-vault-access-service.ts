@@ -118,11 +118,10 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
       const result = await this.query({
         where,
-        orderBy: [['$createdAt', 'desc']],
         limit: 100,
       })
 
-      return result.documents
+      return [...result.documents].sort((left, right) => right.$createdAt - left.$createdAt)
     } catch (error) {
       logger.error('AuthVaultAccessService: Failed to load access docs:', error)
       return []
