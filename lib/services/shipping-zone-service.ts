@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
   ShippingZone,
   ShippingZoneDocument,
@@ -108,7 +108,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
     }
   ): Promise<ShippingZone> {
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(storeId),
+      storeId: identifierStringToDocumentBytes(storeId),
       name: data.name,
       rateType: data.rateType
     };
@@ -148,7 +148,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
     }
 
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(storeId),
+      storeId: identifierStringToDocumentBytes(storeId),
       name: data.name ?? existing.name,
       rateType: data.rateType ?? existing.rateType
     };

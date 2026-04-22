@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
@@ -30,14 +30,15 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
   /**
    * Transform document from SDK response to typed object
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields (postId) are base64
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
    */
   protected transformDocument(doc: Record<string, unknown>): PostHashtagDocument {
     const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
     const hashtag = (data.hashtag || doc.hashtag) as string;
 
-    // Convert postId from base64 to base58 (byte array field)
+    // Normalize the identifier-like postId field to base58.
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     if (rawPostId && !postId) {
       logger.error('HashtagService: Invalid postId format:', rawPostId);
@@ -71,18 +72,13 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         return true;
       }
 
-      // Convert postId to byte array
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-      const postIdBytes = Array.from(bs58.decode(postId));
-
       // Create document via state transition
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         ownerId,
         {
-          postId: postIdBytes,
+          postId: identifierStringToDocumentBytes(postId),
           hashtag: normalizedTag
         }
       );

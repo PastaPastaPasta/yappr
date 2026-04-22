@@ -1,7 +1,7 @@
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
-import { identifierToBase58, normalizeBytes, requireIdentifierBytes } from './sdk-helpers'
+import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
 
@@ -113,7 +113,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
     const buildPayload = (finalSlug: string): Record<string, unknown> => {
       const payload: Record<string, unknown> = {
-        blogId: requireIdentifierBytes(data.blogId, 'blogId'),
+        blogId: requireDocumentIdentifierBytes(data.blogId, 'blogId'),
         title: data.title,
         data0: chunks[0],
         slug: finalSlug,

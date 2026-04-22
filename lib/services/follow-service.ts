@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
+import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
 
@@ -41,7 +41,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         this.contractId,
         this.documentType,
         followerUserId,
-        { followingId: stringToIdentifierBytes(targetUserId) }
+        { followingId: identifierStringToDocumentBytes(targetUserId) }
       );
 
       return result;

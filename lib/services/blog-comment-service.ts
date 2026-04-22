@@ -1,7 +1,7 @@
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
-import { identifierToBase58, requireIdentifierBytes } from './sdk-helpers'
+import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { paginateCount } from './pagination-utils'
 
@@ -43,8 +43,8 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     }
 
     return this.create(ownerId, {
-      blogPostId: requireIdentifierBytes(blogPostId, 'blogPostId'),
-      blogPostOwnerId: requireIdentifierBytes(blogPostOwnerId, 'blogPostOwnerId'),
+      blogPostId: requireDocumentIdentifierBytes(blogPostId, 'blogPostId'),
+      blogPostOwnerId: requireDocumentIdentifierBytes(blogPostOwnerId, 'blogPostOwnerId'),
       content: trimmedContent,
     })
   }

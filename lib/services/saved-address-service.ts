@@ -175,12 +175,12 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
     if (existingDoc) {
       // Update existing document
       await this.update(existingDoc.id, userId, {
-        encryptedPayload: Array.from(encryptedPayload)
+        encryptedPayload
       });
     } else {
       // Create new document
       await this.create(userId, {
-        encryptedPayload: Array.from(encryptedPayload)
+        encryptedPayload
       });
     }
   }

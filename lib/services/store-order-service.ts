@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes, toUint8Array } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes, toUint8Array } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
   StoreOrder,
@@ -114,10 +114,10 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     }
   ): Promise<StoreOrder> {
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(data.storeId),
-      sellerId: stringToIdentifierBytes(data.sellerId),
-      encryptedPayload: Array.from(data.encryptedPayload),
-      nonce: Array.from(data.nonce)
+      storeId: identifierStringToDocumentBytes(data.storeId),
+      sellerId: identifierStringToDocumentBytes(data.sellerId),
+      encryptedPayload: data.encryptedPayload,
+      nonce: data.nonce
     };
 
     return this.create(buyerId, documentData);
