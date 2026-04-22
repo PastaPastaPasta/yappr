@@ -142,19 +142,39 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     if (!this.isConfigured()) return []
 
     try {
-      const result = await this.query({
-        limit,
-      })
+      const pageSize = 100
+      const maxResults = Math.max(1, limit)
+      const allDocuments: AuthVaultAccessDocument[] = []
+      let startAfter: string | undefined
 
-      const documents = result.documents.filter((document) => {
+      while (allDocuments.length < maxResults) {
+        const remaining = maxResults - allDocuments.length
+        const result = await this.query({
+          limit: Math.min(pageSize, remaining),
+          startAfter,
+        })
+
+        if (result.documents.length === 0) break
+
+        allDocuments.push(...result.documents)
+
+        if (result.documents.length < Math.min(pageSize, remaining)) {
+          break
+        }
+
+        startAfter = result.documents[result.documents.length - 1].$id
+        if (!startAfter) break
+      }
+
+      const documents = allDocuments.filter((document) => {
         if (document.kind !== 'passkey-prf' || document.status !== 'active') return false
         if (!document.credentialId || !document.credentialIdHash || !document.prfInput || !document.rpId) return false
         if (rpId && document.rpId !== rpId) return false
         return true
       })
 
-      if (result.documents.length >= limit) {
-        logger.warn('AuthVaultAccessService: Passkey discovery query reached the configured limit and may be truncated')
+      if (allDocuments.length >= maxResults) {
+        logger.warn('AuthVaultAccessService: Passkey discovery reached the configured limit and may be truncated')
       }
 
       return documents
