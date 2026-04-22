@@ -123,15 +123,14 @@ class PrivateFeedFollowerService {
         return { success: false, error: 'Request already pending' };
       }
 
-      // 4. Create FollowRequest document
-      // targetId must be a byte array (Identifier type in contract)
+      // 4. Create FollowRequest document through the typed write path.
       const documentData: Record<string, unknown> = {
-        targetId: Array.from(identifierToBytes(ownerId)),
+        targetId: identifierToBytes(ownerId),
       };
 
       // Include public key if provided (for hash160-only keys on identity)
       if (publicKey) {
-        documentData.publicKey = Array.from(publicKey);
+        documentData.publicKey = publicKey;
       }
 
       logger.info('Creating FollowRequest:', { targetId: ownerId });

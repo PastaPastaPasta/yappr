@@ -7,7 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
   StoreReview,
   StoreReviewDocument,
@@ -132,9 +132,9 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
     }
 
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(data.storeId),
-      orderId: stringToIdentifierBytes(data.orderId),
-      sellerId: stringToIdentifierBytes(data.sellerId),
+      storeId: identifierStringToDocumentBytes(data.storeId),
+      orderId: identifierStringToDocumentBytes(data.orderId),
+      sellerId: identifierStringToDocumentBytes(data.sellerId),
       rating: data.rating
     };
 

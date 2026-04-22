@@ -268,6 +268,9 @@ class StateTransitionService {
   /**
    * Create a document with idempotent retry via ST byte caching.
    *
+   * This is the typed write path: `documentData` should already use `Uint8Array` for binary
+   * fields before it is wrapped in a `Document`.
+   *
    * Instead of using sdk.documents.create() (which atomically builds,
    * signs, broadcasts, and waits — bumping the nonce each time), we:
    *
@@ -311,7 +314,7 @@ class StateTransitionService {
 
       logger.info(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
-      // Build the Document
+      // Build the typed Document. Binary fields remain Uint8Array on this path.
       const document = await documentBuilderService.buildDocumentForCreate(
         contractId,
         documentType,
@@ -537,7 +540,8 @@ class StateTransitionService {
   }
 
   /**
-   * Update a document using the typed API
+   * Update a document using the typed API.
+   * `documentData` should already use `Uint8Array` for binary fields.
    */
   async updateDocument(
     contractId: string,

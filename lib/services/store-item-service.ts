@@ -7,7 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes, type DocumentWhereClause } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
 import { parseJsonArray, parseJsonObject } from '../utils/json-parsing';
 import type {
   StoreItem,
@@ -156,7 +156,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     }
   ): Promise<StoreItem> {
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(storeId),
+      storeId: identifierStringToDocumentBytes(storeId),
       title: data.title,
       status: data.status || 'active'
     };
@@ -208,7 +208,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     }
 
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(storeId),
+      storeId: identifierStringToDocumentBytes(storeId),
       title: data.title ?? existing.title,
       status: data.status ?? existing.status
     };

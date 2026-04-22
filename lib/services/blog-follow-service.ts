@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
+import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { YAPPR_BLOG_CONTRACT_ID } from '../constants';
 import { paginateCount, paginateFetchAll } from './pagination-utils';
@@ -47,7 +47,7 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         this.contractId,
         this.documentType,
         userId,
-        { blogId: stringToIdentifierBytes(blogId) }
+        { blogId: identifierStringToDocumentBytes(blogId) }
       );
     } catch (error) {
       logger.error('Error following blog:', error);

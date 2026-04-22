@@ -5,6 +5,8 @@
  * for use with the new typed state transition APIs in @dashevo/evo-sdk
  *
  * The new API requires Document WASM objects instead of plain data objects.
+ * Binary properties on this path should stay as `Uint8Array`; this layer does not convert them
+ * into JSON-style `number[]`.
  *
  * IMPORTANT: We import the Document class from @dashevo/evo-sdk which re-exports
  * from the shared @dashevo/wasm-sdk module. By calling getEvoSdk() first, we ensure
@@ -31,7 +33,7 @@ class DocumentBuilderService {
    * @param contractId - The data contract ID
    * @param documentTypeName - The document type name (e.g., 'post', 'profile')
    * @param ownerId - The identity ID that owns this document
-   * @param data - The document data fields
+   * @param data - The document data fields (`Uint8Array` for binary fields on typed writes)
    * @returns A WASM Document object ready for creation
    */
   async buildDocumentForCreate(
@@ -66,7 +68,7 @@ class DocumentBuilderService {
    * @param documentTypeName - The document type name
    * @param documentId - The existing document's ID
    * @param ownerId - The identity ID that owns this document
-   * @param data - The updated document data fields
+   * @param data - The updated document data fields (`Uint8Array` for binary fields on typed writes)
    * @param newRevision - The new revision number (current revision + 1)
    * @returns A WASM Document object ready for replacement
    */

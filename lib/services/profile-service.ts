@@ -439,8 +439,7 @@ class ProfileService extends BaseDocumentService<User> {
 
       const sdk = await getEvoSdk();
 
-      // Query profiles where $ownerId is in the array
-      // SDK v3 expects base58 identifier strings for 'in' queries on system fields
+      // Raw query path: system identifier fields keep their base58 string operands.
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,

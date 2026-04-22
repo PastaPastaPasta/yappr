@@ -282,11 +282,12 @@ class PrivateFeedService {
         aad
       );
 
-      // 6. Create PrivateFeedState document (SPEC §8.1 step 5)
+      // 6. Create PrivateFeedState document (SPEC §8.1 step 5).
+      // This is a typed write, so binary fields stay as Uint8Array.
       const documentData = {
         treeCapacity: TREE_CAPACITY,
         maxEpoch: MAX_EPOCH,
-        encryptedSeed: Array.from(encryptedSeed), // Convert to array for platform
+        encryptedSeed,
       };
 
       logger.info('Creating PrivateFeedState document:', {
@@ -473,13 +474,12 @@ class PrivateFeedService {
         aad
       );
 
-      // 11. Create PrivateFeedGrant document
-      // recipientId must be a byte array (Identifier type in contract)
+      // 11. Create PrivateFeedGrant document.
       const documentData = {
-        recipientId: Array.from(identifierToBytes(requesterId)),
+        recipientId: identifierToBytes(requesterId),
         leafIndex,
         epoch: localEpoch,
-        encryptedPayload: Array.from(encryptedPayload),
+        encryptedPayload,
       };
 
       logger.info('Creating PrivateFeedGrant document:', {
@@ -749,8 +749,8 @@ class PrivateFeedService {
       const rekeyData = {
         epoch: newEpoch,
         revokedLeaf: leafIndex,
-        packets: Array.from(encodedPackets),
-        encryptedCEK: Array.from(encryptedCEK),
+        packets: encodedPackets,
+        encryptedCEK,
       };
 
       logger.info('Creating PrivateFeedRekey document:', {
@@ -1057,7 +1057,7 @@ class PrivateFeedService {
       const updateData = {
         treeCapacity: TREE_CAPACITY,
         maxEpoch: MAX_EPOCH,
-        encryptedSeed: Array.from(newEncryptedSeed),
+        encryptedSeed: newEncryptedSeed,
       };
 
       logger.info('Resetting PrivateFeedState document:', {
@@ -1331,10 +1331,10 @@ export type { PrivateFeedService };
  * Encrypted post data ready for document creation
  */
 export interface EncryptedPostData {
-  encryptedContent: number[];  // Array for platform serialization
+  encryptedContent: Uint8Array;
   epoch: number;
-  nonce: number[];             // Array for platform serialization
-  teaser?: string;             // Optional public teaser
+  nonce: Uint8Array;
+  teaser?: string;
 }
 
 /**
@@ -1457,9 +1457,9 @@ export async function prepareOwnerEncryption(
     return {
       success: true,
       data: {
-        encryptedContent: Array.from(encrypted.ciphertext),
+        encryptedContent: encrypted.ciphertext,
         epoch: currentEpoch,
-        nonce: Array.from(encrypted.nonce),
+        nonce: encrypted.nonce,
         teaser,
       },
     };
@@ -1537,9 +1537,9 @@ export async function prepareInheritedEncryption(
     return {
       success: true,
       data: {
-        encryptedContent: Array.from(encrypted.ciphertext),
+        encryptedContent: encrypted.ciphertext,
         epoch: source.epoch,
-        nonce: Array.from(encrypted.nonce),
+        nonce: encrypted.nonce,
       },
     };
   } catch (error) {

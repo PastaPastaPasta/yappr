@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
-import { identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
@@ -42,7 +42,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /**
    * Transform raw block document to typed object.
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields are base64.
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
    */
   protected transformDocument(doc: Record<string, unknown>): BlockDocument {
     const data = (doc.data || doc) as Record<string, unknown>
@@ -87,8 +88,9 @@ class BlockService extends BaseDocumentService<BlockDocument> {
         return { success: true }
       }
 
-      const blockedIdBytes = Array.from(bs58.decode(targetUserId))
-      const documentData: Record<string, unknown> = { blockedId: blockedIdBytes }
+      const documentData: Record<string, unknown> = {
+        blockedId: identifierStringToDocumentBytes(targetUserId),
+      }
       if (message?.trim()) {
         documentData.message = message.trim().slice(0, 280)
       }
@@ -335,7 +337,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
           existing.documentId,
           userId,
           {
-            filterData: Array.from(existing.filter.serialize()),
+            filterData: existing.filter.serialize(),
             itemCount: existing.filter.itemCount,
             version: BLOOM_FILTER_VERSION
           },
@@ -351,7 +353,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
           DOCUMENT_TYPES.BLOCK_FILTER,
           userId,
           {
-            filterData: Array.from(filter.serialize()),
+            filterData: filter.serialize(),
             itemCount: filter.itemCount,
             version: BLOOM_FILTER_VERSION
           }
@@ -417,11 +419,10 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   /**
    * Encode an array of base58 user IDs into a byte array.
    */
-  private encodeUserIdArray(userIds: string[]): number[] {
-    const result: number[] = []
-    for (const userId of userIds) {
-      const bytes = bs58.decode(userId)
-      result.push(...Array.from(bytes))
+  private encodeUserIdArray(userIds: string[]): Uint8Array {
+    const result = new Uint8Array(userIds.length * 32)
+    for (let index = 0; index < userIds.length; index++) {
+      result.set(identifierStringToDocumentBytes(userIds[index]), index * 32)
     }
     return result
   }

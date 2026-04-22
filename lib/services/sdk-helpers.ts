@@ -1,9 +1,16 @@
 import { logger } from '@/lib/logger';
 /**
- * SDK helper utilities for working with the v3 EvoSDK
+ * SDK helper utilities for working with the v3 EvoSDK.
  *
- * The v3 SDK returns Map<Identifier, Document> from queries.
- * This helper converts that to a simple array of document data.
+ * Two Platform paths matter here:
+ * - Typed document writes (`new Document(...)`, `sdk.documents.replace(...)`) should receive
+ *   binary properties as `Uint8Array`.
+ * - Raw document queries (`sdk.documents.query(...)`) receive plain query JSON, so operand
+ *   shape depends on the contract field: identifier-like fields use their base58 string form,
+ *   while ordinary `byteArray: true` fields may need an explicit binary encoding.
+ *
+ * The v3 SDK returns `Map<Identifier, Document>` from queries. These helpers normalize that
+ * response shape into plain document objects and keep the write/query byte rules explicit.
  */
 
 import type { EvoSDK } from '@dashevo/evo-sdk';
@@ -17,11 +24,11 @@ import bs58 from 'bs58';
 export type { DocumentWhereClause, DocumentOrderByClause };
 
 /**
- * Convert any identifier value to a base58 string.
+ * Convert any identifier-like value to a base58 string.
  *
- * SDK v3 toJSON() returns different formats:
+ * Query results and `Document#toJSON()` can surface identifier bytes in different forms:
  * - System fields ($id, $ownerId): base58 strings
- * - Byte array fields (postId, replyToPostId, etc): base64 strings
+ * - Identifier-like document fields (postId, replyToPostId, etc): base64 strings or byte arrays
  *
  * This function normalizes both to base58 for consistent handling.
  */
@@ -97,8 +104,8 @@ export function identifierToBase58(value: unknown): string | null {
 }
 
 /**
- * Convert a base58 string to Uint8Array for SDK queries
- * Returns null if the value is invalid
+ * Decode a base58 identifier string into raw bytes.
+ * Returns null if the value is invalid.
  */
 export function base58ToBytes(value: string): Uint8Array | null {
   if (!value || typeof value !== 'string') return null;
@@ -109,7 +116,12 @@ export function base58ToBytes(value: string): Uint8Array | null {
   }
 }
 
-export function requireIdentifierBytes(id: string, fieldName: string): Uint8Array {
+/**
+ * Typed document write helper for required identifier-like fields.
+ *
+ * Use this when building `Document.properties` for create/update/replace paths.
+ */
+export function requireDocumentIdentifierBytes(id: string, fieldName: string): Uint8Array {
   const bytes = base58ToBytes(id)
   if (!bytes || bytes.length !== 32) {
     throw new Error(`Invalid ${fieldName}: expected base58 identifier`)
@@ -118,8 +130,17 @@ export function requireIdentifierBytes(id: string, fieldName: string): Uint8Arra
 }
 
 /**
- * Convert an array of identifier strings to array of Uint8Array
- * For use in 'in' queries on system identifier fields ($id, $ownerId)
+ * Backwards-compatible alias for older call sites.
+ * Prefer `requireDocumentIdentifierBytes` in new code so the typed-write intent stays obvious.
+ */
+export const requireIdentifierBytes = requireDocumentIdentifierBytes
+
+/**
+ * Convert an array of identifier strings to raw bytes.
+ *
+ * This is for low-level binary handling only. Raw queries on system identifier fields usually
+ * pass the base58 strings directly (`$id`, `$ownerId`, or identifier-typed custom fields).
+ *
  * Handles base58, base64, and hex formats. Filters out invalid values.
  */
 export function base58ArrayToBytes(values: string[]): Uint8Array[] {
@@ -313,8 +334,10 @@ export interface QueryDocumentsOptions {
 }
 
 /**
- * Query documents and return as an array of plain objects
- * Handles the v3 SDK Map response format
+ * Query documents and return an array of plain objects.
+ *
+ * This is the raw `sdk.documents.query` path. It does not rewrite `where` operands; callers are
+ * responsible for supplying the contract-appropriate shape for each queried field.
  */
 export async function queryDocuments(
   sdk: EvoSDK,
@@ -414,17 +437,54 @@ export function normalizeSDKResponse(response: unknown): Record<string, unknown>
 }
 
 /**
- * Convert a base58 string to a byte array for SDK document fields.
- * Returns an Array<number> instead of Uint8Array because the SDK
- * serializes Uint8Array incorrectly.
+ * Convert a base58 identifier string into raw bytes for typed `Document.properties`.
+ *
+ * Use this for create/update flows that end up in `new Document(...)` or
+ * `sdk.documents.replace(...)`.
  */
-export function stringToIdentifierBytes(value: string): number[] {
-  return Array.from(bs58.decode(value));
+export function identifierStringToDocumentBytes(value: string): Uint8Array {
+  return bs58.decode(value);
+}
+
+/**
+ * Legacy helper for plain-object paths that still need JSON-serializable byte arrays.
+ *
+ * Prefer `identifierStringToDocumentBytes` for typed document writes.
+ */
+export function identifierStringToLegacyNumberArray(value: string): number[] {
+  return Array.from(identifierStringToDocumentBytes(value));
+}
+
+/**
+ * Encode raw bytes for ordinary `byteArray: true` query operands.
+ *
+ * Yappr uses base64 for these raw-query comparisons because `sdk.documents.query(...)` receives
+ * plain JSON, and ordinary byte-array fields commonly surface as base64 in `toJSON()` output.
+ * Identifier-like fields should stay in their base58 string form instead.
+ */
+export function bytesToBase64QueryOperand(value: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(value).toString('base64');
+  }
+
+  let binary = '';
+  for (let i = 0; i < value.length; i++) {
+    binary += String.fromCharCode(value[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Convert a base58 identifier string into the base64 operand used by raw queries on ordinary
+ * byte-array fields that store identifier bytes but are not modeled as identifier-typed fields.
+ */
+export function identifierStringToBase64QueryOperand(value: string): string {
+  return bytesToBase64QueryOperand(identifierStringToDocumentBytes(value));
 }
 
 /**
  * Base document fields returned by all SDK documents.
- * Used by transformDocumentWithField to provide consistent structure.
+ * Used by transformDocumentWithField for documents with one identifier-like field.
  */
 export interface BaseDocumentFields {
   $id: string;
@@ -433,13 +493,13 @@ export interface BaseDocumentFields {
 }
 
 /**
- * Transform a raw SDK document into a typed document with a single byte array field.
+ * Transform a raw SDK document into a typed document with a single identifier-like field.
  *
  * This consolidates the repeated pattern across like, bookmark, repost, and follow services
  * where documents have system fields ($id, $ownerId, $createdAt) plus one identifier field.
  *
  * @param doc - Raw document from SDK (may have nested .data or direct fields)
- * @param fieldName - Name of the byte array field to extract and convert (e.g., 'postId', 'followingId')
+ * @param fieldName - Name of the identifier-like field to extract and convert (e.g., 'postId', 'followingId')
  * @param serviceName - Service name for error logging
  * @returns Document with base fields and the converted identifier field
  */

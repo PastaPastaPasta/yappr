@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
+import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 
 /**
@@ -83,13 +83,13 @@ class RepostService {
       // Build document data - a post with empty content + quotedPostId
       const documentData: Record<string, unknown> = {
         content: '',  // Empty content marks this as a pure repost
-        quotedPostId: stringToIdentifierBytes(postId),
+        quotedPostId: identifierStringToDocumentBytes(postId),
         language: language,  // Required field
       };
 
       // Add quotedPostOwnerId if provided (for notification queries)
       if (postOwnerId) {
-        documentData.quotedPostOwnerId = stringToIdentifierBytes(postOwnerId);
+        documentData.quotedPostOwnerId = identifierStringToDocumentBytes(postOwnerId);
       }
 
       // Use state transition service for creation

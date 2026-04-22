@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
  */
 
 import { getEvoSdk } from './evo-sdk-service';
-import { queryDocuments, identifierToBase58 } from './sdk-helpers';
+import { identifierStringToLegacyNumberArray, queryDocuments, identifierToBase58 } from './sdk-helpers';
 import { followService } from './follow-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
@@ -116,16 +116,16 @@ class DashPayContactsService {
 
   /**
    * Get all contact requests sent TO the user (incoming)
-   * Uses index: userIdCreatedAt
-   * Note: toUserId is a 32-byte array field, requires byte array for query
+   * Uses index: userIdCreatedAt.
+   *
+   * This is a raw query over an ordinary byte-array field, so it uses the legacy
+   * JSON `number[]` operand shape instead of the typed-write `Uint8Array` helper.
    */
   async getIncomingContactRequests(userId: string): Promise<ContactRequestDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
-      // Convert userId from base58 to byte array for the query
-      // toUserId is stored as a 32-byte array in the contract
-      const userIdBytes = Array.from(bs58.decode(userId));
+      const userIdBytes = identifierStringToLegacyNumberArray(userId);
 
       const documents = await queryDocuments(sdk, {
         dataContractId: DASHPAY_CONTRACT_ID,

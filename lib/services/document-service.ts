@@ -20,7 +20,7 @@ export interface DocumentResult<T> {
 
 /**
  * Query raw documents through the shared document-service path.
- * This keeps SDK query behavior centralized in one layer.
+ * This keeps the raw `sdk.documents.query(...)` behavior centralized in one layer.
  */
 export async function queryRawDocuments(options: QueryDocumentsOptions): Promise<Record<string, unknown>[]> {
   const sdk = await getEvoSdk();
@@ -88,7 +88,8 @@ export abstract class BaseDocumentService<T> {
   }
 
   /**
-   * Query documents
+   * Query documents through the raw query path.
+   * `where` operands must already use the correct query encoding for each field.
    */
   async query(options: QueryOptions = {}): Promise<DocumentResult<T>> {
     try {
@@ -166,7 +167,8 @@ export abstract class BaseDocumentService<T> {
   }
 
   /**
-   * Create a new document
+   * Create a new document through the typed `Document` path.
+   * Binary fields should already be `Uint8Array` when they reach this layer.
    */
   async create(ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
@@ -220,7 +222,8 @@ export abstract class BaseDocumentService<T> {
   }
 
   /**
-   * Update a document
+   * Update a document through the typed `Document` replace path.
+   * Binary fields should already be `Uint8Array` when they reach this layer.
    */
   async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {

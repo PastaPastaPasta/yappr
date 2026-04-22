@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions } from '../../types';
 import type { BlogPost } from '@/lib/types';
-import { identifierToBase58, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
+import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { paginateCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
@@ -74,7 +74,7 @@ class PostService extends BaseDocumentService<Post> {
 
     // SDK v3 toJSON() returns:
     // - System fields ($id, $ownerId, $createdAt): base58 strings
-    // - Byte array fields (replyToPostId, etc): base64 strings (need conversion)
+    // - Identifier-like document fields (quotedPostId, etc): base64 strings or byte arrays
     // Handle both $ prefixed (query responses) and non-prefixed (creation responses) fields
     const id = (doc.$id || doc.id) as string;
     const ownerId = (doc.$ownerId || doc.ownerId) as string;
@@ -84,11 +84,10 @@ class PostService extends BaseDocumentService<Post> {
     const content = (data.content || doc.content || '') as string;
     const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
-    // Convert quotedPostId from base64 to base58 for consistent storage
+    // Normalize identifier-like fields to base58 for consistent storage.
     const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
     const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) || undefined : undefined;
 
-    // Convert quotedPostOwnerId from base64 to base58 for consistent storage
     const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
     const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
 
@@ -260,8 +259,8 @@ class PostService extends BaseDocumentService<Post> {
 
     // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
-    if (options.quotedPostId) data.quotedPostId = stringToIdentifierBytes(options.quotedPostId);
-    if (options.quotedPostOwnerId) data.quotedPostOwnerId = stringToIdentifierBytes(options.quotedPostOwnerId);
+    if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
+    if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
     if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
     if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;

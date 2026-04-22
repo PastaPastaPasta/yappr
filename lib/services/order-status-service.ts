@@ -7,7 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
   OrderStatusUpdate,
   OrderStatusUpdateDocument,
@@ -94,7 +94,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
-      orderId: stringToIdentifierBytes(orderId),
+      orderId: identifierStringToDocumentBytes(orderId),
       status: data.status
     };
 

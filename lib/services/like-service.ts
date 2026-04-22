@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { stringToIdentifierBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
+import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 
 export interface LikeDocument {
@@ -57,12 +57,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       // Build document data
       const documentData: Record<string, unknown> = {
-        postId: stringToIdentifierBytes(postId)
+        postId: identifierStringToDocumentBytes(postId)
       };
 
       // Add postOwnerId if provided (for notification queries)
       if (postOwnerId) {
-        documentData.postOwnerId = stringToIdentifierBytes(postOwnerId);
+        documentData.postOwnerId = identifierStringToDocumentBytes(postOwnerId);
       }
 
       // Use state transition service for creation

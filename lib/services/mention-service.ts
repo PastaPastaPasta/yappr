@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes } from './sdk-helpers';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
 
@@ -20,14 +20,15 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
 
   /**
    * Transform document from SDK response to typed object
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields are base64
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
    */
   protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
     const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
     const rawMentionedUserId = data.mentionedUserId || doc.mentionedUserId;
 
-    // Convert byte array fields from base64 to base58
+    // Normalize identifier-like fields to base58 for app-level use.
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     const mentionedUserId = rawMentionedUserId ? identifierToBase58(rawMentionedUserId) : '';
 
@@ -68,19 +69,19 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         return true;
       }
 
-      // Convert IDs to byte arrays using shared helper with defensive error handling
-      let postIdBytes: number[];
-      let mentionedUserIdBytes: number[];
+      // Typed writes use Uint8Array for identifier-like fields.
+      let postIdBytes: Uint8Array;
+      let mentionedUserIdBytes: Uint8Array;
 
       try {
-        postIdBytes = stringToIdentifierBytes(postId);
+        postIdBytes = identifierStringToDocumentBytes(postId);
       } catch (decodeError) {
         logger.error('MentionService: Invalid base58 postId:', postId, decodeError);
         return false;
       }
 
       try {
-        mentionedUserIdBytes = stringToIdentifierBytes(mentionedUserId);
+        mentionedUserIdBytes = identifierStringToDocumentBytes(mentionedUserId);
       } catch (decodeError) {
         logger.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
         return false;
@@ -175,8 +176,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use byPost index - simple query by postId only
-      // SDK handles string to byte array conversion for identifier fields
+      // Raw query path: postId is identifier-like, so keep the base58 string operand.
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
