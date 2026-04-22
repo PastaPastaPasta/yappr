@@ -369,30 +369,42 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       label: 'Login to Yappr',
     },
     yapprKeyExchange: {
-      getResponse(contractIdBytes, appEphemeralPubKeyHash) {
+      async getResponse(contractIdBytes, appEphemeralPubKeyHash) {
+        await ensureSdk()
         return keyExchangeService.getResponse(contractIdBytes, appEphemeralPubKeyHash)
       },
-      buildUnsignedKeyRegistrationTransition,
-      checkKeysRegistered,
+      async buildUnsignedKeyRegistrationTransition(request) {
+        await ensureSdk()
+        return buildUnsignedKeyRegistrationTransition(request)
+      },
+      async checkKeysRegistered(identityId, authPublicKey, encryptionPublicKey) {
+        await ensureSdk()
+        return checkKeysRegistered(identityId, authPublicKey, encryptionPublicKey)
+      },
     },
     vault: {
       isConfigured() {
         return authVaultService.isConfigured()
       },
       async getStatus(identityId): Promise<AuthVaultStatus> {
+        await ensureSdk()
         return authVaultService.getStatus(identityId)
       },
       async hasVault(identityId) {
+        await ensureSdk()
         return authVaultService.hasVault(identityId)
       },
       async resolveIdentityId(identityOrUsername) {
+        await ensureSdk()
         return authVaultService.resolveIdentityId(identityOrUsername)
       },
       async createOrUpdateVaultBundle(identityId, bundle, dek) {
+        await ensureSdk()
         const created = await authVaultService.createOrUpdateVaultBundle(identityId, toLegacyBundle(bundle), dek)
         return fromUnlockResult(created)
       },
       async mergeSecrets(identityId, dek, partialSecrets) {
+        await ensureSdk()
         const merged = await authVaultService.mergeSecrets(identityId, dek, {
           loginKey: partialSecrets.loginKey,
           authKeyWif: partialSecrets.authKeyWif,
@@ -403,10 +415,12 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         return merged ? fromUnlockResult(merged) : null
       },
       async unlockWithPassword(identityOrUsername, password) {
+        await ensureSdk()
         const unlocked = await authVaultService.unlockWithPassword(identityOrUsername, password)
         return fromUnlockResult(unlocked)
       },
       async unlockWithPrf(identityId, access, prfOutput) {
+        await ensureSdk()
         const accesses = await authVaultAccessService.getPasskeyAccesses(identityId)
         const matchingAccess = accesses.find((entry) => entry.$id === access.$id)
         if (!matchingAccess) {
@@ -416,10 +430,12 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         return fromUnlockResult(unlocked)
       },
       async getPasskeyAccesses(identityId) {
+        await ensureSdk()
         const accesses = await authVaultAccessService.getPasskeyAccesses(identityId)
         return accesses.map(toPasskeyAccess)
       },
       async addPasswordAccess(identityId, input) {
+        await ensureSdk()
         const wrapped = await wrapDekWithPassword(input.dek, input.password, input.iterations, identityId, input.vaultId)
         await authVaultAccessService.upsertPasswordAccess(identityId, {
           vaultId: input.vaultId,
@@ -431,6 +447,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         })
       },
       async addPasskeyAccess(identityId, input) {
+        await ensureSdk()
         const wrapped = await wrapDekWithPrf(input.dek, input.passkey.prfOutput, identityId, input.vaultId, input.passkey.rpId)
         try {
           await authVaultAccessService.createPasskeyAccess(identityId, {
