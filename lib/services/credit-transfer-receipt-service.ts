@@ -40,6 +40,14 @@ function transitionHashStringToBytes(value: string): Uint8Array {
   return decoded
 }
 
+function amountCreditsToDocumentInteger(value: bigint): number {
+  const amount = Number(value)
+  if (!Number.isSafeInteger(amount) || amount < 0) {
+    throw new Error('Invalid amountCredits: expected a non-negative safe integer for receipt storage')
+  }
+  return amount
+}
+
 class CreditTransferReceiptService extends BaseDocumentService<CreditTransferReceipt> {
   constructor() {
     super(PAYMENT_RECEIPT_DOCUMENT_TYPES.CREDIT_TRANSFER_RECEIPT, YAPPR_PAYMENT_RECEIPT_CONTRACT_ID)
@@ -63,7 +71,7 @@ class CreditTransferReceiptService extends BaseDocumentService<CreditTransferRec
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       recipientId: identifierToBase58(data.recipientId) || '',
-      amountCredits: data.amountCredits,
+      amountCredits: BigInt(data.amountCredits),
       transitionHash: bytesToHex(toUint8Array(data.transitionHash) || new Uint8Array()),
       transitionBytes: toUint8Array(data.transitionBytes) || new Uint8Array(),
       referenceType: data.referenceType,
@@ -94,7 +102,7 @@ class CreditTransferReceiptService extends BaseDocumentService<CreditTransferRec
     data: {
       receiptId: string
       recipientId: string
-      amountCredits: string
+      amountCredits: bigint
       transitionHash: string
       transitionBytes: Uint8Array
       referenceType?: CreditTransferReceiptReferenceType
@@ -115,7 +123,7 @@ class CreditTransferReceiptService extends BaseDocumentService<CreditTransferRec
 
     const documentData: Record<string, unknown> = {
       recipientId: identifierStringToDocumentBytes(data.recipientId),
-      amountCredits: data.amountCredits,
+      amountCredits: amountCreditsToDocumentInteger(data.amountCredits),
       transitionHash: transitionHashStringToBytes(data.transitionHash),
       transitionBytes: data.transitionBytes,
     }

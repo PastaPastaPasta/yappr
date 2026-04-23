@@ -5,7 +5,7 @@ export interface CreditTransferReceiptDocument {
   $ownerId: string
   $createdAt: number
   recipientId: Uint8Array | string
-  amountCredits: string
+  amountCredits: number | string
   transitionHash: Uint8Array | string
   transitionBytes: Uint8Array | string
   referenceType?: string
@@ -17,7 +17,7 @@ export interface CreditTransferReceipt {
   ownerId: string
   createdAt: Date
   recipientId: string
-  amountCredits: string
+  amountCredits: bigint
   transitionHash: string
   transitionBytes: Uint8Array
   referenceType?: string
@@ -30,7 +30,7 @@ export interface CreditTransferReceiptVerification {
   status: CreditTransferReceiptVerificationStatus
   receiptId: string
   receipt?: CreditTransferReceipt | null
-  amountCredits?: string
+  amountCredits?: bigint
   senderId?: string
   recipientId?: string
   transitionHash?: string

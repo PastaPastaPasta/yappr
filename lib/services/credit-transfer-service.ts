@@ -385,7 +385,7 @@ class CreditTransferService {
         const receipt = await creditTransferReceiptService.createReceipt(options.senderId, {
           receiptId,
           recipientId: options.recipientId,
-          amountCredits: amountCreditsString,
+          amountCredits: options.amountCredits,
           transitionHash,
           transitionBytes,
           referenceType: options.referenceType,
@@ -482,7 +482,7 @@ class CreditTransferService {
           await creditTransferReceiptService.createReceipt(entry.senderId, {
             receiptId: entry.receiptId,
             recipientId: entry.recipientId,
-            amountCredits: entry.amountCredits,
+            amountCredits: BigInt(entry.amountCredits),
             transitionHash: entry.transitionHash,
             transitionBytes,
             referenceType: entry.referenceType,
@@ -554,7 +554,7 @@ class CreditTransferService {
       const transitionHash = stateTransition.hash(false)
       const senderId = transfer.senderId.toString()
       const recipientId = transfer.recipientId.toString()
-      const amountCredits = transfer.amount.toString()
+      const amountCredits = transfer.amount
 
       if (receipt.ownerId !== senderId) {
         return { status: 'invalid', receiptId, receipt, error: 'Receipt owner does not match transfer sender' }
@@ -574,7 +574,7 @@ class CreditTransferService {
       if (options.expectedRecipientId && options.expectedRecipientId !== recipientId) {
         return { status: 'invalid', receiptId, receipt, error: 'Unexpected transfer recipient' }
       }
-      if (options.expectedAmountCredits && options.expectedAmountCredits !== amountCredits) {
+      if (options.expectedAmountCredits && BigInt(options.expectedAmountCredits) !== amountCredits) {
         return { status: 'invalid', receiptId, receipt, error: 'Unexpected transfer amount' }
       }
       if (options.expectedReferenceType && receipt.referenceType !== options.expectedReferenceType) {

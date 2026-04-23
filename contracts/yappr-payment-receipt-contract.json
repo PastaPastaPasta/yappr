@@ -53,10 +53,11 @@
         "contentMediaType": "application/x.dash.dpp.identifier"
       },
       "amountCredits": {
-        "type": "string",
+        "type": "integer",
         "position": 1,
-        "maxLength": 32,
-        "description": "Transfer amount in credits serialized as a base-10 string"
+        "minimum": 0,
+        "maximum": 9007199254740991,
+        "description": "Transfer amount in credits"
       },
       "transitionHash": {
         "type": "array",
