@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
+import { creditTransferService } from '@/lib/services/credit-transfer-service'
 import { useUsernameModal } from '@/hooks/use-username-modal'
 
 export interface AuthUser {
@@ -123,6 +124,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       controller.dispose()
     }
   }, [controller])
+
+  useEffect(() => {
+    const identityId = controllerState.user?.identityId
+    if (!identityId || typeof window === 'undefined') {
+      return
+    }
+
+    creditTransferService.recoverPendingTransfers(identityId).catch((error) => {
+      logger.warn('Auth: Failed to recover pending credit transfers', error)
+    })
+  }, [controllerState.user?.identityId])
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     switch (intent.kind) {

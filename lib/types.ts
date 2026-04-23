@@ -1,6 +1,7 @@
 export * from '../types/user'
 export * from '../types/post'
 export * from '../types/store'
+export * from '../types/payment'
 export * from '../types/notification'
 
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'

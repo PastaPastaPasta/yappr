@@ -7,6 +7,8 @@ import type { User } from './user'
 export interface TipInfo {
   amount: number        // Tip amount in credits (self-reported, unverified)
   message: string       // The tip message (content after the tip: line)
+  receiptId?: string    // Receipt document ID for detached verification
+  verificationStatus?: 'verified' | 'pending' | 'legacy'
   transitionId?: string // Future: will be used for on-chain verification
 }
 
