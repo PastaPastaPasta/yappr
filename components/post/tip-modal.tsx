@@ -60,6 +60,8 @@ export function TipModal() {
   const [activeTab, setActiveTab] = useState<PaymentTab>('credits')
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
+  const [receiptId, setReceiptId] = useState<string | null>(null)
+  const [verificationStatus, setVerificationStatus] = useState<'verified' | 'pending' | null>(null)
 
   // Transfer key persistence
   const [keySource, setKeySource] = useState<KeySource>(null)
@@ -113,6 +115,8 @@ export function TipModal() {
       setShowQrDialog(false)
       setKeySource(null)
       usedTransferKeyRef.current = null
+      setReceiptId(null)
+      setVerificationStatus(null)
     }
   }, [isOpen])
 
@@ -197,6 +201,9 @@ export function TipModal() {
     setTransferKey('')
 
     if (result.success) {
+      setReceiptId(result.receiptId || null)
+      setVerificationStatus(result.verificationStatus || null)
+
       // Refresh balance display and persist to auth context
       identityService.getBalance(user.identityId)
         .then(b => setBalance(b.confirmed))
@@ -273,6 +280,16 @@ export function TipModal() {
   const handleCloseQrDialog = () => {
     setShowQrDialog(false)
     setSelectedQrPayment(null)
+  }
+
+  const handleCopyReceiptId = async () => {
+    if (!receiptId) return
+
+    try {
+      await navigator.clipboard.writeText(receiptId)
+    } catch (copyError) {
+      logger.error('Failed to copy receipt ID:', copyError)
+    }
   }
 
 
@@ -574,6 +591,27 @@ export function TipModal() {
                       </p>
                     </div>
 
+                    {receiptId && (
+                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-gray-50 dark:bg-neutral-800">
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          Receipt {verificationStatus === 'verified' ? 'verified' : 'pending'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {verificationStatus === 'verified'
+                            ? 'This transfer has a receipt that can be verified from the tip reply.'
+                            : 'The receipt ID is fixed now and the final proof check may still be catching up.'}
+                        </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <code className="flex-1 text-xs break-all px-2 py-1 rounded bg-white dark:bg-neutral-900 border border-gray-200 dark:border-gray-700">
+                            {receiptId}
+                          </code>
+                          <Button type="button" variant="outline" size="sm" onClick={handleCopyReceiptId}>
+                            Copy
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-4">
                       <div className="flex items-start gap-3">
                         <BookmarkIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
@@ -620,6 +658,26 @@ export function TipModal() {
                       <p className="text-sm text-gray-500">
                         New balance: {tipService.formatDash(tipService.creditsToDash(balance))}
                       </p>
+                    )}
+                    {receiptId && (
+                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-gray-50 dark:bg-neutral-800 text-left">
+                        <p className="text-sm font-medium">
+                          Receipt {verificationStatus === 'verified' ? 'verified' : 'pending'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {verificationStatus === 'verified'
+                            ? 'This receipt can be shared or re-opened from the tip reply.'
+                            : 'This receipt ID is stable even if final verification is still pending.'}
+                        </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <code className="flex-1 text-xs break-all px-2 py-1 rounded bg-white dark:bg-neutral-900 border border-gray-200 dark:border-gray-700">
+                            {receiptId}
+                          </code>
+                          <Button type="button" variant="outline" size="sm" onClick={handleCopyReceiptId}>
+                            Copy
+                          </Button>
+                        </div>
+                      </div>
                     )}
                     <Button onClick={close} className="w-full">
                       Done

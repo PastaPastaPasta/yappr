@@ -16,6 +16,7 @@ export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CON
 export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID || '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
 export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID || '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
 export const YAPPR_BLOG_CONTRACT_ID = '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
+export const YAPPR_PAYMENT_RECEIPT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PAYMENT_RECEIPT_CONTRACT_ID || ''
 export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_value_size
 export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
 export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
@@ -84,6 +85,10 @@ export const STOREFRONT_DOCUMENT_TYPES = {
   ORDER_STATUS_UPDATE: 'orderStatusUpdate',
   STORE_REVIEW: 'storeReview',
   SAVED_ADDRESS: 'savedAddress'
+} as const
+
+export const PAYMENT_RECEIPT_DOCUMENT_TYPES = {
+  CREDIT_TRANSFER_RECEIPT: 'creditTransferReceipt'
 } as const
 
 // DPNS
