@@ -6,7 +6,7 @@ export interface CreditTransferReceiptDocument {
   $createdAt: number
   recipientId: Uint8Array | string
   amountCredits: string
-  transitionHash: string
+  transitionHash: Uint8Array | string
   transitionBytes: Uint8Array | string
   referenceType?: string
   referenceId?: Uint8Array | string
