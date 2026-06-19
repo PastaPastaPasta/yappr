@@ -13,7 +13,7 @@
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { documentToPlainObject } from './sdk-helpers';
+import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 import { Document } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 
@@ -208,9 +208,8 @@ class DocumentBuilderService {
     if (obj.$id) {
       const rawId = obj.$id;
       if (typeof rawId === 'string') return rawId;
-      if (rawId && typeof (rawId as { toString?: () => string }).toString === 'function') {
-        return (rawId as { toString: () => string }).toString();
-      }
+      const base58 = identifierToBase58(rawId);
+      if (base58) return base58;
     }
     throw new Error('Unable to extract document ID from Document object');
   }
