@@ -26,6 +26,74 @@ export interface IdentityBalance {
   total: number;
 }
 
+type IdentityPublicKeyLike = {
+  purpose?: unknown;
+  purposeNumber?: unknown;
+  keyType?: unknown;
+  keyTypeNumber?: unknown;
+  type?: unknown;
+};
+
+const IDENTITY_KEY_PURPOSE = {
+  ENCRYPTION: 1,
+  TRANSFER: 3,
+} as const;
+
+const IDENTITY_KEY_TYPE = {
+  ECDSA_SECP256K1: 0,
+} as const;
+
+function normalizeIdentityKeyEnum(value: unknown, names: Record<string, number>): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isSafeInteger(asNumber) ? asNumber : null;
+  }
+
+  if (typeof value === 'string') {
+    const numeric = Number(value);
+    if (Number.isInteger(numeric)) {
+      return numeric;
+    }
+
+    return names[value.toLowerCase()] ?? null;
+  }
+
+  return null;
+}
+
+function getIdentityKeyPurpose(key: IdentityPublicKeyLike): number | null {
+  return normalizeIdentityKeyEnum(key.purposeNumber ?? key.purpose, {
+    authentication: 0,
+    encryption: IDENTITY_KEY_PURPOSE.ENCRYPTION,
+    decryption: 2,
+    transfer: IDENTITY_KEY_PURPOSE.TRANSFER,
+    system: 4,
+    voting: 5,
+  });
+}
+
+function getIdentityKeyType(key: IdentityPublicKeyLike): number | null {
+  return normalizeIdentityKeyEnum(key.keyTypeNumber ?? key.keyType ?? key.type, {
+    ecdsa_secp256k1: IDENTITY_KEY_TYPE.ECDSA_SECP256K1,
+    ecdsa: IDENTITY_KEY_TYPE.ECDSA_SECP256K1,
+    bls12_381: 1,
+    ecdsa_hash160: 2,
+    bip13_script_hash: 3,
+    eddsa_25519_hash160: 4,
+  });
+}
+
+function isIdentityKeyForPurpose(key: IdentityPublicKeyLike, purpose: number): boolean {
+  return (
+    getIdentityKeyPurpose(key) === purpose &&
+    getIdentityKeyType(key) === IDENTITY_KEY_TYPE.ECDSA_SECP256K1
+  );
+}
+
 function safeStringify(value: unknown): string {
   const seen = new WeakSet<object>();
 
@@ -106,9 +174,9 @@ class IdentityService {
 
       const identityInfo: IdentityInfo = {
         id: identity.id || identityId,
-        balance: identity.balance || 0,
+        balance: Number(identity.balance ?? 0),
         publicKeys: normalizedPublicKeys,
-        revision: identity.revision || 0
+        revision: Number(identity.revision ?? 0)
       };
 
       // Cache the result
@@ -349,7 +417,7 @@ class IdentityService {
 
       // Check if encryption key already exists
       const existingKey = identity.publicKeys.find(
-        (key) => key.purpose === 'ENCRYPTION' && key.keyType === 'ECDSA_SECP256K1'
+        (key) => isIdentityKeyForPurpose(key, IDENTITY_KEY_PURPOSE.ENCRYPTION)
       );
       if (existingKey) {
         return { success: false, error: 'Identity already has an encryption key' };
@@ -369,12 +437,14 @@ class IdentityService {
       logger.info(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       logger.info(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      // v3.1: IdentityPublicKeyInCreation takes an options object
+      // v3.1: IdentityPublicKeyInCreation takes an options object.
+      // dev.8 narrowed PurposeLike/SecurityLevelLike/KeyTypeLike to require
+      // lowercase string variants (or numeric enum values).
       const newKey = new IdentityPublicKeyInCreation({
         keyId: newKeyId,
-        purpose: 'ENCRYPTION',
-        securityLevel: 'MEDIUM',
-        keyType: 'ECDSA_SECP256K1',
+        purpose: 'encryption',
+        securityLevel: 'medium',
+        keyType: 'ecdsa_secp256k1',
         isReadOnly: false,
         data: publicKeyBytes,
       });
@@ -494,9 +564,9 @@ class IdentityService {
         return { success: false, error: 'Identity not found' };
       }
 
-      // Check if transfer key already exists (purpose='TRANSFER')
+      // Check if transfer key already exists (purpose=3)
       const existingKey = identity.publicKeys.find(
-        (key) => key.purpose === 'TRANSFER' && key.keyType === 'ECDSA_SECP256K1'
+        (key) => isIdentityKeyForPurpose(key, IDENTITY_KEY_PURPOSE.TRANSFER)
       );
       if (existingKey) {
         return { success: false, error: 'Identity already has a transfer key' };
@@ -516,12 +586,14 @@ class IdentityService {
       logger.info(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=TRANSFER, securityLevel=HIGH, keyType=ECDSA_SECP256K1`);
       logger.info(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      // v3.1: IdentityPublicKeyInCreation takes an options object
+      // v3.1: IdentityPublicKeyInCreation takes an options object.
+      // dev.8 narrowed PurposeLike/SecurityLevelLike/KeyTypeLike to require
+      // lowercase string variants (or numeric enum values).
       const newKey = new IdentityPublicKeyInCreation({
         keyId: newKeyId,
-        purpose: 'TRANSFER',
-        securityLevel: 'HIGH',
-        keyType: 'ECDSA_SECP256K1',
+        purpose: 'transfer',
+        securityLevel: 'high',
+        keyType: 'ecdsa_secp256k1',
         isReadOnly: false,
         data: publicKeyBytes,
       });

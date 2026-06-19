@@ -58,6 +58,34 @@ export interface UnsignedTransitionResult {
 const COMPACT_SIG_BASE = 27
 const COMPACT_SIG_COMPRESSED_FLAG = 4
 
+type RegisteredIdentityKey = {
+  purpose?: string | number
+  purposeNumber?: number
+  keyType?: string | number
+  keyTypeNumber?: number
+  type?: number
+  data?: string
+  toJSON: () => { data: string | Uint8Array }
+}
+
+function keyEnumMatches(value: unknown, numberValue: unknown, expectedNumber: number, expectedName: string): boolean {
+  if (numberValue === expectedNumber || value === expectedNumber) return true
+  return typeof value === 'string' && value.toLowerCase() === expectedName
+}
+
+function keyMatchesPurposeAndType(
+  key: RegisteredIdentityKey,
+  expectedPurposeNumber: number,
+  expectedPurposeName: string,
+  expectedTypeNumber: number,
+  expectedTypeName: string
+): boolean {
+  return (
+    keyEnumMatches(key.purpose, key.purposeNumber, expectedPurposeNumber, expectedPurposeName) &&
+    keyEnumMatches(key.keyType ?? key.type, key.keyTypeNumber ?? key.type, expectedTypeNumber, expectedTypeName)
+  )
+}
+
 /**
  * Double SHA256 hash (SHA256d) - used by Dash for signing
  */
@@ -157,8 +185,8 @@ export async function buildUnsignedKeyRegistrationTransition(
   // Keep the auth key on the existing hash160 workaround, but register the
   // encryption key as a full secp256k1 public key so encrypted features can
   // consume the on-chain key material directly.
-  const authKeyType = 'ECDSA_HASH160' as const
-  const encryptionKeyType = 'ECDSA_SECP256K1' as const
+  const authKeyType = 'ecdsa_hash160' as const
+  const encryptionKeyType = 'ecdsa_secp256k1' as const
 
   const authKeyData = hash160(authPublicKey)
   const encryptionKeyData = encryptionPublicKey
@@ -176,8 +204,8 @@ export async function buildUnsignedKeyRegistrationTransition(
   )
   const authKey = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
-    purpose: 'AUTHENTICATION',
-    securityLevel: 'HIGH',
+    purpose: 'authentication',
+    securityLevel: 'high',
     keyType: authKeyType,
     isReadOnly: false,
     data: authKeyData,
@@ -186,8 +214,8 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   const encryptionKey = new wasm.IdentityPublicKeyInCreation({
     keyId: encryptionKeyId,
-    purpose: 'ENCRYPTION',
-    securityLevel: 'MEDIUM',
+    purpose: 'encryption',
+    securityLevel: 'medium',
     keyType: encryptionKeyType,
     isReadOnly: false,
     data: encryptionKeyData,
@@ -234,8 +262,8 @@ export async function buildUnsignedKeyRegistrationTransition(
   )
   const authKeyWithSig = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
-    purpose: 'AUTHENTICATION',
-    securityLevel: 'HIGH',
+    purpose: 'authentication',
+    securityLevel: 'high',
     keyType: authKeyType,
     isReadOnly: false,
     data: authKeyData,
@@ -244,8 +272,8 @@ export async function buildUnsignedKeyRegistrationTransition(
 
   const encryptionKeyWithSig = new wasm.IdentityPublicKeyInCreation({
     keyId: encryptionKeyId,
-    purpose: 'ENCRYPTION',
-    securityLevel: 'MEDIUM',
+    purpose: 'encryption',
+    securityLevel: 'medium',
     keyType: encryptionKeyType,
     isReadOnly: false,
     data: encryptionKeyData,
@@ -311,7 +339,7 @@ export async function checkKeysRegistered(
   // Helper to extract key data as Uint8Array from a WASM IdentityPublicKey.
   // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
   // Try the direct `.data` hex property first, then toJSON as fallback.
-  const getKeyData = (key: { data?: string; toJSON: () => { data: string | Uint8Array } }): Uint8Array => {
+  const getKeyData = (key: RegisteredIdentityKey): Uint8Array => {
     // Prefer the direct .data hex getter from WASM objects
     const raw = key.data ?? key.toJSON().data
     if (raw instanceof Uint8Array) {
@@ -337,9 +365,9 @@ export async function checkKeysRegistered(
 
   const authHash = hash160(authPublicKey)
 
-  // Check for auth key (purpose='AUTHENTICATION')
-  const authKeyExists = publicKeys.some((key: { purpose: string; keyType: string; data?: string; toJSON: () => { data: string | Uint8Array } }) => {
-    if (key.purpose !== 'AUTHENTICATION' || key.keyType !== 'ECDSA_HASH160') {
+  // Check for auth key (purpose=AUTHENTICATION, keyType=ECDSA_HASH160)
+  const authKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
+    if (!keyMatchesPurposeAndType(key, 0, 'authentication', 2, 'ecdsa_hash160')) {
       return false
     }
     const keyData = getKeyData(key)
@@ -349,9 +377,9 @@ export async function checkKeysRegistered(
     return keyData.every((b: number, i: number) => b === authHash[i])
   })
 
-  // Check for encryption key (purpose='ENCRYPTION')
-  const encKeyExists = publicKeys.some((key: { purpose: string; keyType: string; data?: string; toJSON: () => { data: string | Uint8Array } }) => {
-    if (key.purpose !== 'ENCRYPTION' || key.keyType !== 'ECDSA_SECP256K1') {
+  // Check for encryption key (purpose=ENCRYPTION, keyType=ECDSA_SECP256K1)
+  const encKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
+    if (!keyMatchesPurposeAndType(key, 1, 'encryption', 0, 'ecdsa_secp256k1')) {
       return false
     }
     const keyData = getKeyData(key)
