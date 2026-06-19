@@ -13,6 +13,7 @@
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
+import { documentToPlainObject } from './sdk-helpers';
 import { Document } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 
@@ -159,9 +160,9 @@ class DocumentBuilderService {
    * @returns Normalized document data with $ prefixed fields
    */
   normalizeDocumentResponse(document: Document | Record<string, unknown>): Record<string, unknown> {
-    // Check if it's a WASM Document with toJSON method
-    if (document && typeof (document as Document).toJSON === 'function') {
-      return (document as Document).toJSON();
+    // Check if it's a WASM Document and extract its JSON-like normalized form.
+    if (document && typeof (document as Document).toObject === 'function') {
+      return documentToPlainObject(document);
     }
 
     // Handle raw objects - normalize field names
@@ -202,9 +203,15 @@ class DocumentBuilderService {
     if (id && typeof (id as { toString?: () => string }).toString === 'function') {
       return (id as { toString: () => string }).toString();
     }
-    // Fallback: try to get from JSON
-    const json = document.toJSON();
-    if (json.$id) return json.$id;
+    // Fallback: convert via toObject() and extract the id field
+    const obj = document.toObject() as { $id?: unknown };
+    if (obj.$id) {
+      const rawId = obj.$id;
+      if (typeof rawId === 'string') return rawId;
+      if (rawId && typeof (rawId as { toString?: () => string }).toString === 'function') {
+        return (rawId as { toString: () => string }).toString();
+      }
+    }
     throw new Error('Unable to extract document ID from Document object');
   }
 }

@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
-import { identifierToBase58 } from './sdk-helpers';
+import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
@@ -14,25 +14,23 @@ function extractDocuments(response: unknown): Record<string, unknown>[] {
   if (response instanceof Map) {
     return Array.from(response.values())
       .filter(Boolean)
-      .map((doc: unknown) => {
-        const d = doc as { toJSON?: () => unknown };
-        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
-      });
+      .map(documentToPlainObject);
   }
   if (Array.isArray(response)) {
-    return response.map((doc: unknown) => {
-      const d = doc as { toJSON?: () => unknown };
-      return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
-    });
+    return response.map(documentToPlainObject);
+  }
+  const maybeDocument = response as { toObject?: () => unknown };
+  if (typeof maybeDocument.toObject === 'function') {
+    return [documentToPlainObject(response)];
   }
   const respObj = response as { documents?: unknown[]; toJSON?: () => unknown };
   if (respObj?.documents) {
-    return respObj.documents as Record<string, unknown>[];
+    return respObj.documents.map(documentToPlainObject);
   }
   if (respObj?.toJSON) {
     const json = respObj.toJSON() as { documents?: unknown[] } | unknown[];
-    if (Array.isArray(json)) return json as Record<string, unknown>[];
-    return (json as { documents?: unknown[] }).documents as Record<string, unknown>[] || [];
+    if (Array.isArray(json)) return json.map(documentToPlainObject);
+    return ((json as { documents?: unknown[] }).documents || []).map(documentToPlainObject);
   }
   return [];
 }

@@ -80,8 +80,20 @@ export function identifierToBase58(value: unknown): string | null {
     return bs58.encode(new Uint8Array(value));
   }
 
-  // Identifier object from SDK (has toBuffer or bytes method)
-  const obj = value as { toBuffer?: () => Uint8Array; bytes?: Uint8Array; toJSON?: () => unknown };
+  // Identifier object from SDK
+  const obj = value as {
+    toBase58?: () => string;
+    toBytes?: () => Uint8Array;
+    toBuffer?: () => Uint8Array;
+    bytes?: Uint8Array;
+    toJSON?: () => unknown;
+  };
+  if (typeof obj.toBase58 === 'function') {
+    return obj.toBase58();
+  }
+  if (typeof obj.toBytes === 'function') {
+    return bs58.encode(obj.toBytes());
+  }
   if (typeof obj.toBuffer === 'function') {
     return bs58.encode(obj.toBuffer());
   }
@@ -92,6 +104,9 @@ export function identifierToBase58(value: unknown): string | null {
   // Try toJSON which might return bytes
   if (typeof obj.toJSON === 'function') {
     const json = obj.toJSON();
+    if (typeof json === 'string') {
+      return identifierToBase58(json);
+    }
     if (json instanceof Uint8Array) {
       return bs58.encode(json);
     }
@@ -134,6 +149,51 @@ export function requireDocumentIdentifierBytes(id: string, fieldName: string): U
  * Prefer `requireDocumentIdentifierBytes` in new code so the typed-write intent stays obvious.
  */
 export const requireIdentifierBytes = requireDocumentIdentifierBytes
+
+const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
+const DOCUMENT_SYSTEM_BIGINT_FIELDS = new Set([
+  '$revision',
+  '$createdAt',
+  '$updatedAt',
+  '$transferredAt',
+  '$createdAtBlockHeight',
+  '$updatedAtBlockHeight',
+  '$transferredAtBlockHeight',
+]);
+
+function normalizeDocumentSystemValue(field: string, value: unknown): unknown {
+  if (DOCUMENT_SYSTEM_IDENTIFIER_FIELDS.has(field)) {
+    return identifierToBase58(value) ?? value;
+  }
+
+  if (DOCUMENT_SYSTEM_BIGINT_FIELDS.has(field) && typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+  }
+
+  return value;
+}
+
+/**
+ * Convert a WASM Document instance to the JSON-like shape Yappr expects from queries.
+ * `Document#toJSON()` now needs a platform version, so normalize the zero-arg
+ * `toObject()` output without rewriting ordinary Uint8Array content fields.
+ */
+export function documentToPlainObject(doc: unknown): Record<string, unknown> {
+  const document = doc as { toObject?: () => unknown };
+  const raw = (typeof document.toObject === 'function' ? document.toObject() : doc) as Record<string, unknown>;
+
+  if (!raw || typeof raw !== 'object') {
+    return raw;
+  }
+
+  return Object.fromEntries(
+    Object.entries(raw).map(([field, value]) => [
+      field,
+      normalizeDocumentSystemValue(field, value),
+    ])
+  );
+}
 
 /**
  * Convert an array of identifier strings to raw bytes.
@@ -380,11 +440,7 @@ export function mapToDocumentArray(
 
   for (const doc of values) {
     if (doc) {
-      // Document has a toJSON method that returns the plain object
-      const data = typeof (doc as { toJSON?: () => unknown }).toJSON === 'function'
-        ? (doc as { toJSON: () => unknown }).toJSON()
-        : doc;
-      documents.push(data as Record<string, unknown>);
+      documents.push(documentToPlainObject(doc));
     }
   }
 
@@ -404,32 +460,37 @@ export function normalizeSDKResponse(response: unknown): Record<string, unknown>
   if (response instanceof Map) {
     return Array.from(response.values())
       .filter(Boolean)
-      .map((doc: unknown) => {
-        const d = doc as { toJSON?: () => unknown };
-        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
-      });
+      .map(documentToPlainObject);
   }
 
   // Handle Array response
   if (Array.isArray(response)) {
-    return response as Record<string, unknown>[];
+    return response
+      .filter(Boolean)
+      .map(documentToPlainObject);
+  }
+
+  // Handle a single WASM Document response
+  const maybeDocument = response as { toObject?: () => unknown };
+  if (typeof maybeDocument.toObject === 'function') {
+    return [documentToPlainObject(response)];
   }
 
   // Handle object with documents property
   const obj = response as { documents?: unknown[]; toJSON?: () => unknown };
   if (obj.documents && Array.isArray(obj.documents)) {
-    return obj.documents as Record<string, unknown>[];
+    return obj.documents.map(documentToPlainObject);
   }
 
-  // Handle object with toJSON method
+  // Handle object with toJSON method for legacy response wrappers
   if (typeof obj.toJSON === 'function') {
     const json = obj.toJSON();
     if (Array.isArray(json)) {
-      return json as Record<string, unknown>[];
+      return json.map(documentToPlainObject);
     }
     const jsonObj = json as { documents?: unknown[] };
     if (jsonObj.documents && Array.isArray(jsonObj.documents)) {
-      return jsonObj.documents as Record<string, unknown>[];
+      return jsonObj.documents.map(documentToPlainObject);
     }
   }
 
