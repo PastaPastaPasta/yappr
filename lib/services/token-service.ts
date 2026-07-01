@@ -90,22 +90,18 @@ class TokenService {
   }
 
   /**
-   * Buy `amount` YAPP for the buyer, paying up to the quoted credits cost.
-   * Requires the buyer's AUTHENTICATION key (CRITICAL/HIGH) from secure storage.
+   * Buy `amount` YAPP for the buyer, spending at most `maxTotalCost` credits.
+   * `maxTotalCost` is the cost the user approved in the UI (caller passes the
+   * quoted total), so a mid-flight price increase is rejected on-chain rather
+   * than silently overspending. Requires the buyer's CRITICAL/HIGH auth key.
    */
-  async buyYapp(buyerId: string, amount: bigint): Promise<TokenResult> {
+  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint): Promise<TokenResult> {
     if (amount < MIN_YAPP_PURCHASE) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
     }
 
     try {
       const sdk = await getEvoSdk();
-      const price = await this.getPricePerToken();
-      if (price === null) {
-        return { success: false, error: 'YAPP is not currently for sale', errorCode: 'NETWORK_ERROR' };
-      }
-      const maxTotalCost = price * amount;
-
       const { signer, identityKey } = await this.getAuthSigner(buyerId);
 
       await sdk.tokens.directPurchase({
@@ -241,6 +237,9 @@ class TokenService {
     }
     if (lower.includes('undeminimum') || lower.includes('under minimum') || lower.includes('minimum sale')) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
+    }
+    if (lower.includes('userpricetoolow') || lower.includes('price too low') || lower.includes('price changed')) {
+      return { success: false, error: 'The YAPP price changed — please reopen and confirm the new cost', errorCode: 'NETWORK_ERROR' };
     }
     if (lower.includes('key') || lower.includes('signature') || lower.includes('security')) {
       return { success: false, error: 'Invalid signing key for this identity', errorCode: 'INVALID_KEY' };

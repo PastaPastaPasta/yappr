@@ -17,6 +17,16 @@ import { tipService } from '@/lib/services/tip-service'
 // Preset purchase amounts in whole YAPP (must be >= the on-chain minimum of 100).
 const PRESETS = [100, 500, 1000, 5000]
 
+const CREDITS_PER_DASH = BigInt(100000000000) // 1 DASH = 1e11 platform credits
+
+/** BigInt-safe credits → "X.XXXX DASH" (or "N credits" for sub-0.0001 DASH). */
+function formatCreditsAsDash(credits: bigint): string {
+  const whole = credits / CREDITS_PER_DASH
+  const frac = ((credits % CREDITS_PER_DASH) * BigInt(10000)) / CREDITS_PER_DASH
+  if (whole === BigInt(0) && frac === BigInt(0)) return `${credits.toString()} credits`
+  return `${whole.toString()}.${frac.toString().padStart(4, '0')} DASH`
+}
+
 type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error'
 
 export function BuyYappModal() {
@@ -50,11 +60,11 @@ export function BuyYappModal() {
     }
   }, [isOpen])
 
-  const amountNum = parseInt(amount, 10) || 0
-  const costCredits = pricePerToken !== null ? pricePerToken * BigInt(amountNum || 0) : null
-  const costDashLabel = costCredits !== null
-    ? tipService.formatDash(tipService.creditsToDash(Number(costCredits)))
-    : '—'
+  // Keep token/credit values as BigInt end-to-end so the signed amount and cap
+  // can never diverge from what the UI showed.
+  const amountBig = /^\d+$/.test(amount) ? BigInt(amount) : BigInt(0)
+  const costCredits = pricePerToken !== null ? pricePerToken * amountBig : null
+  const costDashLabel = costCredits !== null ? formatCreditsAsDash(costCredits) : '—'
 
   const handleAmountChange = (value: string) => {
     if (/^\d*$/.test(value)) {
@@ -64,11 +74,15 @@ export function BuyYappModal() {
   }
 
   const handleContinue = () => {
-    if (amountNum < Number(MIN_YAPP_PURCHASE)) {
+    if (amountBig < MIN_YAPP_PURCHASE) {
       setError(`Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`)
       return
     }
-    if (costCredits !== null && creditBalance !== null && costCredits > BigInt(Math.floor(creditBalance))) {
+    if (costCredits === null) {
+      setError('Price unavailable right now — please try again')
+      return
+    }
+    if (creditBalance !== null && costCredits > BigInt(Math.floor(creditBalance))) {
       setError('Not enough DASH credits for this purchase')
       return
     }
@@ -77,9 +91,11 @@ export function BuyYappModal() {
   }
 
   const handleBuy = async () => {
-    if (!user) return
+    if (!user || costCredits === null) return
     setState('processing')
-    const result = await tokenService.buyYapp(user.identityId, BigInt(amountNum))
+    // Cap the spend at the exact cost the user just confirmed. If the on-chain
+    // price rose since, the transition is rejected rather than silently overspending.
+    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits)
     if (result.success) {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
@@ -182,7 +198,7 @@ export function BuyYappModal() {
 
                         {error && <p className="text-red-500 text-sm">{error}</p>}
 
-                        <Button onClick={handleContinue} className="w-full" disabled={!amountNum || loading}>
+                        <Button onClick={handleContinue} className="w-full" disabled={amountBig <= BigInt(0) || loading}>
                           Continue
                         </Button>
                       </div>
@@ -193,7 +209,7 @@ export function BuyYappModal() {
                         <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-4 space-y-2">
                           <div className="flex justify-between">
                             <span className="text-gray-600 dark:text-gray-400">Buying</span>
-                            <span className="font-bold text-lg">{amountNum} YAPP</span>
+                            <span className="font-bold text-lg">{amountBig.toString()} YAPP</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-gray-600 dark:text-gray-400">Cost</span>
@@ -219,7 +235,7 @@ export function BuyYappModal() {
                       <div className="py-4 text-center space-y-4">
                         <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto" />
                         <div>
-                          <p className="text-lg font-medium">Purchased {amountNum} YAPP</p>
+                          <p className="text-lg font-medium">Purchased {amountBig.toString()} YAPP</p>
                           {yappBalance !== null && (
                             <p className="text-gray-600 dark:text-gray-400">New balance: {yappBalance.toString()} YAPP</p>
                           )}
