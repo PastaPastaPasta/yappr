@@ -17,8 +17,6 @@ export interface PostDocument {
   mediaUrl?: string;
   quotedPostId?: string;
   quotedPostOwnerId?: string;
-  firstMentionId?: string;
-  primaryHashtag?: string;
   language?: string;
   sensitive?: boolean;
   // Private feed fields

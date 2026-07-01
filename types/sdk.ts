@@ -167,8 +167,6 @@ export interface PostDocumentData {
   mediaUrl?: string;
   replyToPostId?: string | Uint8Array;
   quotedPostId?: string | Uint8Array;
-  firstMentionId?: string;
-  primaryHashtag?: string;
   language?: string;
   sensitive?: boolean;
 }

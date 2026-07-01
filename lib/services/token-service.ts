@@ -27,14 +27,35 @@ class TokenService {
     return this.tokenIdCache;
   }
 
+  /**
+   * Look up a token entry from an SDK result keyed by token id. The evo-sdk
+   * facade types these Maps as keyed by wasm `Identifier`, so a plain
+   * `map.get(base58String)` can miss; match by string form of the key.
+   */
+  private tokenMapGet<V>(result: unknown, tokenId: string): V | undefined {
+    if (result instanceof Map) {
+      const direct = result.get(tokenId);
+      if (direct !== undefined) return direct as V;
+      let found: V | undefined;
+      (result as Map<unknown, V>).forEach((v, k) => {
+        if (found !== undefined) return;
+        const key = typeof k === 'string'
+          ? k
+          : String((k as { base58?: () => string })?.base58?.() ?? k);
+        if (key === tokenId) found = v;
+      });
+      return found;
+    }
+    return (result as Record<string, V>)?.[tokenId];
+  }
+
   /** Current YAPP balance (whole tokens, decimals=0) for an identity. */
   async getBalance(identityId: string): Promise<bigint> {
     try {
       const sdk = await getEvoSdk();
       const tokenId = await this.getTokenId();
       const balances = await sdk.tokens.identityBalances(identityId, [tokenId]);
-      const bal = balances instanceof Map ? balances.get(tokenId) : (balances as Record<string, bigint>)?.[tokenId];
-      return bal ?? BigInt(0);
+      return this.tokenMapGet<bigint>(balances, tokenId) ?? BigInt(0);
     } catch (error) {
       logger.error('Error fetching YAPP balance:', error);
       return BigInt(0);
@@ -50,9 +71,9 @@ class TokenService {
       const sdk = await getEvoSdk();
       const tokenId = await this.getTokenId();
       const prices = await sdk.tokens.directPurchasePrices([tokenId]);
-      const info = prices instanceof Map ? prices.get(tokenId) : (prices as Record<string, unknown>)?.[tokenId];
+      const info = this.tokenMapGet<{ currentPrice?: string }>(prices, tokenId);
       if (!info) return null;
-      const current = (info as { currentPrice?: string }).currentPrice;
+      const current = info.currentPrice;
       if (current === undefined) return null;
       return BigInt(current);
     } catch (error) {
@@ -185,8 +206,14 @@ class TokenService {
     wasmPublicKeys: WasmIdentityPublicKey[]
   ): WasmIdentityPublicKey | null {
     const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
-    const authKeys = wasmPublicKeys
-      .filter(k => !k.disabledAt && k.purposeNumber === KeyPurpose.AUTHENTICATION);
+    // Token transitions need a CRITICAL or HIGH AUTHENTICATION key. Filter to those
+    // BEFORE matching so a lower-security key derived from the same WIF (e.g. a MEDIUM
+    // key at a lower id after a rotation) can't win the match and mask a valid key.
+    const authKeys = wasmPublicKeys.filter(k =>
+      !k.disabledAt &&
+      k.purposeNumber === KeyPurpose.AUTHENTICATION &&
+      (k.securityLevelNumber === SecurityLevel.CRITICAL || k.securityLevelNumber === SecurityLevel.HIGH)
+    );
     if (authKeys.length === 0) return null;
 
     const keyInfos: IdentityPublicKeyInfo[] = authKeys.map(key => ({
@@ -199,13 +226,7 @@ class TokenService {
 
     const match = findMatchingKeyIndex(wif, keyInfos, network);
     if (!match) return null;
-    // Token transitions need CRITICAL or HIGH; reject MASTER/MEDIUM matches so the
-    // caller surfaces a clear error instead of a cryptic node-side signature failure.
-    const matched = authKeys.find(k => k.keyId === match.keyId) || null;
-    if (matched && (matched.securityLevelNumber === SecurityLevel.CRITICAL || matched.securityLevelNumber === SecurityLevel.HIGH)) {
-      return matched;
-    }
-    return null;
+    return authKeys.find(k => k.keyId === match.keyId) || null;
   }
 
   private toResult(error: unknown, fallback: string): TokenResult {

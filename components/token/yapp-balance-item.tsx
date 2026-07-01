@@ -28,19 +28,21 @@ export function YappBalanceItem() {
 
   return (
     <>
-      <DropdownMenu.Item className="px-4 py-3 text-sm outline-none" disabled onSelect={(e) => e.preventDefault()}>
+      {/* The whole row is the actionable menu item so it's reachable/operable by
+          keyboard (Enter/Space) and avoids an interactive control nested in a
+          role="menuitem". The "Buy" pill is a visual affordance only. */}
+      <DropdownMenu.Item
+        className="px-4 py-3 text-sm outline-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900 data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-900"
+        onSelect={() => openBuy()}
+      >
         <div className="flex items-center justify-between">
           <div>
             <div className="text-xs text-gray-500">YAPP</div>
             <div className="font-mono">{yapp !== null ? yapp.toString() : '…'}</div>
           </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); openBuy() }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium bg-yappr-500 text-white hover:bg-yappr-600 transition-colors"
-            title="Buy YAPP"
-          >
+          <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium bg-yappr-500 text-white">
             <SparklesIcon className="h-3.5 w-3.5" /> Buy
-          </button>
+          </span>
         </div>
       </DropdownMenu.Item>
       <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />

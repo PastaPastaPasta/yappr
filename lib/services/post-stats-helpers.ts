@@ -155,25 +155,21 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
       import('./reply-service'),
     ]);
 
-    const [likes, reposts, replyCounts] = await Promise.all([
-      likeService.getLikesByPostIds(postIds),
-      repostService.getRepostsByPostIds(postIds),
-      replyService.countRepliesByParentIds(postIds),
+    // Per-post O(1) count-tree reads (no 100-cap undercount the old batched
+    // `in`-queries had once a page collectively exceeded ~100 engagements).
+    const [likeCounts, repostCounts, replyCounts] = await Promise.all([
+      Promise.all(postIds.map((id) => likeService.countLikes(id))),
+      Promise.all(postIds.map((id) => repostService.countReposts(id))),
+      Promise.all(postIds.map((id) => replyService.countReplies(id))),
     ]);
 
-    for (const like of likes) {
-      const stats = result.get(like.postId);
-      if (stats) stats.likes++;
-    }
-
-    for (const repost of reposts) {
-      const stats = result.get(repost.postId);
-      if (stats) stats.reposts++;
-    }
-
-    replyCounts.forEach((count, postId) => {
-      const stats = result.get(postId);
-      if (stats) stats.replies = count;
+    postIds.forEach((id, i) => {
+      const stats = result.get(id);
+      if (stats) {
+        stats.likes = likeCounts[i];
+        stats.reposts = repostCounts[i];
+        stats.replies = replyCounts[i];
+      }
     });
   } catch (error) {
     logger.error('Error getting batch post stats:', error);
