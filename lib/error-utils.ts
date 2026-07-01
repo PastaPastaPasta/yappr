@@ -80,9 +80,28 @@ export function isNonFatalWaitError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error indicates the signer lacks enough YAPP tokens to pay a
+ * document's tokenCost (post/reply/like/repost). When true, the UI should
+ * prompt the user to buy YAPP rather than show a generic failure.
+ */
+export function isInsufficientTokenError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('identitydoesnothaveenoughtokenbalance') ||
+    msg.includes('not have enough token') ||
+    msg.includes('enough token balance') ||
+    msg.includes('insufficient token')
+  )
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
+  if (isInsufficientTokenError(error)) {
+    return 'You don\'t have enough YAPP. Buy more to keep posting.'
+  }
+
   const errorMessage = extractErrorMessage(error)
 
   if (

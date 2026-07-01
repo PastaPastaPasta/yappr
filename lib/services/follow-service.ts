@@ -3,7 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { paginateFetchAll, documentCount } from './pagination-utils';
 
 export interface FollowDocument {
   $id: string;
@@ -231,21 +231,12 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       try {
         const sdk = await getEvoSdk();
 
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'follow',
-            where: [
-              ['followingId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            // Use followers index: [followingId, $createdAt]
-            orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
+        // O(1) count tree on the `followerCount` index [followingId].
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [['followingId', '==', userId]],
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Error counting followers:', errorMessage, error);
@@ -264,21 +255,12 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       try {
         const sdk = await getEvoSdk();
 
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'follow',
-            where: [
-              ['$ownerId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            // Use following index: [$ownerId, $createdAt]
-            orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
+        // O(1) count tree on the `followingCount` index [$ownerId].
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [['$ownerId', '==', userId]],
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Error counting following:', errorMessage, error);

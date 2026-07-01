@@ -11,6 +11,8 @@ export interface LoadingStateProps {
   loadingText?: string
   emptyText?: string
   emptyDescription?: string
+  /** Optional node rendered below the empty description (e.g. a link to the old app). */
+  emptyAction?: React.ReactNode
   className?: string
 }
 
@@ -23,6 +25,7 @@ export function LoadingState({
   loadingText = 'Loading...',
   emptyText = 'No data found',
   emptyDescription = 'There\'s nothing here yet.',
+  emptyAction,
   className = ''
 }: LoadingStateProps) {
   if (loading) {
@@ -79,6 +82,7 @@ export function LoadingState({
         <p className="text-gray-600 dark:text-gray-400 text-center">
           {emptyDescription}
         </p>
+        {emptyAction && <div className="mt-4">{emptyAction}</div>}
       </div>
     )
   }

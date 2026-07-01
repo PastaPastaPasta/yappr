@@ -35,6 +35,34 @@ export interface PaginateFetchResult<T> {
 type SDK = any;
 
 /**
+ * Count documents matching a query using the Platform count-tree (O(1)).
+ *
+ * Requires the queried document type to declare a `countable` index covering the
+ * `where` clause (see yappr-social-contract-v2). The query must NOT include a
+ * `limit`/`startAfter` — counts are over the whole matching set.
+ *
+ * Returns the grand total (the `''` key of the SDK's grouped count map). For
+ * grouped counts (e.g. `groupBy: ['postId']` with `postId in [...]`), call
+ * `sdk.documents.count` directly and read per-key entries.
+ *
+ * @example
+ * const likes = await documentCount(sdk, {
+ *   dataContractId: contractId,
+ *   documentTypeName: 'like',
+ *   where: [['postId', '==', postId]],
+ * });
+ */
+export async function documentCount(
+  sdk: SDK,
+  query: Record<string, unknown>
+): Promise<number> {
+  const result = await sdk.documents.count(query);
+  // SDK returns Map<string, bigint>; '' is the grand total when no groupBy is set.
+  const total = result instanceof Map ? result.get('') : result?.['']; // tolerate plain-object shape
+  return Number(total ?? BigInt(0));
+}
+
+/**
  * Paginate through all documents matching a query and return the count.
  * Used for count methods that need accurate totals.
  *

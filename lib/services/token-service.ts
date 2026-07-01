@@ -1,0 +1,231 @@
+import { logger } from '@/lib/logger';
+import { getEvoSdk } from './evo-sdk-service';
+import { signerService, KeyPurpose, SecurityLevel } from './signer-service';
+import { Identifier } from '@dashevo/evo-sdk';
+import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
+import { extractErrorMessage } from '../error-utils';
+
+export interface TokenResult {
+  success: boolean;
+  error?: string;
+  errorCode?: 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR';
+}
+
+/** Minimum YAPP per direct purchase — enforced on-chain by the SetPrices tier, mirrored here for UX. */
+export const MIN_YAPP_PURCHASE = BigInt(100);
+
+class TokenService {
+  private tokenIdCache: string | null = null;
+
+  /** Resolve (and cache) the YAPP token id from the contract + position. */
+  async getTokenId(): Promise<string> {
+    if (this.tokenIdCache) return this.tokenIdCache;
+    const sdk = await getEvoSdk();
+    this.tokenIdCache = await sdk.tokens.calculateId(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION);
+    return this.tokenIdCache;
+  }
+
+  /** Current YAPP balance (whole tokens, decimals=0) for an identity. */
+  async getBalance(identityId: string): Promise<bigint> {
+    try {
+      const sdk = await getEvoSdk();
+      const tokenId = await this.getTokenId();
+      const balances = await sdk.tokens.identityBalances(identityId, [tokenId]);
+      const bal = balances instanceof Map ? balances.get(tokenId) : (balances as Record<string, bigint>)?.[tokenId];
+      return bal ?? BigInt(0);
+    } catch (error) {
+      logger.error('Error fetching YAPP balance:', error);
+      return BigInt(0);
+    }
+  }
+
+  /**
+   * Price in credits to buy one YAPP (the SetPrices tier value). Null if not for
+   * sale. Fetched fresh each call so `maxTotalCost` never uses a stale price.
+   */
+  async getPricePerToken(): Promise<bigint | null> {
+    try {
+      const sdk = await getEvoSdk();
+      const tokenId = await this.getTokenId();
+      const prices = await sdk.tokens.directPurchasePrices([tokenId]);
+      const info = prices instanceof Map ? prices.get(tokenId) : (prices as Record<string, unknown>)?.[tokenId];
+      if (!info) return null;
+      const current = (info as { currentPrice?: string }).currentPrice;
+      if (current === undefined) return null;
+      return BigInt(current);
+    } catch (error) {
+      logger.error('Error fetching YAPP price:', error);
+      return null;
+    }
+  }
+
+  /** Total credits cost to buy `amount` YAPP at the current price. */
+  async quoteCost(amount: bigint): Promise<bigint | null> {
+    const price = await this.getPricePerToken();
+    if (price === null) return null;
+    return price * amount;
+  }
+
+  /**
+   * Buy `amount` YAPP for the buyer, paying up to the quoted credits cost.
+   * Requires the buyer's AUTHENTICATION key (CRITICAL/HIGH) from secure storage.
+   */
+  async buyYapp(buyerId: string, amount: bigint): Promise<TokenResult> {
+    if (amount < MIN_YAPP_PURCHASE) {
+      return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
+    }
+
+    try {
+      const sdk = await getEvoSdk();
+      const price = await this.getPricePerToken();
+      if (price === null) {
+        return { success: false, error: 'YAPP is not currently for sale', errorCode: 'NETWORK_ERROR' };
+      }
+      const maxTotalCost = price * amount;
+
+      const { signer, identityKey } = await this.getAuthSigner(buyerId);
+
+      await sdk.tokens.directPurchase({
+        dataContractId: new Identifier(YAPPR_CONTRACT_ID),
+        tokenPosition: YAPP_TOKEN_POSITION,
+        buyerId: new Identifier(buyerId),
+        amount,
+        maxTotalCost,
+        identityKey,
+        signer,
+      } as Parameters<typeof sdk.tokens.directPurchase>[0]);
+
+      return { success: true };
+    } catch (error) {
+      return this.toResult(error, 'Purchase failed');
+    }
+  }
+
+  /**
+   * Freeze an identity's YAPP balance (moderation — blocks posting + transfers).
+   * Signed by the token authority (contract owner) identity.
+   */
+  async freeze(authorityId: string, frozenIdentityId: string, publicNote?: string): Promise<TokenResult> {
+    return this.authorityAction('freeze', authorityId, frozenIdentityId, publicNote);
+  }
+
+  /** Unfreeze a previously frozen identity (reinstate). */
+  async unfreeze(authorityId: string, frozenIdentityId: string, publicNote?: string): Promise<TokenResult> {
+    return this.authorityAction('unfreeze', authorityId, frozenIdentityId, publicNote);
+  }
+
+  /** Destroy (burn) a frozen identity's YAPP balance — the slash. Requires a prior freeze. */
+  async destroyFrozen(authorityId: string, frozenIdentityId: string, publicNote?: string): Promise<TokenResult> {
+    return this.authorityAction('destroyFrozen', authorityId, frozenIdentityId, publicNote);
+  }
+
+  private async authorityAction(
+    action: 'freeze' | 'unfreeze' | 'destroyFrozen',
+    authorityId: string,
+    frozenIdentityId: string,
+    publicNote?: string
+  ): Promise<TokenResult> {
+    try {
+      const sdk = await getEvoSdk();
+      const { signer, identityKey } = await this.getAuthSigner(authorityId);
+
+      const options = {
+        dataContractId: new Identifier(YAPPR_CONTRACT_ID),
+        tokenPosition: YAPP_TOKEN_POSITION,
+        authorityId: new Identifier(authorityId),
+        frozenIdentityId: new Identifier(frozenIdentityId),
+        publicNote,
+        identityKey,
+        signer,
+      };
+
+      if (action === 'freeze') {
+        await sdk.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
+      } else if (action === 'unfreeze') {
+        await sdk.tokens.unfreeze(options as Parameters<typeof sdk.tokens.unfreeze>[0]);
+      } else {
+        await sdk.tokens.destroyFrozen(options as Parameters<typeof sdk.tokens.destroyFrozen>[0]);
+      }
+      return { success: true };
+    } catch (error) {
+      return this.toResult(error, `${action} failed`);
+    }
+  }
+
+  /**
+   * Build an IdentitySigner + matching AUTHENTICATION key for an identity,
+   * using the private key from secure storage. Mirrors tip-service's transfer-key flow.
+   */
+  private async getAuthSigner(identityId: string) {
+    const { getPrivateKey } = await import('../secure-storage');
+    const wif = getPrivateKey(identityId);
+    if (!wif) {
+      const { promptForAuthKey } = await import('../auth-utils');
+      promptForAuthKey();
+      throw new Error('Private key not found — please re-authenticate');
+    }
+
+    const sdk = await getEvoSdk();
+    const identity = await sdk.identities.fetch(identityId);
+    if (!identity) throw new Error('Identity not found');
+
+    const authKey = this.findMatchingAuthKey(wif.trim(), identity.publicKeys);
+    if (!authKey) {
+      throw new Error('No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key');
+    }
+
+    return signerService.createSignerFromWasmKey(wif.trim(), authKey);
+  }
+
+  /** Find the AUTHENTICATION key on the identity that matches the provided WIF. */
+  private findMatchingAuthKey(
+    wif: string,
+    wasmPublicKeys: WasmIdentityPublicKey[]
+  ): WasmIdentityPublicKey | null {
+    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+    const authKeys = wasmPublicKeys
+      .filter(k => !k.disabledAt && k.purposeNumber === KeyPurpose.AUTHENTICATION);
+    if (authKeys.length === 0) return null;
+
+    const keyInfos: IdentityPublicKeyInfo[] = authKeys.map(key => ({
+      id: key.keyId,
+      type: key.keyTypeNumber,
+      purpose: key.purposeNumber,
+      securityLevel: key.securityLevelNumber,
+      data: new Uint8Array(key.data.match(/.{1,2}/g)?.map(b => parseInt(b, 16)) || []),
+    }));
+
+    const match = findMatchingKeyIndex(wif, keyInfos, network);
+    if (!match) return null;
+    // Token transitions need CRITICAL or HIGH; reject MASTER/MEDIUM matches so the
+    // caller surfaces a clear error instead of a cryptic node-side signature failure.
+    const matched = authKeys.find(k => k.keyId === match.keyId) || null;
+    if (matched && (matched.securityLevelNumber === SecurityLevel.CRITICAL || matched.securityLevelNumber === SecurityLevel.HIGH)) {
+      return matched;
+    }
+    return null;
+  }
+
+  private toResult(error: unknown, fallback: string): TokenResult {
+    const msg = extractErrorMessage(error);
+    logger.error(`${fallback}:`, msg);
+    const lower = msg.toLowerCase();
+    if (lower.includes('not authorized') || lower.includes('noone')) {
+      return { success: false, error: 'Not authorized to perform this action', errorCode: 'NOT_AUTHORIZED' };
+    }
+    if (lower.includes('enough') && lower.includes('credit')) {
+      return { success: false, error: 'Insufficient credits to complete the purchase', errorCode: 'INSUFFICIENT_CREDITS' };
+    }
+    if (lower.includes('undeminimum') || lower.includes('under minimum') || lower.includes('minimum sale')) {
+      return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
+    }
+    if (lower.includes('key') || lower.includes('signature') || lower.includes('security')) {
+      return { success: false, error: 'Invalid signing key for this identity', errorCode: 'INVALID_KEY' };
+    }
+    return { success: false, error: `${fallback}: ${msg}`, errorCode: 'NETWORK_ERROR' };
+  }
+}
+
+export const tokenService = new TokenService();

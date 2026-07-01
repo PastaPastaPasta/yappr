@@ -2,7 +2,8 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll } from './pagination-utils';
+import { paginateFetchAll, documentCount } from './pagination-utils';
+import { isInsufficientTokenError } from '../error-utils';
 
 export interface LikeDocument {
   $id: string;
@@ -73,9 +74,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         documentData
       );
 
-      return result.success;
+      if (!result.success) {
+        throw new Error(result.error || 'Like failed');
+      }
+      return true;
     } catch (error) {
       logger.error('Error liking post:', error);
+      // Let the UI prompt to buy YAPP on insufficient-token failures.
+      if (isInsufficientTokenError(error)) throw error;
       return false;
     }
   }
@@ -172,9 +178,18 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Count likes for a post
    */
   async countLikes(postId: string): Promise<number> {
-    // In a real implementation, this would be more efficient
-    const likes = await this.getPostLikes(postId);
-    return likes.length;
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      // O(1) count tree on the `byPost` index [postId].
+      return await documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: 'like',
+        where: [['postId', '==', postId]],
+      });
+    } catch (error) {
+      logger.error('Error counting likes:', error);
+      return 0;
+    }
   }
 
   /**

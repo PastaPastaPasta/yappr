@@ -3,6 +3,7 @@
 import { Post } from '@/lib/types';
 import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
+import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link';
 import { PostCard } from '@/components/post/post-card';
 
 interface FeedPostListProps {
@@ -66,6 +67,7 @@ export function FeedPostList({
             ? 'Follow some people to see their posts here!'
             : 'Be the first to share something!'
         }
+        emptyAction={<LegacyYapprLink />}
       >
         <div>
           {posts?.map((post) => (
@@ -87,6 +89,13 @@ export function FeedPostList({
               >
                 {isLoadingMore ? 'Loading...' : 'Load More'}
               </button>
+            </div>
+          )}
+
+          {!hasMore && posts && posts.length > 0 && (
+            <div className="p-6 flex flex-col items-center gap-2 border-t border-gray-200 dark:border-gray-800 text-center">
+              <p className="text-sm text-gray-500">You&apos;ve reached the end.</p>
+              <LegacyYapprLink />
             </div>
           )}
         </div>

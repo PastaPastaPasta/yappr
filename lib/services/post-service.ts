@@ -206,8 +206,6 @@ class PostService extends BaseDocumentService<Post> {
       mediaUrl?: string;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
-      firstMentionId?: string;
-      primaryHashtag?: string;
       language?: string;
       sensitive?: boolean;
       /** Encryption options for private posts */
@@ -261,8 +259,6 @@ class PostService extends BaseDocumentService<Post> {
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
-    if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
-    if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     return this.create(ownerId, data);
@@ -438,20 +434,6 @@ class PostService extends BaseDocumentService<Post> {
         return 0;
       }
     });
-  }
-
-  /**
-   * Get posts by hashtag
-   */
-  async getPostsByHashtag(hashtag: string, options: QueryOptions = {}): Promise<DocumentResult<Post>> {
-    const queryOptions: QueryOptions = {
-      where: [['primaryHashtag', '==', hashtag.replace('#', '')]],
-      orderBy: [['$createdAt', 'desc']],
-      limit: 20,
-      ...options
-    };
-
-    return this.query(queryOptions);
   }
 
   /**

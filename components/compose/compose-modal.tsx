@@ -22,7 +22,8 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
-import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
+import { extractErrorMessage, isTimeoutError, categorizeError, isInsufficientTokenError } from '@/lib/error-utils'
+import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import {
   PostingProgress,
   PostButtonContent,
@@ -902,7 +903,11 @@ export function ComposeModal() {
       }
     } catch (error) {
       logger.error('Failed to create post:', error)
-      toast.error(categorizeError(error))
+      if (isInsufficientTokenError(error)) {
+        useBuyYappModal.getState().open('You need YAPP to post. Buy some to continue.')
+      } else {
+        toast.error(categorizeError(error))
+      }
     } finally {
       setIsPosting(false)
       setPostingProgress(null)

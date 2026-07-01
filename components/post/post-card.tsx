@@ -38,6 +38,8 @@ import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
+import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
+import { isInsufficientTokenError } from '@/lib/error-utils'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
@@ -364,7 +366,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       setLiked(wasLiked)
       setLikes(prevLikes)
       logger.error('Like error:', error)
-      toast.error('Failed to update like. Please try again.')
+      if (isInsufficientTokenError(error)) {
+        useBuyYappModal.getState().open('You need YAPP to like posts. Buy some to continue.')
+      } else {
+        toast.error('Failed to update like. Please try again.')
+      }
     } finally {
       setLikeLoading(false)
     }
@@ -397,7 +403,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       setReposted(wasReposted)
       setReposts(prevReposts)
       logger.error('Repost error:', error)
-      toast.error('Failed to update repost. Please try again.')
+      if (isInsufficientTokenError(error)) {
+        useBuyYappModal.getState().open('You need YAPP to repost. Buy some to continue.')
+      } else {
+        toast.error('Failed to update repost. Please try again.')
+      }
     } finally {
       setRepostLoading(false)
     }

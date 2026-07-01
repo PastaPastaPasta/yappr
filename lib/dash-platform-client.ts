@@ -72,7 +72,6 @@ export class DashPlatformClient {
     replyToPostOwnerId?: string
     quotedPostId?: string
     mediaUrl?: string
-    primaryHashtag?: string
   }) {
     // Get identity ID from instance or auth context
     let identityId = this.identityId
@@ -114,7 +113,6 @@ export class DashPlatformClient {
       const post = await postService.createPost(identityId, content.trim(), {
         quotedPostId: options?.quotedPostId,
         mediaUrl: options?.mediaUrl,
-        primaryHashtag: options?.primaryHashtag?.replace('#', ''),
         language: 'en'
       })
 

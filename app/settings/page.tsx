@@ -20,6 +20,7 @@ import {
   UserPlusIcon,
   LockClosedIcon,
   CloudArrowUpIcon,
+  NoSymbolIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -41,14 +42,18 @@ import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { SavedAddressesSettings } from '@/components/settings/saved-addresses-settings'
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
+import { ModerationSettings } from '@/components/settings/moderation-settings'
+import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
-type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'about'
-const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'about']
+type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'about' | 'moderation'
+const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'about', 'moderation']
+
+const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Freeze or slash YAPP balances (token authority only)' }
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
@@ -85,6 +90,7 @@ function SettingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
+  const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
   const { theme, setTheme } = useTheme()
   const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
   const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
@@ -206,7 +212,7 @@ function SettingsPage() {
 
   const renderMainSettings = () => (
     <div className="divide-y divide-gray-200 dark:divide-gray-800">
-      {settingsSections.map((section) => (
+      {(isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections).map((section) => (
         <button
           key={section.id}
           onClick={() => setActiveSection(section.id as SettingsSection)}
@@ -734,6 +740,8 @@ function SettingsPage() {
         return renderAppearanceSettings()
       case 'about':
         return renderAboutSettings()
+      case 'moderation':
+        return isAuthority ? <ModerationSettings /> : renderMainSettings()
       default:
         return renderMainSettings()
     }

@@ -5,6 +5,8 @@ import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
+import { getEvoSdk } from './evo-sdk-service';
+import { documentCount } from './pagination-utils';
 
 export interface ReplyDocument {
   $id: string;
@@ -351,15 +353,13 @@ class ReplyService extends BaseDocumentService<Reply> {
    */
   async countReplies(parentId: string): Promise<number> {
     try {
-      const result = await this.query({
-        where: [
-          ['parentId', '==', parentId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['parentId', 'asc'], ['$createdAt', 'asc']],
-        limit: 100
+      const sdk = await getEvoSdk();
+      // O(1) count tree on the `byParent` index [parentId] (also removes the old 100-cap undercount).
+      return await documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: 'reply',
+        where: [['parentId', '==', parentId]],
       });
-      return result.documents.length;
     } catch {
       return 0;
     }
