@@ -12,6 +12,12 @@ export interface TipResult {
   transactionHash?: string;
   error?: string;
   errorCode?: 'INSUFFICIENT_BALANCE' | 'SELF_TIP' | 'NETWORK_ERROR' | 'INVALID_AMOUNT' | 'INVALID_KEY';
+  /**
+   * Whether the public "X tipped Y" announcement reply posted. False when the
+   * tip's credit transfer succeeded but the reply (a YAPP-costed doc) was
+   * rejected — e.g. the tipper holds no YAPP. Only meaningful when a postId was given.
+   */
+  announcementPosted?: boolean;
 }
 
 // Regex to parse tip content: tip:AMOUNT_CREDITS followed by optional message
@@ -245,14 +251,18 @@ class TipService {
 
       // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
-      if (postId) {
-        await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
-      }
+      // The tip (credit transfer) already succeeded; the announcement reply is a
+      // `reply` doc with a YAPP tokenCost, so a 0-YAPP tipper's reply can fail —
+      // report that so the UI can tell the user rather than losing it silently.
+      const announcementPosted = postId
+        ? await this.createTipPost(senderId, postId, recipientId, amountCredits, message)
+        : true;
 
       return {
         success: true,
         // TODO: Return actual transaction hash once SDK exposes it
-        transactionHash: 'confirmed'
+        transactionHash: 'confirmed',
+        announcementPosted,
       };
 
     } catch (error) {
@@ -268,13 +278,14 @@ class TipService {
         identityService.clearCache(senderId);
 
         // Create tip post (amount is known even if confirmation timed out)
-        if (postId) {
-          await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
-        }
+        const announcementPosted = postId
+          ? await this.createTipPost(senderId, postId, recipientId, amountCredits, message)
+          : true;
 
         return {
           success: true,
-          transactionHash: 'pending-confirmation'
+          transactionHash: 'pending-confirmation',
+          announcementPosted,
         };
       }
 
@@ -318,7 +329,7 @@ class TipService {
     postOwnerId: string,
     amountCredits: number,
     tipMessage?: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Format: tip:CREDITS\nmessage (message is optional)
       // Amount is self-reported until SDK provides transition ID for verification
@@ -331,9 +342,11 @@ class TipService {
       await replyService.createReply(senderId, content, postId, postOwnerId);
 
       logger.info('Tip reply created successfully');
+      return true;
     } catch (error) {
       // Log but don't fail the tip - the credit transfer already succeeded
       logger.error('Failed to create tip post:', error);
+      return false;
     }
   }
 

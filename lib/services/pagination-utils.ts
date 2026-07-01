@@ -9,6 +9,7 @@
  * for both counting and fetching complete lists.
  */
 
+import { logger } from '@/lib/logger';
 import { normalizeSDKResponse } from './sdk-helpers';
 
 export interface PaginateOptions {
@@ -35,6 +36,29 @@ export interface PaginateFetchResult<T> {
 type SDK = any;
 
 /**
+ * Map over items with bounded concurrency (a tiny promise pool). Prevents a
+ * whole feed page from firing an unbounded burst of DAPI requests at once.
+ */
+export async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker)
+  );
+  return results;
+}
+
+/**
  * Count documents matching a query using the Platform count-tree (O(1)).
  *
  * Requires the queried document type to declare a `countable` index covering the
@@ -59,7 +83,15 @@ export async function documentCount(
   const result = await sdk.documents.count(query);
   // SDK returns Map<string, bigint>; '' is the grand total when no groupBy is set.
   const total = result instanceof Map ? result.get('') : result?.['']; // tolerate plain-object shape
-  return Number(total ?? BigInt(0));
+  if (total === undefined || total === null) {
+    // Shouldn't happen for a countable index; log so a silent 0 doesn't hide a
+    // response-shape mismatch or a doctype/index that isn't actually countable.
+    logger.warn('documentCount: no grand-total key in count result; treating as 0', {
+      documentTypeName: (query as { documentTypeName?: string }).documentTypeName,
+    });
+    return 0;
+  }
+  return Number(total);
 }
 
 /**

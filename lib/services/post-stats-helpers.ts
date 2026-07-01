@@ -109,18 +109,15 @@ export async function fetchBatchUserInteractions(
       import('./bookmark-service'),
     ]);
 
-    const [allLikesForPosts, allRepostsForPosts, userBookmarks] = await Promise.all([
-      likeService.getLikesByPostIds(postIds),
-      repostService.getRepostsByPostIds(postIds),
+    // Query only the CURRENT user's own likes/reposts (bounded by page size via
+    // the composite indexes) instead of fetching all users' likes capped at 100
+    // and filtering client-side — which could miss the user's own on busy pages.
+    const [likedPostIds, repostedPostIds, userBookmarks] = await Promise.all([
+      likeService.getUserLikedPostIds(currentUserId, postIds),
+      repostService.getUserRepostedPostIds(currentUserId, postIds),
       bookmarkService.getUserBookmarksForPosts(currentUserId, postIds),
     ]);
 
-    const likedPostIds = new Set(
-      allLikesForPosts.filter((like) => like.$ownerId === currentUserId).map((like) => like.postId)
-    );
-    const repostedPostIds = new Set(
-      allRepostsForPosts.filter((repost) => repost.$ownerId === currentUserId).map((repost) => repost.postId)
-    );
     const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
 
     postIds.forEach((postId) => {
@@ -156,11 +153,14 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
     ]);
 
     // Per-post O(1) count-tree reads (no 100-cap undercount the old batched
-    // `in`-queries had once a page collectively exceeded ~100 engagements).
+    // `in`-queries had once a page collectively exceeded ~100 engagements),
+    // bounded so a page doesn't fire an unbounded burst of DAPI requests.
+    const { mapLimit } = await import('./pagination-utils');
+    const COUNT_CONCURRENCY = 6;
     const [likeCounts, repostCounts, replyCounts] = await Promise.all([
-      Promise.all(postIds.map((id) => likeService.countLikes(id))),
-      Promise.all(postIds.map((id) => repostService.countReposts(id))),
-      Promise.all(postIds.map((id) => replyService.countReplies(id))),
+      mapLimit(postIds, COUNT_CONCURRENCY, (id) => likeService.countLikes(id)),
+      mapLimit(postIds, COUNT_CONCURRENCY, (id) => repostService.countReposts(id)),
+      mapLimit(postIds, COUNT_CONCURRENCY, (id) => replyService.countReplies(id)),
     ]);
 
     postIds.forEach((id, i) => {

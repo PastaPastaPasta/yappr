@@ -3,7 +3,7 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { Reply, PostQueryOptions } from '../../types';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentCount } from './pagination-utils';
@@ -34,8 +34,6 @@ export interface EncryptionSource {
 }
 
 class ReplyService extends BaseDocumentService<Reply> {
-  // Request deduplicators for batch operations
-  private repliesDeduplicator = new RequestDeduplicator<string, Map<string, number>>();
 
   constructor() {
     super('reply');
@@ -363,55 +361,6 @@ class ReplyService extends BaseDocumentService<Reply> {
     } catch {
       return 0;
     }
-  }
-
-  /**
-   * Batch count replies for multiple posts.
-   * Deduplicates in-flight requests.
-   */
-  async countRepliesByParentIds(parentIds: string[]): Promise<Map<string, number>> {
-    if (parentIds.length === 0) {
-      return new Map<string, number>();
-    }
-
-    const cacheKey = RequestDeduplicator.createBatchKey(parentIds);
-    return this.repliesDeduplicator.dedupe(cacheKey, () => this.fetchRepliesByParentIds(parentIds));
-  }
-
-  /** Internal: Actually fetch reply counts */
-  private async fetchRepliesByParentIds(parentIds: string[]): Promise<Map<string, number>> {
-    const result = new Map<string, number>();
-    parentIds.forEach(id => result.set(id, 0));
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'reply',
-        where: [['parentId', 'in', parentIds]],
-        orderBy: [['parentId', 'asc']],
-        limit: 100
-      });
-
-      const documents = normalizeSDKResponse(response);
-
-      // Count replies per parent
-      for (const doc of documents) {
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const rawParentId = data.parentId || doc.parentId;
-        const parentId = rawParentId ? identifierToBase58(rawParentId) : null;
-
-        if (parentId && result.has(parentId)) {
-          result.set(parentId, (result.get(parentId) || 0) + 1);
-        }
-      }
-    } catch (error) {
-      logger.error('Error getting replies batch:', error);
-    }
-
-    return result;
   }
 
   /**

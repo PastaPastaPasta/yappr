@@ -31,7 +31,10 @@ class RepostService {
     const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
     const postId = rawPostId ? identifierToBase58(rawPostId) : null;
-    if (!postId) return null;
+    if (!postId) {
+      logger.error('RepostService: repost doc has invalid/missing postId:', rawPostId);
+      return null;
+    }
     const rawOwner = data.postOwnerId || doc.postOwnerId;
     return {
       $id: (doc.$id || doc.id) as string,
@@ -163,6 +166,34 @@ class RepostService {
     } catch (error) {
       logger.error('Error getting user reposts:', error);
       return [];
+    }
+  }
+
+  /**
+   * Which of the given posts the user has reposted — queries only the user's OWN
+   * reposts via the unique `ownerAndPost` [$ownerId, postId] index, so the result
+   * is bounded by the number of posts (not total reposts).
+   */
+  async getUserRepostedPostIds(userId: string, postIds: string[]): Promise<Set<string>> {
+    if (postIds.length === 0) return new Set();
+    try {
+      const sdk = await this.sdk();
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [['$ownerId', '==', userId], ['postId', 'in', postIds]],
+        orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
+        limit: 100,
+      });
+      const out = new Set<string>();
+      for (const doc of normalizeSDKResponse(response)) {
+        const r = this.map(doc);
+        if (r) out.add(r.postId);
+      }
+      return out;
+    } catch (error) {
+      logger.error('Error fetching user reposted post ids:', error);
+      return new Set();
     }
   }
 

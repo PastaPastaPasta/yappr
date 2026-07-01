@@ -749,7 +749,11 @@ function SettingsPage() {
 
   const getSectionTitle = () => {
     if (activeSection === 'main') return 'Settings'
-    const section = [...settingsSections, MODERATION_SECTION].find(s => s.id === activeSection)
+    // Only surface the Moderation title to the authority (matches renderSection's
+    // gate) so a non-authority hitting ?section=moderation doesn't see a
+    // "Moderation" header over the fallback main menu.
+    const sections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
+    const section = sections.find(s => s.id === activeSection)
     return section?.label || 'Settings'
   }
 

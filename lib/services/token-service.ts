@@ -49,17 +49,16 @@ class TokenService {
     return (result as Record<string, V>)?.[tokenId];
   }
 
-  /** Current YAPP balance (whole tokens, decimals=0) for an identity. */
+  /**
+   * Current YAPP balance (whole tokens, decimals=0) for an identity.
+   * Throws on a fetch failure so callers can distinguish "unknown" (e.g. a
+   * transient DAPI error) from a genuine zero balance — do not swallow to 0.
+   */
   async getBalance(identityId: string): Promise<bigint> {
-    try {
-      const sdk = await getEvoSdk();
-      const tokenId = await this.getTokenId();
-      const balances = await sdk.tokens.identityBalances(identityId, [tokenId]);
-      return this.tokenMapGet<bigint>(balances, tokenId) ?? BigInt(0);
-    } catch (error) {
-      logger.error('Error fetching YAPP balance:', error);
-      return BigInt(0);
-    }
+    const sdk = await getEvoSdk();
+    const tokenId = await this.getTokenId();
+    const balances = await sdk.tokens.identityBalances(identityId, [tokenId]);
+    return this.tokenMapGet<bigint>(balances, tokenId) ?? BigInt(0);
   }
 
   /**
@@ -80,13 +79,6 @@ class TokenService {
       logger.error('Error fetching YAPP price:', error);
       return null;
     }
-  }
-
-  /** Total credits cost to buy `amount` YAPP at the current price. */
-  async quoteCost(amount: bigint): Promise<bigint | null> {
-    const price = await this.getPricePerToken();
-    if (price === null) return null;
-    return price * amount;
   }
 
   /**
@@ -232,8 +224,14 @@ class TokenService {
     if (lower.includes('not authorized') || lower.includes('noone')) {
       return { success: false, error: 'Not authorized to perform this action', errorCode: 'NOT_AUTHORIZED' };
     }
-    if (lower.includes('enough') && lower.includes('credit')) {
-      return { success: false, error: 'Insufficient credits to complete the purchase', errorCode: 'INSUFFICIENT_CREDITS' };
+    // Insufficient Dash credits to pay for the purchase (various phrasings /
+    // the compact `IdentityInsufficientBalanceError` name).
+    if (
+      (lower.includes('enough') && lower.includes('credit')) ||
+      lower.includes('insufficientbalance') ||
+      ((lower.includes('insufficient') || lower.includes('not enough')) && lower.includes('balance'))
+    ) {
+      return { success: false, error: 'Insufficient Dash credits to complete the purchase', errorCode: 'INSUFFICIENT_CREDITS' };
     }
     if (lower.includes('underminimum') || lower.includes('under minimum') || lower.includes('minimum sale')) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
@@ -241,8 +239,11 @@ class TokenService {
     if (lower.includes('userpricetoolow') || lower.includes('price too low') || lower.includes('price changed')) {
       return { success: false, error: 'The YAPP price changed — please reopen and confirm the new cost', errorCode: 'NETWORK_ERROR' };
     }
-    if (lower.includes('key') || lower.includes('signature') || lower.includes('security')) {
-      return { success: false, error: 'Invalid signing key for this identity', errorCode: 'INVALID_KEY' };
+    // Only classify as a key problem when the local signer genuinely didn't match —
+    // NOT on transient consensus/proof errors that merely contain "key"/"signature"
+    // (e.g. "no quorum public key found", "signature verification for proof failed").
+    if (lower.includes('no matching authentication key') || lower.includes('private key not found')) {
+      return { success: false, error: 'No suitable signing key for this identity', errorCode: 'INVALID_KEY' };
     }
     return { success: false, error: `${fallback}: ${msg}`, errorCode: 'NETWORK_ERROR' };
   }
