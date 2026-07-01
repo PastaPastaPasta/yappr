@@ -235,7 +235,7 @@ class TokenService {
     if (lower.includes('enough') && lower.includes('credit')) {
       return { success: false, error: 'Insufficient credits to complete the purchase', errorCode: 'INSUFFICIENT_CREDITS' };
     }
-    if (lower.includes('undeminimum') || lower.includes('under minimum') || lower.includes('minimum sale')) {
+    if (lower.includes('underminimum') || lower.includes('under minimum') || lower.includes('minimum sale')) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
     }
     if (lower.includes('userpricetoolow') || lower.includes('price too low') || lower.includes('price changed')) {

@@ -59,8 +59,9 @@ export function ModerationSettings() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity ID</label>
+          <label htmlFor="moderation-target-id" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity ID</label>
           <input
+            id="moderation-target-id"
             type="text"
             value={targetId}
             onChange={(e) => setTargetId(e.target.value)}
@@ -69,8 +70,9 @@ export function ModerationSettings() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Public note (optional)</label>
+          <label htmlFor="moderation-note" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Public note (optional)</label>
           <input
+            id="moderation-note"
             type="text"
             value={note}
             onChange={(e) => setNote(e.target.value)}

@@ -749,7 +749,7 @@ function SettingsPage() {
 
   const getSectionTitle = () => {
     if (activeSection === 'main') return 'Settings'
-    const section = settingsSections.find(s => s.id === activeSection)
+    const section = [...settingsSections, MODERATION_SECTION].find(s => s.id === activeSection)
     return section?.label || 'Settings'
   }
 

@@ -81,6 +81,12 @@ try {
   });
   console.log('built TokenBaseTransition');
 
+  // NOTE: this SDK's wasm binding for SetPrices rejects a BigInt value
+  // ("Price for amount '100' must be an integer") and requires a JS number.
+  // Guard against the >2^53 precision cliff since CREDITS_PER_TOKEN is a Number here.
+  if (CREDITS_PER_TOKEN > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('CREDITS_PER_TOKEN exceeds Number.MAX_SAFE_INTEGER; SetPrices needs a safe-integer price');
+  }
   const schedule = TokenPricingSchedule.SetPrices({ [MIN_PURCHASE.toString()]: Number(CREDITS_PER_TOKEN) });
   console.log('built SetPrices schedule');
   const setPriceTx = new TokenSetPriceForDirectPurchaseTransition({
