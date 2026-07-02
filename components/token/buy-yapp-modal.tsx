@@ -13,9 +13,18 @@ import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService } from '@/lib/services/tip-service'
+import { YAPP_TOKEN_COSTS } from '@/lib/constants'
 
 // Preset purchase amounts in whole YAPP (must be >= the on-chain minimum of 100).
 const PRESETS = [100, 500, 1000, 5000]
+
+/** "≈ 10 posts, 33 replies, or 100 likes" for a given YAPP amount. */
+function formatCoverage(amount: bigint): string {
+  const posts = amount / BigInt(YAPP_TOKEN_COSTS.post)
+  const replies = amount / BigInt(YAPP_TOKEN_COSTS.reply)
+  const likes = amount / BigInt(YAPP_TOKEN_COSTS.like)
+  return `≈ ${posts.toString()} posts, ${replies.toString()} replies, or ${likes.toString()} likes`
+}
 
 const CREDITS_PER_DASH = BigInt(100000000000) // 1 DASH = 1e11 platform credits
 
@@ -40,6 +49,7 @@ export function BuyYappModal() {
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const [pricePerToken, setPricePerToken] = useState<bigint | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showCosts, setShowCosts] = useState(false)
 
   useEffect(() => {
     if (isOpen && user) {
@@ -57,6 +67,7 @@ export function BuyYappModal() {
       setAmount('100')
       setState('input')
       setError(null)
+      setShowCosts(false)
     }
   }, [isOpen])
 
@@ -155,8 +166,39 @@ export function BuyYappModal() {
                           <p className="text-sm bg-yappr-500/10 text-yappr-500 rounded-lg px-3 py-2">{reason}</p>
                         )}
                         <p className="text-gray-600 dark:text-gray-400 text-sm">
-                          YAPP powers posting, comments, and likes. Buy in bundles of {MIN_YAPP_PURCHASE.toString()}+ — the upfront stake keeps spam out.
+                          YAPP powers posting, comments, and likes. Buy in bundles of {MIN_YAPP_PURCHASE.toString()}+ — the upfront stake keeps spam out.{' '}
+                          <button
+                            onClick={() => setShowCosts(v => !v)}
+                            className="text-yappr-500 hover:underline font-medium"
+                            aria-expanded={showCosts}
+                          >
+                            {showCosts ? 'Hide action costs' : 'See action costs'}
+                          </button>
                         </p>
+
+                        {showCosts && (
+                          <div className="text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2 space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600 dark:text-gray-400">Post</span>
+                              <span className="font-medium">{YAPP_TOKEN_COSTS.post} YAPP</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600 dark:text-gray-400">Reply</span>
+                              <span className="font-medium">{YAPP_TOKEN_COSTS.reply} YAPP</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600 dark:text-gray-400">Like</span>
+                              <span className="font-medium">{YAPP_TOKEN_COSTS.like} YAPP</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600 dark:text-gray-400">Repost</span>
+                              <span className="font-medium">{YAPP_TOKEN_COSTS.repost} YAPP</span>
+                            </div>
+                            <p className="text-xs text-gray-500 pt-1">
+                              Costs are fixed in the contract and can&apos;t change under you. Following, bookmarking, and browsing are free.
+                            </p>
+                          </div>
+                        )}
 
                         <div className="text-sm text-gray-500 space-y-0.5">
                           <div>Your YAPP: <span className="font-medium">{loading ? '…' : yappBalance !== null ? yappBalance.toString() : '—'}</span></div>
@@ -191,9 +233,14 @@ export function BuyYappModal() {
                           ))}
                         </div>
 
-                        <div className="flex justify-between text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2">
-                          <span className="text-gray-600 dark:text-gray-400">Cost</span>
-                          <span className="font-medium">{costDashLabel}</span>
+                        <div className="text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2 space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">Cost</span>
+                            <span className="font-medium">{costDashLabel}</span>
+                          </div>
+                          {amountBig > BigInt(0) && (
+                            <p className="text-xs text-gray-500">{formatCoverage(amountBig)}</p>
+                          )}
                         </div>
 
                         {error && <p className="text-red-500 text-sm">{error}</p>}
@@ -215,6 +262,7 @@ export function BuyYappModal() {
                             <span className="text-gray-600 dark:text-gray-400">Cost</span>
                             <span className="font-medium">{costDashLabel}</span>
                           </div>
+                          <p className="text-xs text-gray-500">{formatCoverage(amountBig)}</p>
                         </div>
                         <div className="flex gap-3">
                           <Button onClick={() => setState('input')} variant="outline" className="flex-1">Back</Button>
