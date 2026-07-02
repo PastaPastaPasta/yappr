@@ -15,14 +15,26 @@ export function YappBalanceItem() {
   const { user } = useAuth()
   const openBuy = useBuyYappModal((s) => s.open)
   const [yapp, setYapp] = useState<bigint | null>(null)
+  const identityId = user?.identityId
 
   useEffect(() => {
-    if (!user) return
-    const refresh = () => tokenService.getBalance(user.identityId).then(setYapp).catch(() => setYapp(null))
+    // Clear the previous identity's balance immediately so an account switch
+    // never keeps showing the old user's YAPP while the new fetch is in flight.
+    setYapp(null)
+    if (!identityId) return
+    let cancelled = false
+    const refresh = () => {
+      tokenService.getBalance(identityId)
+        .then((b) => { if (!cancelled) setYapp(b) })
+        .catch(() => { if (!cancelled) setYapp(null) })
+    }
     refresh()
     window.addEventListener('yapp-balance-changed', refresh)
-    return () => window.removeEventListener('yapp-balance-changed', refresh)
-  }, [user])
+    return () => {
+      cancelled = true
+      window.removeEventListener('yapp-balance-changed', refresh)
+    }
+  }, [identityId])
 
   if (!user) return null
 

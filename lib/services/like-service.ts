@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll, documentCount, groupedDocumentCount } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount, chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { isInsufficientTokenError } from '../error-utils';
 
 export interface LikeDocument {
@@ -186,18 +186,24 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     if (postIds.length === 0) return new Set();
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'like',
-        where: [['postId', 'in', postIds], ['$ownerId', '==', userId]],
-        orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
-        limit: 100,
-      });
       const liked = new Set<string>();
-      for (const doc of normalizeSDKResponse(response)) {
-        const like = this.transformDocument(doc);
-        if (like?.postId) liked.add(like.postId);
-      }
+      // Platform caps `in` clauses at 100 values, so oversized pages (e.g. a
+      // profile's merged posts + reposts) must be batched. The unique
+      // [postId, $ownerId] index yields at most one like per postId, so
+      // `limit: batch.length` can never truncate a batch's results.
+      await mapLimit(chunk(postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
+        const response = await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: 'like',
+          where: [['postId', 'in', batch], ['$ownerId', '==', userId]],
+          orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
+          limit: batch.length,
+        });
+        for (const doc of normalizeSDKResponse(response)) {
+          const like = this.transformDocument(doc);
+          if (like?.postId) liked.add(like.postId);
+        }
+      });
       return liked;
     } catch (error) {
       logger.error('Error fetching user liked post ids:', error);

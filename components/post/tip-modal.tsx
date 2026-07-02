@@ -207,9 +207,14 @@ export function TipModal() {
 
       // The tip (credit transfer) succeeded, but the public "tip" reply is a
       // YAPP-costed doc — tell the user if it couldn't be posted rather than
-      // letting it vanish silently.
+      // letting it vanish silently, and only blame YAPP when that was the cause.
       if (result.announcementPosted === false) {
-        toast('Tip sent — but the public tip note couldn’t be posted (needs YAPP).', { icon: '⚠️', duration: 5000 })
+        toast(
+          result.announcementError === 'INSUFFICIENT_YAPP'
+            ? 'Tip sent — but the public tip note couldn’t be posted (needs YAPP).'
+            : 'Tip sent — but the public tip note couldn’t be posted. You can reply to the post manually.',
+          { icon: '⚠️', duration: 5000 }
+        )
       }
 
       // If key was manually entered and not already saved, offer to save

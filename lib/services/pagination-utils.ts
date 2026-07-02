@@ -36,6 +36,21 @@ export interface PaginateFetchResult<T> {
 type SDK = any;
 
 /**
+ * Dash Platform caps `in` clauses (and per-query limits) at 100 values —
+ * queries over larger id lists must be split into batches of at most this size.
+ */
+export const MAX_IN_CLAUSE_VALUES = 100;
+
+/** Split items into consecutive batches of at most `size` items. */
+export function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+/**
  * Map over items with bounded concurrency (a tiny promise pool). Prevents a
  * whole feed page from firing an unbounded burst of DAPI requests at once.
  */
@@ -118,48 +133,51 @@ export async function groupedDocumentCount(
   if (ids.length === 0) return result;
   ids.forEach((id) => result.set(id, 0));
 
-  const hexToId = new Map<string, string>();
-  ids.forEach((id) => {
-    const hex = identifierToHex(id);
-    if (hex) hexToId.set(hex, id);
+  // Platform caps `in` clauses at 100 values, so oversized id lists (e.g. a
+  // profile page's merged posts + reposts) must be batched or the query errors.
+  await mapLimit(chunk(ids, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
+    const hexToId = new Map<string, string>();
+    batch.forEach((id) => {
+      const hex = identifierToHex(id);
+      if (hex) hexToId.set(hex, id);
+    });
+
+    try {
+      const raw: unknown = await sdk.documents.count({
+        dataContractId: query.dataContractId,
+        documentTypeName: query.documentTypeName,
+        where: [[query.groupField, 'in', batch]],
+        groupBy: [query.groupField],
+        limit: batch.length,
+      });
+
+      const entries: [string, unknown][] =
+        raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
+
+      let matched = 0;
+      for (const [key, value] of entries) {
+        if (key === '') continue; // aggregate-mode key; shouldn't appear once groupBy is set
+        const id = hexToId.get(key);
+        if (id) {
+          result.set(id, Number(value as bigint | number));
+          matched++;
+        }
+      }
+
+      if (entries.length > 0 && matched === 0) {
+        throw new Error('groupedDocumentCount: no group keys matched expected hex ids');
+      }
+    } catch (error) {
+      logger.warn('groupedDocumentCount: falling back to per-id counts', {
+        documentTypeName: query.documentTypeName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const counts = await mapLimit(batch, 6, fallbackCount);
+      batch.forEach((id, i) => result.set(id, counts[i]));
+    }
   });
 
-  try {
-    const raw: unknown = await sdk.documents.count({
-      dataContractId: query.dataContractId,
-      documentTypeName: query.documentTypeName,
-      where: [[query.groupField, 'in', ids]],
-      groupBy: [query.groupField],
-      limit: ids.length,
-    });
-
-    const entries: [string, unknown][] =
-      raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
-
-    let matched = 0;
-    for (const [key, value] of entries) {
-      if (key === '') continue; // aggregate-mode key; shouldn't appear once groupBy is set
-      const id = hexToId.get(key);
-      if (id) {
-        result.set(id, Number(value as bigint | number));
-        matched++;
-      }
-    }
-
-    if (entries.length > 0 && matched === 0) {
-      throw new Error('groupedDocumentCount: no group keys matched expected hex ids');
-    }
-
-    return result;
-  } catch (error) {
-    logger.warn('groupedDocumentCount: falling back to per-id counts', {
-      documentTypeName: query.documentTypeName,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    const counts = await mapLimit(ids, 6, fallbackCount);
-    ids.forEach((id, i) => result.set(id, counts[i]));
-    return result;
-  }
+  return result;
 }
 
 /**

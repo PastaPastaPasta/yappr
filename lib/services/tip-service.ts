@@ -5,6 +5,7 @@ import { signerService, KeyPurpose } from './signer-service';
 import { wallet } from '@dashevo/evo-sdk';
 import { TipInfo } from '../../types';
 import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import { isInsufficientTokenError } from '@/lib/error-utils';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 export interface TipResult {
@@ -18,6 +19,12 @@ export interface TipResult {
    * rejected — e.g. the tipper holds no YAPP. Only meaningful when a postId was given.
    */
   announcementPosted?: boolean;
+  /**
+   * Why the announcement reply failed when `announcementPosted` is false:
+   * the tipper lacked YAPP for the reply's tokenCost, or any other posting
+   * failure (timeout, transport, rejection).
+   */
+  announcementError?: 'INSUFFICIENT_YAPP' | 'POST_FAILED';
 }
 
 // Regex to parse tip content: tip:AMOUNT_CREDITS followed by optional message
@@ -131,12 +138,19 @@ class TipService {
     }
 
     try {
-      // Check sender balance
-      const balance = await identityService.getBalance(senderId);
-      if (balance.confirmed < amountCredits) {
+      // Check sender balance. If the balance fetch itself fails, don't treat
+      // that as "0 credits" — skip the pre-check and let the transfer be the
+      // authority (the chain rejects underfunded transfers anyway).
+      let confirmedBalance: number | null = null;
+      try {
+        confirmedBalance = (await identityService.getBalance(senderId)).confirmed;
+      } catch (error) {
+        logger.warn('Could not fetch balance before tip; proceeding without pre-check:', error);
+      }
+      if (confirmedBalance !== null && confirmedBalance < amountCredits) {
         return {
           success: false,
-          error: `Insufficient balance. You have ${this.formatDash(this.creditsToDash(balance.confirmed))}.`,
+          error: `Insufficient balance. You have ${this.formatDash(this.creditsToDash(confirmedBalance))}.`,
           errorCode: 'INSUFFICIENT_BALANCE'
         };
       }
@@ -254,15 +268,16 @@ class TipService {
       // The tip (credit transfer) already succeeded; the announcement reply is a
       // `reply` doc with a YAPP tokenCost, so a 0-YAPP tipper's reply can fail —
       // report that so the UI can tell the user rather than losing it silently.
-      const announcementPosted = postId
+      const announcement = postId
         ? await this.createTipPost(senderId, postId, recipientId, amountCredits, message)
-        : true;
+        : { posted: true as const };
 
       return {
         success: true,
         // TODO: Return actual transaction hash once SDK exposes it
         transactionHash: 'confirmed',
-        announcementPosted,
+        announcementPosted: announcement.posted,
+        announcementError: announcement.posted ? undefined : announcement.reason,
       };
 
     } catch (error) {
@@ -278,14 +293,15 @@ class TipService {
         identityService.clearCache(senderId);
 
         // Create tip post (amount is known even if confirmation timed out)
-        const announcementPosted = postId
+        const announcement = postId
           ? await this.createTipPost(senderId, postId, recipientId, amountCredits, message)
-          : true;
+          : { posted: true as const };
 
         return {
           success: true,
           transactionHash: 'pending-confirmation',
-          announcementPosted,
+          announcementPosted: announcement.posted,
+          announcementError: announcement.posted ? undefined : announcement.reason,
         };
       }
 
@@ -329,7 +345,7 @@ class TipService {
     postOwnerId: string,
     amountCredits: number,
     tipMessage?: string
-  ): Promise<boolean> {
+  ): Promise<{ posted: true } | { posted: false; reason: 'INSUFFICIENT_YAPP' | 'POST_FAILED' }> {
     try {
       // Format: tip:CREDITS\nmessage (message is optional)
       // Amount is self-reported until SDK provides transition ID for verification
@@ -342,11 +358,16 @@ class TipService {
       await replyService.createReply(senderId, content, postId, postOwnerId);
 
       logger.info('Tip reply created successfully');
-      return true;
+      return { posted: true };
     } catch (error) {
-      // Log but don't fail the tip - the credit transfer already succeeded
+      // Log but don't fail the tip - the credit transfer already succeeded.
+      // Distinguish "tipper has no YAPP for the reply's tokenCost" from any
+      // other posting failure so the UI doesn't misattribute the cause.
       logger.error('Failed to create tip post:', error);
-      return false;
+      return {
+        posted: false,
+        reason: isInsufficientTokenError(error) ? 'INSUFFICIENT_YAPP' : 'POST_FAILED',
+      };
     }
   }
 

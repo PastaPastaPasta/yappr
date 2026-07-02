@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll, documentCount, groupedDocumentCount } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount, chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { isInsufficientTokenError } from '../error-utils';
 
 /** A repost of a post — a dedicated `repost` document ({ postId, postOwnerId }). */
@@ -178,18 +178,23 @@ class RepostService {
     if (postIds.length === 0) return new Set();
     try {
       const sdk = await this.sdk();
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [['$ownerId', '==', userId], ['postId', 'in', postIds]],
-        orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
-        limit: 100,
-      });
       const out = new Set<string>();
-      for (const doc of normalizeSDKResponse(response)) {
-        const r = this.map(doc);
-        if (r) out.add(r.postId);
-      }
+      // Platform caps `in` clauses at 100 values, so oversized pages must be
+      // batched. The unique [$ownerId, postId] index yields at most one repost
+      // per postId, so `limit: batch.length` can never truncate a batch.
+      await mapLimit(chunk(postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
+        const response = await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [['$ownerId', '==', userId], ['postId', 'in', batch]],
+          orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
+          limit: batch.length,
+        });
+        for (const doc of normalizeSDKResponse(response)) {
+          const r = this.map(doc);
+          if (r) out.add(r.postId);
+        }
+      });
       return out;
     } catch (error) {
       logger.error('Error fetching user reposted post ids:', error);

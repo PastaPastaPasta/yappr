@@ -309,8 +309,13 @@ export function Sidebar() {
                       onClick={async (e) => {
                         e.stopPropagation()
                         setIsRefreshingBalance(true)
-                        await refreshBalance()
-                        setIsRefreshingBalance(false)
+                        try {
+                          await refreshBalance()
+                        } catch (error) {
+                          logger.error('Failed to refresh balance:', error)
+                        } finally {
+                          setIsRefreshingBalance(false)
+                        }
                       }}
                       disabled={isRefreshingBalance}
                       className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
