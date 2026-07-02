@@ -90,6 +90,9 @@ export function isInsufficientTokenError(error: unknown): boolean {
     msg.includes('identitydoesnothaveenoughtokenbalance') ||
     msg.includes('not have enough token') ||
     msg.includes('enough token balance') ||
+    // Drive phrasing: "Identity X does not have enough balance for token Y:
+    // required 10, actual 0, action: Document create token payment"
+    msg.includes('enough balance for token') ||
     msg.includes('insufficient token')
   )
 }

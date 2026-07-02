@@ -885,7 +885,13 @@ export function ComposeModal() {
         }
         const successPart = parts.join(', ')
 
-        const errorMsg = failureError?.message || 'Unknown error'
+        const ranOutOfYapp = handleInsufficientYapp(
+          failureError,
+          'You ran out of YAPP mid-thread. Buy some to post the rest.'
+        )
+        const errorMsg = ranOutOfYapp
+          ? 'not enough YAPP'
+          : failureError?.message || 'Unknown error'
         toast.error(
           `Thread partially created: ${successPart}. ` +
           `Post ${(failedAtIndex ?? 0) + 1} failed: ${errorMsg}. Press Post to retry.`,
