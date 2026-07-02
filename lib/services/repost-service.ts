@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll, documentCount } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount } from './pagination-utils';
 import { isInsufficientTokenError } from '../error-utils';
 
 /** A repost of a post — a dedicated `repost` document ({ postId, postOwnerId }). */
@@ -210,6 +210,17 @@ class RepostService {
       logger.error('Error counting reposts:', error);
       return 0;
     }
+  }
+
+  /** Repost counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
+  async countRepostsForPosts(postIds: string[]): Promise<Map<string, number>> {
+    const sdk = await this.sdk();
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'postId' },
+      postIds,
+      (id) => this.countReposts(id)
+    );
   }
 
   /** Batch reposts for many posts — `byPost` index, single query. */

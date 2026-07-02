@@ -10,7 +10,7 @@
  */
 
 import { logger } from '@/lib/logger';
-import { normalizeSDKResponse } from './sdk-helpers';
+import { normalizeSDKResponse, identifierToHex } from './sdk-helpers';
 
 export interface PaginateOptions {
   /** Maximum results to return (safety limit). Default: 1000 */
@@ -92,6 +92,74 @@ export async function documentCount(
     return 0;
   }
   return Number(total);
+}
+
+/**
+ * Batch-count documents grouped by an identifier `In`-field's count-tree, in one
+ * DAPI round-trip instead of one `documentCount` call per id.
+ *
+ * Requires the queried document type to declare a `countable` index whose sole
+ * property is `groupField` (e.g. `byPost`/`byParent` in yappr-social-contract-v2).
+ * `ids` are base58 identifier strings; the returned map is keyed the same way.
+ *
+ * The SDK's raw grouped-count map is keyed by hex-encoded property bytes — an
+ * encoding not otherwise exercised by this app, so on any response that doesn't
+ * decode against our expected hex keys, this transparently falls back to
+ * `fallbackCount` per id (bounded concurrency) rather than risk silently
+ * reporting every id as a 0 count.
+ */
+export async function groupedDocumentCount(
+  sdk: SDK,
+  query: { dataContractId: unknown; documentTypeName: string; groupField: string },
+  ids: string[],
+  fallbackCount: (id: string) => Promise<number>
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (ids.length === 0) return result;
+  ids.forEach((id) => result.set(id, 0));
+
+  const hexToId = new Map<string, string>();
+  ids.forEach((id) => {
+    const hex = identifierToHex(id);
+    if (hex) hexToId.set(hex, id);
+  });
+
+  try {
+    const raw: unknown = await sdk.documents.count({
+      dataContractId: query.dataContractId,
+      documentTypeName: query.documentTypeName,
+      where: [[query.groupField, 'in', ids]],
+      groupBy: [query.groupField],
+      limit: ids.length,
+    });
+
+    const entries: [string, unknown][] =
+      raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
+
+    let matched = 0;
+    for (const [key, value] of entries) {
+      if (key === '') continue; // aggregate-mode key; shouldn't appear once groupBy is set
+      const id = hexToId.get(key);
+      if (id) {
+        result.set(id, Number(value as bigint | number));
+        matched++;
+      }
+    }
+
+    if (entries.length > 0 && matched === 0) {
+      throw new Error('groupedDocumentCount: no group keys matched expected hex ids');
+    }
+
+    return result;
+  } catch (error) {
+    logger.warn('groupedDocumentCount: falling back to per-id counts', {
+      documentTypeName: query.documentTypeName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const counts = await mapLimit(ids, 6, fallbackCount);
+    ids.forEach((id, i) => result.set(id, counts[i]));
+    return result;
+  }
 }
 
 /**

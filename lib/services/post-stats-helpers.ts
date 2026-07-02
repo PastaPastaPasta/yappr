@@ -152,23 +152,22 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
       import('./reply-service'),
     ]);
 
-    // Per-post O(1) count-tree reads (no 100-cap undercount the old batched
-    // `in`-queries had once a page collectively exceeded ~100 engagements),
-    // bounded so a page doesn't fire an unbounded burst of DAPI requests.
-    const { mapLimit } = await import('./pagination-utils');
-    const COUNT_CONCURRENCY = 6;
+    // One grouped count-tree query per stat type (no 100-cap undercount the old
+    // batched `in`-queries had once a page collectively exceeded ~100
+    // engagements) instead of 3xN per-post reads; each transparently falls
+    // back to per-post reads if the grouped response doesn't decode as expected.
     const [likeCounts, repostCounts, replyCounts] = await Promise.all([
-      mapLimit(postIds, COUNT_CONCURRENCY, (id) => likeService.countLikes(id)),
-      mapLimit(postIds, COUNT_CONCURRENCY, (id) => repostService.countReposts(id)),
-      mapLimit(postIds, COUNT_CONCURRENCY, (id) => replyService.countReplies(id)),
+      likeService.countLikesForPosts(postIds),
+      repostService.countRepostsForPosts(postIds),
+      replyService.countRepliesForPosts(postIds),
     ]);
 
-    postIds.forEach((id, i) => {
+    postIds.forEach((id) => {
       const stats = result.get(id);
       if (stats) {
-        stats.likes = likeCounts[i];
-        stats.reposts = repostCounts[i];
-        stats.replies = replyCounts[i];
+        stats.likes = likeCounts.get(id) ?? 0;
+        stats.reposts = repostCounts.get(id) ?? 0;
+        stats.replies = replyCounts.get(id) ?? 0;
       }
     });
   } catch (error) {

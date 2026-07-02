@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll, documentCount } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount } from './pagination-utils';
 import { isInsufficientTokenError } from '../error-utils';
 
 export interface LikeDocument {
@@ -218,6 +218,17 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       logger.error('Error counting likes:', error);
       return 0;
     }
+  }
+
+  /** Like counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
+  async countLikesForPosts(postIds: string[]): Promise<Map<string, number>> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: 'like', groupField: 'postId' },
+      postIds,
+      (id) => this.countLikes(id)
+    );
   }
 
   /**

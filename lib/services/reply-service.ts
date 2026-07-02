@@ -6,7 +6,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
-import { documentCount } from './pagination-utils';
+import { documentCount, groupedDocumentCount } from './pagination-utils';
 
 export interface ReplyDocument {
   $id: string;
@@ -361,6 +361,17 @@ class ReplyService extends BaseDocumentService<Reply> {
     } catch {
       return 0;
     }
+  }
+
+  /** Reply counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
+  async countRepliesForPosts(parentIds: string[]): Promise<Map<string, number>> {
+    const sdk = await getEvoSdk();
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: 'reply', groupField: 'parentId' },
+      parentIds,
+      (id) => this.countReplies(id)
+    );
   }
 
   /**
