@@ -10,7 +10,7 @@ import { extractErrorMessage } from '../error-utils';
 export interface TokenResult {
   success: boolean;
   error?: string;
-  errorCode?: 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR';
+  errorCode?: 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR' | 'NEEDS_CRITICAL_KEY';
 }
 
 /** Minimum YAPP per direct purchase — enforced on-chain by the SetPrices tier, mirrored here for UX. */
@@ -85,16 +85,24 @@ class TokenService {
    * Buy `amount` YAPP for the buyer, spending at most `maxTotalCost` credits.
    * `maxTotalCost` is the cost the user approved in the UI (caller passes the
    * quoted total), so a mid-flight price increase is rejected on-chain rather
-   * than silently overspending. Requires the buyer's CRITICAL/HIGH auth key.
+   * than silently overspending.
+   *
+   * Drive only accepts a CRITICAL auth key for direct purchase (it spends
+   * credits). If the stored login key is HIGH, this returns
+   * NEEDS_CRITICAL_KEY without broadcasting; the UI should prompt for the
+   * CRITICAL key and retry with `criticalKeyWif` (used to sign, never stored).
    */
-  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint): Promise<TokenResult> {
+  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint, criticalKeyWif?: string): Promise<TokenResult> {
     if (amount < MIN_YAPP_PURCHASE) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
     }
 
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(buyerId);
+      const { signer, identityKey } = await this.getAuthSigner(buyerId, {
+        requireCritical: true,
+        overrideWif: criticalKeyWif,
+      });
 
       await sdk.tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -164,43 +172,61 @@ class TokenService {
   }
 
   /**
-   * Build an IdentitySigner + matching AUTHENTICATION key for an identity,
-   * using the private key from secure storage. Mirrors tip-service's transfer-key flow.
+   * Build an IdentitySigner + matching AUTHENTICATION key for an identity.
+   * Uses `overrideWif` when given (a key the user just entered), otherwise the
+   * private key from secure storage. Mirrors tip-service's transfer-key flow.
+   * With `requireCritical`, only a CRITICAL key may match — throws the
+   * NEEDS_CRITICAL_KEY marker otherwise so callers can prompt for one.
    */
-  private async getAuthSigner(identityId: string) {
-    const { getPrivateKey } = await import('../secure-storage');
-    const wif = getPrivateKey(identityId);
+  private async getAuthSigner(
+    identityId: string,
+    opts?: { requireCritical?: boolean; overrideWif?: string }
+  ) {
+    let wif = opts?.overrideWif?.trim();
     if (!wif) {
-      const { promptForAuthKey } = await import('../auth-utils');
-      promptForAuthKey();
-      throw new Error('Private key not found — please re-authenticate');
+      const { getPrivateKey } = await import('../secure-storage');
+      const stored = getPrivateKey(identityId);
+      if (!stored) {
+        const { promptForAuthKey } = await import('../auth-utils');
+        promptForAuthKey();
+        throw new Error('Private key not found — please re-authenticate');
+      }
+      wif = stored.trim();
     }
 
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.fetch(identityId);
     if (!identity) throw new Error('Identity not found');
 
-    const authKey = this.findMatchingAuthKey(wif.trim(), identity.publicKeys);
+    const allowedLevels = opts?.requireCritical
+      ? [SecurityLevel.CRITICAL]
+      : [SecurityLevel.CRITICAL, SecurityLevel.HIGH];
+    const authKey = this.findMatchingAuthKey(wif, identity.publicKeys, allowedLevels);
     if (!authKey) {
-      throw new Error('No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key');
+      throw new Error(
+        opts?.requireCritical
+          ? 'critical key required'
+          : 'No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key'
+      );
     }
 
-    return signerService.createSignerFromWasmKey(wif.trim(), authKey);
+    return signerService.createSignerFromWasmKey(wif, authKey);
   }
 
-  /** Find the AUTHENTICATION key on the identity that matches the provided WIF. */
+  /** Find the AUTHENTICATION key at an allowed security level that matches the provided WIF. */
   private findMatchingAuthKey(
     wif: string,
-    wasmPublicKeys: WasmIdentityPublicKey[]
+    wasmPublicKeys: WasmIdentityPublicKey[],
+    allowedLevels: number[]
   ): WasmIdentityPublicKey | null {
     const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
-    // Token transitions need a CRITICAL or HIGH AUTHENTICATION key. Filter to those
-    // BEFORE matching so a lower-security key derived from the same WIF (e.g. a MEDIUM
-    // key at a lower id after a rotation) can't win the match and mask a valid key.
+    // Filter to the allowed levels BEFORE matching so a lower-security key
+    // derived from the same WIF (e.g. a MEDIUM key at a lower id after a
+    // rotation) can't win the match and mask a valid key.
     const authKeys = wasmPublicKeys.filter(k =>
       !k.disabledAt &&
       k.purposeNumber === KeyPurpose.AUTHENTICATION &&
-      (k.securityLevelNumber === SecurityLevel.CRITICAL || k.securityLevelNumber === SecurityLevel.HIGH)
+      allowedLevels.includes(k.securityLevelNumber)
     );
     if (authKeys.length === 0) return null;
 
@@ -221,6 +247,18 @@ class TokenService {
     const msg = extractErrorMessage(error);
     logger.error(`${fallback}:`, msg);
     const lower = msg.toLowerCase();
+    // Local marker from getAuthSigner, or Drive's rejection ("Invalid public
+    // key security level HIGH. The state transition requires one of CRITICAL").
+    if (
+      lower.includes('critical key required') ||
+      (lower.includes('invalid public key security level') && lower.includes('critical'))
+    ) {
+      return {
+        success: false,
+        error: 'This action needs your CRITICAL key to authorize',
+        errorCode: 'NEEDS_CRITICAL_KEY',
+      };
+    }
     if (lower.includes('not authorized') || lower.includes('noone')) {
       return { success: false, error: 'Not authorized to perform this action', errorCode: 'NOT_AUTHORIZED' };
     }

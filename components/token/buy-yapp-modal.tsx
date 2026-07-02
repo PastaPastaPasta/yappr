@@ -36,7 +36,7 @@ function formatCreditsAsDash(credits: bigint): string {
   return `${whole.toString()}.${frac.toString().padStart(4, '0')} DASH`
 }
 
-type ModalState = 'input' | 'confirming' | 'processing' | 'success' | 'error'
+type ModalState = 'input' | 'confirming' | 'needKey' | 'processing' | 'success' | 'error'
 
 export function BuyYappModal() {
   const { isOpen, reason, close } = useBuyYappModal()
@@ -50,6 +50,9 @@ export function BuyYappModal() {
   const [pricePerToken, setPricePerToken] = useState<bigint | null>(null)
   const [loading, setLoading] = useState(false)
   const [showCosts, setShowCosts] = useState(false)
+  // CRITICAL key the user pastes when their login key is HIGH — kept in
+  // component state only for the purchase, never persisted.
+  const [criticalKeyWif, setCriticalKeyWif] = useState('')
 
   useEffect(() => {
     if (isOpen && user) {
@@ -68,6 +71,7 @@ export function BuyYappModal() {
       setState('input')
       setError(null)
       setShowCosts(false)
+      setCriticalKeyWif('')
     }
   }, [isOpen])
 
@@ -106,14 +110,24 @@ export function BuyYappModal() {
     setState('processing')
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
-    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits)
+    const enteredKey = criticalKeyWif.trim()
+    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, enteredKey || undefined)
     if (result.success) {
+      setCriticalKeyWif('')
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
       // Notify other YAPP balance views (e.g. the sidebar dropdown) to refresh.
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
       setState('success')
+    } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
+      // Login key is HIGH but purchases must be signed with CRITICAL — ask for
+      // it. If a key was already entered, it didn't match a CRITICAL key.
+      setError(enteredKey ? 'That key doesn\'t match a CRITICAL key on your identity — check it and try again' : null)
+      setState('needKey')
     } else {
+      // Leaving the needKey flow — drop the entered key so a later retry can't
+      // silently sign with it without the user re-confirming.
+      setCriticalKeyWif('')
       setState('error')
       setError(result.error || 'Purchase failed')
     }
@@ -146,7 +160,7 @@ export function BuyYappModal() {
                   >
                     <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
                       <SparklesIcon className="h-6 w-6 text-yappr-500" />
-                      {state === 'success' ? 'YAPP Purchased!' : state === 'error' ? 'Purchase Failed' : 'Buy YAPP'}
+                      {state === 'success' ? 'YAPP Purchased!' : state === 'error' ? 'Purchase Failed' : state === 'needKey' ? 'Authorize Purchase' : 'Buy YAPP'}
                     </Dialog.Title>
                     <Dialog.Description className="sr-only">
                       Buy YAPP tokens to post, comment, and like on Yappr.
@@ -265,8 +279,51 @@ export function BuyYappModal() {
                           <p className="text-xs text-gray-500">{formatCoverage(amountBig)}</p>
                         </div>
                         <div className="flex gap-3">
-                          <Button onClick={() => setState('input')} variant="outline" className="flex-1">Back</Button>
+                          <Button onClick={() => { setState('input'); setCriticalKeyWif('') }} variant="outline" className="flex-1">Back</Button>
                           <Button onClick={handleBuy} className="flex-1">Confirm &amp; Buy</Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {state === 'needKey' && (
+                      <div className="space-y-4">
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          Buying YAPP spends DASH credits, and Dash Platform requires your{' '}
+                          <span className="font-medium text-gray-900 dark:text-gray-100">CRITICAL</span> key to
+                          authorize that — your login key is a HIGH key, which can post but not spend.
+                          Paste your CRITICAL private key below. It signs this purchase locally and is
+                          never stored or sent anywhere.
+                        </p>
+                        <div className="flex justify-between text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2">
+                          <span className="text-gray-600 dark:text-gray-400">Buying {amountBig.toString()} YAPP</span>
+                          <span className="font-medium">{costDashLabel}</span>
+                        </div>
+                        <input
+                          type="password"
+                          value={criticalKeyWif}
+                          onChange={(e) => { setCriticalKeyWif(e.target.value); setError(null) }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && criticalKeyWif.trim()) {
+                              e.preventDefault()
+                              handleBuy().catch(err => logger.error('Failed to buy YAPP:', err))
+                            }
+                          }}
+                          placeholder="CRITICAL private key (WIF)"
+                          autoComplete="off"
+                          className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+                        />
+                        {error && <p className="text-red-500 text-sm">{error}</p>}
+                        <div className="flex gap-3">
+                          <Button
+                            onClick={() => { setState('confirming'); setError(null); setCriticalKeyWif('') }}
+                            variant="outline"
+                            className="flex-1"
+                          >
+                            Back
+                          </Button>
+                          <Button onClick={handleBuy} disabled={!criticalKeyWif.trim()} className="flex-1">
+                            Authorize &amp; Buy
+                          </Button>
                         </div>
                       </div>
                     )}
