@@ -57,7 +57,7 @@ export function BuyYappModal() {
   useEffect(() => {
     if (isOpen && user) {
       setLoading(true)
-      Promise.all([
+      void Promise.all([
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => setYappBalance(null)),
         identityService.getBalance(user.identityId).then(b => setCreditBalance(b.confirmed)).catch(() => setCreditBalance(null)),
         tokenService.getPricePerToken().then(setPricePerToken).catch(() => setPricePerToken(null)),
@@ -168,6 +168,7 @@ export function BuyYappModal() {
 
                     <button
                       onClick={handleClose}
+                      aria-label="Close Buy YAPP modal"
                       className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                       disabled={state === 'processing'}
                     >
@@ -220,8 +221,9 @@ export function BuyYappModal() {
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount (YAPP)</label>
+                          <label htmlFor="buy-yapp-amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount (YAPP)</label>
                           <input
+                            id="buy-yapp-amount"
                             type="text"
                             inputMode="numeric"
                             value={amount}
