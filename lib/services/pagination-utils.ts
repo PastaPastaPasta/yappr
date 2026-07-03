@@ -99,11 +99,16 @@ export async function documentCount(
   // SDK returns Map<string, bigint>; '' is the grand total when no groupBy is set.
   const total = result instanceof Map ? result.get('') : result?.['']; // tolerate plain-object shape
   if (total === undefined || total === null) {
-    // Shouldn't happen for a countable index; log so a silent 0 doesn't hide a
-    // response-shape mismatch or a doctype/index that isn't actually countable.
-    logger.warn('documentCount: no grand-total key in count result; treating as 0', {
-      documentTypeName: (query as { documentTypeName?: string }).documentTypeName,
-    });
+    // Zero-count branches aren't materialized in the platform's count trees, so
+    // a genuine 0 comes back as an EMPTY map with no grand-total key. Only warn
+    // when the map has entries but none of them is the grand total — that shape
+    // would mean a grouped response leaked into the aggregate path.
+    const entryCount = result instanceof Map ? result.size : Object.keys(result ?? {}).length;
+    if (entryCount > 0) {
+      logger.warn('documentCount: non-empty count result without grand-total key; treating as 0', {
+        documentTypeName: (query as { documentTypeName?: string }).documentTypeName,
+      });
+    }
     return 0;
   }
   return Number(total);
@@ -143,12 +148,13 @@ export async function groupedDocumentCount(
     });
 
     try {
+      // NOTE: no `limit` — Drive rejects any limit on In-grouped COUNT queries
+      // with InvalidLimit (the result is already bounded by the In array).
       const raw: unknown = await sdk.documents.count({
         dataContractId: query.dataContractId,
         documentTypeName: query.documentTypeName,
         where: [[query.groupField, 'in', batch]],
         groupBy: [query.groupField],
-        limit: batch.length,
       });
 
       const entries: [string, unknown][] =
