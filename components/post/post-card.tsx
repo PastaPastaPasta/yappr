@@ -119,7 +119,7 @@ export interface ProgressiveEnrichment {
   username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
   displayName: string | undefined
   avatarUrl: string | undefined
-  stats: { likes: number; reposts: number; replies: number; views: number } | undefined
+  stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined
   interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
   isBlocked: boolean | undefined
   isFollowing: boolean | undefined
@@ -166,6 +166,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const statsLikes = progressiveEnrichment?.stats?.likes ?? post.likes
   const statsReposts = progressiveEnrichment?.stats?.reposts ?? post.reposts
   const statsReplies = progressiveEnrichment?.stats?.replies ?? post.replies
+  const statsQuotes = progressiveEnrichment?.stats?.quotes ?? post.quotes
 
   // Interactions: use progressive enrichment > post data
   const initialLiked = progressiveEnrichment?.interactions?.liked ?? post.liked ?? false
@@ -520,6 +521,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         likes: statsLikes,
         reposts: statsReposts,
         replies: statsReplies,
+        quotes: statsQuotes,
         views: post.views
       },
       interactions: progressiveEnrichment?.interactions ?? {
@@ -810,7 +812,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       'text-sm transition-colors',
                       reposted ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500'
                     )}>
-                      {reposts > 0 && formatNumber(reposts)}
+                      {reposts + statsQuotes > 0 && formatNumber(reposts + statsQuotes)}
                     </span>
                   </button>
                 </DropdownMenu.Trigger>

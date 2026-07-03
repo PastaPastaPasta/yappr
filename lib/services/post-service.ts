@@ -3,7 +3,7 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { Post, PostQueryOptions } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
-import { paginateCount } from './pagination-utils';
+import { paginateCount, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
@@ -44,6 +44,7 @@ export interface PostStats {
   likes: number;
   reposts: number;
   replies: number;
+  quotes: number;
   views: number;
 }
 
@@ -108,6 +109,7 @@ class PostService extends BaseDocumentService<Post> {
       likes: 0,
       reposts: 0,
       replies: 0,
+      quotes: 0,
       views: 0,
       liked: false,
       reposted: false,
@@ -552,6 +554,34 @@ class PostService extends BaseDocumentService<Post> {
     );
   }
 
+  /** Count quotes of a post — O(1) `quoteCount` count tree. */
+  async countQuotes(quotedPostId: string): Promise<number> {
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+      return await documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [['quotedPostId', '==', quotedPostId]],
+      });
+    } catch (error) {
+      logger.error('Error counting quotes:', error);
+      return 0;
+    }
+  }
+
+  /** Quote counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
+  async countQuotesForPosts(quotedPostIds: string[]): Promise<Map<string, number>> {
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'quotedPostId' },
+      quotedPostIds,
+      (id) => this.countQuotes(id)
+    );
+  }
+
   /**
    * Get quotes of posts owned by a specific user (for notification queries).
    * Uses the quotedPostOwnerAndTime index: [quotedPostOwnerId, $createdAt]
@@ -601,6 +631,7 @@ class PostService extends BaseDocumentService<Post> {
       likes: reply.likes,
       reposts: reply.reposts,
       replies: reply.replies,
+      quotes: 0,
       views: reply.views,
       liked: reply.liked,
       reposted: reply.reposted,
@@ -661,6 +692,7 @@ class PostService extends BaseDocumentService<Post> {
           likes: 0,
           reposts: 0,
           replies: 0,
+          quotes: 0,
           views: 0,
           liked: false,
           reposted: false,

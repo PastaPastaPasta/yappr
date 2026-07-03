@@ -22,7 +22,7 @@ interface FeedPostListProps {
     username: string | null | undefined;
     displayName: string | undefined;
     avatarUrl: string | undefined;
-    stats: { likes: number; reposts: number; replies: number; views: number } | undefined;
+    stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined;
     interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined;
     isBlocked: boolean | undefined;
     isFollowing: boolean | undefined;
