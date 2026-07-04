@@ -3,7 +3,7 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { Post, PostQueryOptions } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
-import { paginateCount, documentCount, groupedDocumentCount } from './pagination-utils';
+import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
@@ -366,8 +366,7 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count posts by user.
-   * Paginates through all results for accurate count.
+   * Count posts by user via the `byOwner` count tree (O(1)).
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -376,20 +375,11 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'post',
-            where: [
-              ['$ownerId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            orderBy: [['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
+          where: [['$ownerId', '==', userId]],
+        });
       } catch (error) {
         logger.error('Error counting user posts:', error);
         return 0;
@@ -398,11 +388,8 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count all posts on the platform - paginates through all results.
-   * Uses the languageTimeline index [language, $createdAt] to scan posts.
-   * Note: Currently only counts English posts (language='en') since most posts
-   * use the default language. For accurate total counts across all languages,
-   * would need to iterate through all language codes or add a dedicated index.
+   * Count all posts on the platform via the doctype's primary-key count tree
+   * (`documentsCountable`, O(1) — counts every post regardless of language).
    * Deduplicates in-flight requests.
    */
   async countAllPosts(): Promise<number> {
@@ -412,23 +399,10 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
-        // Use languageTimeline index: [language, $createdAt]
-        // This requires a language prefix to use the index
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'post',
-            where: [
-              ['language', '==', 'en'],
-              ['$createdAt', '>', 0]
-            ],
-            orderBy: [['language', 'asc'], ['$createdAt', 'asc']]
-          }),
-          { maxResults: 10000 } // Higher limit for platform-wide count
-        );
-
-        return count;
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
+        });
       } catch (error) {
         logger.error('Error counting all posts:', error);
         return 0;

@@ -97,8 +97,16 @@
             { "quotedPostId": "asc" }
           ],
           "countable": true
+        },
+        {
+          "name": "byOwner",
+          "properties": [
+            { "$ownerId": "asc" }
+          ],
+          "countable": true
         }
       ],
+      "documentsCountable": true,
       "required": [
         "$createdAt",
         "language"
@@ -856,6 +864,13 @@
             { "postId": "asc" },
             { "hashtag": "asc" }
           ]
+        },
+        {
+          "name": "byHashtag",
+          "properties": [
+            { "hashtag": "asc" }
+          ],
+          "countable": true
         }
       ],
       "documentsMutable": false,
