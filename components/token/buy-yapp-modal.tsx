@@ -12,7 +12,7 @@ import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
 import { identityService } from '@/lib/services/identity-service'
-import { tipService } from '@/lib/services/tip-service'
+import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS } from '@/lib/constants'
 
 // Preset purchase amounts in whole YAPP (must be >= the on-chain minimum of 100).
@@ -26,7 +26,7 @@ function formatCoverage(amount: bigint): string {
   return `≈ ${posts.toString()} posts, ${replies.toString()} replies, or ${likes.toString()} likes`
 }
 
-const CREDITS_PER_DASH = BigInt(100000000000) // 1 DASH = 1e11 platform credits
+const CREDITS_PER_DASH = BigInt(CREDITS_PER_DASH_NUM) // 1 DASH = 1e11 platform credits
 
 /** BigInt-safe credits → "X.XXXX DASH" (or "N credits" for sub-0.0001 DASH). */
 function formatCreditsAsDash(credits: bigint): string {

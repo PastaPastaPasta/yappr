@@ -264,6 +264,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [reposted, setReposted] = useState(initialReposted)
   const [reposts, setReposts] = useState(statsReposts)
   const [bookmarked, setBookmarked] = useState(initialBookmarked)
+  // The repost control shows reposts + quote-posts combined.
+  const totalReposts = reposts + statsQuotes
   const [showLikesModal, setShowLikesModal] = useState(false)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
@@ -812,7 +814,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       'text-sm transition-colors',
                       reposted ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500'
                     )}>
-                      {reposts + statsQuotes > 0 && formatNumber(reposts + statsQuotes)}
+                      {totalReposts > 0 && formatNumber(totalReposts)}
                     </span>
                   </button>
                 </DropdownMenu.Trigger>

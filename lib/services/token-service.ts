@@ -55,8 +55,7 @@ class TokenService {
    * transient DAPI error) from a genuine zero balance — do not swallow to 0.
    */
   async getBalance(identityId: string): Promise<bigint> {
-    const sdk = await getEvoSdk();
-    const tokenId = await this.getTokenId();
+    const [sdk, tokenId] = await Promise.all([getEvoSdk(), this.getTokenId()]);
     const balances = await sdk.tokens.identityBalances(identityId, [tokenId]);
     return this.tokenMapGet<bigint>(balances, tokenId) ?? BigInt(0);
   }

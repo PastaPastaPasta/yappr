@@ -187,6 +187,57 @@ export async function groupedDocumentCount(
 }
 
 /**
+ * Which of `postIds` appear in the caller's OWN documents of a type indexed
+ * uniquely on `$ownerId` + `postId` — the "did I like/repost this?" lookup.
+ *
+ * Queries only the user's own docs, batched to respect the 100-value `in` cap.
+ * A unique (owner, postId) index yields at most one doc per postId, so
+ * `limit: batch.length` can never truncate a batch. `ownerFirst` selects the
+ * where/orderBy ordering to match how the contract declares that index
+ * (`true` = [$ownerId, postId], `false` = [postId, $ownerId]).
+ *
+ * Returns the set of matching postIds; on error logs `errorLabel` and returns
+ * whatever was collected so far.
+ */
+export async function queryOwnedPostIds(
+  sdk: SDK,
+  params: {
+    dataContractId: unknown;
+    documentTypeName: string;
+    userId: string;
+    postIds: string[];
+    ownerFirst: boolean;
+    getPostId: (doc: Record<string, unknown>) => string | undefined;
+    errorLabel: string;
+  }
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (params.postIds.length === 0) return found;
+  try {
+    const ownerClause = ['$ownerId', '==', params.userId];
+    const ownerOrder = ['$ownerId', 'asc'];
+    await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
+      const postClause = ['postId', 'in', batch];
+      const postOrder = ['postId', 'asc'];
+      const response = await sdk.documents.query({
+        dataContractId: params.dataContractId,
+        documentTypeName: params.documentTypeName,
+        where: params.ownerFirst ? [ownerClause, postClause] : [postClause, ownerClause],
+        orderBy: params.ownerFirst ? [ownerOrder, postOrder] : [postOrder, ownerOrder],
+        limit: batch.length,
+      });
+      for (const doc of normalizeSDKResponse(response)) {
+        const postId = params.getPostId(doc);
+        if (postId) found.add(postId);
+      }
+    });
+  } catch (error) {
+    logger.error(params.errorLabel, error);
+  }
+  return found;
+}
+
+/**
  * Paginate through all documents matching a query and return the count.
  * Used for count methods that need accurate totals.
  *

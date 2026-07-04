@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll, documentCount, groupedDocumentCount, chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isInsufficientTokenError } from '../error-utils';
 
 export interface LikeDocument {
@@ -183,32 +183,17 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * is bounded by the number of posts (not total likes) and never undercounts.
    */
   async getUserLikedPostIds(userId: string, postIds: string[]): Promise<Set<string>> {
-    if (postIds.length === 0) return new Set();
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const liked = new Set<string>();
-      // Platform caps `in` clauses at 100 values, so oversized pages (e.g. a
-      // profile's merged posts + reposts) must be batched. The unique
-      // [postId, $ownerId] index yields at most one like per postId, so
-      // `limit: batch.length` can never truncate a batch's results.
-      await mapLimit(chunk(postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
-        const response = await sdk.documents.query({
-          dataContractId: this.contractId,
-          documentTypeName: 'like',
-          where: [['postId', 'in', batch], ['$ownerId', '==', userId]],
-          orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
-          limit: batch.length,
-        });
-        for (const doc of normalizeSDKResponse(response)) {
-          const like = this.transformDocument(doc);
-          if (like?.postId) liked.add(like.postId);
-        }
-      });
-      return liked;
-    } catch (error) {
-      logger.error('Error fetching user liked post ids:', error);
-      return new Set();
-    }
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    // like's `postAndOwner` index is [postId, $ownerId] → ownerFirst: false.
+    return queryOwnedPostIds(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: 'like',
+      userId,
+      postIds,
+      ownerFirst: false,
+      getPostId: (doc) => this.transformDocument(doc)?.postId,
+      errorLabel: 'Error fetching user liked post ids:',
+    });
   }
 
   async countLikes(postId: string): Promise<number> {
@@ -235,39 +220,6 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       postIds,
       (id) => this.countLikes(id)
     );
-  }
-
-  /**
-   * Get likes for multiple posts in a single batch query
-   * Uses 'in' operator for efficient querying
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  async getLikesByPostIds(postIds: string[]): Promise<LikeDocument[]> {
-    if (postIds.length === 0) return [];
-
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-      // Use 'in' operator for batch query on postId
-      // Must include orderBy to match the postLikes index: [postId, $createdAt]
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'like',
-        where: [['postId', 'in', postIds]],
-        orderBy: [['postId', 'asc']],
-        limit: 100
-      });
-
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
-    } catch (error) {
-      logger.error('Error getting likes batch:', error);
-      return [];
-    }
   }
 
   /**

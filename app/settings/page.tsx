@@ -91,6 +91,9 @@ function SettingsPage() {
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
+  // Moderation is authority-only; keep the visible-sections list in one place so
+  // the menu, the section title, and the render gate can't drift apart.
+  const visibleSections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
   const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
   const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
@@ -212,7 +215,7 @@ function SettingsPage() {
 
   const renderMainSettings = () => (
     <div className="divide-y divide-gray-200 dark:divide-gray-800">
-      {(isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections).map((section) => (
+      {visibleSections.map((section) => (
         <button
           key={section.id}
           onClick={() => setActiveSection(section.id as SettingsSection)}
@@ -752,8 +755,7 @@ function SettingsPage() {
     // Only surface the Moderation title to the authority (matches renderSection's
     // gate) so a non-authority hitting ?section=moderation doesn't see a
     // "Moderation" header over the fallback main menu.
-    const sections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
-    const section = sections.find(s => s.id === activeSection)
+    const section = visibleSections.find(s => s.id === activeSection)
     return section?.label || 'Settings'
   }
 
