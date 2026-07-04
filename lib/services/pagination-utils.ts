@@ -200,8 +200,8 @@ export async function groupedDocumentCount(
  * whatever was collected so far.
  */
 export async function queryOwnedPostIds(
-  sdk: SDK,
   params: {
+    getSdk: () => Promise<SDK>;
     dataContractId: unknown;
     documentTypeName: string;
     userId: string;
@@ -211,9 +211,10 @@ export async function queryOwnedPostIds(
     errorLabel: string;
   }
 ): Promise<Set<string>> {
+  if (params.postIds.length === 0) return new Set();
   const found = new Set<string>();
-  if (params.postIds.length === 0) return found;
   try {
+    const sdk = await params.getSdk();
     const ownerClause = ['$ownerId', '==', params.userId];
     const ownerOrder = ['$ownerId', 'asc'];
     await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
@@ -231,10 +232,13 @@ export async function queryOwnedPostIds(
         if (postId) found.add(postId);
       }
     });
+    return found;
   } catch (error) {
+    // Fail closed: a failed batch/SDK acquisition returns an empty set rather
+    // than partial results, so callers never highlight a subset of posts.
     logger.error(params.errorLabel, error);
+    return new Set();
   }
-  return found;
 }
 
 /**

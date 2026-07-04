@@ -175,9 +175,9 @@ class RepostService {
    * is bounded by the number of posts (not total reposts).
    */
   async getUserRepostedPostIds(userId: string, postIds: string[]): Promise<Set<string>> {
-    const sdk = await this.sdk();
     // repost's `ownerAndPost` index is [$ownerId, postId] → ownerFirst: true.
-    return queryOwnedPostIds(sdk, {
+    return queryOwnedPostIds({
+      getSdk: () => this.sdk(),
       dataContractId: this.contractId,
       documentTypeName: this.documentType,
       userId,

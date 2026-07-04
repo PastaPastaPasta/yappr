@@ -183,9 +183,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * is bounded by the number of posts (not total likes) and never undercounts.
    */
   async getUserLikedPostIds(userId: string, postIds: string[]): Promise<Set<string>> {
-    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     // like's `postAndOwner` index is [postId, $ownerId] → ownerFirst: false.
-    return queryOwnedPostIds(sdk, {
+    return queryOwnedPostIds({
+      getSdk: () => import('../services/evo-sdk-service').then(m => m.getEvoSdk()),
       dataContractId: this.contractId,
       documentTypeName: 'like',
       userId,
