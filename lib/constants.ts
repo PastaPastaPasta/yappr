@@ -3,7 +3,7 @@
  */
 
 // Contract IDs
-export const YAPPR_CONTRACT_ID = 'AyBNQV6qSLY8kZYHxbvhLrsDMSzWTKrWJBE6B7NYSxSh' // Testnet - v2 (protocol v12: count trees + YAPP token + tokenCost; pricing rule + repost postOwner index)
+export const YAPPR_CONTRACT_ID = '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9' // Testnet - v2 (protocol v12: count trees + YAPP token + tokenCost; documentsCountable + countable byOwner on post)
 
 // YAPP token (defined at position 0 of the v2 social contract)
 export const YAPP_TOKEN_POSITION = 0

@@ -29,7 +29,7 @@ import {
 } from '@dashevo/evo-sdk';
 
 // ---- Config -----------------------------------------------------------------
-const CONTRACT_ID = 'AyBNQV6qSLY8kZYHxbvhLrsDMSzWTKrWJBE6B7NYSxSh';
+const CONTRACT_ID = '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9';
 const TOKEN_POS = 0;
 const MIN_PURCHASE = 100n;          // lowest tier key => minimum tokens per buy
 const CREDITS_PER_TOKEN = 1000000n; // P: credits per YAPP at/above the min tier
