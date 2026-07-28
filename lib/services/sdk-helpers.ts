@@ -151,33 +151,62 @@ export function requireDocumentIdentifierBytes(id: string, fieldName: string): U
 export const requireIdentifierBytes = requireDocumentIdentifierBytes
 
 const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
-const DOCUMENT_SYSTEM_BIGINT_FIELDS = new Set([
-  '$revision',
-  '$createdAt',
-  '$updatedAt',
-  '$transferredAt',
-  '$createdAtBlockHeight',
-  '$updatedAtBlockHeight',
-  '$transferredAtBlockHeight',
-]);
 
-function normalizeDocumentSystemValue(field: string, value: unknown): unknown {
-  if (DOCUMENT_SYSTEM_IDENTIFIER_FIELDS.has(field)) {
-    return identifierToBase58(value) ?? value;
+/**
+ * Convert a bigint to the JSON-safe value the rest of the app expects.
+ *
+ * `Document#toObject()` returns every Platform `integer` as a bigint, but Yappr treats these as
+ * plain numbers (prices, ratings, timestamps, counters). Mixing a bigint into ordinary arithmetic
+ * throws `TypeError: Cannot mix BigInt and other types`, so narrow to a number whenever the value
+ * fits and fall back to a decimal string when it does not.
+ */
+function bigintToJsonSafe(value: bigint): number | string {
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+}
+
+/**
+ * Recursively replace bigints in `toObject()` output with JSON-safe values.
+ *
+ * Only plain objects and arrays are traversed: `Uint8Array` byte fields and SDK class instances
+ * (Identifier and friends) are passed through untouched so binary handling stays as-is.
+ */
+function normalizeDocumentValue(value: unknown): unknown {
+  if (typeof value === 'bigint') {
+    return bigintToJsonSafe(value);
   }
 
-  if (DOCUMENT_SYSTEM_BIGINT_FIELDS.has(field) && typeof value === 'bigint') {
-    const asNumber = Number(value);
-    return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+  if (Array.isArray(value)) {
+    return value.map(normalizeDocumentValue);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, normalizeDocumentValue(nested)])
+    );
   }
 
   return value;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeDocumentField(field: string, value: unknown): unknown {
+  if (DOCUMENT_SYSTEM_IDENTIFIER_FIELDS.has(field)) {
+    return identifierToBase58(value) ?? value;
+  }
+
+  return normalizeDocumentValue(value);
+}
+
 /**
  * Convert a WASM Document instance to the JSON-like shape Yappr expects from queries.
- * `Document#toJSON()` now needs a platform version, so normalize the zero-arg
- * `toObject()` output without rewriting ordinary Uint8Array content fields.
+ * `Document#toObject()` keeps binary fields as `Uint8Array` (unlike `toJSON()`, which stringifies
+ * them), so use it and normalize identifiers plus bigints here instead.
  */
 export function documentToPlainObject(doc: unknown): Record<string, unknown> {
   const document = doc as { toObject?: () => unknown };
@@ -190,7 +219,7 @@ export function documentToPlainObject(doc: unknown): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(raw).map(([field, value]) => [
       field,
-      normalizeDocumentSystemValue(field, value),
+      normalizeDocumentField(field, value),
     ])
   );
 }
