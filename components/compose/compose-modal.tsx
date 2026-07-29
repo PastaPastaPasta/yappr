@@ -23,6 +23,7 @@ import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
+import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import {
   PostingProgress,
   PostButtonContent,
@@ -884,7 +885,13 @@ export function ComposeModal() {
         }
         const successPart = parts.join(', ')
 
-        const errorMsg = failureError?.message || 'Unknown error'
+        const ranOutOfYapp = handleInsufficientYapp(
+          failureError,
+          'You ran out of YAPP mid-thread. Buy some to post the rest.'
+        )
+        const errorMsg = ranOutOfYapp
+          ? 'not enough YAPP'
+          : failureError?.message || 'Unknown error'
         toast.error(
           `Thread partially created: ${successPart}. ` +
           `Post ${(failedAtIndex ?? 0) + 1} failed: ${errorMsg}. Press Post to retry.`,
@@ -902,7 +909,9 @@ export function ComposeModal() {
       }
     } catch (error) {
       logger.error('Failed to create post:', error)
-      toast.error(categorizeError(error))
+      if (!handleInsufficientYapp(error, 'You need YAPP to post. Buy some to continue.')) {
+        toast.error(categorizeError(error))
+      }
     } finally {
       setIsPosting(false)
       setPostingProgress(null)

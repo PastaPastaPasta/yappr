@@ -40,6 +40,7 @@ interface BookmarkedPost {
   likes: number
   replies: number
   reposts: number
+  quotes: number
   views: number
   bookmarkedAt: Date
 }

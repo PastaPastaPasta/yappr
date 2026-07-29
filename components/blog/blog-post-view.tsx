@@ -117,6 +117,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
       likes: 0,
       reposts: 0,
       replies: 0,
+      quotes: 0,
       views: 0,
       __isBlogPostQuote: true,
       title: post.title,

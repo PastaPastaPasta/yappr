@@ -80,9 +80,56 @@ export function isNonFatalWaitError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error indicates the signer lacks enough YAPP tokens to pay a
+ * document's tokenCost (post/reply/like/repost). When true, the UI should
+ * prompt the user to buy YAPP rather than show a generic failure.
+ */
+export function isInsufficientTokenError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('identitydoesnothaveenoughtokenbalance') ||
+    msg.includes('not have enough token') ||
+    msg.includes('enough token balance') ||
+    // Drive phrasing: "Identity X does not have enough balance for token Y:
+    // required 10, actual 0, action: Document create token payment"
+    msg.includes('enough balance for token') ||
+    msg.includes('insufficient token')
+  )
+}
+
+/**
+ * Checks if an error indicates the signer's token account is frozen (suspended
+ * by a token authority via a freeze action). Frozen accounts cannot spend YAPP,
+ * so token payments fail — but buying more YAPP will NOT help. The UI should
+ * explain the account is suspended rather than prompt a purchase.
+ *
+ * Drive phrasing: "Identity X account is frozen for token Y. Action attempted: Z"
+ */
+export function isFrozenBalanceError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  // Match the frozen failure but NOT the "is not frozen for token" error that
+  // destroyFrozen raises when the target account was never frozen.
+  return (
+    msg.includes('is frozen for token') ||
+    msg.includes('identitytokenaccountfrozen') ||
+    msg.includes('account frozen')
+  )
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
+  // Check frozen before insufficient-balance: a frozen account can't spend even
+  // with a positive balance, and buying more YAPP won't unfreeze it.
+  if (isFrozenBalanceError(error)) {
+    return 'Your account is suspended (frozen) and can\'t spend YAPP right now. Contact a moderator to be reinstated.'
+  }
+
+  if (isInsufficientTokenError(error)) {
+    return 'You don\'t have enough YAPP. Buy more to keep posting.'
+  }
+
   const errorMessage = extractErrorMessage(error)
 
   if (

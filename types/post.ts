@@ -35,6 +35,7 @@ export interface Post {
   likes: number
   reposts: number
   replies: number
+  quotes: number
   views: number
   liked?: boolean
   reposted?: boolean

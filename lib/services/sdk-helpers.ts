@@ -132,6 +132,18 @@ export function base58ToBytes(value: string): Uint8Array | null {
 }
 
 /**
+ * Decode a base58 identifier string into lowercase hex — the key format
+ * `sdk.documents.count`'s grouped (`groupBy`) results use for identifier
+ * properties (platform-value-encoded bytes, hex-encoded). Returns null if the
+ * value is not a valid base58 identifier.
+ */
+export function identifierToHex(value: string): string | null {
+  const bytes = base58ToBytes(value);
+  if (!bytes) return null;
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Typed document write helper for required identifier-like fields.
  *
  * Use this when building `Document.properties` for create/update/replace paths.

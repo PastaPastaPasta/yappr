@@ -6,6 +6,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
+import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useTipModal } from '@/hooks/use-tip-modal'
@@ -203,6 +204,18 @@ export function TipModal() {
         .catch(() => {})
       // Update global balance in auth context (persists to localStorage)
       refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
+
+      // The tip (credit transfer) succeeded, but the public "tip" reply is a
+      // YAPP-costed doc — tell the user if it couldn't be posted rather than
+      // letting it vanish silently, and only blame YAPP when that was the cause.
+      if (result.announcementPosted === false) {
+        toast(
+          result.announcementError === 'INSUFFICIENT_YAPP'
+            ? 'Tip sent — but the public tip note couldn’t be posted (needs YAPP).'
+            : 'Tip sent — but the public tip note couldn’t be posted. You can reply to the post manually.',
+          { icon: '⚠️', duration: 5000 }
+        )
+      }
 
       // If key was manually entered and not already saved, offer to save
       if (keySource === 'manual' && usedTransferKeyRef.current && !hasTransferKey(user.identityId)) {

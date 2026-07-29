@@ -152,6 +152,7 @@ export default function ExplorePage() {
             likes: 0,
             replies: 0,
             reposts: 0,
+            quotes: 0,
             views: 0
           }))
 

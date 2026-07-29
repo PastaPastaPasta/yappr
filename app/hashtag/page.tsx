@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link'
 
 function HashtagPageContent() {
   const router = useRouter()
@@ -163,6 +164,7 @@ function HashtagPageContent() {
                 <p className="text-gray-500 mb-4">
                   Be the first to post with {tagSymbol}{displayTag}
                 </p>
+                <LegacyYapprLink />
               </div>
             ) : (
               posts.map((post, index) => (

@@ -12,6 +12,7 @@ export interface PostStats {
   likes: number
   reposts: number
   replies: number
+  quotes: number
   views: number
 }
 

@@ -3,7 +3,21 @@
  */
 
 // Contract IDs
-export const YAPPR_CONTRACT_ID = 'EWR695MsqPUuW8EnTbYzD4KybNQD5n7CUDWydJYNg63F' // Testnet - v10
+export const YAPPR_CONTRACT_ID = '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9' // Testnet - v2 (protocol v12: count trees + YAPP token + tokenCost; documentsCountable + countable byOwner on post)
+
+// YAPP token (defined at position 0 of the v2 social contract)
+export const YAPP_TOKEN_POSITION = 0
+// Contract-owner / token authority identity (signs freeze/unfreeze/slash on testnet).
+// Mainnet TODO: move moderation to a Group and drop this single-identity gate.
+export const YAPP_TOKEN_AUTHORITY_ID = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A'
+// Per-action token cost baked into the v2 contract's tokenCost.create (immutable ratio).
+// Used as the `maximumTokenCost` guard when creating token-paid documents.
+export const YAPP_TOKEN_COSTS = {
+  post: 10,
+  reply: 3,
+  like: 1,
+  repost: 1,
+} as const
 export const YAPPR_PROFILE_CONTRACT_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 export const YAPPR_DM_CONTRACT_ID = 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
 // YAPPR_BLOCK_CONTRACT_ID removed - block, blockFilter, blockFollow document types now in YAPPR_CONTRACT_ID
@@ -22,6 +36,10 @@ export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (lea
 
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'
+
+// Previous ("v2") Yappr deployment — the old contract's content lives here.
+// Linked from empty / end-of-feed states so users can still reach pre-cutover posts.
+export const LEGACY_APP_URL = 'https://yappr-v2.thepasta.org'
 
 // Network configuration
 export const DEFAULT_NETWORK = 'testnet'
