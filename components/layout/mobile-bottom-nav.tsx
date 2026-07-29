@@ -17,6 +17,7 @@ import {
   BuildingStorefrontIcon,
   BellIcon,
   BookmarkIcon,
+  BookOpenIcon,
   UserIcon,
   Cog6ToothIcon,
   UserGroupIcon,
@@ -76,6 +77,7 @@ export function MobileBottomNav() {
   // More menu items - Store first for prominence, then user-specific items
   const moreMenuItems = [
     { name: 'Store', href: '/store', icon: BuildingStorefrontIcon },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon },
     ...(user ? [
       { name: 'Profile', href: `/user?id=${user.identityId}`, icon: UserIcon },
       { name: 'Notifications', href: '/notifications', icon: BellIcon, badge: isHydrated && unreadNotificationCount > 0 ? unreadNotificationCount : undefined },
