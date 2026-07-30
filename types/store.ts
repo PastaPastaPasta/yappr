@@ -1,5 +1,20 @@
 import type { ParsedPaymentUri, SocialLink } from './user'
 
+export type OrderPaymentMethod = 'externalUri' | 'platformCredits'
+
+export interface ExternalUriPaymentMethod {
+  kind: 'externalUri'
+  paymentUri: ParsedPaymentUri
+}
+
+export interface PlatformCreditsPaymentMethod {
+  kind: 'platformCredits'
+  recipientId: string
+  label?: string
+}
+
+export type StorePaymentMethod = ExternalUriPaymentMethod | PlatformCreditsPaymentMethod
+
 // Store policy for arbitrary seller-defined policies
 export interface StorePolicy {
   name: string     // Policy title, e.g., "Return Policy"
@@ -256,8 +271,11 @@ export interface OrderPayload {
   shippingCost: number
   total: number
   currency: string
-  paymentUri: string
+  paymentMethod?: OrderPaymentMethod
+  paymentUri?: string
   txid?: string
+  creditTransferReceiptId?: string
+  paymentAmountCredits?: string
   notes?: string
   refundAddress?: string
 }

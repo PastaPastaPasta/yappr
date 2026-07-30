@@ -158,6 +158,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       shippingCost,
       total: subtotal + shippingCost,
       currency,
+      paymentMethod: 'externalUri',
       paymentUri,
       notes,
       refundAddress

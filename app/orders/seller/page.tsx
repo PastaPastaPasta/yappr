@@ -22,11 +22,12 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
+import { creditTransferService } from '@/lib/services/credit-transfer-service'
 import { dpnsService } from '@/lib/services'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { ClipboardIcon } from '@heroicons/react/24/outline'
-import type { StoreOrder, OrderStatusUpdate, OrderStatus, OrderPayload } from '@/lib/types'
+import type { StoreOrder, OrderStatusUpdate, OrderStatus, OrderPayload, CreditTransferReceiptVerification } from '@/lib/types'
 
 /**
  * Decrypt order payload using seller's encryption private key.
@@ -73,6 +74,7 @@ function SellerOrdersPage() {
   const [orderPayloads, setOrderPayloads] = useState<Map<string, OrderPayload>>(new Map())
   const [orderStatuses, setOrderStatuses] = useState<Map<string, OrderStatusUpdate>>(new Map())
   const [buyerUsernames, setBuyerUsernames] = useState<Map<string, string>>(new Map())
+  const [paymentReceiptStatuses, setPaymentReceiptStatuses] = useState<Map<string, CreditTransferReceiptVerification>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null)
 
@@ -99,15 +101,31 @@ function SellerOrdersPage() {
 
         // Decrypt order payloads
         const payloadMap = new Map<string, OrderPayload>()
+        const receiptStatusMap = new Map<string, CreditTransferReceiptVerification>()
         await Promise.all(
           sellerOrders.map(async (order) => {
             const payload = await decryptSellerOrderPayload(order, sellerPrivateKey)
             if (payload) {
               payloadMap.set(order.id, payload)
+
+              if (
+                payload.paymentMethod === 'platformCredits' &&
+                payload.creditTransferReceiptId
+              ) {
+                const verification = await creditTransferService.verifyReceipt(
+                  payload.creditTransferReceiptId,
+                  {
+                    expectedRecipientId: order.sellerId,
+                    expectedAmountCredits: payload.paymentAmountCredits,
+                  }
+                )
+                receiptStatusMap.set(order.id, verification)
+              }
             }
           })
         )
         setOrderPayloads(payloadMap)
+        setPaymentReceiptStatuses(receiptStatusMap)
 
         // Load latest status for each order and resolve buyer usernames
         const statusMap = new Map<string, OrderStatusUpdate>()
@@ -215,6 +233,7 @@ function SellerOrdersPage() {
               {orders.map((order, index) => {
                 const status = orderStatuses.get(order.id)
                 const payload = orderPayloads.get(order.id)
+                const paymentReceiptStatus = paymentReceiptStatuses.get(order.id)
                 const isExpanded = expandedOrder === order.id
                 const isUpdating = updateOrderId === order.id
 
@@ -332,19 +351,50 @@ function SellerOrdersPage() {
                             {/* Payment Info */}
                             <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
                               <p className="text-sm font-medium mb-2">Payment</p>
-                              <p className="text-sm font-mono break-all">{payload.paymentUri}</p>
-                              {payload.txid && (
-                                <p className="text-sm mt-1">
-                                  <span className="text-gray-500">TXID: </span>
-                                  <a
-                                    href={storeOrderService.getPaymentVerificationUrl(payload.txid)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-yappr-600 hover:underline font-mono"
-                                  >
-                                    {payload.txid.slice(0, 16)}...
-                                  </a>
-                                </p>
+                              {payload.paymentMethod === 'platformCredits' ? (
+                                <>
+                                  <p className="text-sm">
+                                    Platform credits
+                                    {payload.paymentAmountCredits ? ` • ${payload.paymentAmountCredits} credits` : ''}
+                                  </p>
+                                  {payload.creditTransferReceiptId && (
+                                    <p className="text-sm mt-1">
+                                      <span className="text-gray-500">Receipt: </span>
+                                      <span className="font-mono break-all">{payload.creditTransferReceiptId}</span>
+                                    </p>
+                                  )}
+                                  {paymentReceiptStatus && (
+                                    <p className="text-sm mt-1">
+                                      <span className="text-gray-500">Status: </span>
+                                      <span className={
+                                        paymentReceiptStatus.status === 'verified'
+                                          ? 'text-green-700 dark:text-green-300'
+                                          : 'text-blue-700 dark:text-blue-300'
+                                      }>
+                                        {paymentReceiptStatus.status === 'verified' ? 'Verified receipt' : 'Receipt pending'}
+                                      </span>
+                                    </p>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  {payload.paymentUri && (
+                                    <p className="text-sm font-mono break-all">{payload.paymentUri}</p>
+                                  )}
+                                  {payload.txid && (
+                                    <p className="text-sm mt-1">
+                                      <span className="text-gray-500">TXID: </span>
+                                      <a
+                                        href={storeOrderService.getPaymentVerificationUrl(payload.txid)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-yappr-600 hover:underline font-mono"
+                                      >
+                                        {payload.txid.slice(0, 16)}...
+                                      </a>
+                                    </p>
+                                  )}
+                                </>
                               )}
                             </div>
 

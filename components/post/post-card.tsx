@@ -46,6 +46,7 @@ import { useMentionValidation } from '@/hooks/use-mention-validation'
 import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { tipService } from '@/lib/services/tip-service'
+import { creditTransferService } from '@/lib/services/credit-transfer-service'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
@@ -330,7 +331,46 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const isTipPost = !!tipInfo
+  const [tipVerificationStatus, setTipVerificationStatus] = useState<'verified' | 'pending' | 'legacy'>(
+    tipInfo?.verificationStatus || 'legacy'
+  )
   const createdAtLabel = useRelativeTime(post.createdAt)
+
+  useEffect(() => {
+    if (!tipInfo) {
+      return
+    }
+
+    if (!tipInfo.receiptId) {
+      setTipVerificationStatus('legacy')
+      return
+    }
+
+    let cancelled = false
+    setTipVerificationStatus('pending')
+
+    creditTransferService.verifyReceipt(tipInfo.receiptId, {
+      expectedSenderId: post.author.id,
+      expectedRecipientId: post.parentOwnerId,
+      expectedAmountCredits: String(tipInfo.amount),
+      expectedReferenceType: 'tip',
+      expectedReferenceId: post.parentId,
+    })
+      .then((result) => {
+        if (cancelled) return
+        setTipVerificationStatus(result.status === 'verified' ? 'verified' : 'pending')
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          logger.warn('Failed to verify tip receipt', error)
+          setTipVerificationStatus('pending')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [tipInfo, post.author.id, post.parentId, post.parentOwnerId])
 
   const handleLike = async () => {
     if (hideAvatar) {
@@ -668,29 +708,32 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           </div>
 
           {/* Tip post - show tip badge with recipient and message */}
-          {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
           {isTipPost ? (
             <div className="mt-2">
-              <Tooltip.Provider>
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium mb-2 cursor-help">
-                      <CurrencyDollarIcon className="h-4 w-4" />
-                      <span>
-                        Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
-                      </span>
-                    </div>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                      sideOffset={5}
-                    >
-                      Unverified - awaiting SDK support
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-              </Tooltip.Provider>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium">
+                  <CurrencyDollarIcon className="h-4 w-4" />
+                  <span>
+                    Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
+                  </span>
+                </div>
+                <div
+                  className={cn(
+                    'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium',
+                    tipVerificationStatus === 'verified'
+                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                      : tipVerificationStatus === 'legacy'
+                        ? 'bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-gray-300'
+                        : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                  )}
+                >
+                  {tipVerificationStatus === 'verified'
+                    ? 'Verified'
+                    : tipVerificationStatus === 'legacy'
+                      ? 'Unverified legacy'
+                      : 'Pending'}
+                </div>
+              </div>
               {tipInfo.message && (
                 <PostContent content={tipInfo.message} className="mt-1" />
               )}
