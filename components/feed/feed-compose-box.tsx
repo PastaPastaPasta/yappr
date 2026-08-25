@@ -31,6 +31,7 @@ export function FeedComposeBox() {
           <Button
             type="button"
             variant="ghost"
+            data-testid="open-compose-btn"
             onClick={() => setComposeOpen(true)}
             className="flex-1 justify-start h-auto text-left px-4 py-3 bg-gray-50 dark:bg-gray-950 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
           >

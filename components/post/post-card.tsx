@@ -538,6 +538,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   return (
     <motion.article
+      data-testid={`post-card-${post.id}`}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={handleCardClick}
@@ -757,6 +758,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <Tooltip.Provider>
               <ActionTooltip label={cantReplyReason || 'Reply'}>
                 <button
+                  data-testid={`reply-btn-${post.id}`}
                   onClick={(e) => { e.stopPropagation(); handleReply(); }}
                   disabled={!canReplyToPrivate}
                   className={cn(
@@ -835,6 +837,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
               <ActionTooltip label="Like">
                 <button
+                  data-testid={`like-btn-${post.id}`}
+                  aria-pressed={liked}
                   onClick={(e) => { e.stopPropagation(); handleLike().catch((error) => logger.error(error)); }}
                   disabled={likeLoading}
                   className={cn(

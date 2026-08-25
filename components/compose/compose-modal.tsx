@@ -1012,6 +1012,7 @@ export function ComposeModal() {
                         </button>
                         {/* Post button - prominent primary action */}
                         <Button
+                          data-testid="compose-submit-btn"
                           onClick={handlePost}
                           disabled={!canPost}
                           className={`min-w-[100px] h-10 px-5 text-sm font-semibold transition-all ${
