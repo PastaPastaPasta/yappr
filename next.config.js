@@ -28,6 +28,9 @@ const nextConfig = {
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
     NEXT_PUBLIC_GIT_COMMIT_DATE: gitInfo.commitDate,
     NEXT_PUBLIC_GIT_BRANCH: gitInfo.branch,
+    // Subpath deployments share the origin with the root deployment, so
+    // client-side storage keys are namespaced by the base path (lib/storage-scope.ts).
+    NEXT_PUBLIC_STORAGE_SCOPE: basePath ? basePath.replace(/^\//, '') : '',
   },
   reactStrictMode: true,
   output: 'export',

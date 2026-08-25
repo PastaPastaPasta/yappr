@@ -7,8 +7,9 @@
  */
 
 import { BloomFilter, bloomFilterToBase64, bloomFilterFromBase64 } from '../bloom-filter'
+import { scopedKey } from '@/lib/storage-scope'
 
-const CACHE_KEY_PREFIX = 'yappr_block_cache_'
+const CACHE_KEY_PREFIX = scopedKey('yappr_block_cache_')
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes for full data refresh
 
 export interface ConfirmedBlock {

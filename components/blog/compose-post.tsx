@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { scopedKey } from '@/lib/storage-scope'
 import { XMarkIcon, Cog6ToothIcon, PhotoIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -40,7 +41,7 @@ interface DraftData {
 
 function loadDraft(identityId: string, blogId: string): DraftData | null {
   try {
-    const raw = localStorage.getItem(`yappr:blog-draft:${identityId}:${blogId}:new`)
+    const raw = localStorage.getItem(scopedKey(`yappr:blog-draft:${identityId}:${blogId}:new`))
     if (!raw) return null
     return JSON.parse(raw) as DraftData
   } catch {
@@ -167,7 +168,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
   const draftKey = useMemo(() => {
     if (!user?.identityId) return ''
-    return `yappr:blog-draft:${user.identityId}:${blog.id}:new`
+    return scopedKey(`yappr:blog-draft:${user.identityId}:${blog.id}:new`)
   }, [blog.id, user?.identityId])
 
   useEffect(() => {

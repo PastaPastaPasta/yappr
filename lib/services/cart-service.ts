@@ -8,8 +8,9 @@ import { logger } from '@/lib/logger';
 
 import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
+import { scopedKey } from '@/lib/storage-scope';
 
-const CART_STORAGE_KEY = 'yappr_cart';
+const CART_STORAGE_KEY = scopedKey('yappr_cart');
 
 class CartService {
   private cart: Cart | null = null;

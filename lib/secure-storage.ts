@@ -5,6 +5,7 @@ import {
   type BrowserStoredKeyType,
 } from 'platform-auth'
 import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
+import { scopedKey } from '@/lib/storage-scope'
 
 const getConfiguredNetwork = (): 'testnet' | 'mainnet' => {
   if (process?.env?.NEXT_PUBLIC_NETWORK) {
@@ -14,7 +15,7 @@ const getConfiguredNetwork = (): 'testnet' | 'mainnet' => {
 }
 
 const browserSecretStore = createBrowserSecretStore({
-  prefix: 'yappr_secure_',
+  prefix: scopedKey('yappr_secure_'),
   network: getConfiguredNetwork(),
   crypto: {
     parsePrivateKey,

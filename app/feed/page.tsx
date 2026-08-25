@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { logger } from '@/lib/logger';
+import { scopedKey } from '@/lib/storage-scope';
 import { Sidebar } from '@/components/layout/sidebar';
 import { RightSidebar } from '@/components/layout/right-sidebar';
 import { ComposeModal } from '@/components/compose/compose-modal';
@@ -21,7 +22,7 @@ function FeedPage() {
   const [activeTab, setActiveTab] = useState<FeedTab>(() => {
     try {
       if (typeof window !== 'undefined') {
-        const savedTab = localStorage.getItem('feed-tab');
+        const savedTab = localStorage.getItem(scopedKey('feed-tab'));
         if (savedTab === 'forYou' || savedTab === 'following') {
           return savedTab;
         }
@@ -49,7 +50,7 @@ function FeedPage() {
   const handleTabChange = (tab: FeedTab) => {
     setActiveTab(tab);
     try {
-      localStorage.setItem('feed-tab', tab);
+      localStorage.setItem(scopedKey('feed-tab'), tab);
     } catch {
       // Ignore storage write failures (privacy mode/blocked storage).
     }

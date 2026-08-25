@@ -7,8 +7,9 @@
  */
 
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy } from '../types'
+import { scopedKey } from '@/lib/storage-scope'
 
-const CACHE_KEY_PREFIX = 'yappr_store_view_'
+const CACHE_KEY_PREFIX = scopedKey('yappr_store_view_')
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
 export interface StoreViewCacheData {

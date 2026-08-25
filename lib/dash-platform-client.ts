@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 // Import the centralized SDK service
 import { evoSdkService } from './services/evo-sdk-service'
 import { YAPPR_CONTRACT_ID } from './constants'
+import { SESSION_STORAGE_KEY } from './storage-scope'
 import { documentToPlainObject } from './services/sdk-helpers'
 
 export class DashPlatformClient {
@@ -80,7 +81,7 @@ export class DashPlatformClient {
     if (!identityId) {
       // Try to get from auth context via user session
       if (typeof window !== 'undefined') {
-        const savedSession = localStorage.getItem('yappr_session')
+        const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
         if (savedSession) {
           try {
             const sessionData = JSON.parse(savedSession)
