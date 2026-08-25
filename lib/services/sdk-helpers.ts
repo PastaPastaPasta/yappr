@@ -4,8 +4,8 @@ import { SESSION_STORAGE_KEY } from '@/lib/storage-scope';
  * SDK helper utilities for working with the v3 EvoSDK.
  *
  * Two Platform paths matter here:
- * - Typed document writes (`new Document(...)`, `sdk.documents.replace(...)`) should receive
- *   binary properties as `Uint8Array`.
+ * - Typed document writes (`documentBuilderService`, `sdk.documents.replace(...)`) should
+ *   receive binary properties as `Uint8Array`.
  * - Raw document queries (`sdk.documents.query(...)`) receive plain query JSON, so operand
  *   shape depends on the contract field: identifier-like fields use their base58 string form,
  *   while ordinary `byteArray: true` fields may need an explicit binary encoding.
@@ -542,7 +542,7 @@ export function normalizeSDKResponse(response: unknown): Record<string, unknown>
 /**
  * Convert a base58 identifier string into raw bytes for typed `Document.properties`.
  *
- * Use this for create/update flows that end up in `new Document(...)` or
+ * Use this for create/update flows that end up in `documentBuilderService` or
  * `sdk.documents.replace(...)`.
  */
 export function identifierStringToDocumentBytes(value: string): Uint8Array {

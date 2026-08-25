@@ -220,13 +220,12 @@ export abstract class BaseDocumentService<T> {
    * Subclasses can override for custom extraction logic.
    */
   protected extractContentFields(doc: T): Record<string, unknown> {
-    const systemFields = new Set([
-      'id', 'ownerId', 'createdAt', 'updatedAt',
-      '$id', '$ownerId', '$createdAt', '$updatedAt', '$revision', '$type', 'revision',
-    ]);
+    const systemFields = new Set(['id', 'ownerId', 'createdAt', 'updatedAt', 'revision']);
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
-      if (!systemFields.has(key) && value !== undefined) {
+      // Every platform system field is `$`-prefixed ($id, $revision, $formatVersion, …) and
+      // no contract declares a `$` property, so the prefix is enough to filter them all.
+      if (!key.startsWith('$') && !systemFields.has(key) && value !== undefined) {
         result[key] = value;
       }
     }
