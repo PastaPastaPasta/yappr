@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -84,7 +85,7 @@ export function InventoryUploadModal({
       setWarnings(result.warnings)
       setStep('preview')
     } catch (err) {
-      console.error('Failed to parse CSV:', err)
+      logger.error('Failed to parse CSV:', err)
       // Clear any stale preview state before showing error
       setItems([])
       setWarnings([])
@@ -121,7 +122,7 @@ export function InventoryUploadModal({
           await storeItemService.createItem(ownerId, storeId, data)
           successCount++
         } catch (err) {
-          console.error(`Failed to upload item ${item.title}:`, err)
+          logger.error(`Failed to upload item ${item.title}:`, err)
           newErrors.push(`${item.title}: ${err instanceof Error ? err.message : 'Upload failed'}`)
         }
 

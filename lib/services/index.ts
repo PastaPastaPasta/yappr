@@ -16,6 +16,10 @@ export { directMessageService } from './direct-message-service';
 export { hashtagService } from './hashtag-service';
 export { notificationService } from './notification-service';
 export { tipService, CREDITS_PER_DASH, MIN_TIP_CREDITS } from './tip-service';
+export { blogService } from './blog-service';
+export { blogPostService } from './blog-post-service';
+export { blogCommentService } from './blog-comment-service';
+export { blogFollowService } from './blog-follow-service';
 
 // New unified profile services
 export {
@@ -25,7 +29,6 @@ export {
   DICEBEAR_STYLE_LABELS,
   DEFAULT_AVATAR_STYLE,
 } from './unified-profile-service';
-export { profileMigrationService } from './profile-migration-service';
 
 // Export types
 export type { EvoSdkConfig } from './evo-sdk-service';
@@ -43,12 +46,14 @@ export type {
   DirectMessageDocument,
   ConversationInviteDocument,
   ReadReceiptDocument,
-  ParsedPaymentUri,
-  SocialLink,
 } from '../types';
+export type { ParsedPaymentUri, SocialLink } from '../../types';
 export type { PostHashtagDocument, TrendingHashtag } from './hashtag-service';
 export type { TipResult } from './tip-service';
 export type { NotificationResult } from './notification-service';
+export type { CreateBlogData, UpdateBlogData } from './blog-service';
+export type { CreateBlogPostData, UpdateBlogPostData, BlogPostQueryOptions } from './blog-post-service';
+export type { BlogCommentQueryOptions } from './blog-comment-service';
 export type {
   UnifiedProfileDocument,
   CreateUnifiedProfileData,
@@ -56,7 +61,6 @@ export type {
   AvatarConfig,
   DiceBearStyle,
 } from './unified-profile-service';
-export type { LegacyProfileData, LegacyAvatarData, MigrationStatus } from './profile-migration-service';
 
 // Private feed crypto service
 export { privateFeedCryptoService } from './private-feed-crypto-service';

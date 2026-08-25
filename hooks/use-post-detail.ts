@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, Reply, ReplyThread } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
@@ -225,12 +226,30 @@ export function usePostDetail({
       currentParentId = parent.parentId
     }
 
+    // Fetch quoted posts for any chain items that reference them (e.g. reposts/quote posts)
+    const chainQuotedPostIds = chain
+      .filter(p => p.quotedPostId && !p.quotedPost)
+      .map(p => p.quotedPostId!)
+    if (chainQuotedPostIds.length > 0) {
+      try {
+        const quotedPosts = await postService.fetchPostsOrReplies(chainQuotedPostIds)
+        const quotedPostMap = new Map(quotedPosts.map(qp => [qp.id, qp]))
+        for (const post of chain) {
+          if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
+            post.quotedPost = quotedPostMap.get(post.quotedPostId)
+          }
+        }
+      } catch (err) {
+        logger.error('usePostDetail: Failed to fetch quoted posts for reply chain:', err)
+      }
+    }
+
     // Enrich all posts in the chain
     if (chain.length > 0) {
       try {
         await enrich(chain)
       } catch (err) {
-        console.error('usePostDetail: Failed to enrich reply chain:', err)
+        logger.error('usePostDetail: Failed to enrich reply chain:', err)
       }
     }
 
@@ -292,11 +311,11 @@ export function usePostDetail({
 
       // Enrich the main post without blocking replies or UI
       enrich([loadedPost]).catch((err) => {
-        console.error('usePostDetail: Failed to enrich main post:', err)
+        logger.error('usePostDetail: Failed to enrich main post:', err)
       })
     } catch (err) {
       if (!isCurrent()) return
-      console.error('usePostDetail: Failed to load post:', err)
+      logger.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
       // Only clear state if we don't have navigation data to show
       if (!usedNavigationDataRef.current) {
@@ -382,17 +401,17 @@ export function usePostDetail({
       // All replies for backwards compat
       const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
 
-      // Fetch quoted posts for main post only (replies don't have quotes)
+      // Fetch quoted post for the main post (reply chain quoted posts are handled in fetchReplyChain)
       let quotedPost: Post | undefined
       if (loadedPost.quotedPostId) {
         try {
-          const quotedPosts = await postService.getPostsByIds([loadedPost.quotedPostId])
+          const quotedPosts = await postService.fetchPostsOrReplies([loadedPost.quotedPostId])
           if (!isCurrent()) return
           if (quotedPosts.length > 0) {
             quotedPost = quotedPosts[0]
           }
         } catch (quoteError) {
-          console.error('Failed to fetch quoted post:', quoteError)
+          logger.error('Failed to fetch quoted post:', quoteError)
         }
       }
 
@@ -407,7 +426,7 @@ export function usePostDetail({
       })
     } catch (err) {
       if (!isCurrent()) return
-      console.error('usePostDetail: Failed to load replies:', err)
+      logger.error('usePostDetail: Failed to load replies:', err)
       setError(err instanceof Error ? err.message : 'Failed to load replies')
     } finally {
       if (isCurrent()) {

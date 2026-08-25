@@ -1,17 +1,22 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { Spinner } from '@/components/ui/spinner'
+import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
 import { useSettingsStore } from '@/lib/store'
+import type { BlogPostWithAuthor } from '@/lib/types'
+import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
 interface UserResult {
   id: string
@@ -33,12 +38,13 @@ function SearchPageContent() {
 
   const [users, setUsers] = useState<UserResult[]>([])
   const [hashtags, setHashtags] = useState<HashtagResult[]>([])
+  const [blogPosts, setBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoading, setIsLoading] = useState(query.trim().length >= 3)
   const searchIdRef = useRef(0)
 
   useEffect(() => {
     const currentSearchId = ++searchIdRef.current
-    console.log(`Search: Starting search #${currentSearchId} for query: "${query}"`)
+    logger.info(`Search: Starting search #${currentSearchId} for query: "${query}"`)
 
     const performSearch = async () => {
       const trimmedQuery = query.trim()
@@ -46,15 +52,17 @@ function SearchPageContent() {
       if (!trimmedQuery) {
         setUsers([])
         setHashtags([])
+        setBlogPosts([])
         setIsLoading(false)
         return
       }
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        console.log('Search: Query too short, need at least 3 characters')
+        logger.info('Search: Query too short, need at least 3 characters')
         setUsers([])
         setHashtags([])
+        setBlogPosts([])
         setIsLoading(false)
         return
       }
@@ -63,21 +71,23 @@ function SearchPageContent() {
 
       try {
         // Search in parallel
-        const [userResults, hashtagResults] = await Promise.all([
+        const [userResults, hashtagResults, blogResults] = await Promise.all([
           searchUsers(trimmedQuery),
-          searchHashtags(trimmedQuery)
+          searchHashtags(trimmedQuery),
+          searchBlogPosts(trimmedQuery),
         ])
 
         // Only update state if this is still the current search
         if (currentSearchId !== searchIdRef.current) {
-          console.log(`Search: Ignoring stale results for search #${currentSearchId}`)
+          logger.info(`Search: Ignoring stale results for search #${currentSearchId}`)
           return
         }
 
         setUsers(userResults)
         setHashtags(hashtagResults)
+        setBlogPosts(blogResults)
       } catch (error) {
-        console.error('Search failed:', error)
+        logger.error('Search failed:', error)
       } finally {
         if (currentSearchId === searchIdRef.current) {
           setIsLoading(false)
@@ -85,30 +95,30 @@ function SearchPageContent() {
       }
     }
 
-    performSearch().catch(err => console.error('Search failed:', err))
+    performSearch().catch(err => logger.error('Search failed:', err))
   }, [query])
 
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
     try {
       const trimmedQuery = searchQuery.trim()
-      console.log(`Search: searchUsers called with: "${trimmedQuery}"`)
+      logger.info(`Search: searchUsers called with: "${trimmedQuery}"`)
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        console.log('Search: Query too short, need at least 3 characters')
+        logger.info('Search: Query too short, need at least 3 characters')
         return []
       }
 
       // Search DPNS usernames by prefix
       const dpnsResults = await dpnsService.searchUsernamesWithDetails(trimmedQuery, 10)
-      console.log(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
+      logger.info(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
 
       // If prefix search returns nothing, try exact name resolution as fallback
       if (dpnsResults.length === 0) {
-        console.log(`Search: Trying exact name resolution for "${trimmedQuery}"`)
+        logger.info(`Search: Trying exact name resolution for "${trimmedQuery}"`)
         const exactIdentity = await dpnsService.resolveIdentity(trimmedQuery)
         if (exactIdentity) {
-          console.log(`Search: Found exact match for "${trimmedQuery}"`)
+          logger.info(`Search: Found exact match for "${trimmedQuery}"`)
           dpnsResults.push({
             username: `${trimmedQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
             ownerId: exactIdentity
@@ -129,7 +139,7 @@ function SearchPageContent() {
         try {
           profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
         } catch (error) {
-          console.error('Failed to fetch profiles:', error)
+          logger.error('Failed to fetch profiles:', error)
         }
       }
 
@@ -165,7 +175,7 @@ function SearchPageContent() {
 
       return results
     } catch (error) {
-      console.error('User search failed:', error)
+      logger.error('User search failed:', error)
       return []
     }
   }
@@ -203,7 +213,25 @@ function SearchPageContent() {
 
       return results
     } catch (error) {
-      console.error('Hashtag search failed:', error)
+      logger.error('Hashtag search failed:', error)
+      return []
+    }
+  }
+
+  const searchBlogPosts = async (searchQuery: string): Promise<BlogPostWithAuthor[]> => {
+    try {
+      const { blogService, blogPostService } = await import('@/lib/services')
+
+      const allBlogs = await blogService.getAllBlogs()
+      if (allBlogs.length === 0) return []
+
+      const blogMap = new Map(allBlogs.map(b => [b.id, b]))
+      const blogIds = allBlogs.map(b => b.id)
+      const matchingPosts = await blogPostService.searchPosts(blogIds, searchQuery, 10)
+
+      return enrichBlogPostsWithAuthors(matchingPosts, blogMap)
+    } catch (error) {
+      logger.error('Blog post search failed:', error)
       return []
     }
   }
@@ -214,6 +242,12 @@ function SearchPageContent() {
 
   const handleHashtagClick = (hashtag: string) => {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
+  }
+
+  const handleBlogPostClick = (post: BlogPostWithAuthor) => {
+    if (post.blogId && post.slug) {
+      router.push(getBlogPostUrl(post.blogId, post.slug))
+    }
   }
 
   if (!query) {
@@ -263,7 +297,7 @@ function SearchPageContent() {
           {/* Content */}
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Searching...</p>
             </div>
           ) : (
@@ -339,6 +373,27 @@ function SearchPageContent() {
                   </div>
                 )}
               </section>
+
+              {/* Blog Posts Section */}
+              <section>
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    <DocumentTextIcon className="h-5 w-5" />
+                    Blog Posts
+                  </h2>
+                </div>
+                {blogPosts.length > 0 ? (
+                  <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {blogPosts.map((post, index) => (
+                      <BlogPostCard key={post.id} post={post} onClick={handleBlogPostClick} index={index} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center">
+                    <p className="text-gray-500">No blog posts found</p>
+                  </div>
+                )}
+              </section>
             </div>
           )}
         </main>
@@ -353,7 +408,7 @@ export default function SearchPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+        <Spinner size="md" />
       </div>
     }>
       <SearchPageContent />

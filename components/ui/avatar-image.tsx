@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, memo } from 'react'
 import { PresenceIndicator } from './presence-indicator'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
@@ -14,7 +15,7 @@ const pendingRequests = new Map<string, Promise<string>>()
 async function fetchAvatarUrl(userId: string): Promise<string> {
   // Guard against empty userId to prevent seed= URLs
   if (!userId) {
-    console.warn('AvatarImage: fetchAvatarUrl called with empty userId')
+    logger.warn('AvatarImage: fetchAvatarUrl called with empty userId')
     return ''
   }
 
@@ -39,7 +40,7 @@ async function fetchAvatarUrl(userId: string): Promise<string> {
       avatarCache.set(userId, { url, timestamp: Date.now() })
       return url
     } catch (error) {
-      console.error('AvatarImage: Error fetching avatar:', error)
+      logger.error('AvatarImage: Error fetching avatar:', error)
       const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
       return unifiedProfileService.getDefaultAvatarUrl(userId)
     } finally {
@@ -128,7 +129,7 @@ export const UserAvatar = memo(function UserAvatar({
       if (mounted && url) {
         setAvatarUrl(url)
       }
-    }).catch(err => console.error('Failed to fetch avatar URL:', err))
+    }).catch(err => logger.error('Failed to fetch avatar URL:', err))
 
     return () => {
       mounted = false

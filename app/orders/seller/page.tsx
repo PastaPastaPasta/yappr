@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -12,6 +13,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { OrderStatusBadge } from '@/components/store'
 import { OrderItemsList, StatusUpdateForm } from '@/components/orders'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
@@ -41,7 +43,7 @@ async function decryptSellerOrderPayload(
       const jsonStr = decoder.decode(order.encryptedPayload)
       return JSON.parse(jsonStr) as OrderPayload
     } catch (e) {
-      console.error('Failed to decode order payload:', e)
+      logger.error('Failed to decode order payload:', e)
       return null
     }
   }
@@ -56,7 +58,7 @@ async function decryptSellerOrderPayload(
       false // isBuyer = false (seller)
     )
   } catch (e) {
-    console.error('Failed to decrypt order payload:', e)
+    logger.error('Failed to decrypt order payload:', e)
     return null
   }
 }
@@ -133,13 +135,13 @@ function SellerOrdersPage() {
         setOrderStatuses(statusMap)
         setBuyerUsernames(usernameMap)
       } catch (error) {
-        console.error('Failed to load seller orders:', error)
+        logger.error('Failed to load seller orders:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadOrders().catch(console.error)
+    loadOrders().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
   const handleUpdateStatus = async (orderId: string) => {
@@ -161,7 +163,7 @@ function SellerOrdersPage() {
       setTrackingCarrier('')
       setStatusMessage('')
     } catch (error) {
-      console.error('Failed to update status:', error)
+      logger.error('Failed to update status:', error)
     } finally {
       setIsSubmitting(false)
     }
@@ -199,7 +201,7 @@ function SellerOrdersPage() {
 
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500 mx-auto mb-4" />
+              <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Loading orders...</p>
             </div>
           ) : orders.length === 0 ? (
@@ -302,15 +304,17 @@ function SellerOrdersPage() {
                             />
 
                             {/* Shipping Address */}
-                            <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
-                              <p className="text-sm font-medium mb-2">Shipping Address</p>
-                              <p className="text-sm">{payload.shippingAddress.name}</p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.street}</p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">
-                                {payload.shippingAddress.city}{payload.shippingAddress.state ? `, ${payload.shippingAddress.state}` : ''} {payload.shippingAddress.postalCode}
-                              </p>
-                              <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.country}</p>
-                            </div>
+                            {payload.shippingAddress && (
+                              <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
+                                <p className="text-sm font-medium mb-2">Shipping Address</p>
+                                <p className="text-sm">{payload.shippingAddress.name}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.street}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                  {payload.shippingAddress.city}{payload.shippingAddress.state ? `, ${payload.shippingAddress.state}` : ''} {payload.shippingAddress.postalCode}
+                                </p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{payload.shippingAddress.country}</p>
+                              </div>
+                            )}
 
                             {/* Contact Info */}
                             {(payload.buyerContact.email || payload.buyerContact.phone) && (

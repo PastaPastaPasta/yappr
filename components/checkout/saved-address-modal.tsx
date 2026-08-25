@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -141,7 +142,7 @@ export function SavedAddressModal({
 
       handleBack()
     } catch (error) {
-      console.error('Failed to save address:', error)
+      logger.error('Failed to save address:', error)
       toast.error('Failed to save address')
     } finally {
       setIsSubmitting(false)
@@ -157,7 +158,7 @@ export function SavedAddressModal({
       toast.success('Address deleted')
       setDeleteConfirmId(null)
     } catch (error) {
-      console.error('Failed to delete address:', error)
+      logger.error('Failed to delete address:', error)
       toast.error('Failed to delete address')
     } finally {
       setIsSubmitting(false)
@@ -169,7 +170,7 @@ export function SavedAddressModal({
       await onSetDefault(id)
       toast.success('Default address updated')
     } catch (error) {
-      console.error('Failed to set default:', error)
+      logger.error('Failed to set default:', error)
       toast.error('Failed to update default address')
     }
   }

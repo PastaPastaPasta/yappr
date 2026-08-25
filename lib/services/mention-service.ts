@@ -1,6 +1,7 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, normalizeSDKResponse, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes } from './sdk-helpers';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
 
@@ -19,22 +20,23 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
 
   /**
    * Transform document from SDK response to typed object
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields are base64
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
    */
   protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
     const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
     const rawMentionedUserId = data.mentionedUserId || doc.mentionedUserId;
 
-    // Convert byte array fields from base64 to base58
+    // Normalize identifier-like fields to base58 for app-level use.
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     const mentionedUserId = rawMentionedUserId ? identifierToBase58(rawMentionedUserId) : '';
 
     if (rawPostId && !postId) {
-      console.error('MentionService: Invalid postId format:', rawPostId);
+      logger.error('MentionService: Invalid postId format:', rawPostId);
     }
     if (rawMentionedUserId && !mentionedUserId) {
-      console.error('MentionService: Invalid mentionedUserId format:', rawMentionedUserId);
+      logger.error('MentionService: Invalid mentionedUserId format:', rawMentionedUserId);
     }
 
     return {
@@ -51,11 +53,11 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    */
   async createPostMention(postId: string, ownerId: string, mentionedUserId: string): Promise<boolean> {
     if (!postId) {
-      console.warn('MentionService: Invalid postId');
+      logger.warn('MentionService: Invalid postId');
       return false;
     }
     if (!mentionedUserId) {
-      console.warn('MentionService: Invalid mentionedUserId');
+      logger.warn('MentionService: Invalid mentionedUserId');
       return false;
     }
 
@@ -63,25 +65,25 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       // Check if already exists (unique index on postId + mentionedUserId)
       const existing = await this.getMentionForPost(postId, mentionedUserId);
       if (existing) {
-        console.log('Mention already exists for post:', mentionedUserId);
+        logger.info('Mention already exists for post:', mentionedUserId);
         return true;
       }
 
-      // Convert IDs to byte arrays using shared helper with defensive error handling
-      let postIdBytes: number[];
-      let mentionedUserIdBytes: number[];
+      // Typed writes use Uint8Array for identifier-like fields.
+      let postIdBytes: Uint8Array;
+      let mentionedUserIdBytes: Uint8Array;
 
       try {
-        postIdBytes = stringToIdentifierBytes(postId);
+        postIdBytes = identifierStringToDocumentBytes(postId);
       } catch (decodeError) {
-        console.error('MentionService: Invalid base58 postId:', postId, decodeError);
+        logger.error('MentionService: Invalid base58 postId:', postId, decodeError);
         return false;
       }
 
       try {
-        mentionedUserIdBytes = stringToIdentifierBytes(mentionedUserId);
+        mentionedUserIdBytes = identifierStringToDocumentBytes(mentionedUserId);
       } catch (decodeError) {
-        console.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
+        logger.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
         return false;
       }
 
@@ -98,7 +100,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error creating mention:', error);
+      logger.error('Error creating mention:', error);
       return false;
     }
   }
@@ -124,7 +126,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         // Resolve username to identity ID via DPNS
         const identityId = await dpnsService.resolveIdentity(username);
         if (!identityId) {
-          console.warn('MentionService: Could not resolve username:', username);
+          logger.warn('MentionService: Could not resolve username:', username);
           results.push(false);
           continue;
         }
@@ -132,7 +134,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         const result = await this.createPostMention(postId, ownerId, identityId);
         results.push(result);
       } catch (error) {
-        console.error('Error creating mention for username:', username, error);
+        logger.error('Error creating mention for username:', username, error);
         results.push(false);
       }
     }
@@ -162,7 +164,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
-      console.error('Error getting mention for post:', error);
+      logger.error('Error getting mention for post:', error);
       return null;
     }
   }
@@ -174,8 +176,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use byPost index - simple query by postId only
-      // SDK handles string to byte array conversion for identifier fields
+      // Raw query path: postId is identifier-like, so keep the base58 string operand.
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
@@ -189,7 +190,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting mentions for post:', error);
+      logger.error('Error getting mentions for post:', error);
       return [];
     }
   }
@@ -220,7 +221,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
 
       return documents;
     } catch (error) {
-      console.error('Error getting posts mentioning user:', error);
+      logger.error('Error getting posts mentioning user:', error);
       return [];
     }
   }
@@ -233,7 +234,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const mentions = await this.getPostsMentioningUser(userId);
       return mentions.length;
     } catch (error) {
-      console.error('Error counting mentions for user:', error);
+      logger.error('Error counting mentions for user:', error);
       return 0;
     }
   }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -14,8 +15,10 @@ import { followService, dpnsService, unifiedProfileService } from '@/lib/service
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
+import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
@@ -47,7 +50,7 @@ function FollowersPage() {
 
   // Get target user ID from URL params (if viewing another user's followers list)
   const targetUserId = searchParams.get('id')
-  const isOwnProfile = !targetUserId || targetUserId === user?.identityId
+  const isOwnProfile = !!user && (!targetUserId || targetUserId === user.identityId)
 
   // Load followers list
   const loadFollowers = useCallback(async (forceRefresh: boolean = false) => {
@@ -64,7 +67,7 @@ function FollowersPage() {
         return
       }
 
-      console.log('Followers: Loading followers list for:', userIdToLoad)
+      logger.info('Followers: Loading followers list for:', userIdToLoad)
 
       // If viewing another user, fetch their username for the header
       if (targetUserId && targetUserId !== user?.identityId) {
@@ -72,7 +75,7 @@ function FollowersPage() {
           const username = await dpnsService.resolveUsername(targetUserId)
           setTargetUserName(username || `User ${targetUserId.slice(-6)}`)
         } catch (error) {
-          console.error('Failed to resolve target user name:', error)
+          logger.error('Failed to resolve target user name:', error)
           setTargetUserName(`User ${targetUserId.slice(-6)}`)
         }
       }
@@ -83,7 +86,7 @@ function FollowersPage() {
       if (!forceRefresh) {
         const cached = cacheManager.get<Follower[]>('followers', cacheKey)
         if (cached) {
-          console.log('Followers: Using cached data')
+          logger.info('Followers: Using cached data')
           setData(cached)
           setLoading(false)
           return
@@ -93,7 +96,7 @@ function FollowersPage() {
       // Use followService to get followers list
       const follows = await followService.getFollowers(userIdToLoad)
       
-      console.log('Followers: Raw follows from platform:', follows)
+      logger.info('Followers: Raw follows from platform:', follows)
 
       // Get unique identity IDs from followers
       const identityIds = follows
@@ -114,7 +117,7 @@ function FollowersPage() {
             const username = await dpnsService.resolveUsername(id)
             return { id, username }
           } catch (error) {
-            console.error(`Failed to resolve DPNS for ${id}:`, error)
+            logger.error(`Failed to resolve DPNS for ${id}:`, error)
             return { id, username: null }
           }
         })),
@@ -129,7 +132,7 @@ function FollowersPage() {
             }
             return { id, usernames }
           } catch (error) {
-            console.error(`Failed to get all usernames for ${id}:`, error)
+            logger.error(`Failed to get all usernames for ${id}:`, error)
             return { id, usernames: [] }
           }
         })),
@@ -141,7 +144,7 @@ function FollowersPage() {
             const count = await followService.countFollowers(id)
             return { id, count }
           } catch (error) {
-            console.error(`Failed to get follower count for ${id}:`, error)
+            logger.error(`Failed to get follower count for ${id}:`, error)
             return { id, count: 0 }
           }
         })),
@@ -151,7 +154,7 @@ function FollowersPage() {
             const count = await followService.countFollowing(id)
             return { id, count }
           } catch (error) {
-            console.error(`Failed to get following count for ${id}:`, error)
+            logger.error(`Failed to get following count for ${id}:`, error)
             return { id, count: 0 }
           }
         }))
@@ -177,7 +180,7 @@ function FollowersPage() {
       const followers = follows.map(follow => {
         const followerId = follow.$ownerId
         if (!followerId) {
-          console.warn('Follow document missing ownerId:', follow)
+          logger.warn('Follow document missing ownerId:', follow)
           return null
         }
 
@@ -203,10 +206,10 @@ function FollowersPage() {
       cacheManager.set('followers', cacheKey, followers)
 
       setData(followers)
-      console.log(`Followers: Successfully loaded ${followers.length} followers`)
+      logger.info(`Followers: Successfully loaded ${followers.length} followers`)
 
     } catch (error) {
-      console.error('Followers: Failed to load followers list:', error)
+      logger.error('Followers: Failed to load followers list:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       setError(errorMessage)
     } finally {
@@ -215,11 +218,8 @@ function FollowersPage() {
   }, [setLoading, setError, setData, isOwnProfile, user?.identityId, targetUserId])
 
   useEffect(() => {
-    // Load when we have a user (for own profile) or a targetUserId (for viewing others)
-    if (user || targetUserId) {
-      loadFollowers().catch(err => console.error('Failed to load followers:', err))
-    }
-  }, [loadFollowers, user, targetUserId])
+    loadFollowers().catch(err => logger.error('Failed to load followers:', err))
+  }, [loadFollowers])
 
   const handleFollow = async (userId: string) => {
     const authedUser = requireAuth('follow')
@@ -228,7 +228,7 @@ function FollowersPage() {
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      console.log('Following user:', userId)
+      logger.info('Following user:', userId)
       const result = await followService.followUser(authedUser.identityId, userId)
 
       if (result.success) {
@@ -240,11 +240,11 @@ function FollowersPage() {
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Following!')
       } else {
-        console.error('Failed to follow user:', result.error)
+        logger.error('Failed to follow user:', result.error)
         toast.error('Failed to follow user')
       }
     } catch (error) {
-      console.error('Error following user:', error)
+      logger.error('Error following user:', error)
       toast.error('Failed to follow user')
     } finally {
       setActionInProgress(prev => {
@@ -262,7 +262,7 @@ function FollowersPage() {
     setActionInProgress(prev => new Set(prev).add(userId))
 
     try {
-      console.log('Unfollowing user:', userId)
+      logger.info('Unfollowing user:', userId)
       const result = await followService.unfollowUser(authedUser.identityId, userId)
 
       if (result.success) {
@@ -274,11 +274,11 @@ function FollowersPage() {
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Unfollowed')
       } else {
-        console.error('Failed to unfollow user:', result.error)
+        logger.error('Failed to unfollow user:', result.error)
         toast.error('Failed to unfollow user')
       }
     } catch (error) {
-      console.error('Error unfollowing user:', error)
+      logger.error('Error unfollowing user:', error)
       toast.error('Failed to unfollow user')
     } finally {
       setActionInProgress(prev => {
@@ -350,29 +350,47 @@ function FollowersPage() {
                     className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
                   >
                     <div className="flex items-start gap-3">
-                      <button
-                        onClick={() => router.push(`/user?id=${follower.id}`)}
-                        className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                      <ProfileHoverCard
+                        userId={follower.id}
+                        username={follower.hasDpnsName ? follower.username : null}
+                        displayName={follower.displayName}
                       >
-                        <UserAvatar userId={follower.id} size="lg" alt={follower.displayName} />
-                      </button>
+                        <button
+                          onClick={() => router.push(`/user?id=${follower.id}`)}
+                          className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                        >
+                          <UserAvatar userId={follower.id} size="lg" alt={follower.displayName} />
+                        </button>
+                      </ProfileHoverCard>
 
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
                           <div>
-                            <h3
-                              onClick={() => router.push(`/user?id=${follower.id}`)}
-                              className="font-semibold hover:underline cursor-pointer"
+                            <ProfileHoverCard
+                              userId={follower.id}
+                              username={follower.hasDpnsName ? follower.username : null}
+                              displayName={follower.displayName}
                             >
-                              {follower.displayName}
-                            </h3>
-                            {follower.hasDpnsName ? (
-                              <p
+                              <h3
                                 onClick={() => router.push(`/user?id=${follower.id}`)}
-                                className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                className="font-semibold hover:underline cursor-pointer"
                               >
-                                @{follower.username}
-                              </p>
+                                {follower.displayName}
+                              </h3>
+                            </ProfileHoverCard>
+                            {follower.hasDpnsName ? (
+                              <ProfileHoverCard
+                                userId={follower.id}
+                                username={follower.username}
+                                displayName={follower.displayName}
+                              >
+                                <p
+                                  onClick={() => router.push(`/user?id=${follower.id}`)}
+                                  className="text-sm text-gray-500 hover:underline cursor-pointer"
+                                >
+                                  @{follower.username}
+                                </p>
+                              </ProfileHoverCard>
                             ) : (
                               <Tooltip.Provider>
                                 <Tooltip.Root>
@@ -380,7 +398,7 @@ function FollowersPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(follower.id).catch(console.error)
+                                        navigator.clipboard.writeText(follower.id).catch((error) => logger.error(error))
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"
@@ -440,7 +458,7 @@ function FollowersPage() {
                                 disabled={actionInProgress.has(follower.id)}
                               >
                                 {actionInProgress.has(follower.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                  <Spinner size="sm" className="border-gray-600" />
                                 ) : (
                                   'Following'
                                 )}
@@ -453,7 +471,7 @@ function FollowersPage() {
                                 disabled={actionInProgress.has(follower.id)}
                               >
                                 {actionInProgress.has(follower.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                  <Spinner size="sm" className="border-white" />
                                 ) : (
                                   'Follow back'
                                 )}
@@ -476,4 +494,4 @@ function FollowersPage() {
   )
 }
 
-export default withAuth(FollowersPage)
+export default withAuth(FollowersPage, { optional: true })

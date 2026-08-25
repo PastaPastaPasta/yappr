@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
@@ -73,7 +74,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
 
       setData(likesWithUsers)
     } catch (error) {
-      console.error('Failed to load likes:', error)
+      logger.error('Failed to load likes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load likes')
     } finally {
       setLoading(false)
@@ -82,7 +83,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
 
   useEffect(() => {
     if (isOpen) {
-      loadLikes().catch(err => console.error('Failed to load likes:', err))
+      loadLikes().catch(err => logger.error('Failed to load likes:', err))
     }
   }, [isOpen, loadLikes])
 

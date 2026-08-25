@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -60,7 +61,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
 
       // Check if we have stored credentials
       const hasCredentials = provider.hasStoredCredentials()
-      console.log('[Pinata] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
+      logger.info('[Pinata] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
 
       if (hasCredentials) {
         try {
@@ -69,20 +70,20 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
           setMaskedJwt(provider.getMaskedJwt())
           setGateway(provider.getConnectedGateway())
           onConnectionChangeRef.current?.(true)
-          console.log('[Pinata] Successfully connected')
+          logger.info('[Pinata] Successfully connected')
         } catch (err) {
-          console.error('[Pinata] Failed to connect with stored credentials:', err)
+          logger.error('[Pinata] Failed to connect with stored credentials:', err)
           setStatus('disconnected')
           onConnectionChangeRef.current?.(false)
         }
       } else {
-        console.log('[Pinata] No stored credentials found')
+        logger.info('[Pinata] No stored credentials found')
         setStatus('disconnected')
         onConnectionChangeRef.current?.(false)
       }
 
     } catch (error) {
-      console.error('Error checking Pinata status:', error)
+      logger.error('Error checking Pinata status:', error)
       setStatus('error')
       onConnectionChangeRef.current?.(false)
     } finally {
@@ -91,7 +92,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
   }, [user])
 
   useEffect(() => {
-    checkConnectionStatus().catch(err => console.error('Failed to check status:', err))
+    checkConnectionStatus().catch(err => logger.error('Failed to check status:', err))
   }, [checkConnectionStatus])
 
   const handleStartConnect = () => {
@@ -132,7 +133,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
       onConnectionChange?.(true)
       toast.success('Pinata connected successfully!')
     } catch (error) {
-      console.error('Failed to connect:', error)
+      logger.error('Failed to connect:', error)
       let message = 'Failed to connect'
       if (error instanceof Error) {
         message = error.message
@@ -159,7 +160,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
       onConnectionChange?.(false)
       toast.success('Disconnected from Pinata')
     } catch (error) {
-      console.error('Failed to disconnect:', error)
+      logger.error('Failed to disconnect:', error)
       toast.error('Failed to disconnect')
     }
   }

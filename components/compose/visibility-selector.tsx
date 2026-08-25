@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { LockClosedIcon, GlobeAltIcon, EyeIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import type { PostVisibility } from '@/lib/store'
+import { Spinner } from '@/components/ui/spinner'
 
 interface VisibilitySelectorProps {
   visibility: PostVisibility
@@ -17,7 +18,6 @@ interface VisibilitySelectorProps {
 }
 
 const TEASER_LIMIT = 280
-const PRIVATE_CONTENT_LIMIT = 500
 
 interface VisibilityOption {
   value: PostVisibility
@@ -81,27 +81,32 @@ export function VisibilitySelector({
     setIsExpanded(false)
   }
 
-  // Close dropdown when clicking outside
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown when clicking outside (uses capture phase to work with stopPropagation)
   useEffect(() => {
-    const handleClickOutside = () => setIsExpanded(false)
-    if (isExpanded) {
-      document.addEventListener('click', handleClickOutside)
-      return () => document.removeEventListener('click', handleClickOutside)
+    if (!isExpanded) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsExpanded(false)
+      }
     }
+    document.addEventListener('click', handleClickOutside, true)
+    return () => document.removeEventListener('click', handleClickOutside, true)
   }, [isExpanded])
 
   // Don't show if private feed is loading
   if (privateFeedLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-gray-400">
-        <div className="w-4 h-4 rounded-full border-2 border-gray-300 border-t-transparent animate-spin" />
+        <Spinner size="sm" className="h-4 w-4 border-gray-300" />
         <span>Loading...</span>
       </div>
     )
   }
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       {/* Main selector button */}
       <button
         data-testid="visibility-selector"
@@ -216,4 +221,4 @@ export function VisibilitySelector({
   )
 }
 
-export { TEASER_LIMIT, PRIVATE_CONTENT_LIMIT }
+export { TEASER_LIMIT }

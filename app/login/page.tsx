@@ -4,18 +4,21 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
 
 export default function LoginPage() {
   const router = useRouter()
   const { user } = useAuth()
   const { open, isOpen } = useLoginModal()
+  const keyExchangeOpen = useKeyExchangeModal((s) => s.isOpen)
 
   // Open the login modal when this page loads
+  // Skip if the key exchange modal is open (user switched to QR login)
   useEffect(() => {
-    if (!user && !isOpen) {
+    if (!user && !isOpen && !keyExchangeOpen) {
       open()
     }
-  }, [user, isOpen, open])
+  }, [user, isOpen, keyExchangeOpen, open])
 
   // Redirect if already logged in
   useEffect(() => {

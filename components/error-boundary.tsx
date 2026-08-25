@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import React from 'react'
 import { ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 
@@ -30,7 +31,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo)
+    logger.error('ErrorBoundary caught an error:', error, errorInfo)
     
     this.setState({
       error,
@@ -43,7 +44,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
     // Report to error tracking service in production
     if (process.env.NODE_ENV === 'production') {
       // TODO: Implement error reporting
-      console.error('Production error:', {
+      logger.error('Production error:', {
         error: error.message,
         stack: error.stack,
         componentStack: errorInfo.componentStack,

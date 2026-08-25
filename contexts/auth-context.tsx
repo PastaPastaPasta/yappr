@@ -1,8 +1,13 @@
 'use client'
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { logger } from '@/lib/logger'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
-import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
+import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
+import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
+import { useUsernameModal } from '@/hooks/use-username-modal'
 
 export interface AuthUser {
   identityId: string
@@ -20,13 +25,27 @@ export interface AuthUser {
 }
 
 interface AuthContextType {
+  controller: PlatformAuthController
   user: AuthUser | null
   isLoading: boolean
   isAuthRestoring: boolean
   error: string | null
-  login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean; rememberMe?: boolean }) => Promise<void>
-  loginWithPassword: (username: string, password: string, rememberMe?: boolean) => Promise<void>
-  logout: () => void
+  login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
+  loginWithPassword: (username: string, password: string) => Promise<void>
+  loginWithPasskey: (identityOrUsername?: string) => Promise<void>
+  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<void>
+  createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
+  createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
+  addPasskeyWrapper: (label?: string) => Promise<void>
+  addPasswordWrapper: (password: string, iterations: number) => Promise<void>
+  mergeSecretsIntoAuthVault: (identityId: string, partialSecrets: {
+    loginKey?: Uint8Array | string
+    authKeyWif?: string
+    encryptionKeyWif?: string
+    transferKeyWif?: string
+    source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
+  }) => Promise<void>
+  logout: () => Promise<void>
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
   refreshBalance: () => Promise<void>
@@ -34,495 +53,222 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// Helper to update a field in the saved session
-function updateSavedSession(updater: (sessionData: Record<string, unknown>) => void): void {
-  const savedSession = localStorage.getItem('yappr_session')
-  if (!savedSession) return
-
-  try {
-    const sessionData = JSON.parse(savedSession)
-    updater(sessionData)
-    localStorage.setItem('yappr_session', JSON.stringify(sessionData))
-  } catch (e) {
-    console.error('Failed to update session:', e)
-  }
-}
-
-// Helper to set DashPlatformClient identity
-async function setDashPlatformClientIdentity(identityId: string): Promise<void> {
-  try {
-    const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
-    const dashClient = getDashPlatformClient()
-    dashClient.setIdentity(identityId)
-  } catch (err) {
-    console.error('Failed to set DashPlatformClient identity:', err)
-  }
-}
-
-// Helper to initialize post-login background tasks (block data + DashPay contacts + private feed sync)
-function initializePostLoginTasks(identityId: string, delayMs: number): void {
-  // Initialize block data immediately (background)
-  import('@/lib/services/block-service').then(async ({ blockService }) => {
-    try {
-      await blockService.initializeBlockData(identityId)
-      console.log('Auth: Block data initialized')
-    } catch (err) {
-      console.error('Auth: Failed to initialize block data:', err)
-    }
-  })
-
-  // Sync private feed keys immediately (background) - PRD §5.4
-  // Guard against logout race: check session is still active before/after sync
-  import('@/lib/services/private-feed-follower-service').then(async ({ privateFeedFollowerService }) => {
-    const isSessionActive = () => {
-      const savedSession = localStorage.getItem('yappr_session')
-      if (!savedSession) return false
-      try {
-        const sessionData = JSON.parse(savedSession)
-        return sessionData.user?.identityId === identityId
-      } catch {
-        return false
-      }
-    }
-
-    // Check session before starting
-    if (!isSessionActive()) {
-      console.log('Auth: Skipping private feed sync - session no longer active')
-      return
-    }
-
-    try {
-      const result = await privateFeedFollowerService.syncFollowedFeeds()
-
-      // Check session after sync completes (results already stored by service)
-      if (!isSessionActive()) {
-        console.log('Auth: Private feed sync completed but session ended - clearing keys')
-        const { privateFeedKeyStore } = await import('@/lib/services/private-feed-key-store')
-        privateFeedKeyStore.clearAllKeys()
-        return
-      }
-
-      if (result.synced.length > 0 || result.failed.length > 0) {
-        console.log(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
-      }
-    } catch (err) {
-      console.error('Auth: Failed to sync private feed keys:', err)
-    }
-  })
-
-  // Check for DashPay contacts after delay
-  setTimeout(async () => {
-    try {
-      const { dashPayContactsService } = await import('@/lib/services/dashpay-contacts-service')
-      const result = await dashPayContactsService.getUnfollowedContacts(identityId)
-
-      if (result.contacts.length > 0) {
-        const { useDashPayContactsModal } = await import('@/hooks/use-dashpay-contacts-modal')
-        useDashPayContactsModal.getState().open()
-      }
-    } catch (err) {
-      console.error('Auth: Failed to check Dash Pay contacts:', err)
-    }
-  }, delayMs)
-}
-
-// Loading spinner shown during auth state transitions
 function AuthLoadingSpinner(): JSX.Element {
   return (
     <div className="flex items-center justify-center min-h-screen">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+      <Spinner size="md" />
     </div>
   )
 }
 
-/**
- * Attempt to derive encryption key and check if it matches the identity.
- * If it matches, stores the key and marks it as 'derived'.
- * Returns the derived key bytes if successful, null otherwise.
- *
- * @param identityId - The identity to derive key for
- * @param authPrivateKey - The authentication private key bytes
- * @param isSessionActive - Callback to check if session is still active for this identity
- */
-async function attemptEncryptionKeyDerivation(
-  identityId: string,
-  authPrivateKey: Uint8Array,
-  isSessionActive: () => boolean
-): Promise<Uint8Array | null> {
-  try {
-    const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } =
-      await import('@/lib/crypto/key-derivation')
-    const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
-    const { privateKeyToWif } = await import('@/lib/crypto/wif')
+function toExternalUser(user: PlatformAuthUser | null): AuthUser | null {
+  if (!user) return null
 
-    // Derive the encryption key
-    const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
-
-    // Check if it matches the identity's key
-    const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId, 1)
-
-    if (matches) {
-      // Check if session is still active before storing keys
-      // This prevents resurrecting keys after logout
-      if (!isSessionActive()) {
-        console.log('Auth: Session ended before key derivation completed, skipping storage')
-        return null
-      }
-
-      // Convert to WIF and store
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
-      const wif = privateKeyToWif(derivedKey, network, true)
-      storeEncryptionKey(identityId, wif)
-      storeEncryptionKeyType(identityId, 'derived')
-      console.log('Auth: Encryption key derived and stored')
-      return derivedKey
-    }
-
-    return null
-  } catch (error) {
-    console.error('Auth: Failed to derive encryption key:', error)
-    return null
+  return {
+    identityId: user.identityId,
+    balance: user.balance,
+    dpnsUsername: user.username,
+    publicKeys: user.publicKeys,
   }
 }
 
+function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'password'): Error {
+  const message = extractErrorMessage(error)
+  const normalized = message.toLowerCase()
+
+  if (isAlreadyExistsError(error)) {
+    if (methodLabel === 'passkey') {
+      return new Error('This passkey is already registered for this account on this site.')
+    }
+    return new Error('A password unlock method is already configured for this account.')
+  }
+
+  if (normalized.includes('unknown contract')) {
+    return new Error('The auth vault contract is still propagating across Dash Platform. Please try again in a moment.')
+  }
+
+  if (
+    normalized.includes('grpc error') ||
+    normalized.includes('transport error') ||
+    normalized.includes('missing response message')
+  ) {
+    return new Error(`Dash Platform could not save your ${methodLabel} unlock method right now. Please try again in a moment.`)
+  }
+
+  return error instanceof Error ? error : new Error(message)
+}
+
+function decodeBase64ToBytes(value: string): Uint8Array {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isAuthRestoring, setIsAuthRestoring] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
+  const [controllerState, setControllerState] = useState(() => controller.getState())
 
-  // Check for saved session on mount
+  useEffect(() => controller.subscribe(setControllerState), [controller])
+
   useEffect(() => {
-    async function restoreSession(): Promise<void> {
-      const savedSession = localStorage.getItem('yappr_session')
-      if (!savedSession) return
-
-      try {
-        const sessionData = JSON.parse(savedSession)
-        const savedUser = sessionData.user
-
-        // Set user immediately with cached data
-        setUser(savedUser)
-
-        // Set identity in DashPlatformClient for document operations
-        await setDashPlatformClientIdentity(savedUser.identityId)
-        console.log('Auth: DashPlatformClient identity restored from session')
-
-        // If user doesn't have DPNS username, fetch it in background
-        if (savedUser && !savedUser.dpnsUsername) {
-          console.log('Auth: Fetching DPNS username in background...')
-          import('@/lib/services/dpns-service').then(async ({ dpnsService }) => {
-            try {
-              const dpnsUsername = await dpnsService.resolveUsername(savedUser.identityId)
-              if (dpnsUsername) {
-                console.log('Auth: Found DPNS username:', dpnsUsername)
-                setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
-                updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = dpnsUsername })
-              }
-            } catch (e) {
-              console.error('Auth: Background DPNS fetch failed:', e)
-            }
-          })
-        }
-
-        // Initialize background tasks (block data + DashPay contacts)
-        initializePostLoginTasks(savedUser.identityId, 3000)
-      } catch (e) {
-        console.error('Failed to restore session:', e)
-        localStorage.removeItem('yappr_session')
-      }
-    }
-
-    restoreSession().finally(() => {
-      setIsAuthRestoring(false)
+    controller.restoreSession().catch((error) => {
+      logger.error('Auth: Failed to restore session:', error)
     })
-  }, [])
 
-  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean; rememberMe?: boolean } = {}) => {
-    const { skipUsernameCheck = false, rememberMe = false } = options
-    setIsLoading(true)
-    setError(null)
+    return () => {
+      controller.dispose()
+    }
+  }, [controller])
 
-    try {
-      // Validate inputs
-      if (!identityId || !privateKey) {
-        throw new Error('Identity ID and private key are required')
-      }
-
-      // Use the EvoSDK services
-      const { identityService } = await import('@/lib/services/identity-service')
-      const { evoSdkService } = await import('@/lib/services/evo-sdk-service')
-
-      // Initialize SDK if needed
-      await evoSdkService.initialize({
-        network: (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet',
-        contractId: YAPPR_CONTRACT_ID
-      })
-
-      console.log('Fetching identity with EvoSDK...')
-      const identityData = await identityService.getIdentity(identityId)
-
-      if (!identityData) {
-        throw new Error('Identity not found')
-      }
-
-      // Check for DPNS username
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const dpnsUsername = await dpnsService.resolveUsername(identityData.id)
-
-      const authUser: AuthUser = {
-        identityId: identityData.id,
-        balance: identityData.balance,
-        dpnsUsername: dpnsUsername || undefined,
-        publicKeys: identityData.publicKeys
-      }
-
-      // Save session (note: private key is not saved, only used for login)
-      // Convert any BigInt values to numbers for JSON serialization
-      const sessionData = {
-        user: {
-          ...authUser,
-          balance: typeof authUser.balance === 'bigint' ? Number(authUser.balance) : authUser.balance
-        },
-        timestamp: Date.now()
-      }
-      localStorage.setItem('yappr_session', JSON.stringify(sessionData))
-
-      // Set storage mode based on "remember me" choice
-      // - rememberMe=true: localStorage (shared across tabs, persists)
-      // - rememberMe=false: sessionStorage (single tab, cleared on close)
-      const { storePrivateKey, setRememberMe, hasEncryptionKey } = await import('@/lib/secure-storage')
-      setRememberMe(rememberMe)
-      storePrivateKey(identityId, privateKey)
-
-      setUser(authUser)
-
-      // Set identity in DashPlatformClient for document operations
-      await setDashPlatformClientIdentity(identityId)
-
-      // Attempt key derivation for encryption key (background, non-blocking)
-      // This auto-derives and stores the encryption key if it matches identity
-      // Use fire-and-forget IIFE so this doesn't block login
-      // Capture identityId to check session is still active when derivation completes
-      const loginIdentityId = identityId
-      ;(async () => {
-        try {
-          const { parsePrivateKey } = await import('@/lib/crypto/wif')
-          const { privateKey: authPrivateKeyBytes } = parsePrivateKey(privateKey)
-
-          // Check if identity has encryption key (purpose=1)
-          const hasEncryptionKeyOnIdentity = authUser.publicKeys.some(
-            (key) => key.purpose === 1 && key.type === 0
-          )
-
-          if (hasEncryptionKeyOnIdentity && !hasEncryptionKey(identityId)) {
-            // Try to derive encryption key
-            // Pass session check callback to prevent storing keys after logout
-            console.log('Auth: Attempting encryption key derivation...')
-            const isSessionActive = () => {
-              const savedSession = localStorage.getItem('yappr_session')
-              if (!savedSession) return false
-              try {
-                const sessionData = JSON.parse(savedSession)
-                return sessionData.user?.identityId === loginIdentityId
-              } catch {
-                return false
-              }
-            }
-            const derivedEncKey = await attemptEncryptionKeyDerivation(identityId, authPrivateKeyBytes, isSessionActive)
-
-            if (!derivedEncKey) {
-              // Derivation didn't match - user has external key, will need to enter it manually
-              console.log('Auth: Encryption key derivation failed - external key exists on identity')
-              // Note: The encryption-key-modal will handle prompting for manual entry
-            }
-          }
-        } catch (err) {
-          console.warn('Encryption key derivation failed (non-fatal):', err)
-        }
-      })()
-
-      // First check if user has DPNS username (unless skipped)
-      console.log('Checking for DPNS username...')
-      if (!authUser.dpnsUsername && !skipUsernameCheck) {
-        console.log('No DPNS username found, opening username modal...')
-        // Import and use the username modal store
-        const { useUsernameModal } = await import('@/hooks/use-username-modal')
-        useUsernameModal.getState().open(identityId)
+  const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
+    switch (intent.kind) {
+      case 'username-required':
+        useUsernameModal.getState().open(intent.identityId)
         return
-      }
-      
-      // Then check if user has a profile (check new unified profile first, then old)
-      console.log('Checking for user profile...')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-      const { profileService } = await import('@/lib/services/profile-service')
-      let profile = await unifiedProfileService.getProfile(identityId, authUser.dpnsUsername)
-      if (!profile) {
-        // Fall back to old profile service
-        profile = await profileService.getProfile(identityId, authUser.dpnsUsername)
-      }
-      
-      if (profile) {
-        console.log('Profile found, redirecting to home...')
-        router.push('/')
-
-        // Initialize background tasks (block data + DashPay contacts)
-        initializePostLoginTasks(authUser.identityId, 2000)
-      } else {
-        console.log('No profile found, redirecting to profile creation...')
+      case 'profile-required':
         router.push('/profile/create')
-      }
-    } catch (err) {
-      console.error('Login error:', err)
-      setError(err instanceof Error ? err.message : 'Failed to login')
-      throw err
-    } finally {
-      setIsLoading(false)
+        return
+      case 'ready':
+        router.push('/feed')
+        return
+      case 'logged-out':
+        router.push('/login')
+        return
     }
   }, [router])
 
-  const logout = useCallback(async () => {
-    localStorage.removeItem('yappr_session')
-    sessionStorage.removeItem('yappr_dpns_username')
-    sessionStorage.removeItem('yappr_skip_dpns')
-    sessionStorage.removeItem('yappr_backup_prompt_shown')
+  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
+    const result = await controller.loginWithAuthKey(identityId, privateKey, options)
+    await applyIntent(result.intent)
+  }, [applyIntent, controller])
 
-    // Clear private key, encryption key, transfer key, and caches
-    if (user?.identityId) {
-      const {
-        clearPrivateKey,
-        clearEncryptionKey,
-        clearEncryptionKeyType,
-        clearTransferKey,
-      } = await import('@/lib/secure-storage')
-      clearPrivateKey(user.identityId)
-      clearEncryptionKey(user.identityId)
-      clearEncryptionKeyType(user.identityId)
-      clearTransferKey(user.identityId)
+  const loginWithPassword = useCallback(async (username: string, password: string) => {
+    const result = await controller.loginWithPassword(username, password)
+    await applyIntent(result.intent)
+  }, [applyIntent, controller])
 
-      const { invalidateBlockCache } = await import('@/lib/caches/block-cache')
-      invalidateBlockCache(user.identityId)
+  const loginWithPasskey = useCallback(async (identityOrUsername?: string) => {
+    const result = await controller.loginWithPasskey(identityOrUsername)
+    await applyIntent(result.intent)
+  }, [applyIntent, controller])
 
-      // Clear all private feed keys (both owner keys and followed feed keys)
-      const { privateFeedKeyStore } = await import('@/lib/services/private-feed-key-store')
-      privateFeedKeyStore.clearAllKeys()
-    }
+  const loginWithKeyExchange = useCallback(async (identityId: string, loginKey: Uint8Array, keyIndex: number) => {
+    const result = await controller.loginWithLoginKey(identityId, loginKey, keyIndex)
+    await applyIntent(result.intent)
+  }, [applyIntent, controller])
 
-    setUser(null)
+  const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
+    await controller.createOrUpdateVaultFromLoginKey(identityId, loginKey)
+  }, [controller])
 
-    // Clear DashPlatformClient identity
-    setDashPlatformClientIdentity('')
+  const createOrUpdateUnifiedVaultFromAuthKey = useCallback(async (identityId: string, authKeyWif: string) => {
+    await controller.createOrUpdateVaultFromAuthKey(identityId, authKeyWif)
+  }, [controller])
 
-    router.push('/login')
-  }, [router, user?.identityId])
+  const mergeSecretsIntoAuthVault = useCallback(async (
+    identityId: string,
+    partialSecrets: {
+      loginKey?: Uint8Array | string
+      authKeyWif?: string
+      encryptionKeyWif?: string
+      transferKeyWif?: string
+      source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
+    },
+  ) => {
+    await controller.mergeSecretsIntoVault(identityId, {
+      loginKey: partialSecrets.loginKey
+        ? partialSecrets.loginKey instanceof Uint8Array
+          ? partialSecrets.loginKey
+          : decodeBase64ToBytes(partialSecrets.loginKey)
+        : undefined,
+      authKeyWif: partialSecrets.authKeyWif,
+      encryptionKeyWif: partialSecrets.encryptionKeyWif,
+      transferKeyWif: partialSecrets.transferKeyWif,
+      source: partialSecrets.source,
+    })
+  }, [controller])
 
-  const loginWithPassword = useCallback(async (username: string, password: string, rememberMe = false) => {
-    setIsLoading(true)
-    setError(null)
-
+  const addPasswordWrapper = useCallback(async (password: string, iterations: number) => {
     try {
-      // Use the encrypted key service to decrypt credentials
-      const { encryptedKeyService } = await import('@/lib/services/encrypted-key-service')
-
-      if (!encryptedKeyService.isConfigured()) {
-        throw new Error('Password login is not yet configured')
-      }
-
-      // Decrypt credentials from backup
-      const result = await encryptedKeyService.loginWithPassword(username, password)
-
-      // Continue with normal login flow using decrypted credentials
-      // Skip username check since we know they have one (they logged in with it)
-      await login(result.identityId, result.privateKey, { skipUsernameCheck: true, rememberMe })
-    } catch (err) {
-      console.error('Password login error:', err)
-      setError(err instanceof Error ? err.message : 'Failed to login with password')
-      throw err
-    } finally {
-      setIsLoading(false)
+      await controller.addPasswordAccess(password, iterations)
+    } catch (error) {
+      throw toFriendlyVaultWriteError(error, 'password')
     }
-  }, [login])
+  }, [controller])
+
+  const addPasskeyWrapper = useCallback(async (label = 'Current device') => {
+    try {
+      await controller.addPasskeyAccess(label)
+    } catch (error) {
+      throw toFriendlyVaultWriteError(error, 'passkey')
+    }
+  }, [controller])
+
+  const logout = useCallback(async () => {
+    const result = await controller.logout()
+    await applyIntent(result.intent)
+  }, [applyIntent, controller])
 
   const updateDPNSUsername = useCallback((username: string) => {
-    if (!user) return
+    controller.setUsername(username).catch((error) => {
+      logger.error('Failed to update DPNS username:', error)
+    })
+  }, [controller])
 
-    setUser({ ...user, dpnsUsername: username })
-    updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = username })
-  }, [user])
-
-  // Refresh DPNS usernames from the network (fetches primary username)
   const refreshDpnsUsernames = useCallback(async () => {
-    const identityId = user?.identityId
-    if (!identityId) return
+    await controller.refreshUsername()
+  }, [controller])
 
-    try {
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      dpnsService.clearCache(undefined, identityId)
-      const dpnsUsername = await dpnsService.resolveUsername(identityId)
-
-      if (dpnsUsername && dpnsUsername !== user.dpnsUsername) {
-        setUser(prev => prev ? { ...prev, dpnsUsername } : prev)
-        updateSavedSession(data => { (data.user as Record<string, unknown>).dpnsUsername = dpnsUsername })
-      }
-    } catch (error) {
-      console.error('Failed to refresh DPNS usernames:', error)
-    }
-  }, [user?.identityId, user?.dpnsUsername])
-
-  // Refresh balance from the network (clears cache first)
   const refreshBalance = useCallback(async () => {
-    const identityId = user?.identityId
-    if (!identityId) return
+    await controller.refreshBalance()
+  }, [controller])
 
-    try {
-      const { identityService } = await import('@/lib/services/identity-service')
-      identityService.clearCache(identityId)
-      const balance = await identityService.getBalance(identityId)
-
-      setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
-      updateSavedSession(data => { (data.user as Record<string, unknown>).balance = balance.confirmed })
-    } catch (error) {
-      console.error('Failed to refresh balance:', error)
-    }
-  }, [user?.identityId])
-
-  // Periodic balance refresh (every 5 minutes when user is logged in)
-  useEffect(() => {
-    const identityId = user?.identityId
-    if (!identityId) return
-
-    const FIVE_MINUTES = 300000
-
-    const interval = setInterval(async () => {
-      try {
-        const { identityService } = await import('@/lib/services/identity-service')
-        identityService.clearCache(identityId)
-        const balance = await identityService.getBalance(identityId)
-        setUser(prev => prev ? { ...prev, balance: balance.confirmed } : prev)
-        updateSavedSession(data => { (data.user as Record<string, unknown>).balance = balance.confirmed })
-      } catch (error) {
-        console.error('Failed to refresh balance:', error)
-      }
-    }, FIVE_MINUTES)
-
-    return () => clearInterval(interval)
-  }, [user?.identityId])
+  const value = useMemo<AuthContextType>(() => ({
+    controller,
+    user: toExternalUser(controllerState.user),
+    isLoading: controllerState.isLoading,
+    isAuthRestoring: controllerState.isAuthRestoring,
+    error: controllerState.error,
+    login,
+    loginWithPassword,
+    loginWithPasskey,
+    loginWithKeyExchange,
+    createOrUpdateUnifiedVaultFromLoginKey,
+    createOrUpdateUnifiedVaultFromAuthKey,
+    addPasskeyWrapper,
+    addPasswordWrapper,
+    mergeSecretsIntoAuthVault,
+    logout,
+    updateDPNSUsername,
+    refreshDpnsUsernames,
+    refreshBalance,
+  }), [
+    addPasskeyWrapper,
+    addPasswordWrapper,
+    controller,
+    controllerState.error,
+    controllerState.isAuthRestoring,
+    controllerState.isLoading,
+    controllerState.user,
+    createOrUpdateUnifiedVaultFromAuthKey,
+    createOrUpdateUnifiedVaultFromLoginKey,
+    login,
+    loginWithKeyExchange,
+    loginWithPasskey,
+    loginWithPassword,
+    logout,
+    mergeSecretsIntoAuthVault,
+    refreshBalance,
+    refreshDpnsUsernames,
+    updateDPNSUsername,
+  ])
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      isLoading,
-      isAuthRestoring,
-      error,
-      login,
-      loginWithPassword,
-      logout,
-      updateDPNSUsername,
-      refreshDpnsUsernames,
-      refreshBalance
-    }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
@@ -536,13 +282,12 @@ export function useAuth() {
   return context
 }
 
-// HOC for protecting routes
 export function withAuth<P extends object>(
   Component: React.ComponentType<P>,
   options?: {
     allowWithoutProfile?: boolean
     allowWithoutDPNS?: boolean
-    optional?: boolean  // Allow access without authentication
+    optional?: boolean
   }
 ): React.ComponentType<P> {
   function AuthenticatedComponent(props: P): JSX.Element {
@@ -554,40 +299,29 @@ export function withAuth<P extends object>(
     const needsDPNS = !options?.allowWithoutDPNS && user && !user.dpnsUsername && !skipDPNS
 
     useEffect(() => {
-      // Wait for session restoration to complete before checking auth
       if (isAuthRestoring) return
 
-      console.log('withAuth check - user:', user)
-
-      // Handle missing user
       if (!user) {
         if (options?.optional) {
-          console.log('No user found, but auth is optional - continuing...')
           return
         }
-        console.log('No user found, redirecting to login...')
         router.push('/login')
         return
       }
 
-      // Handle missing DPNS username
       if (needsDPNS) {
-        console.log('No DPNS username found, redirecting to DPNS registration...')
         router.push('/dpns/register')
       }
-    }, [user, isAuthRestoring, router, needsDPNS])
+    }, [user, isAuthRestoring, router, needsDPNS, options?.optional])
 
-    // Show loading while restoring auth
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />
     }
 
-    // Optional auth: render regardless of user state
     if (options?.optional) {
       return <Component {...props} />
     }
 
-    // Required auth: show loading while redirecting
     if (!user || needsDPNS) {
       return <AuthLoadingSpinner />
     }

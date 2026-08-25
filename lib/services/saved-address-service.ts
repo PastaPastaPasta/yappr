@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Saved Address Service
  *
@@ -10,6 +11,7 @@ import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import { identityService } from './identity-service';
+import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { toUint8Array } from './sdk-helpers';
 import type {
   SavedAddress,
@@ -17,7 +19,7 @@ import type {
   SavedAddressDocument,
   ShippingAddress,
   BuyerContact
-} from '../types';
+} from '../../types';
 
 // AAD context for address encryption
 const AAD_SHIPPING = 'yappr/shipping/v1';
@@ -102,9 +104,7 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
     if (!identity) return null;
 
     // Find encryption key (purpose=1, type=0 ECDSA_SECP256K1, not disabled)
-    const encryptionKey = identity.publicKeys.find(
-      (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-    );
+    const encryptionKey = findEncryptionKey(identity.publicKeys);
 
     if (!encryptionKey?.data) return null;
     return normalizeKeyData(encryptionKey.data);
@@ -135,12 +135,12 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
 
       // Validate version
       if (payload.version !== PAYLOAD_VERSION) {
-        console.warn(`Unknown saved address payload version: ${payload.version}`);
+        logger.warn(`Unknown saved address payload version: ${payload.version}`);
       }
 
       return payload.addresses || [];
     } catch (error) {
-      console.error('Failed to decrypt saved addresses:', error);
+      logger.error('Failed to decrypt saved addresses:', error);
       throw new Error('Failed to decrypt saved addresses. Your encryption key may have changed.');
     }
   }
@@ -174,12 +174,12 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
     if (existingDoc) {
       // Update existing document
       await this.update(existingDoc.id, userId, {
-        encryptedPayload: Array.from(encryptedPayload)
+        encryptedPayload
       });
     } else {
       // Create new document
       await this.create(userId, {
-        encryptedPayload: Array.from(encryptedPayload)
+        encryptedPayload
       });
     }
   }

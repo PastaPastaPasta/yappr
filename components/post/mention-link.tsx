@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
@@ -37,7 +38,7 @@ export function MentionLink({ username, displayText, isFailed, onFailedClick }: 
           setError(!id)
         }
       } catch (e) {
-        console.warn('Failed to resolve mention:', username, e)
+        logger.warn('Failed to resolve mention:', username, e)
         if (!cancelled) {
           setError(true)
         }
@@ -48,7 +49,7 @@ export function MentionLink({ username, displayText, isFailed, onFailedClick }: 
       }
     }
 
-    resolveUser().catch(err => console.error('Failed to resolve user:', err))
+    resolveUser().catch(err => logger.error('Failed to resolve user:', err))
     return () => { cancelled = true }
   }, [username])
 

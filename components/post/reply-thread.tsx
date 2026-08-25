@@ -70,7 +70,6 @@ export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }:
       <PostCard
         post={postLike}
         enrichment={getPostEnrichment?.(postLike)}
-        hideReplyTo
         rootPostOwnerId={mainPostAuthorId}
       />
 
@@ -110,7 +109,6 @@ function NestedReply({ thread, mainPostAuthorId, getPostEnrichment }: NestedRepl
       <PostCard
         post={postLike}
         enrichment={getPostEnrichment?.(postLike)}
-        hideReplyTo
         rootPostOwnerId={mainPostAuthorId}
       />
 

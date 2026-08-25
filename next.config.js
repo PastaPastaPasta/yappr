@@ -67,30 +67,11 @@ const nextConfig = {
       {
         source: '/:path*',
         headers: [
-          {
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: https: blob:",
-              "font-src 'self'",
-              "connect-src 'self' https: wss: https://44.240.98.102:1443",
-              "worker-src 'self' blob:",
-              "child-src 'self' blob:",
-              "frame-src 'self' blob: https://www.youtube-nocookie.com"
-            ].join('; ')
-          },
+          // CSP is set via <meta> tag in app/layout.tsx so it works in static exports.
           // CRITICAL: These headers are required for WASM to work
           // Using 'credentialless' instead of 'require-corp' to allow cross-origin images
-          {
-            key: 'Cross-Origin-Embedder-Policy',
-            value: 'credentialless'
-          },
-          {
-            key: 'Cross-Origin-Opener-Policy', 
-            value: 'same-origin'
-          }
+          { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
         ]
       }
     ]

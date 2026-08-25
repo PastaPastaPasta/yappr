@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Store Order Service
  *
@@ -7,7 +8,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes, toUint8Array } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes, toUint8Array } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
   StoreOrder,
@@ -17,7 +18,7 @@ import type {
   ShippingAddress,
   BuyerContact,
   OrderItem
-} from '../types';
+} from '../../types';
 
 class StoreOrderService extends BaseDocumentService<StoreOrder> {
   constructor() {
@@ -113,10 +114,10 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     }
   ): Promise<StoreOrder> {
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(data.storeId),
-      sellerId: stringToIdentifierBytes(data.sellerId),
-      encryptedPayload: Array.from(data.encryptedPayload),
-      nonce: Array.from(data.nonce)
+      storeId: identifierStringToDocumentBytes(data.storeId),
+      sellerId: identifierStringToDocumentBytes(data.sellerId),
+      encryptedPayload: data.encryptedPayload,
+      nonce: data.nonce
     };
 
     return this.create(buyerId, documentData);
@@ -127,7 +128,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
    */
   buildOrderPayload(
     cartItems: CartItem[],
-    shippingAddress: ShippingAddress,
+    shippingAddress: ShippingAddress | undefined,
     buyerContact: BuyerContact,
     shippingCost: number,
     paymentUri: string,
@@ -258,7 +259,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       } catch (e) {
         // Old order with random ephemeral key - buyer can't decrypt
         // Fall through to plain JSON fallback
-        console.warn('Buyer decryption failed (may be old order):', e);
+        logger.warn('Buyer decryption failed (may be old order):', e);
       }
     } else {
       // Seller: Standard ECIES decryption
@@ -271,7 +272,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
 
         return JSON.parse(decoder.decode(decryptedBytes)) as OrderPayload;
       } catch (e) {
-        console.warn('ECIES decryption failed:', e);
+        logger.warn('ECIES decryption failed:', e);
       }
     }
 

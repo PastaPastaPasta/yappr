@@ -1,11 +1,13 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
@@ -28,7 +30,7 @@ type KeySource = 'prefilled' | 'manual' | null
 
 export function TipModal() {
   const { isOpen, post, recipient, close } = useTipModal()
-  const { user, refreshBalance } = useAuth()
+  const { user, refreshBalance, mergeSecretsIntoAuthVault } = useAuth()
 
   // Derive recipient info from either post.author or direct recipient
   const recipientInfo = useMemo(() => {
@@ -200,7 +202,7 @@ export function TipModal() {
         .then(b => setBalance(b.confirmed))
         .catch(() => {})
       // Update global balance in auth context (persists to localStorage)
-      refreshBalance().catch(err => console.error('Failed to refresh balance:', err))
+      refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
 
       // If key was manually entered and not already saved, offer to save
       if (keySource === 'manual' && usedTransferKeyRef.current && !hasTransferKey(user.identityId)) {
@@ -228,17 +230,29 @@ export function TipModal() {
   }
 
   // Handle saving the transfer key for future use
-  const handleSaveKey = () => {
+  const handleSaveKey = async () => {
     if (!user || !usedTransferKeyRef.current) {
       setState('success')
       return
     }
 
-    // Store the key locally and go to success
+    let normalizedTransferKey: string | null = null
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
+      normalizedTransferKey = getTransferKey(user.identityId)
     } catch (err) {
-      console.error('Failed to store transfer key:', err)
+      logger.error('Failed to store transfer key:', err)
+      setError('Failed to save transfer key')
+      setState('error')
+      return
+    }
+
+    if (normalizedTransferKey) {
+      try {
+        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
+      } catch (err) {
+        logger.error('Failed to merge transfer key into auth vault:', err)
+      }
     }
     usedTransferKeyRef.current = null
     setState('success')
@@ -543,7 +557,7 @@ export function TipModal() {
                 {/* Processing State */}
                 {state === 'processing' && (
                   <div className="py-8 text-center space-y-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-amber-500 border-t-transparent mx-auto" />
+                    <Spinner size="lg" className="mx-auto border-amber-500" />
                     <p className="text-gray-600 dark:text-gray-400">Sending tip...</p>
                     <p className="text-xs text-gray-500">Please wait, this may take a moment.</p>
                   </div>

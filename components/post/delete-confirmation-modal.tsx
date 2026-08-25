@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -17,7 +18,7 @@ export function DeleteConfirmationModal() {
       await onConfirm()
       close()
     } catch (error) {
-      console.error('Delete failed:', error)
+      logger.error('Delete failed:', error)
       setDeleting(false)
     }
   }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -13,6 +14,7 @@ import ErrorBoundary from '@/components/error-boundary'
 import { followService, dpnsService, unifiedProfileService, likeService, repostService, postService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -31,6 +33,42 @@ interface EngagementUser {
   // For quotes tab
   quoteContent?: string
   quotePostId?: string
+}
+
+/**
+ * Batch resolve user data for a list of owner IDs.
+ * Returns engagement user objects with DPNS names, profiles, and follow status.
+ */
+async function resolveEngagementUsers(
+  ownerIds: string[],
+  currentUserId: string | undefined
+): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile' | 'isFollowing'>[]> {
+  const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
+    dpnsService.resolveUsernamesBatch(ownerIds),
+    unifiedProfileService.getProfilesByIdentityIds(ownerIds),
+    currentUserId
+      ? followService.getFollowStatusBatch(ownerIds, currentUserId)
+      : Promise.resolve(new Map<string, boolean>())
+  ])
+
+  const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+
+  return ownerIds.map((id) => {
+    const username = dpnsNamesMap.get(id) || null
+    const profile = profileMap.get(id)
+    const profileData = (profile as any)?.data || profile
+    const profileDisplayName = profileData?.displayName
+
+    return {
+      id,
+      username: username || id.slice(-8),
+      displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
+      bio: profileData?.bio,
+      hasDpnsName: !!username,
+      hasProfile: !!profileDisplayName,
+      isFollowing: followStatus.get(id) || false
+    }
+  })
 }
 
 function EngagementsPageContent() {
@@ -67,37 +105,10 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = ownerIds.map((id) => {
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false
-        }
-      })
-
+      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
-      console.error('Failed to load likes:', error)
+      logger.error('Failed to load likes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load likes')
     } finally {
       setLoading(false)
@@ -121,37 +132,10 @@ function EngagementsPageContent() {
         return
       }
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
-
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = ownerIds.map((id) => {
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false
-        }
-      })
-
+      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
       setData(users)
     } catch (error) {
-      console.error('Failed to load reposts:', error)
+      logger.error('Failed to load reposts:', error)
       setError(error instanceof Error ? error.message : 'Failed to load reposts')
     } finally {
       setLoading(false)
@@ -175,41 +159,28 @@ function EngagementsPageContent() {
       }
 
       const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
+      const baseUsers = await resolveEngagementUsers(ownerIds, user?.identityId)
 
-      // Batch fetch user data using efficient batch resolution
-      const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds),
-        user?.identityId
-          ? followService.getFollowStatusBatch(ownerIds, user.identityId)
-          : Promise.resolve(new Map<string, boolean>())
-      ])
+      // Create Map for O(1) lookups - avoids index mismatch when filter(Boolean) removes IDs
+      const baseUsersMap = new Map(baseUsers.map(u => [u.id, u]))
 
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
-
-      const users: EngagementUser[] = quotePosts.map((post) => {
-        const id = post.author.id
-        const username = dpnsNamesMap.get(id) || null
-        const profile = profileMap.get(id)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
-
-        return {
-          id,
-          username: username || id.slice(-8),
-          displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-          bio: profileData?.bio,
-          hasDpnsName: !!username,
-          hasProfile: !!profileDisplayName,
-          isFollowing: followStatus.get(id) || false,
-          quoteContent: post.content,
-          quotePostId: post.id
-        }
-      })
+      // Add quote-specific fields by joining with quotePosts data using ID-based lookup
+      const users: EngagementUser[] = quotePosts.map((post) => ({
+        ...(baseUsersMap.get(post.author.id) || {
+          id: post.author.id,
+          username: post.author.id?.slice(-8) || 'unknown',
+          displayName: 'User ' + (post.author.id?.slice(-8) || 'unknown'),
+          hasDpnsName: false,
+          hasProfile: false,
+          isFollowing: false
+        }),
+        quoteContent: post.content,
+        quotePostId: post.id
+      }))
 
       setData(users)
     } catch (error) {
-      console.error('Failed to load quotes:', error)
+      logger.error('Failed to load quotes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load quotes')
     } finally {
       setLoading(false)
@@ -223,17 +194,17 @@ function EngagementsPageContent() {
     switch (activeTab) {
       case 'likes':
         if (likesState.data === null) {
-          loadLikes().catch(err => console.error('Failed to load likes:', err))
+          loadLikes().catch(err => logger.error('Failed to load likes:', err))
         }
         break
       case 'reposts':
         if (repostsState.data === null) {
-          loadReposts().catch(err => console.error('Failed to load reposts:', err))
+          loadReposts().catch(err => logger.error('Failed to load reposts:', err))
         }
         break
       case 'quotes':
         if (quotesState.data === null) {
-          loadQuotes().catch(err => console.error('Failed to load quotes:', err))
+          loadQuotes().catch(err => logger.error('Failed to load quotes:', err))
         }
         break
     }
@@ -261,7 +232,7 @@ function EngagementsPageContent() {
         toast.error('Failed to follow user')
       }
     } catch (error) {
-      console.error('Error following user:', error)
+      logger.error('Error following user:', error)
       toast.error('Failed to follow user')
     } finally {
       setActionInProgress(prev => {
@@ -293,7 +264,7 @@ function EngagementsPageContent() {
         toast.error('Failed to unfollow user')
       }
     } catch (error) {
-      console.error('Error unfollowing user:', error)
+      logger.error('Error unfollowing user:', error)
       toast.error('Failed to unfollow user')
     } finally {
       setActionInProgress(prev => {
@@ -439,7 +410,7 @@ function EngagementsPageContent() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        navigator.clipboard.writeText(engagement.id).catch(console.error)
+                                        navigator.clipboard.writeText(engagement.id).catch((error) => logger.error(error))
                                         toast.success('Identity ID copied')
                                       }}
                                       className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"
@@ -488,7 +459,7 @@ function EngagementsPageContent() {
                                 disabled={actionInProgress.has(engagement.id)}
                               >
                                 {actionInProgress.has(engagement.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                                  <Spinner size="sm" />
                                 ) : (
                                   'Following'
                                 )}
@@ -501,7 +472,7 @@ function EngagementsPageContent() {
                                 disabled={actionInProgress.has(engagement.id)}
                               >
                                 {actionInProgress.has(engagement.id) ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                  <Spinner size="sm" className="border-white" />
                                 ) : (
                                   'Follow'
                                 )}
@@ -528,7 +499,7 @@ function EngagementsPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yappr-500"></div>
+        <Spinner size="md" />
       </div>
     }>
       <EngagementsPageContent />

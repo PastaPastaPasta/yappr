@@ -1,11 +1,13 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, KeyboardEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
 import { dpnsService, unifiedProfileService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { Spinner } from '@/components/ui/spinner'
 
 // Minimum characters to trigger search (like DashPay)
 const MIN_SEARCH_LENGTH = 3
@@ -98,7 +100,7 @@ export function SearchInput() {
               try {
                 profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
               } catch (error) {
-                console.error('Failed to fetch profiles:', error)
+                logger.error('Failed to fetch profiles:', error)
               }
             }
 
@@ -142,7 +144,7 @@ export function SearchInput() {
           setSelectedIndex(0)
         }
       } catch (error) {
-        console.error('Search failed:', error)
+        logger.error('Search failed:', error)
         if (searchId === searchIdRef.current) {
           setResults([])
         }
@@ -246,7 +248,7 @@ export function SearchInput() {
           >
             {isSearching ? (
               <div className="p-3 flex items-center justify-center gap-2 text-gray-500">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500" />
+                <Spinner size="sm" />
                 <span className="text-sm">Searching...</span>
               </div>
             ) : results.length > 0 ? (

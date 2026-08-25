@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 /**
  * Pinata Credential Storage
  *
@@ -35,7 +36,7 @@ function set(key: string, value: unknown): void {
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify(value))
   } catch (e) {
-    console.error('PinataCredentialStorage: Failed to store value:', e)
+    logger.error('PinataCredentialStorage: Failed to store value:', e)
   }
 }
 
@@ -108,7 +109,7 @@ export function getPinataGateway(identityId: string): string | null {
  */
 export function hasPinataCredentials(identityId: string): boolean {
   const hasJwt = has(`jwt_${identityId}`)
-  console.log('[Pinata Storage] hasCredentials check:', { identityId, hasJwt })
+  logger.info('[Pinata Storage] hasCredentials check:', { identityId, hasJwt })
   return hasJwt
 }
 
@@ -130,7 +131,7 @@ export function getPinataCredentials(identityId: string): PinataCredentials | nu
  * Store all Pinata credentials for an identity
  */
 export function storePinataCredentials(identityId: string, credentials: PinataCredentials): void {
-  console.log('[Pinata Storage] Storing credentials for identity:', identityId)
+  logger.info('[Pinata Storage] Storing credentials for identity:', identityId)
   storePinataJwt(identityId, credentials.jwt)
   if (credentials.gateway) {
     storePinataGateway(identityId, credentials.gateway)
@@ -138,7 +139,7 @@ export function storePinataCredentials(identityId: string, credentials: PinataCr
     // Clear any previously stored gateway when new credentials don't include one
     remove(`gateway_${identityId}`)
   }
-  console.log('[Pinata Storage] Credentials stored successfully')
+  logger.info('[Pinata Storage] Credentials stored successfully')
 }
 
 /**

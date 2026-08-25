@@ -2,12 +2,14 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useImageUpload } from '@/hooks/use-image-upload'
+import { useFileDrop } from '@/hooks/use-file-drop'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
+import { validateHttpUrl } from '@/lib/utils'
 import { IpfsImage } from './ipfs-image'
-import { PhotoIcon, XMarkIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { useRouter } from 'next/navigation'
+import toast from 'react-hot-toast'
+import { PhotoIcon, XMarkIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
-import { Button } from './button'
-import Link from 'next/link'
 
 export interface ProfileImageUploadProps {
   /** Current ipfs:// or data: URL */
@@ -37,55 +39,43 @@ export function ProfileImageUpload({
   aspectRatio = 'square',
   maxSizeMB = 5,
   label = 'Upload Image',
-  placeholder = 'Click to upload',
+  placeholder = 'Click or drag to upload',
 }: ProfileImageUploadProps) {
+  const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { upload, isUploading, progress, error, isProviderConnected, checkProvider, clearError } = useImageUpload()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [urlInput, setUrlInput] = useState('')
+  const [showUrlInput, setShowUrlInput] = useState(false)
 
   const [imageLoading, setImageLoading] = useState(false)
 
-  // Check provider on mount
   useEffect(() => {
     checkProvider().catch(() => {
       // Silently handle - state will be updated
     })
   }, [checkProvider])
 
-  // Track when we have an IPFS URL to show (for loading state)
   useEffect(() => {
-    if (currentUrl && isIpfsProtocol(currentUrl)) {
-      setImageLoading(true)
-    } else {
-      setImageLoading(false)
-    }
+    setImageLoading(Boolean(currentUrl && isIpfsProtocol(currentUrl)))
   }, [currentUrl])
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    // Reset errors
+  const processFile = useCallback(async (file: File) => {
     setLocalError(null)
     clearError()
 
-    // Validate file type
     if (!file.type.startsWith('image/')) {
       setLocalError('Please select an image file')
-      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
-    // Validate file size
     const maxBytes = maxSizeMB * 1024 * 1024
     if (file.size > maxBytes) {
       setLocalError(`Image must be smaller than ${maxSizeMB}MB`)
-      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
-    // Create local preview
     const reader = new FileReader()
     reader.onload = () => {
       setPreviewUrl(reader.result as string)
@@ -94,20 +84,34 @@ export function ProfileImageUpload({
 
     try {
       const result = await upload(file)
-      // Return ipfs:// URL for storage (canonical format)
-      const ipfsUrl = `ipfs://${result.cid}`
-      onUpload(ipfsUrl)
-      setPreviewUrl(null) // Clear preview, will use the uploaded URL
-    } catch (err) {
-      // Error is already set in the hook
+      onUpload(`ipfs://${result.cid}`)
       setPreviewUrl(null)
+    } catch (err) {
+      setPreviewUrl(null)
+      const msg = err instanceof Error ? err.message : 'Image upload failed'
+      if (msg.toLowerCase().includes('provider')) {
+        toast.error('No storage provider connected. Set one up in Settings to upload images.')
+      } else {
+        toast.error(msg)
+      }
     }
+  }, [upload, maxSizeMB, onUpload, clearError])
 
-    // Reset file input
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    await processFile(file)
+
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
-  }, [upload, maxSizeMB, onUpload, clearError])
+  }, [processFile])
+
+  const { isDragging, dropZoneProps } = useFileDrop({
+    disabled: isUploading,
+    onDrop: processFile,
+  })
 
   const handleClear = useCallback(() => {
     setPreviewUrl(null)
@@ -118,41 +122,66 @@ export function ProfileImageUpload({
 
   const handleClick = useCallback(() => {
     if (isUploading) return
+    if (!isProviderConnected) {
+      toast.error('No storage provider connected. Set one up in Settings to upload images.', {
+        duration: 5000,
+      })
+      router.push('/settings')
+      return
+    }
     fileInputRef.current?.click()
-  }, [isUploading])
+  }, [isUploading, isProviderConnected, router])
+
+  const handleUrlSubmit = useCallback(() => {
+    const validated = validateHttpUrl(urlInput)
+    if (!validated) {
+      setLocalError('Please enter a valid http or https URL')
+      return
+    }
+    setLocalError(null)
+    clearError()
+    onUpload(validated)
+    setUrlInput('')
+    setShowUrlInput(false)
+  }, [urlInput, onUpload, clearError])
 
   const aspectClass = aspectRatio === 'square'
     ? 'aspect-square rounded-full'
     : 'aspect-[3/1] rounded-lg'
 
   const currentError = localError || error
+  const imageClass = `absolute inset-0 w-full h-full object-cover ${isUploading ? 'opacity-50' : ''}`
 
-  // Show provider connection prompt if not connected
-  if (!isProviderConnected) {
-    return (
-      <div className="space-y-2">
-        {label && (
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {label}
-          </label>
-        )}
-        <div
-          className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center cursor-default`}
-        >
-          <div className="text-center p-4">
-            <Cog6ToothIcon className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-              Connect a storage provider to upload images
-            </p>
-            <Link href="/settings">
-              <Button size="sm" variant="outline">
-                Go to Settings
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
-    )
+  function renderImage(): React.ReactNode {
+    if (previewUrl) {
+      // eslint-disable-next-line @next/next/no-img-element
+      return <img src={previewUrl} alt="Preview" className={imageClass} />
+    }
+
+    if (!currentUrl) return null
+
+    if (isIpfsProtocol(currentUrl)) {
+      return (
+        <>
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+              <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
+            </div>
+          )}
+          <IpfsImage
+            src={currentUrl}
+            alt="Preview"
+            className={imageClass}
+            onLoad={() => setImageLoading(false)}
+            onError={() => setImageLoading(false)}
+          />
+        </>
+      )
+    }
+
+    // Regular http(s) URL
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={currentUrl} alt="Preview" className={imageClass} />
   }
 
   return (
@@ -183,54 +212,19 @@ export function ProfileImageUpload({
             handleClick()
           }
         }}
-        className={`relative ${aspectClass} bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-yappr-500 dark:hover:border-yappr-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 transition-colors overflow-hidden ${
+        {...dropZoneProps}
+        className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed transition-colors overflow-hidden ${
+          isDragging
+            ? 'border-yappr-500 bg-yappr-500/10 dark:bg-yappr-500/10'
+            : 'border-gray-200 dark:border-gray-800 hover:border-yappr-500/60 dark:hover:border-yappr-500/40'
+        } focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
           isUploading ? 'cursor-wait' : 'cursor-pointer'
         }`}
       >
         {/* Current or preview image */}
         {(previewUrl || currentUrl) && (
           <>
-            {/* Use IpfsImage for IPFS URLs (handles gateway fallback), regular img for data URLs */}
-            {previewUrl ? (
-              // Preview from file input (data: URL)
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt="Preview"
-                className={`absolute inset-0 w-full h-full object-cover ${
-                  isUploading ? 'opacity-50' : ''
-                }`}
-              />
-            ) : currentUrl && isIpfsProtocol(currentUrl) ? (
-              // IPFS URL - use IpfsImage for gateway fallback
-              <>
-                {imageLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
-                    <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
-                  </div>
-                )}
-                <IpfsImage
-                  src={currentUrl}
-                  alt="Preview"
-                  className={`absolute inset-0 w-full h-full object-cover ${
-                    isUploading ? 'opacity-50' : ''
-                  }`}
-                  onLoad={() => setImageLoading(false)}
-                  onError={() => setImageLoading(false)}
-                />
-              </>
-            ) : currentUrl ? (
-              // Regular URL
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={currentUrl}
-                alt="Preview"
-                className={`absolute inset-0 w-full h-full object-cover ${
-                  isUploading ? 'opacity-50' : ''
-                }`}
-              />
-            ) : null}
-            {/* Clear button */}
+            {renderImage()}
             {!isUploading && onClear && !imageLoading && (
               <button
                 onClick={(e) => {
@@ -257,16 +251,58 @@ export function ProfileImageUpload({
         {/* Empty state */}
         {!previewUrl && !currentUrl && !isUploading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <PhotoIcon className="h-10 w-10 text-gray-400 mb-2" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {placeholder}
+            <PhotoIcon className={`h-10 w-10 mb-2 ${isDragging ? 'text-yappr-500' : 'text-gray-400'}`} />
+            <span className={`text-sm ${isDragging ? 'text-yappr-500' : 'text-gray-500 dark:text-gray-400'}`}>
+              {isDragging ? 'Drop image here' : isProviderConnected ? placeholder : 'Paste a URL below'}
             </span>
-            <span className="text-xs text-gray-400 mt-1">
-              Max {maxSizeMB}MB
-            </span>
+            {isProviderConnected && (
+              <span className="text-xs text-gray-400 mt-1">
+                Max {maxSizeMB}MB
+              </span>
+            )}
           </div>
         )}
       </div>
+
+      {/* URL paste toggle + input */}
+      {!currentUrl && !previewUrl && (
+        showUrlInput ? (
+          <div className="flex gap-1.5">
+            <input
+              type="url"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleUrlSubmit() } }}
+              placeholder="https://example.com/image.jpg"
+              className="h-7 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              onClick={handleUrlSubmit}
+              className="shrink-0 rounded bg-gray-800 px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowUrlInput(false); setUrlInput('') }}
+              className="shrink-0 rounded px-1 text-xs text-gray-500 hover:text-gray-300"
+            >
+              <XMarkIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowUrlInput(true)}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-400"
+          >
+            <LinkIcon className="h-3 w-3" />
+            Paste image URL
+          </button>
+        )
+      )}
 
       {/* Error message */}
       {currentError && (

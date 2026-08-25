@@ -1,8 +1,16 @@
+import { logger } from '@/lib/logger';
 /**
- * SDK helper utilities for working with the v3 EvoSDK
+ * SDK helper utilities for working with the v3 EvoSDK.
  *
- * The v3 SDK returns Map<Identifier, Document> from queries.
- * This helper converts that to a simple array of document data.
+ * Two Platform paths matter here:
+ * - Typed document writes (`new Document(...)`, `sdk.documents.replace(...)`) should receive
+ *   binary properties as `Uint8Array`.
+ * - Raw document queries (`sdk.documents.query(...)`) receive plain query JSON, so operand
+ *   shape depends on the contract field: identifier-like fields use their base58 string form,
+ *   while ordinary `byteArray: true` fields may need an explicit binary encoding.
+ *
+ * The v3 SDK returns `Map<Identifier, Document>` from queries. These helpers normalize that
+ * response shape into plain document objects and keep the write/query byte rules explicit.
  */
 
 import type { EvoSDK } from '@dashevo/evo-sdk';
@@ -16,11 +24,11 @@ import bs58 from 'bs58';
 export type { DocumentWhereClause, DocumentOrderByClause };
 
 /**
- * Convert any identifier value to a base58 string.
+ * Convert any identifier-like value to a base58 string.
  *
- * SDK v3 toJSON() returns different formats:
+ * Query results and `Document#toJSON()` can surface identifier bytes in different forms:
  * - System fields ($id, $ownerId): base58 strings
- * - Byte array fields (postId, replyToPostId, etc): base64 strings
+ * - Identifier-like document fields (postId, replyToPostId, etc): base64 strings or byte arrays
  *
  * This function normalizes both to base58 for consistent handling.
  */
@@ -72,8 +80,20 @@ export function identifierToBase58(value: unknown): string | null {
     return bs58.encode(new Uint8Array(value));
   }
 
-  // Identifier object from SDK (has toBuffer or bytes method)
-  const obj = value as { toBuffer?: () => Uint8Array; bytes?: Uint8Array; toJSON?: () => unknown };
+  // Identifier object from SDK
+  const obj = value as {
+    toBase58?: () => string;
+    toBytes?: () => Uint8Array;
+    toBuffer?: () => Uint8Array;
+    bytes?: Uint8Array;
+    toJSON?: () => unknown;
+  };
+  if (typeof obj.toBase58 === 'function') {
+    return obj.toBase58();
+  }
+  if (typeof obj.toBytes === 'function') {
+    return bs58.encode(obj.toBytes());
+  }
   if (typeof obj.toBuffer === 'function') {
     return bs58.encode(obj.toBuffer());
   }
@@ -84,6 +104,9 @@ export function identifierToBase58(value: unknown): string | null {
   // Try toJSON which might return bytes
   if (typeof obj.toJSON === 'function') {
     const json = obj.toJSON();
+    if (typeof json === 'string') {
+      return identifierToBase58(json);
+    }
     if (json instanceof Uint8Array) {
       return bs58.encode(json);
     }
@@ -96,8 +119,8 @@ export function identifierToBase58(value: unknown): string | null {
 }
 
 /**
- * Convert a base58 string to Uint8Array for SDK queries
- * Returns null if the value is invalid
+ * Decode a base58 identifier string into raw bytes.
+ * Returns null if the value is invalid.
  */
 export function base58ToBytes(value: string): Uint8Array | null {
   if (!value || typeof value !== 'string') return null;
@@ -109,8 +132,104 @@ export function base58ToBytes(value: string): Uint8Array | null {
 }
 
 /**
- * Convert an array of identifier strings to array of Uint8Array
- * For use in 'in' queries on system identifier fields ($id, $ownerId)
+ * Typed document write helper for required identifier-like fields.
+ *
+ * Use this when building `Document.properties` for create/update/replace paths.
+ */
+export function requireDocumentIdentifierBytes(id: string, fieldName: string): Uint8Array {
+  const bytes = base58ToBytes(id)
+  if (!bytes || bytes.length !== 32) {
+    throw new Error(`Invalid ${fieldName}: expected base58 identifier`)
+  }
+  return bytes
+}
+
+/**
+ * Backwards-compatible alias for older call sites.
+ * Prefer `requireDocumentIdentifierBytes` in new code so the typed-write intent stays obvious.
+ */
+export const requireIdentifierBytes = requireDocumentIdentifierBytes
+
+const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
+
+/**
+ * Convert a bigint to the JSON-safe value the rest of the app expects.
+ *
+ * `Document#toObject()` returns every Platform `integer` as a bigint, but Yappr treats these as
+ * plain numbers (prices, ratings, timestamps, counters). Mixing a bigint into ordinary arithmetic
+ * throws `TypeError: Cannot mix BigInt and other types`, so narrow to a number whenever the value
+ * fits and fall back to a decimal string when it does not.
+ */
+function bigintToJsonSafe(value: bigint): number | string {
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+}
+
+/**
+ * Recursively replace bigints in `toObject()` output with JSON-safe values.
+ *
+ * Only plain objects and arrays are traversed: `Uint8Array` byte fields and SDK class instances
+ * (Identifier and friends) are passed through untouched so binary handling stays as-is.
+ */
+function normalizeDocumentValue(value: unknown): unknown {
+  if (typeof value === 'bigint') {
+    return bigintToJsonSafe(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeDocumentValue);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, normalizeDocumentValue(nested)])
+    );
+  }
+
+  return value;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeDocumentField(field: string, value: unknown): unknown {
+  if (DOCUMENT_SYSTEM_IDENTIFIER_FIELDS.has(field)) {
+    return identifierToBase58(value) ?? value;
+  }
+
+  return normalizeDocumentValue(value);
+}
+
+/**
+ * Convert a WASM Document instance to the JSON-like shape Yappr expects from queries.
+ * `Document#toObject()` keeps binary fields as `Uint8Array` (unlike `toJSON()`, which stringifies
+ * them), so use it and normalize identifiers plus bigints here instead.
+ */
+export function documentToPlainObject(doc: unknown): Record<string, unknown> {
+  const document = doc as { toObject?: () => unknown };
+  const raw = (typeof document.toObject === 'function' ? document.toObject() : doc) as Record<string, unknown>;
+
+  if (!raw || typeof raw !== 'object') {
+    return raw;
+  }
+
+  return Object.fromEntries(
+    Object.entries(raw).map(([field, value]) => [
+      field,
+      normalizeDocumentField(field, value),
+    ])
+  );
+}
+
+/**
+ * Convert an array of identifier strings to raw bytes.
+ *
+ * This is for low-level binary handling only. Raw queries on system identifier fields usually
+ * pass the base58 strings directly (`$id`, `$ownerId`, or identifier-typed custom fields).
+ *
  * Handles base58, base64, and hex formats. Filters out invalid values.
  */
 export function base58ArrayToBytes(values: string[]): Uint8Array[] {
@@ -149,7 +268,7 @@ export function base58ArrayToBytes(values: string[]): Uint8Array[] {
       }
     }
 
-    console.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
+    logger.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
   }
   return result;
 }
@@ -205,6 +324,94 @@ export function toUint8Array(data: unknown): Uint8Array | null {
   return null;
 }
 
+/**
+ * Normalize bytes from SDK response to Uint8Array.
+ * Handles all common SDK byte formats: Uint8Array, number[] (JSON), base64 string, and hex string.
+ * Returns null on decode failure to prevent malformed data from being treated as valid.
+ *
+ * Used for normalizing encrypted content, nonces, and other byte array fields from SDK responses.
+ */
+export function normalizeBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (Array.isArray(value) && value.every(n => typeof n === 'number')) {
+    return new Uint8Array(value);
+  }
+  if (typeof value === 'string') {
+    // Try base64 decode first using SSR-compatible helper
+    try {
+      return base64ToBytes(value);
+    } catch {
+      // Not valid base64 - try hex
+      if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
+        const bytes = new Uint8Array(value.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+          bytes[i] = parseInt(value.substr(i * 2, 2), 16);
+        }
+        return bytes;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Get current user ID from localStorage session.
+ * Returns null if not in browser or no session exists.
+ */
+export function getCurrentUserId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const savedSession = localStorage.getItem('yappr_session');
+    if (savedSession) {
+      const sessionData = JSON.parse(savedSession);
+      return sessionData.user?.identityId || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * User type with hasDpns flag for display components.
+ * Imported from lib/types to avoid circular dependencies.
+ */
+export interface DefaultUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  bio: string;
+  followers: number;
+  following: number;
+  verified: boolean;
+  joinedAt: Date;
+  hasDpns: boolean;
+}
+
+/**
+ * Create a default user object when profile not found.
+ * Sets username to empty string and hasDpns to false so display components
+ * can properly show the identity ID instead of a fake username.
+ */
+export function createDefaultUser(userId: string | undefined): DefaultUser {
+  const id = userId || 'unknown';
+  return {
+    id,
+    username: '',
+    displayName: 'Unknown User',
+    avatar: '',
+    bio: '',
+    followers: 0,
+    following: 0,
+    verified: false,
+    joinedAt: new Date(),
+    hasDpns: false
+  };
+}
+
 export interface QueryDocumentsOptions {
   dataContractId: string;
   documentTypeName: string;
@@ -216,8 +423,10 @@ export interface QueryDocumentsOptions {
 }
 
 /**
- * Query documents and return as an array of plain objects
- * Handles the v3 SDK Map response format
+ * Query documents and return an array of plain objects.
+ *
+ * This is the raw `sdk.documents.query` path. It does not rewrite `where` operands; callers are
+ * responsible for supplying the contract-appropriate shape for each queried field.
  */
 export async function queryDocuments(
   sdk: EvoSDK,
@@ -260,11 +469,7 @@ export function mapToDocumentArray(
 
   for (const doc of values) {
     if (doc) {
-      // Document has a toJSON method that returns the plain object
-      const data = typeof (doc as { toJSON?: () => unknown }).toJSON === 'function'
-        ? (doc as { toJSON: () => unknown }).toJSON()
-        : doc;
-      documents.push(data as Record<string, unknown>);
+      documents.push(documentToPlainObject(doc));
     }
   }
 
@@ -284,32 +489,37 @@ export function normalizeSDKResponse(response: unknown): Record<string, unknown>
   if (response instanceof Map) {
     return Array.from(response.values())
       .filter(Boolean)
-      .map((doc: unknown) => {
-        const d = doc as { toJSON?: () => unknown };
-        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
-      });
+      .map(documentToPlainObject);
   }
 
   // Handle Array response
   if (Array.isArray(response)) {
-    return response as Record<string, unknown>[];
+    return response
+      .filter(Boolean)
+      .map(documentToPlainObject);
+  }
+
+  // Handle a single WASM Document response
+  const maybeDocument = response as { toObject?: () => unknown };
+  if (typeof maybeDocument.toObject === 'function') {
+    return [documentToPlainObject(response)];
   }
 
   // Handle object with documents property
   const obj = response as { documents?: unknown[]; toJSON?: () => unknown };
   if (obj.documents && Array.isArray(obj.documents)) {
-    return obj.documents as Record<string, unknown>[];
+    return obj.documents.map(documentToPlainObject);
   }
 
-  // Handle object with toJSON method
+  // Handle object with toJSON method for legacy response wrappers
   if (typeof obj.toJSON === 'function') {
     const json = obj.toJSON();
     if (Array.isArray(json)) {
-      return json as Record<string, unknown>[];
+      return json.map(documentToPlainObject);
     }
     const jsonObj = json as { documents?: unknown[] };
     if (jsonObj.documents && Array.isArray(jsonObj.documents)) {
-      return jsonObj.documents as Record<string, unknown>[];
+      return jsonObj.documents.map(documentToPlainObject);
     }
   }
 
@@ -317,17 +527,54 @@ export function normalizeSDKResponse(response: unknown): Record<string, unknown>
 }
 
 /**
- * Convert a base58 string to a byte array for SDK document fields.
- * Returns an Array<number> instead of Uint8Array because the SDK
- * serializes Uint8Array incorrectly.
+ * Convert a base58 identifier string into raw bytes for typed `Document.properties`.
+ *
+ * Use this for create/update flows that end up in `new Document(...)` or
+ * `sdk.documents.replace(...)`.
  */
-export function stringToIdentifierBytes(value: string): number[] {
-  return Array.from(bs58.decode(value));
+export function identifierStringToDocumentBytes(value: string): Uint8Array {
+  return bs58.decode(value);
+}
+
+/**
+ * Legacy helper for plain-object paths that still need JSON-serializable byte arrays.
+ *
+ * Prefer `identifierStringToDocumentBytes` for typed document writes.
+ */
+export function identifierStringToLegacyNumberArray(value: string): number[] {
+  return Array.from(identifierStringToDocumentBytes(value));
+}
+
+/**
+ * Encode raw bytes for ordinary `byteArray: true` query operands.
+ *
+ * Yappr uses base64 for these raw-query comparisons because `sdk.documents.query(...)` receives
+ * plain JSON, and ordinary byte-array fields commonly surface as base64 in `toJSON()` output.
+ * Identifier-like fields should stay in their base58 string form instead.
+ */
+export function bytesToBase64QueryOperand(value: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(value).toString('base64');
+  }
+
+  let binary = '';
+  for (let i = 0; i < value.length; i++) {
+    binary += String.fromCharCode(value[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Convert a base58 identifier string into the base64 operand used by raw queries on ordinary
+ * byte-array fields that store identifier bytes but are not modeled as identifier-typed fields.
+ */
+export function identifierStringToBase64QueryOperand(value: string): string {
+  return bytesToBase64QueryOperand(identifierStringToDocumentBytes(value));
 }
 
 /**
  * Base document fields returned by all SDK documents.
- * Used by transformDocumentWithField to provide consistent structure.
+ * Used by transformDocumentWithField for documents with one identifier-like field.
  */
 export interface BaseDocumentFields {
   $id: string;
@@ -336,13 +583,13 @@ export interface BaseDocumentFields {
 }
 
 /**
- * Transform a raw SDK document into a typed document with a single byte array field.
+ * Transform a raw SDK document into a typed document with a single identifier-like field.
  *
  * This consolidates the repeated pattern across like, bookmark, repost, and follow services
  * where documents have system fields ($id, $ownerId, $createdAt) plus one identifier field.
  *
  * @param doc - Raw document from SDK (may have nested .data or direct fields)
- * @param fieldName - Name of the byte array field to extract and convert (e.g., 'postId', 'followingId')
+ * @param fieldName - Name of the identifier-like field to extract and convert (e.g., 'postId', 'followingId')
  * @param serviceName - Service name for error logging
  * @returns Document with base fields and the converted identifier field
  */
@@ -356,7 +603,7 @@ export function transformDocumentWithField<T extends BaseDocumentFields>(
 
   const convertedValue = rawFieldValue ? identifierToBase58(rawFieldValue) : '';
   if (rawFieldValue && !convertedValue) {
-    console.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
+    logger.error(`${serviceName}: Invalid ${fieldName} format:`, rawFieldValue);
   }
 
   return {

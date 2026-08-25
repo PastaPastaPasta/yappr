@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
@@ -42,7 +43,7 @@ function convertToKeyInfo(keys: IdentityPublicKey[]): IdentityPublicKeyInfo[] {
       id: key.id,
       type: key.type,
       purpose: key.purpose,
-      securityLevel: key.securityLevel ?? key.security_level ?? 0,
+      securityLevel: key.securityLevel,
       data,
     }
   })
@@ -104,7 +105,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
       setStep('review')
     } catch (error) {
-      console.error('Failed to check availability:', error)
+      logger.error('Failed to check availability:', error)
       toast.error('Failed to check availability. Please try again.')
       setStep('username-entry')
     }
@@ -193,7 +194,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
       setStep('complete')
     } catch (error) {
-      console.error('Registration failed:', error)
+      logger.error('Registration failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Registration failed. Please try again.'
       toast.error(errorMessage)
       // Mark any pending usernames as failed

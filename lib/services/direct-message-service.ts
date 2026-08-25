@@ -1,9 +1,15 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
 import { dpnsService } from './dpns-service'
 import { unifiedProfileService } from './unified-profile-service'
-import type { DocumentWhereClause } from './sdk-helpers'
+import {
+  bytesToBase64QueryOperand,
+  documentToPlainObject,
+  identifierStringToDocumentBytes,
+  type DocumentWhereClause,
+} from './sdk-helpers'
 import {
   DirectMessage,
   Conversation
@@ -16,6 +22,7 @@ import {
 } from '../message-encryption'
 import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID } from '../constants'
+import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 
 /**
@@ -51,7 +58,8 @@ class DirectMessageService {
       // 2. Get sender's private key
       const privateKey = getPrivateKey(senderId)
       if (!privateKey) {
-        return { success: false, error: 'Please log in again to send messages' }
+        promptForAuthKey()
+        throw new Error('Private key not found. Please re-enter your key.')
       }
 
       // 3. Get recipient's public key (from identity or their invite)
@@ -73,26 +81,22 @@ class DirectMessageService {
         // Check if sender's identity uses hash160 (no full pubkey on-chain)
         const needsPubKeyInInvite = await this.identityUsesHash160(senderId)
 
-        // All byteArray fields >= 10 bytes, so Array.from works for platform's byte detection
-        const conversationIdArray = Array.from(conversationIdBytes)
-        const senderPubKeyArray = needsPubKeyInInvite ? Array.from(senderPubKey) : undefined
+        const conversationIdDocumentBytes = conversationIdBytes
+        const senderPubKeyDocumentBytes = needsPubKeyInInvite ? senderPubKey : undefined
 
         const inviteResult = await stateTransitionService.createDocument(
           this.contractId,
           'conversationInvite',
           senderId,
           {
-            // recipientId is an Identifier type - must be byte array
-            recipientId: Array.from(bs58.decode(recipientId)),
-            // conversationId as array (10 bytes >= platform threshold)
-            conversationId: conversationIdArray,
-            // senderPubKey as array (33 bytes)
-            ...(senderPubKeyArray ? { senderPubKey: senderPubKeyArray } : {})
+            recipientId: identifierStringToDocumentBytes(recipientId),
+            conversationId: conversationIdDocumentBytes,
+            ...(senderPubKeyDocumentBytes ? { senderPubKey: senderPubKeyDocumentBytes } : {})
           }
         )
 
         if (!inviteResult.success) {
-          console.warn('Failed to create conversation invite:', inviteResult.error)
+          logger.warn('Failed to create conversation invite:', inviteResult.error)
           // Continue anyway - message is more important
         }
       }
@@ -100,18 +104,13 @@ class DirectMessageService {
       // 5. Encrypt the message to binary format
       const encryptedContent = await encryptToBinary(content, privateKey, recipientPubKey)
 
-      // 6. Create directMessage document
-      // All byteArray fields >= 10 bytes, so Array.from works for platform's byte detection
-      const conversationIdArray = Array.from(conversationIdBytes)
-      const encryptedContentArray = Array.from(encryptedContent)
-
       const result = await stateTransitionService.createDocument(
         this.contractId,
         'directMessage',
         senderId,
         {
-          conversationId: conversationIdArray,
-          encryptedContent: encryptedContentArray
+          conversationId: conversationIdBytes,
+          encryptedContent
         }
       )
 
@@ -131,7 +130,7 @@ class DirectMessageService {
         }
       }
     } catch (error) {
-      console.error('Error sending message:', error)
+      logger.error('Error sending message:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to send message'
@@ -142,8 +141,12 @@ class DirectMessageService {
   /**
    * Get all conversations for a user
    */
-  async getConversations(userId: string): Promise<Conversation[]> {
+  async getConversations(
+    userId: string,
+    options?: { includeParticipantInfo?: boolean }
+  ): Promise<Conversation[]> {
     try {
+      const includeParticipantInfo = options?.includeParticipantInfo ?? true
       const sdk = await getEvoSdk()
 
       // 1. Get invites where I'm the recipient (inbox)
@@ -233,16 +236,18 @@ class DirectMessageService {
           // Get participant username and display name
           let participantUsername: string | undefined
           let participantDisplayName: string | undefined
-          try {
-            participantUsername = await dpnsService.resolveUsername(data.participantId) || undefined
-          } catch {
-            // Ignore DPNS errors
-          }
-          try {
-            const profile = await unifiedProfileService.getProfile(data.participantId)
-            participantDisplayName = profile?.displayName
-          } catch {
-            // Ignore profile errors
+          if (includeParticipantInfo) {
+            const [usernameResult, profileResult] = await Promise.allSettled([
+              dpnsService.resolveUsername(data.participantId),
+              unifiedProfileService.getProfile(data.participantId)
+            ])
+
+            if (usernameResult.status === 'fulfilled') {
+              participantUsername = usernameResult.value || undefined
+            }
+            if (profileResult.status === 'fulfilled') {
+              participantDisplayName = profileResult.value?.displayName
+            }
           }
 
           // Decrypt latest message for preview
@@ -272,7 +277,7 @@ class DirectMessageService {
             updatedAt: latestDoc ? new Date(latestDoc.$createdAt as number) : new Date()
           })
         } catch (err) {
-          console.error(`Error processing conversation ${convId}:`, err)
+          logger.error(`Error processing conversation ${convId}:`, err)
         }
       }
 
@@ -281,7 +286,7 @@ class DirectMessageService {
         b.updatedAt.getTime() - a.updatedAt.getTime()
       )
     } catch (error) {
-      console.error('Error getting conversations:', error)
+      logger.error('Error getting conversations:', error)
       return []
     }
   }
@@ -312,7 +317,7 @@ class DirectMessageService {
           const msg = await this.decryptMessage(doc, userId, otherPartyId || '')
           if (msg) messages.push(msg)
         } catch (err) {
-          console.error('Error decrypting message:', err)
+          logger.error('Error decrypting message:', err)
           messages.push({
             id: doc.$id as string,
             senderId: doc.$ownerId as string,
@@ -326,7 +331,7 @@ class DirectMessageService {
 
       return messages
     } catch (error) {
-      console.error('Error getting conversation messages:', error)
+      logger.error('Error getting conversation messages:', error)
       return []
     }
   }
@@ -358,7 +363,7 @@ class DirectMessageService {
       }
       return messages
     } catch (error) {
-      console.error('Error polling messages:', error)
+      logger.error('Error polling messages:', error)
       return []
     }
   }
@@ -374,9 +379,10 @@ class DirectMessageService {
   ): Promise<Record<string, unknown>[]> {
     try {
       const sdk = await getEvoSdk()
-      // Decode base58 conversationId, then encode as base64 for SDK
+      // Raw query path: conversationId is an ordinary byte-array field, so use the shared
+      // base64 query operand helper rather than the typed-write Uint8Array shape.
       const convIdBytes = bs58.decode(conversationId)
-      const convIdBase64 = Buffer.from(convIdBytes).toString('base64')
+      const convIdBase64 = bytesToBase64QueryOperand(convIdBytes)
 
       // Build where clause - add timestamp filter if provided
       const where: DocumentWhereClause[] = [['conversationId', '==', convIdBase64]]
@@ -394,7 +400,7 @@ class DirectMessageService {
 
       return this.extractDocuments(response)
     } catch (error) {
-      console.error('Error getting raw messages:', error)
+      logger.error('Error getting raw messages:', error)
       return []
     }
   }
@@ -407,7 +413,6 @@ class DirectMessageService {
     try {
       const existingReceipt = await this.getMyReadReceipt(userId, conversationId)
       const convIdBytes = bs58.decode(conversationId)
-      const conversationIdArray = Array.from(convIdBytes)
 
       if (existingReceipt) {
         // Update existing receipt - platform will set $updatedAt
@@ -416,7 +421,7 @@ class DirectMessageService {
           'readReceipt',
           existingReceipt.$id,
           userId,
-          { conversationId: conversationIdArray },
+          { conversationId: convIdBytes },
           existingReceipt.$revision || 0
         )
       } else {
@@ -425,11 +430,11 @@ class DirectMessageService {
           this.contractId,
           'readReceipt',
           userId,
-          { conversationId: conversationIdArray }
+          { conversationId: convIdBytes }
         )
       }
     } catch (error) {
-      console.error('Error marking as read:', error)
+      logger.error('Error marking as read:', error)
     }
   }
 
@@ -465,8 +470,8 @@ class DirectMessageService {
   ): Promise<DirectMessage | null> {
     const privateKey = getPrivateKey(currentUserId)
     if (!privateKey) {
-      console.warn('No private key available for decryption')
-      return null
+      promptForAuthKey()
+      throw new Error('Private key not found. Please re-enter your key.')
     }
 
     const senderId = doc.$ownerId as string
@@ -479,7 +484,7 @@ class DirectMessageService {
     )
 
     if (!otherPubKey) {
-      console.warn('Could not get public key for decryption')
+      logger.warn('Could not get public key for decryption')
       return null
     }
 
@@ -568,7 +573,7 @@ class DirectMessageService {
 
       return this.extractPublicKeyBytes(ecdsaKey)
     } catch (error) {
-      console.error('Error getting public key from identity:', error)
+      logger.error('Error getting public key from identity:', error)
       return null
     }
   }
@@ -605,7 +610,7 @@ class DirectMessageService {
     try {
       const sdk = await getEvoSdk()
 
-      // recipientId has contentMediaType "application/x.dash.dpp.identifier" so use base58 string
+      // Raw query path: recipientId is identifier-like, so keep the base58 string operand.
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'conversationInvite',
@@ -643,9 +648,9 @@ class DirectMessageService {
   ): Promise<{ lastReadAt: number } | null> {
     try {
       const sdk = await getEvoSdk()
-      // Decode base58 conversationId, then encode as base64 for SDK
+      // Raw query path: conversationId is an ordinary byte-array field.
       const convIdBytes = bs58.decode(conversationId)
-      const convIdBase64 = Buffer.from(convIdBytes).toString('base64')
+      const convIdBase64 = bytesToBase64QueryOperand(convIdBytes)
 
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
@@ -681,7 +686,7 @@ class DirectMessageService {
     try {
       const sdk = await getEvoSdk()
       const convIdBytes = bs58.decode(conversationId)
-      const convIdBase64 = Buffer.from(convIdBytes).toString('base64')
+      const convIdBase64 = bytesToBase64QueryOperand(convIdBytes)
 
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
@@ -729,20 +734,18 @@ class DirectMessageService {
     if (response instanceof Map) {
       return Array.from(response.values())
         .filter(Boolean)
-        .map((doc: unknown) => {
-          const d = doc as { toJSON?: () => unknown }
-          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>
-        })
+        .map(documentToPlainObject)
     }
     if (Array.isArray(response)) {
-      return response.map((doc: unknown) => {
-        const d = doc as { toJSON?: () => unknown }
-        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>
-      })
+      return response
+        .filter(Boolean)
+        .map(documentToPlainObject)
     }
-    const respObj = response as { documents?: Record<string, unknown>[] }
-    if (respObj?.documents) {
+    const respObj = response as { documents?: unknown[] }
+    if (Array.isArray(respObj?.documents)) {
       return respObj.documents
+        .filter(Boolean)
+        .map(documentToPlainObject)
     }
     return []
   }
