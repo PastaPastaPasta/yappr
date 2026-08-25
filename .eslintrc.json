@@ -41,6 +41,7 @@
     "out/",
     "*.config.js",
     "*.config.ts",
-    "vendor/platform-auth/**"
+    "vendor/platform-auth/**",
+    "e2e/**"
   ]
 }
