@@ -6,6 +6,7 @@ import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo 
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
+import { documentToPlainObject } from './sdk-helpers';
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -250,8 +251,8 @@ class StateTransitionService {
     try {
       const doc = await sdk.documents.get(contractId, documentType, documentId);
       if (doc) {
-        const json = typeof doc.toJSON === 'function' ? doc.toJSON() : doc;
-        return json as Record<string, unknown>;
+        // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
+        return documentToPlainObject(doc);
       }
       return null;
     } catch (err) {

@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -149,8 +149,8 @@ export abstract class BaseDocumentService<T> {
         return null;
       }
 
-      // Document has toJSON method — cast to Record for transformDocument
-      const docData = (typeof response.toJSON === 'function' ? response.toJSON() : response) as Record<string, unknown>;
+      // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
+      const docData = documentToPlainObject(response);
       const transformed = this.transformDocument(docData);
 
       // Cache the result

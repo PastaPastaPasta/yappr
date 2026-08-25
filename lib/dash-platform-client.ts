@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 // Import the centralized SDK service
 import { evoSdkService } from './services/evo-sdk-service'
 import { YAPPR_CONTRACT_ID } from './constants'
+import { documentToPlainObject } from './services/sdk-helpers'
 
 export class DashPlatformClient {
   private sdk: any = null
@@ -164,12 +165,11 @@ export class DashPlatformClient {
       if (profileResponse instanceof Map) {
         profiles = Array.from(profileResponse.values())
           .filter(Boolean)
-          .map((doc: unknown) => {
-            const d = doc as { toJSON?: () => unknown }
-            return typeof d.toJSON === 'function' ? d.toJSON() : doc
-          })
+          .map(documentToPlainObject)
       } else if (Array.isArray(profileResponse)) {
         profiles = profileResponse
+          .filter(Boolean)
+          .map(documentToPlainObject)
       }
 
       logger.info('Profiles found:', profiles)
@@ -298,12 +298,11 @@ export class DashPlatformClient {
         if (postsResponse instanceof Map) {
           posts = Array.from(postsResponse.values())
             .filter(Boolean)
-            .map((doc: unknown) => {
-              const d = doc as { toJSON?: () => unknown }
-              return typeof d.toJSON === 'function' ? d.toJSON() : doc
-            })
+            .map(documentToPlainObject)
         } else if (Array.isArray(postsResponse)) {
           posts = postsResponse
+            .filter(Boolean)
+            .map(documentToPlainObject)
         }
 
         logger.info(`DashPlatformClient: Found ${posts.length} posts`)

@@ -5,6 +5,7 @@ import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
 import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
+import { documentToPlainObject } from './sdk-helpers';
 
 // Approved payment URI schemes (whitelist)
 export const APPROVED_PAYMENT_SCHEMES = [
@@ -427,21 +428,17 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     if (response instanceof Map) {
       return Array.from(response.values())
         .filter(Boolean)
-        .map((doc: unknown) => {
-          const d = doc as { toJSON?: () => unknown };
-          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
-        });
+        .map(documentToPlainObject);
     }
     if (Array.isArray(response)) {
       return response
         .filter(Boolean)
-        .map((doc: unknown) => {
-          const d = doc as { toJSON?: () => unknown };
-          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>;
-        });
+        .map(documentToPlainObject);
     }
     if (response && typeof response === 'object' && 'documents' in response) {
-      return (response as { documents: Record<string, unknown>[] }).documents;
+      return ((response as { documents: unknown[] }).documents || [])
+        .filter(Boolean)
+        .map(documentToPlainObject);
     }
     return [];
   }

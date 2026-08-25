@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import type { DocumentWhereClause, DocumentOrderByClause } from './sdk-helpers';
+import { documentToPlainObject, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { User } from '../../types';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
@@ -78,10 +78,7 @@ class ProfileService extends BaseDocumentService<User> {
         const entries = Array.from(response.values());
         for (const doc of entries) {
           if (doc) {
-            const d = doc as { toJSON?: () => unknown };
-            const docData = typeof d.toJSON === 'function'
-              ? d.toJSON()
-              : doc;
+            const docData = documentToPlainObject(doc);
             documents.push(this.transformDocument(docData as Record<string, unknown>, { cachedUsername: this.cachedUsername }));
           }
         }
@@ -96,16 +93,21 @@ class ProfileService extends BaseDocumentService<User> {
       let result: Record<string, unknown> | unknown[] = response as Record<string, unknown>;
 
       // Handle different response formats
-      const respObj = response as { toJSON?: () => unknown };
-      if (response && typeof respObj.toJSON === 'function') {
+      const respObj = response as { toObject?: () => unknown; toJSON?: () => unknown };
+      if (response && typeof respObj.toObject === 'function') {
+        result = documentToPlainObject(response);
+      } else if (response && typeof respObj.toJSON === 'function') {
         result = respObj.toJSON() as Record<string, unknown>;
       }
 
       // Check if result is an array (direct documents response)
       if (Array.isArray(result)) {
-        const documents = result.map((doc) => {
-          return this.transformDocument(doc as Record<string, unknown>, { cachedUsername: this.cachedUsername });
-        });
+        const documents = result
+          .filter(Boolean)
+          .map(documentToPlainObject)
+          .map((doc) => {
+            return this.transformDocument(doc as Record<string, unknown>, { cachedUsername: this.cachedUsername });
+          });
 
         return {
           documents,
@@ -116,9 +118,12 @@ class ProfileService extends BaseDocumentService<User> {
 
       // Otherwise expect object with documents property
       const resultObj = result as { documents?: unknown[]; nextCursor?: string; prevCursor?: string };
-      const documents = resultObj?.documents?.map((doc) => {
-        return this.transformDocument(doc as Record<string, unknown>, { cachedUsername: this.cachedUsername });
-      }) || [];
+      const documents = resultObj?.documents
+        ?.filter(Boolean)
+        .map(documentToPlainObject)
+        .map((doc) => {
+          return this.transformDocument(doc as Record<string, unknown>, { cachedUsername: this.cachedUsername });
+        }) || [];
 
       return {
         documents,
@@ -452,22 +457,26 @@ class ProfileService extends BaseDocumentService<User> {
       if (response instanceof Map) {
         const documents = Array.from(response.values())
           .filter(Boolean)
-          .map((doc: unknown) => {
-            const d = doc as { toJSON?: () => unknown };
-            return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as ProfileDocument;
-          });
+          .map((doc: unknown) => documentToPlainObject(doc) as unknown as ProfileDocument);
         logger.info(`ProfileService: Found ${documents.length} profiles`);
         return documents;
       }
 
-      // Handle array response
-      const respWithDocs = response as { documents?: ProfileDocument[] };
-      if (Array.isArray(response)) {
-        logger.info(`ProfileService: Found ${(response as ProfileDocument[]).length} profiles`);
-        return response as ProfileDocument[];
-      } else if (respWithDocs?.documents) {
-        logger.info(`ProfileService: Found ${respWithDocs.documents.length} profiles`);
-        return respWithDocs.documents;
+      // Handle fallback response shapes
+      const fallbackResponse = response as unknown;
+      const respWithDocs = fallbackResponse as { documents?: unknown[] };
+      if (Array.isArray(fallbackResponse)) {
+        const documents = fallbackResponse
+          .filter(Boolean)
+          .map((doc: unknown) => documentToPlainObject(doc) as unknown as ProfileDocument);
+        logger.info(`ProfileService: Found ${documents.length} profiles`);
+        return documents;
+      } else if (Array.isArray(respWithDocs?.documents)) {
+        const documents = respWithDocs.documents
+          .filter(Boolean)
+          .map((doc: unknown) => documentToPlainObject(doc) as unknown as ProfileDocument);
+        logger.info(`ProfileService: Found ${documents.length} profiles`);
+        return documents;
       }
 
       return [];

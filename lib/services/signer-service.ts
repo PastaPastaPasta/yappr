@@ -13,6 +13,7 @@ import {
   IdentitySigner,
   PrivateKey,
   IdentityPublicKey,
+  PlatformVersion,
 } from '@dashevo/evo-sdk';
 import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
@@ -128,9 +129,9 @@ class SignerService {
     await ensureWasmReady();
 
     // Normalize the key data to match the expected JSON format
-    // v3.1: SDK consistently returns camelCase, requires $version field
+    // v3.1: SDK consistently returns camelCase, requires $formatVersion field
     const normalizedKeyData = {
-      $version: '0',
+      $formatVersion: '0',
       id: keyData.id,
       type: keyData.type,
       purpose: keyData.purpose,
@@ -143,7 +144,10 @@ class SignerService {
 
     // Use the fromJSON method which handles proper deserialization
     // Cast needed: TS can't narrow the ternary on data to string
-    const identityKey = IdentityPublicKey.fromJSON(normalizedKeyData as Parameters<typeof IdentityPublicKey.fromJSON>[0]);
+    const identityKey = IdentityPublicKey.fromJSON(
+      normalizedKeyData as Parameters<typeof IdentityPublicKey.fromJSON>[0],
+      PlatformVersion.current()
+    );
 
     return identityKey;
   }

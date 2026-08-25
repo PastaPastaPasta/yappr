@@ -6,6 +6,7 @@ import { dpnsService } from './dpns-service'
 import { unifiedProfileService } from './unified-profile-service'
 import {
   bytesToBase64QueryOperand,
+  documentToPlainObject,
   identifierStringToDocumentBytes,
   type DocumentWhereClause,
 } from './sdk-helpers'
@@ -733,20 +734,18 @@ class DirectMessageService {
     if (response instanceof Map) {
       return Array.from(response.values())
         .filter(Boolean)
-        .map((doc: unknown) => {
-          const d = doc as { toJSON?: () => unknown }
-          return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>
-        })
+        .map(documentToPlainObject)
     }
     if (Array.isArray(response)) {
-      return response.map((doc: unknown) => {
-        const d = doc as { toJSON?: () => unknown }
-        return (typeof d.toJSON === 'function' ? d.toJSON() : doc) as Record<string, unknown>
-      })
+      return response
+        .filter(Boolean)
+        .map(documentToPlainObject)
     }
-    const respObj = response as { documents?: Record<string, unknown>[] }
-    if (respObj?.documents) {
+    const respObj = response as { documents?: unknown[] }
+    if (Array.isArray(respObj?.documents)) {
       return respObj.documents
+        .filter(Boolean)
+        .map(documentToPlainObject)
     }
     return []
   }
