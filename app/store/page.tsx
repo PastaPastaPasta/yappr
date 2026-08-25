@@ -32,6 +32,7 @@ export default function StoreBrowsePage() {
   const [stores, setStores] = useState<Store[]>([])
   const [storeRatings, setStoreRatings] = useState<Map<string, StoreRatingSummary>>(new Map())
   const [blockedOwners, setBlockedOwners] = useState<Map<string, boolean>>(new Map())
+  const [blockedResolvedKey, setBlockedResolvedKey] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [hasStore, setHasStore] = useState(false)
@@ -81,6 +82,11 @@ export default function StoreBrowsePage() {
     loadStores().catch((error) => logger.error(error))
   }, [sdkReady])
 
+  // Identifies which (identity, store set) the blockedOwners state was resolved for
+  const blockCheckKey = user?.identityId && stores.length > 0
+    ? `${user.identityId}:${stores.map(store => store.id).join(',')}`
+    : ''
+
   // Check which store owners are blocked
   useEffect(() => {
     if (!user?.identityId || stores.length === 0) {
@@ -89,21 +95,36 @@ export default function StoreBrowsePage() {
     }
 
     let cancelled = false
+    const identityId = user.identityId
+    const key = blockCheckKey
 
     const checkBlockedOwners = async () => {
       const ownerIds = stores.map(store => store.ownerId)
-      const blocked = await checkBlockedForAuthors(user.identityId, ownerIds)
+      const blocked = await checkBlockedForAuthors(identityId, ownerIds)
       if (!cancelled) {
         setBlockedOwners(blocked)
+        setBlockedResolvedKey(key)
       }
     }
 
-    checkBlockedOwners().catch(console.error)
+    checkBlockedOwners().catch((error) => {
+      logger.error('Failed to check blocked store owners:', error)
+      // Fail open: show stores rather than blocking the page forever
+      if (!cancelled) {
+        setBlockedOwners(new Map())
+        setBlockedResolvedKey(key)
+      }
+    })
 
     return () => {
       cancelled = true
     }
-  }, [user?.identityId, stores])
+  }, [user?.identityId, stores, blockCheckKey])
+
+  // Keep the list in its loading state until block status resolves for the
+  // current identity and store set, so blocked stores never flash as clickable.
+  // Guests have no blocks, so they skip this entirely.
+  const isBlockCheckPending = blockCheckKey !== '' && blockedResolvedKey !== blockCheckKey
 
   // Filter stores by search query and block status
   const filteredStores = useMemo(() => {
@@ -187,7 +208,7 @@ export default function StoreBrowsePage() {
 
           {/* Store List */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
-            {isLoading ? (
+            {isLoading || isBlockCheckPending ? (
               <div className="p-8 text-center">
                 <Spinner className="mx-auto mb-4" />
                 <p className="text-gray-500">Loading stores...</p>
