@@ -66,7 +66,7 @@ function ItemDetailContent() {
   const addedToCartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Check if store owner is blocked
-  const { isBlocked: isOwnerBlocked, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '')
+  const { isBlocked: isOwnerBlocked, isOwnBlock, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '')
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -301,21 +301,34 @@ function ItemDetailContent() {
                 <NoSymbolIcon className="h-6 w-6 text-red-500" />
                 <div className="flex-1">
                   <p className="font-medium text-red-700 dark:text-red-400">
-                    You have blocked this store owner
+                    {isOwnBlock ? 'You have blocked this store owner' : 'This store owner is blocked'}
                   </p>
                   <p className="text-sm text-red-600 dark:text-red-400/80">
-                    Items from this store won&apos;t appear in browse listings.
+                    {isOwnBlock
+                      ? "Items from this store won't appear in browse listings."
+                      : "Blocked by a block list you follow. Items from this store won't appear in browse listings."}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toggleBlock()}
-                  disabled={isBlockLoading}
-                  className="border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40"
-                >
-                  Unblock
-                </Button>
+                {isOwnBlock ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toggleBlock()}
+                    disabled={isBlockLoading}
+                    className="border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40"
+                  >
+                    Unblock
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push('/settings?section=privacy')}
+                    className="border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40"
+                  >
+                    Manage block lists
+                  </Button>
+                )}
               </div>
             </div>
           )}

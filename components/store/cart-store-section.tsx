@@ -23,7 +23,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
     const router = useRouter()
 
     // Check if store owner is blocked
-    const { isBlocked: isOwnerBlocked } = useBlock(store?.ownerId ?? '')
+    const { isBlocked: isOwnerBlocked, isOwnBlock } = useBlock(store?.ownerId ?? '')
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
     const currency = items[0]?.currency || 'USD'
@@ -81,7 +81,9 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
           <div className="flex items-center gap-2">
             <ExclamationTriangleIcon className="h-5 w-5 text-amber-500 flex-shrink-0" />
             <p className="text-sm text-amber-700 dark:text-amber-400">
-              You have blocked this store owner. Consider removing these items.
+              {isOwnBlock
+                ? 'You have blocked this store owner. Consider removing these items.'
+                : 'This store owner is blocked by a block list you follow. Consider removing these items.'}
             </p>
           </div>
         </div>

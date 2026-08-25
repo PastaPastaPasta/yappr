@@ -15,6 +15,10 @@ import {
 
 export interface UseBlockResult {
   isBlocked: boolean
+  /** Whether the block comes from the viewer's own block document */
+  isOwnBlock: boolean
+  /** Identity whose followed block list blocks the target, if any */
+  inheritedFrom: string | null
   isLoading: boolean
   toggleBlock: (message?: string) => Promise<void>
   refresh: () => void
@@ -33,6 +37,8 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
   const { user } = useAuth()
   const { open: openLoginPrompt } = useLoginPromptModal()
   const [isBlocked, setIsBlocked] = useState(initialValue ?? false)
+  const [isOwnBlock, setIsOwnBlock] = useState(false)
+  const [inheritedFrom, setInheritedFrom] = useState<string | null>(null)
   // Only show loading if no initial value was provided
   const [isLoading, setIsLoading] = useState(initialValue === undefined)
 
@@ -44,32 +50,36 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
       return
     }
 
-    // Skip initial fetch if initialValue was provided (unless force refresh)
-    if (initialValue !== undefined && !forceRefresh) {
-      return
-    }
-
-    // Check shared cache unless forcing refresh
-    if (!forceRefresh && cacheKey) {
-      const cached = getBlockStatus(cacheKey)
-      if (cached !== null) {
-        setIsBlocked(cached)
+    if (!forceRefresh) {
+      // Known-negative statuses need no provenance lookup
+      if (initialValue === false) {
+        setIsLoading(false)
+        return
+      }
+      if (initialValue === undefined && cacheKey && getBlockStatus(cacheKey) === false) {
+        setIsBlocked(false)
+        setIsOwnBlock(false)
+        setInheritedFrom(null)
         setIsLoading(false)
         return
       }
     }
 
+    // Blocked or unknown status - resolve full provenance so callers know
+    // whether an unblock (deleting the own block document) can actually help
     setIsLoading(true)
 
     try {
       const { blockService } = await import('@/lib/services/block-service')
-      const blocked = await blockService.isBlocked(targetUserId, user.identityId)
+      const provenance = await blockService.getBlockProvenance(targetUserId, user.identityId)
 
       // Cache the result
       if (cacheKey) {
-        setBlockStatus(cacheKey, blocked)
+        setBlockStatus(cacheKey, provenance.isBlocked)
       }
-      setIsBlocked(blocked)
+      setIsBlocked(provenance.isBlocked)
+      setIsOwnBlock(provenance.isOwnBlock)
+      setInheritedFrom(provenance.inheritedFrom)
     } catch (error) {
       logger.error('useBlock: Error checking block status:', error)
     } finally {
@@ -94,14 +104,27 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     }
 
     const wasBlocked = isBlocked
+    const wasOwnBlock = isOwnBlock
+
+    if (wasBlocked && !wasOwnBlock) {
+      // Inherited-only block: there is no own block document to delete, so an
+      // "unblock" here would be a silent no-op. It must be managed via block
+      // list follows in settings instead.
+      toast.error('This user is blocked by a block list you follow. Manage block lists in Settings.')
+      return
+    }
+
+    // Removing an own block only helps fully if no inherited block remains
+    const blockedAfterToggle = wasBlocked ? inheritedFrom !== null : true
 
     // Optimistic update
-    setIsBlocked(!wasBlocked)
+    setIsBlocked(blockedAfterToggle)
+    setIsOwnBlock(!wasBlocked)
     setIsLoading(true)
 
     // Update cache optimistically
     if (cacheKey) {
-      setBlockStatus(cacheKey, !wasBlocked)
+      setBlockStatus(cacheKey, blockedAfterToggle)
     }
 
     try {
@@ -117,7 +140,11 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
 
       // Show appropriate message based on whether auto-revocation occurred
       if (wasBlocked) {
-        toast.success('User unblocked')
+        if (blockedAfterToggle) {
+          toast.success('Your block was removed, but this user is still blocked by a block list you follow')
+        } else {
+          toast.success('User unblocked')
+        }
       } else if ('autoRevoked' in result && result.autoRevoked) {
         toast.success('User blocked and private feed access revoked')
       } else {
@@ -126,6 +153,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     } catch (error) {
       // Rollback
       setIsBlocked(wasBlocked)
+      setIsOwnBlock(wasOwnBlock)
       if (cacheKey) {
         setBlockStatus(cacheKey, wasBlocked)
       }
@@ -134,7 +162,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     } finally {
       setIsLoading(false)
     }
-  }, [user?.identityId, targetUserId, isBlocked, isLoading, cacheKey, openLoginPrompt])
+  }, [user?.identityId, targetUserId, isBlocked, isOwnBlock, inheritedFrom, isLoading, cacheKey, openLoginPrompt])
 
   const refresh = useCallback(() => {
     if (cacheKey) {
@@ -143,7 +171,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     checkBlockStatus(true)
   }, [cacheKey, checkBlockStatus])
 
-  return { isBlocked, isLoading, toggleBlock, refresh }
+  return { isBlocked, isOwnBlock, inheritedFrom, isLoading, toggleBlock, refresh }
 }
 
 /**
