@@ -391,7 +391,7 @@ All Dash Platform operations go through singleton services in `lib/services/`. T
 ## CI/CD
 
 The project uses GitHub Actions for continuous integration:
-- **CI Workflow** (`ci.yml`): Runs on PRs to master - linting, type checking, and build verification
+- **CI Workflow** (`ci.yml`): Runs linting, type checking, and build verification on PRs to any branch; E2E tests run only for master-bound changes
 - **Deploy Workflow** (`deploy.yml`): Deploys to GitHub Pages on push to master
 
 ## Network
