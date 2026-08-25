@@ -45,6 +45,7 @@ import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
 import { useMentionValidation } from '@/hooks/use-mention-validation'
 import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
+import { useEditPostModal } from '@/hooks/use-edit-post-modal'
 import { tipService } from '@/lib/services/tip-service'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 
@@ -172,10 +173,18 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const initialBookmarked = progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false
 
 
+  // Local override applied when this post is edited while mounted
+  // (set from the global 'post-updated' event dispatched by the edit modal)
+  const [editedContent, setEditedContent] = useState<string | null>(null)
+  const displayContent = editedContent ?? post.content
+  const isEdited = Boolean(post.isEdited) || editedContent !== null
+
   // Memoize enriched post for use in compose/tip modals and caching
   // Includes all resolved values so cached posts display correctly
   const enrichedPost = useMemo(() => ({
     ...post,
+    content: displayContent,
+    isEdited,
     author: {
       ...post.author,
       username: usernameState || post.author.username,
@@ -185,7 +194,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       // undefined = still loading, true = has DPNS, false = no DPNS
       hasDpns: usernameState !== undefined ? (usernameState !== null) : post.author.hasDpns
     }
-  }), [post, usernameState, displayName, avatarUrl])
+  }), [post, displayContent, isEdited, usernameState, displayName, avatarUrl])
 
   // Render username/identity display based on state
   const renderUsernameOrIdentity = useCallback(() => {
@@ -271,6 +280,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const { open: openHashtagRecoveryModal } = useHashtagRecoveryModal()
   const { open: openMentionRecoveryModal } = useMentionRecoveryModal()
   const { open: openDeleteModal } = useDeleteConfirmationModal()
+  const { open: openEditModal } = useEditPostModal()
 
   // Validate hashtags for all posts (checks if hashtag documents exist on platform)
   const { validations: hashtagValidations, revalidate: revalidateHashtags } = useHashtagValidation(post)
@@ -327,8 +337,22 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     }
   }, [post.id, revalidateMentions])
 
+  // Listen for edit events so the displayed content refreshes without a refetch
+  useEffect(() => {
+    const handlePostUpdated = (event: CustomEvent<{ postId: string; content: string }>) => {
+      if (event.detail.postId === post.id) {
+        setEditedContent(event.detail.content)
+      }
+    }
+
+    window.addEventListener('post-updated', handlePostUpdated as EventListener)
+    return () => {
+      window.removeEventListener('post-updated', handlePostUpdated as EventListener)
+    }
+  }, [post.id])
+
   // Check if this post is a tip and parse tip info
-  const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
+  const tipInfo = useMemo(() => tipService.parseTipContent(displayContent), [displayContent])
   const isTipPost = !!tipInfo
   const createdAtLabel = useRelativeTime(post.createdAt)
 
@@ -467,6 +491,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   const handleFailedMentionClick = (username: string) => {
     openMentionRecoveryModal(post, username)
+  }
+
+  const handleEdit = () => {
+    if (!requireAuth('post')) return
+    // enrichedPost carries the latest displayed content so the modal pre-fills correctly
+    openEditModal(enrichedPost)
   }
 
   const handleDelete = () => {
@@ -617,6 +647,23 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 </span>
               )}
               <span className="text-gray-500 text-sm">{createdAtLabel}</span>
+              {isEdited && (
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <span className="text-gray-400 text-sm cursor-help">(edited)</span>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+                        sideOffset={5}
+                      >
+                        {post.updatedAt ? `Edited ${post.updatedAt.toLocaleString()}` : 'This post was edited'}
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+              )}
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton onClick={(e: React.MouseEvent) => e.stopPropagation()}>
@@ -645,6 +692,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   >
                     View post engagements
                   </DropdownMenu.Item>
+                  {isOwnPost && !isPrivatePost(post) && (
+                    <DropdownMenu.Item
+                      onClick={(e) => { e.stopPropagation(); handleEdit(); }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none"
+                    >
+                      <PencilSquareIcon className="h-4 w-4" />
+                      Edit {post.parentId ? 'reply' : 'post'}
+                    </DropdownMenu.Item>
+                  )}
                   {isOwnPost && (
                     <DropdownMenu.Item
                       onClick={(e) => { e.stopPropagation(); handleDelete(); }}
@@ -704,9 +760,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               mentionValidations={mentionValidations}
               onFailedMentionClick={handleFailedMentionClick}
             />
-          ) : post.content ? (
+          ) : displayContent ? (
             <PostContent
-              content={post.content}
+              content={displayContent}
               className="mt-1"
               hashtagValidations={hashtagValidations}
               onFailedHashtagClick={handleFailedHashtagClick}
