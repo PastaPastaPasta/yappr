@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint
@@ -63,3 +67,83 @@ jobs:
 
       - name: Build application
         run: npm run build
+
+  e2e:
+    name: End-to-End
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Keyed on the resolved @playwright/test version rather than the
+      # lockfile hash: the browser bundle only changes when Playwright itself
+      # changes, so unrelated dependency bumps keep reusing cached browsers.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
+      # Still run on a cache hit: the browser binaries come from the cache but
+      # the OS-level shared libraries (--with-deps) are not cached.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build testing bundle
+        run: npm run build:testing
+
+      # Secrets cannot be referenced from `if:`, so surface the seed phrase's
+      # presence as an env flag. Fork PRs have no secret; the `write` project
+      # self-skips there and only `smoke` runs.
+      - name: Detect E2E seed secret
+        env:
+          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+        run: |
+          if [ -n "$E2E_SEED_PHRASE" ]; then
+            echo "HAS_SEED=true" >> "$GITHUB_ENV"
+          else
+            echo "HAS_SEED=false" >> "$GITHUB_ENV"
+            echo "::notice::E2E_SEED_PHRASE unavailable (fork PR?) — running smoke tests only"
+          fi
+
+      # Fails the job with an actionable message when the identity pool is
+      # depleted, rather than letting the suite die mid-run on a funding error.
+      - name: Check test identity balances
+        if: env.HAS_SEED == 'true'
+        env:
+          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+        run: node scripts/provision-test-identity.mjs --check-balances
+
+      # Spread concurrent runs across the 3-identity pool to reduce (not
+      # eliminate) identity-nonce races; Playwright retries absorb the rest.
+      - name: Select identity pool slot
+        run: echo "E2E_IDENTITY_INDEX=$(( GITHUB_RUN_ID % 3 ))" >> "$GITHUB_ENV"
+
+      - name: Run Playwright tests
+        env:
+          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
