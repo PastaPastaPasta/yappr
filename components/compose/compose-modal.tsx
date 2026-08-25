@@ -566,7 +566,7 @@ export function ComposeModal() {
         (post.quotedPostOwnerId ?? null) === expectedQuotedOwnerId
       )
     } catch (error) {
-      console.warn('Duplicate pre-check failed; continuing without block:', error)
+      logger.warn('Duplicate pre-check failed; continuing without block:', error)
       return false
     }
   }
@@ -613,7 +613,7 @@ export function ComposeModal() {
     }
 
     try {
-      const { retryPostCreation } = await import('@/lib/retry-utils')
+      const { retryPostCreation, isPostCreationIndeterminateError } = await import('@/lib/retry-utils')
 
       // Check if this is a private post (explicit or inherited)
       const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
@@ -901,11 +901,22 @@ export function ComposeModal() {
             break
           }
         } else {
-          // Check if this is a timeout error - the state-transition-service already
-          // tried to verify on Platform. If we still get here, it couldn't confirm.
-          // Retrying is safe — idempotency checks will prevent double-posting.
+          // Ambiguous outcome: the broadcast may have committed, and the
+          // service already polled Platform for the exact document ID without
+          // finding it. Do NOT retry — a new attempt would broadcast a fresh
+          // document (new entropy/ID) and could duplicate this one. Stop the
+          // thread here and let the user check their profile first.
+          if (isPostCreationIndeterminateError(result.error)) {
+            logger.warn(`Post ${i + 1} outcome indeterminate (document ${result.error.documentId}) — it may have been created.`)
+            timeoutPosts.push({ index: i, threadPostId })
+            break
+          }
+
+          // Remaining timeout errors are pre-broadcast failures (post-broadcast
+          // ambiguity surfaces as PostCreationIndeterminateError above), so the
+          // document was not created and pressing Post again is safe.
           if (isTimeoutError(result.error)) {
-            logger.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
+            logger.warn(`Post ${i + 1} timed out before it could be broadcast.`)
             timeoutPosts.push({ index: i, threadPostId })
             continue
           }
@@ -979,19 +990,20 @@ export function ComposeModal() {
         if (confirmedCount > 0 && timeoutCount > 0) {
           toast(
             `${confirmedCount} post${confirmedCount > 1 ? 's' : ''} confirmed. ` +
-            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out - press Post to retry.`,
-            { duration: 5000, icon: '⚠️' }
+            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} could not be confirmed and may have been created — ` +
+            `check your profile before pressing Post again.`,
+            { duration: 6000, icon: '⚠️' }
           )
-          // Keep modal open for retry - set active to first timed-out post
+          // Keep modal open for retry - set active to first unconfirmed post
           const firstTimeout = timeoutPosts[0]
           if (firstTimeout) {
             setActiveThreadPost(firstTimeout.threadPostId)
           }
         } else if (timeoutCount > 0) {
           toast(
-            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out. ` +
-            `Press Post to retry, or check your profile.`,
-            { duration: 5000, icon: '⚠️' }
+            `Your post${timeoutCount > 1 ? 's' : ''} could not be confirmed and may have been created — ` +
+            `check your profile before pressing Post again.`,
+            { duration: 6000, icon: '⚠️' }
           )
           // Keep modal open for retry
         } else {
