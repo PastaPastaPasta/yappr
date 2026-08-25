@@ -331,7 +331,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const isTipPost = !!tipInfo
-  const [tipVerificationStatus, setTipVerificationStatus] = useState<'verified' | 'pending' | 'legacy'>(
+  const [tipVerificationStatus, setTipVerificationStatus] = useState<'verified' | 'pending' | 'legacy' | 'invalid' | 'error'>(
     tipInfo?.verificationStatus || 'legacy'
   )
   const createdAtLabel = useRelativeTime(post.createdAt)
@@ -358,12 +358,19 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     })
       .then((result) => {
         if (cancelled) return
-        setTipVerificationStatus(result.status === 'verified' ? 'verified' : 'pending')
+        // Surface invalid and error results distinctly — an invalid receipt
+        // (hash/sender/amount mismatch) must never render as a benign
+        // "Pending" badge.
+        setTipVerificationStatus(
+          result.status === 'verified' || result.status === 'invalid' || result.status === 'error'
+            ? result.status
+            : 'pending'
+        )
       })
       .catch((error) => {
         if (!cancelled) {
           logger.warn('Failed to verify tip receipt', error)
-          setTipVerificationStatus('pending')
+          setTipVerificationStatus('error')
         }
       })
 
@@ -722,16 +729,22 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium',
                     tipVerificationStatus === 'verified'
                       ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                      : tipVerificationStatus === 'legacy'
-                        ? 'bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-gray-300'
-                        : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                      : tipVerificationStatus === 'invalid' || tipVerificationStatus === 'error'
+                        ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                        : tipVerificationStatus === 'legacy'
+                          ? 'bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-gray-300'
+                          : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                   )}
                 >
                   {tipVerificationStatus === 'verified'
                     ? 'Verified'
-                    : tipVerificationStatus === 'legacy'
-                      ? 'Unverified legacy'
-                      : 'Pending'}
+                    : tipVerificationStatus === 'invalid'
+                      ? 'Invalid receipt'
+                      : tipVerificationStatus === 'error'
+                        ? 'Verification error'
+                        : tipVerificationStatus === 'legacy'
+                          ? 'Unverified legacy'
+                          : 'Pending'}
                 </div>
               </div>
               {tipInfo.message && (
