@@ -34,7 +34,17 @@ npm run build
 - Catches missing imports, type errors, and build-time issues
 - Do not commit code that fails to build
 
-### 3. Code Review for Complex Changes
+### 3. Run the End-to-End Tests
+```bash
+npm run build:testing   # build the /testing bundle the tests run against
+npm run test:e2e
+```
+- Runs Playwright against the real static export talking to real Dash testnet
+- Without secrets, only the read-only `smoke` project runs; the `write` project self-skips
+- The full suite needs `E2E_SEED_PHRASE` (in gitignored `.env.local`) and performs real state transitions against the dedicated test contracts in `.env.testing` — never production
+- See `docs/TESTING.md` for the identity pool, provisioning, and known quirks
+
+### 4. Code Review for Complex Changes
 For complex or multi-file changes, use a code review sub-agent to identify potential issues:
 
 ```
@@ -48,7 +58,7 @@ Use the Task tool with subagent_type=Plan to review the changes for:
 
 **Trust but verify**: The review agent may flag potential issues that aren't actually problems, or miss real issues. Treat its output as suggestions to investigate, not definitive judgments. Verify each finding before acting on it.
 
-### 4. Manual Verification (when applicable)
+### 5. Manual Verification (when applicable)
 - For UI changes: Run `npm run dev` and visually verify the changes
 - For new features: Test the happy path and common error cases
 - For bug fixes: Confirm the original issue is resolved
@@ -58,6 +68,7 @@ Use the Task tool with subagent_type=Plan to review the changes for:
 |-------|---------|----------|
 | Linter | `npm run lint` | Always |
 | Build | `npm run build` | Always |
+| End-to-End | `npm run build:testing && npm run test:e2e` | Changes touching feeds, posts, or auth flows |
 | Code Review | Task sub-agent | Complex changes |
 | Dev Server | `npm run dev` | UI changes |
 
@@ -103,6 +114,9 @@ This app is fully decentralized with **NO backend server**. All code and archite
 - Dash Platform DAPI (via `@dashevo/evo-sdk`)
 - Client-side storage (localStorage, sessionStorage, IndexedDB)
 
+### Parallel `/testing` Deployment
+A second copy of the app is deployed at `https://yap.pr/testing/` from the same master commit as production. It is built with `npm run build:testing`, which sources the checked-in `.env.testing` to point at **dedicated test data contracts**, and namespaces all persisted browser storage under a `testing:` prefix (`lib/storage-scope.ts`). This is what the Playwright e2e suite runs against, so automated writes never touch production state. See `docs/TESTING.md`.
+
 ### SDK Integration
 - Uses `@dashevo/evo-sdk` package for Dash Platform operations
 - `lib/services/evo-sdk-service.ts` manages SDK initialization and connection
@@ -120,8 +134,9 @@ Singleton service classes handle all Dash Platform operations:
 - Domain services: `post-service.ts`, `profile-service.ts`, `like-service.ts`, `follow-service.ts`, etc.
 
 ### Authentication System
-- `contexts/auth-context.tsx` manages user sessions
-- Private keys stored via biometric storage (`lib/biometric-storage.ts`) or session storage (`lib/secure-storage.ts`)
+- `contexts/auth-context.tsx` manages user sessions and exposes the `withAuth` HOC
+- It delegates to the vendored `platform-auth` controller (`vendor/platform-auth`) through the adapters in `lib/auth/platform-auth-adapters.ts`
+- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`); passkey/PRF unlock is in `lib/webauthn/passkey-prf.ts`
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure

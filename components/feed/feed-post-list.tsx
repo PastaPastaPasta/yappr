@@ -69,7 +69,7 @@ export function FeedPostList({
         }
         emptyAction={<LegacyYapprLink />}
       >
-        <div>
+        <div data-testid="feed-post-list">
           {posts?.map((post) => (
             <ErrorBoundary key={post.id} level="component">
               <PostCard

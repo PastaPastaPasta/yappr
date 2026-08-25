@@ -313,6 +313,7 @@ export function ThreadPostEditor({
             <div className="relative">
               <textarea
                 ref={ref}
+                data-testid="compose-textarea"
                 value={post.content}
                 onChange={(e) => onContentChange(e.target.value)}
                 onFocus={onActivate}
