@@ -112,11 +112,21 @@ function SellerOrdersPage() {
                 payload.paymentMethod === 'platformCredits' &&
                 payload.creditTransferReceiptId
               ) {
+                // Bind the receipt to this specific order: the transfer must
+                // come from this order's buyer, go to this seller, and carry a
+                // storeOrder reference to this exact order ID. This prevents a
+                // buyer from replaying an unrelated or shared receipt across
+                // orders. Note: the amount is still taken from the buyer-
+                // supplied payload; sellers should confirm it matches the
+                // order total shown alongside.
                 const verification = await creditTransferService.verifyReceipt(
                   payload.creditTransferReceiptId,
                   {
+                    expectedSenderId: order.buyerId,
                     expectedRecipientId: order.sellerId,
                     expectedAmountCredits: payload.paymentAmountCredits,
+                    expectedReferenceType: 'storeOrder',
+                    expectedReferenceId: order.id,
                   }
                 )
                 receiptStatusMap.set(order.id, verification)
@@ -369,10 +379,23 @@ function SellerOrdersPage() {
                                       <span className={
                                         paymentReceiptStatus.status === 'verified'
                                           ? 'text-green-700 dark:text-green-300'
-                                          : 'text-blue-700 dark:text-blue-300'
+                                          : paymentReceiptStatus.status === 'invalid' || paymentReceiptStatus.status === 'error'
+                                            ? 'text-red-700 dark:text-red-300'
+                                            : 'text-blue-700 dark:text-blue-300'
                                       }>
-                                        {paymentReceiptStatus.status === 'verified' ? 'Verified receipt' : 'Receipt pending'}
+                                        {paymentReceiptStatus.status === 'verified'
+                                          ? 'Verified receipt'
+                                          : paymentReceiptStatus.status === 'invalid'
+                                            ? 'Invalid receipt - do not fulfill'
+                                            : paymentReceiptStatus.status === 'error'
+                                              ? 'Receipt verification error'
+                                              : 'Receipt pending'}
                                       </span>
+                                      {(paymentReceiptStatus.status === 'invalid' || paymentReceiptStatus.status === 'error') && paymentReceiptStatus.error && (
+                                        <span className="block text-xs text-red-600 dark:text-red-400 mt-0.5">
+                                          {paymentReceiptStatus.error}
+                                        </span>
+                                      )}
                                     </p>
                                   )}
                                 </>
