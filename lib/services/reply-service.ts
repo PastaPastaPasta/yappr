@@ -242,7 +242,10 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (raw.mediaUrl != null) data.mediaUrl = raw.mediaUrl;
     if (raw.sensitive != null) data.sensitive = raw.sensitive;
 
-    const revision = Number(raw.$revision ?? raw.revision ?? 1);
+    const revision = Number(raw.$revision ?? raw.revision);
+    if (!Number.isFinite(revision) || revision < 1) {
+      throw new Error('Reply could not be edited: current document revision is unavailable');
+    }
 
     const { stateTransitionService } = await import('./state-transition-service');
     const result = await stateTransitionService.updateDocument(

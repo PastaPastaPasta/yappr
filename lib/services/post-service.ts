@@ -312,12 +312,21 @@ class PostService extends BaseDocumentService<Post> {
     };
     if (raw.mediaUrl != null) data.mediaUrl = raw.mediaUrl;
     if (raw.sensitive != null) data.sensitive = raw.sensitive;
-    const quotedPostId = identifierToBase58(raw.quotedPostId);
-    if (quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(quotedPostId);
-    const quotedPostOwnerId = identifierToBase58(raw.quotedPostOwnerId);
-    if (quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(quotedPostOwnerId);
+    // Abort rather than silently drop a stored quote reference the replacement must preserve
+    for (const field of ['quotedPostId', 'quotedPostOwnerId'] as const) {
+      if (raw[field] == null) continue;
+      const base58 = identifierToBase58(raw[field]);
+      if (!base58) {
+        logger.error(`updatePost: could not convert stored ${field} for post ${postId}`);
+        throw new Error('Post could not be edited: stored quote reference is unreadable');
+      }
+      data[field] = identifierStringToDocumentBytes(base58);
+    }
 
-    const revision = Number(raw.$revision ?? raw.revision ?? 1);
+    const revision = Number(raw.$revision ?? raw.revision);
+    if (!Number.isFinite(revision) || revision < 1) {
+      throw new Error('Post could not be edited: current document revision is unavailable');
+    }
 
     const { stateTransitionService } = await import('./state-transition-service');
     const result = await stateTransitionService.updateDocument(
@@ -690,6 +699,8 @@ class PostService extends BaseDocumentService<Post> {
       author: reply.author,
       content: reply.content,
       createdAt: reply.createdAt,
+      updatedAt: reply.updatedAt,
+      isEdited: reply.isEdited,
       likes: reply.likes,
       reposts: reply.reposts,
       replies: reply.replies,

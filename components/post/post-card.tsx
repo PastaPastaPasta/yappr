@@ -649,19 +649,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <span className="text-gray-500 text-sm">{createdAtLabel}</span>
               {isEdited && (
                 <Tooltip.Provider>
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <span className="text-gray-400 text-sm cursor-help">(edited)</span>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content
-                        className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                        sideOffset={5}
-                      >
-                        {post.updatedAt ? `Edited ${post.updatedAt.toLocaleString()}` : 'This post was edited'}
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
+                  <ActionTooltip label={post.updatedAt ? `Edited ${post.updatedAt.toLocaleString()}` : 'This post was edited'}>
+                    <span className="text-gray-400 text-sm cursor-help">(edited)</span>
+                  </ActionTooltip>
                 </Tooltip.Provider>
               )}
               <DropdownMenu.Root>
