@@ -12,6 +12,7 @@ import {
   clearBlockCache as clearSharedBlockCache,
   seedBlockStatusCache
 } from '@/lib/caches/user-status-cache'
+import { getConfirmedBlock } from '@/lib/caches/block-cache'
 
 export interface UseBlockResult {
   isBlocked: boolean
@@ -27,13 +28,20 @@ export interface UseBlockResult {
 export interface UseBlockOptions {
   /** Initial block status from batch prefetch (skips initial query if provided) */
   initialValue?: boolean
+  /**
+   * Always resolve exact provenance (own vs. inherited) with a platform query
+   * instead of trusting the confirmed-block cache. Use on pages that render
+   * provenance-dependent UI (e.g. Unblock vs. Manage block lists) and must
+   * handle a target blocked both directly and via a followed list.
+   */
+  resolveProvenance?: boolean
 }
 
 /**
  * Hook to manage block state for a target user
  */
 export function useBlock(targetUserId: string, options: UseBlockOptions = {}): UseBlockResult {
-  const { initialValue } = options
+  const { initialValue, resolveProvenance = false } = options
   const { user } = useAuth()
   const { open: openLoginPrompt } = useLoginPromptModal()
   const [isBlocked, setIsBlocked] = useState(initialValue ?? false)
@@ -63,6 +71,26 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
         setIsLoading(false)
         return
       }
+
+      // Fast positive path: the confirmed-block cache (populated by batch
+      // checks and prior lookups) records who blocked the target, so trust it
+      // instead of re-querying - unless exact provenance was requested. Note
+      // an "own" entry may hide an additional inherited block (own takes
+      // precedence), which is why provenance-dependent UI opts out of this.
+      if (!resolveProvenance) {
+        const confirmed = getConfirmedBlock(user.identityId, targetUserId)
+        if (confirmed !== undefined) {
+          const own = confirmed.isBlocked && confirmed.blockedBy === user.identityId
+          setIsBlocked(confirmed.isBlocked)
+          setIsOwnBlock(own)
+          setInheritedFrom(confirmed.isBlocked && !own && confirmed.blockedBy ? confirmed.blockedBy : null)
+          if (cacheKey) {
+            setBlockStatus(cacheKey, confirmed.isBlocked)
+          }
+          setIsLoading(false)
+          return
+        }
+      }
     }
 
     // Blocked or unknown status - resolve full provenance so callers know
@@ -85,7 +113,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     } finally {
       setIsLoading(false)
     }
-  }, [user?.identityId, targetUserId, cacheKey, initialValue])
+  }, [user?.identityId, targetUserId, cacheKey, initialValue, resolveProvenance])
 
   useEffect(() => {
     checkBlockStatus()
@@ -106,10 +134,11 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     const wasBlocked = isBlocked
     const wasOwnBlock = isOwnBlock
 
-    if (wasBlocked && !wasOwnBlock) {
+    if (wasBlocked && !wasOwnBlock && inheritedFrom !== null) {
       // Inherited-only block: there is no own block document to delete, so an
       // "unblock" here would be a silent no-op. It must be managed via block
-      // list follows in settings instead.
+      // list follows in settings instead. (If provenance is still unresolved,
+      // fall through and attempt an own unblock as before.)
       toast.error('This user is blocked by a block list you follow. Manage block lists in Settings.')
       return
     }

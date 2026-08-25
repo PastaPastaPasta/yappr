@@ -66,7 +66,7 @@ function ItemDetailContent() {
   const addedToCartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Check if store owner is blocked
-  const { isBlocked: isOwnerBlocked, isOwnBlock, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '')
+  const { isBlocked: isOwnerBlocked, isOwnBlock, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '', { resolveProvenance: true })
 
   // Cleanup timeout on unmount
   useEffect(() => {

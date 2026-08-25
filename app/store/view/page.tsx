@@ -88,7 +88,7 @@ function StoreDetailContent() {
   const pendingScrollY = useRef<number | null>(null)
 
   // Check if store owner is blocked
-  const { isBlocked: isOwnerBlocked, isOwnBlock, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '')
+  const { isBlocked: isOwnerBlocked, isOwnBlock, isLoading: isBlockLoading, toggleBlock } = useBlock(store?.ownerId ?? '', { resolveProvenance: true })
 
   // Subscribe to cart changes
   useEffect(() => {
