@@ -16,8 +16,17 @@
  *   node scripts/provision-test-identity.mjs --topup <identityId> [--cap-token <t>]
  *   node scripts/provision-test-identity.mjs --check-balances
  *
+ * When the faucet demands a captcha and no token is at hand, the request can be
+ * made out-of-band (e.g. from the faucet page itself, where its CAP widget runs)
+ * and the result fed back in, so the token never has to leave the browser:
+ *   node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>   # prints the pubkey to fund
+ *   # POST /api/asset-lock-proof elsewhere, save the JSON response, then:
+ *   node scripts/provision-test-identity.mjs <index> --asset-lock-key-file <keyfile> --funding-proof-file <json>
+ *
  * Never prints the mnemonic or any WIF.
  */
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { getPublicKey, utils as secpUtils } from '@noble/secp256k1';
 import {
   AssetLockProof,
@@ -25,6 +34,7 @@ import {
   Identity,
   IdentityPublicKey,
   IdentitySigner,
+  OutPoint,
   PrivateKey,
 } from '@dashevo/evo-sdk';
 import { CRITICAL_AUTH_KEY_ID, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
@@ -48,7 +58,11 @@ function describeErr(e) {
 }
 
 function parseArgs(argv) {
-  const args = { positional: [], identityIndex: null, dpns: null, topUp: null, capToken: null, checkBalances: false };
+  const args = {
+    positional: [], identityIndex: null, dpns: null, topUp: null, capToken: null,
+    checkBalances: false, genAssetLockKey: null, assetLockKeyFile: null, fundingProofFile: null,
+    chainLockHeight: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     switch (arg) {
@@ -56,13 +70,20 @@ function parseArgs(argv) {
       case '--topup': args.topUp = argv[++i]; break;
       case '--cap-token': args.capToken = argv[++i]; break;
       case '--check-balances': args.checkBalances = true; break;
+      case '--gen-asset-lock-key': args.genAssetLockKey = argv[++i]; break;
+      case '--asset-lock-key-file': args.assetLockKeyFile = argv[++i]; break;
+      case '--funding-proof-file': args.fundingProofFile = argv[++i]; break;
+      case '--chain-lock': args.chainLockHeight = Number(argv[++i]); break;
       default:
         if (arg.startsWith('--')) throw new Error(`Unknown flag: ${arg}`);
         args.positional.push(arg);
     }
   }
 
-  if (args.checkBalances || args.topUp) return args;
+  if (Boolean(args.assetLockKeyFile) !== Boolean(args.fundingProofFile)) {
+    throw new Error('--asset-lock-key-file and --funding-proof-file must be used together');
+  }
+  if (args.checkBalances || args.topUp || args.genAssetLockKey) return args;
 
   args.identityIndex = Number(args.positional[0]);
   if (args.positional.length !== 1 || !Number.isInteger(args.identityIndex) || args.identityIndex < 0) {
@@ -76,6 +97,63 @@ function generateAssetLockKeypair() {
   const privateKeyBytes = secpUtils.randomSecretKey();
   const publicKeyHex = Buffer.from(getPublicKey(privateKeyBytes, true)).toString('hex');
   return { privateKeyBytes, publicKeyHex };
+}
+
+/** Reads a 64-hex asset-lock private key written by `--gen-asset-lock-key`. */
+function loadAssetLockKeypair(keyFile) {
+  const hex = readFileSync(keyFile, 'utf8').trim();
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error(`${keyFile} is not a 64-hex private key`);
+  const privateKeyBytes = Uint8Array.from(Buffer.from(hex, 'hex'));
+  const publicKeyHex = Buffer.from(getPublicKey(privateKeyBytes, true)).toString('hex');
+  return { privateKeyBytes, publicKeyHex };
+}
+
+/**
+ * The faucet returns the proof as hex-encoded JSON — `{instantLock, transaction,
+ * outputIndex}` with base64 payloads — not the bincode blob `fromHex` expects,
+ * so build the instant proof from its parts (falling back to `fromHex` should
+ * the faucet ever switch to the SDK wire format).
+ */
+function assetLockProofFromFaucet(proofHex, chainLockHeight) {
+  const decoded = Buffer.from(proofHex, 'hex').toString('utf8');
+  if (decoded.trimStart().startsWith('{')) {
+    const proof = JSON.parse(decoded);
+    if (chainLockHeight) {
+      // Instant lock proofs go stale once the signing quorum rotates; once the
+      // funding tx is buried under a chain lock, `--chain-lock <height>` claims
+      // the same outpoint via a chain asset-lock proof instead.
+      const tx = Buffer.from(proof.transaction, 'base64');
+      const txid = createHash('sha256').update(createHash('sha256').update(tx).digest()).digest().reverse().toString('hex');
+      console.log(`using chain asset-lock proof: height=${chainLockHeight} outpoint=${txid}:${proof.outputIndex}`);
+      return AssetLockProof.createChainAssetLockProof(chainLockHeight, new OutPoint(txid, proof.outputIndex));
+    }
+    return AssetLockProof.createInstantAssetLockProof(
+      Uint8Array.from(Buffer.from(proof.instantLock, 'base64')),
+      Uint8Array.from(Buffer.from(proof.transaction, 'base64')),
+      proof.outputIndex,
+    );
+  }
+  return AssetLockProof.fromHex(proofHex);
+}
+
+/**
+ * Yields the asset-lock keypair plus faucet funding for a create/top-up, either
+ * by calling the faucet directly or from files prepared out-of-band (the
+ * captcha-in-browser flow described in the header).
+ */
+async function obtainFunding(args) {
+  if (args.fundingProofFile) {
+    const assetLock = loadAssetLockKeypair(args.assetLockKeyFile);
+    const funding = JSON.parse(readFileSync(args.fundingProofFile, 'utf8'));
+    if (!funding.assetLockProof) throw new Error(`${args.fundingProofFile} has no assetLockProof field`);
+    console.log(`using pre-fetched asset lock proof: txid=${funding.txid} credits=${funding.creditsAmount}`);
+    return { assetLock, funding };
+  }
+  const assetLock = generateAssetLockKeypair();
+  console.log(`requesting asset lock proof from ${FAUCET_URL} …`);
+  const funding = await requestAssetLockProof(assetLock.publicKeyHex, args.capToken);
+  console.log(`funded: txid=${funding.txid} credits=${funding.creditsAmount}`);
+  return { assetLock, funding };
 }
 
 /**
@@ -102,7 +180,8 @@ async function requestAssetLockProof(publicKeyHex, capToken) {
     return payload;
   }
 
-  const detail = String(payload.detail ?? payload.message ?? text);
+  const rawDetail = payload.detail ?? payload.message ?? text;
+  const detail = typeof rawDetail === 'string' ? rawDetail : JSON.stringify(rawDetail);
   if (response.status === 400 && /captcha|cap token|captoken/i.test(detail)) {
     throw new Error(
       `Faucet requires a captcha token: ${detail}\n` +
@@ -133,7 +212,7 @@ async function connect() {
   return sdk;
 }
 
-async function createIdentity(sdk, identityIndex, dpnsLabel, capToken) {
+async function createIdentity(sdk, identityIndex, dpnsLabel, args) {
   const keys = deriveIdentityKeys(identityIndex);
   console.log(`derived ${keys.length} keys for identity index ${identityIndex}`);
 
@@ -141,12 +220,9 @@ async function createIdentity(sdk, identityIndex, dpnsLabel, capToken) {
     throw new Error(`DPNS name "${dpnsLabel}" is already taken — pick another label`);
   }
 
-  const assetLock = generateAssetLockKeypair();
-  console.log(`requesting asset lock proof from ${FAUCET_URL} …`);
-  const funding = await requestAssetLockProof(assetLock.publicKeyHex, capToken);
-  console.log(`funded: txid=${funding.txid} credits=${funding.creditsAmount}`);
+  const { assetLock, funding } = await obtainFunding(args);
 
-  const assetLockProof = AssetLockProof.fromHex(funding.assetLockProof);
+  const assetLockProof = assetLockProofFromFaucet(funding.assetLockProof, args.chainLockHeight);
   const identityId = assetLockProof.createIdentityId();
 
   const identity = new Identity(identityId);
@@ -189,18 +265,15 @@ async function createIdentity(sdk, identityIndex, dpnsLabel, capToken) {
   console.log(`Append ${identityIdBase58} to E2E_IDENTITY_IDS in .env.testing (index ${identityIndex} order).`);
 }
 
-async function topUp(sdk, identityId, capToken) {
+async function topUp(sdk, identityId, args) {
   const identity = await sdk.identities.fetch(identityId);
   if (!identity) throw new Error(`Identity ${identityId} not found on testnet`);
 
-  const assetLock = generateAssetLockKeypair();
-  console.log(`requesting asset lock proof from ${FAUCET_URL} …`);
-  const funding = await requestAssetLockProof(assetLock.publicKeyHex, capToken);
-  console.log(`funded: txid=${funding.txid} credits=${funding.creditsAmount}`);
+  const { assetLock, funding } = await obtainFunding(args);
 
   const newBalance = await sdk.identities.topUp({
     identity,
-    assetLockProof: AssetLockProof.fromHex(funding.assetLockProof),
+    assetLockProof: assetLockProofFromFaucet(funding.assetLockProof, args.chainLockHeight),
     assetLockPrivateKey: PrivateKey.fromBytes(assetLock.privateKeyBytes, 'testnet'),
   });
   console.log(`topped up ${identityId}: balance=${newBalance} credits`);
@@ -239,7 +312,17 @@ try {
   console.error('Usage: node scripts/provision-test-identity.mjs <index> [--dpns <label>] [--cap-token <t>]');
   console.error('       node scripts/provision-test-identity.mjs --topup <identityId> [--cap-token <t>]');
   console.error('       node scripts/provision-test-identity.mjs --check-balances');
+  console.error('       node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>');
+  console.error('       node scripts/provision-test-identity.mjs <index> --asset-lock-key-file <keyfile> --funding-proof-file <json>');
   process.exit(1);
+}
+
+if (args.genAssetLockKey) {
+  const assetLock = generateAssetLockKeypair();
+  writeFileSync(args.genAssetLockKey, `${Buffer.from(assetLock.privateKeyBytes).toString('hex')}\n`, { mode: 0o600 });
+  console.log(`asset-lock private key written to ${args.genAssetLockKey} (mode 600)`);
+  console.log(`assetLockPublicKey: ${assetLock.publicKeyHex}`);
+  process.exit(0);
 }
 
 try {
@@ -247,9 +330,9 @@ try {
   if (args.checkBalances) {
     await checkBalances(sdk);
   } else if (args.topUp) {
-    await topUp(sdk, args.topUp, args.capToken);
+    await topUp(sdk, args.topUp, args);
   } else {
-    await createIdentity(sdk, args.identityIndex, args.dpns, args.capToken);
+    await createIdentity(sdk, args.identityIndex, args.dpns, args);
   }
 } catch (e) {
   console.error('ERROR:', describeErr(e));

@@ -6,8 +6,11 @@
  * its AUTHENTICATION/CRITICAL key. Re-running this is also the "reset test state"
  * mechanism: new contracts start empty, and the old ones are simply abandoned.
  *
- * The profile schema is not checked into this repo, so it is read back from the
- * deployed production contract and re-published verbatim under the new owner.
+ * Both schemas are read back from the deployed production contracts and
+ * re-published verbatim under the new owner. (The checked-in
+ * contracts/yappr-social-contract-actual.json predates current DPP validation —
+ * its per-type `mutable` keys are rejected on registration — while the chain\'s
+ * `schemas` getter returns the canonical registrable form.)
  *
  * Run:
  *   node scripts/register-test-contracts.mjs [--owner <identityId>] [--only social|profile]
@@ -15,12 +18,9 @@
  * The owner defaults to the first entry of E2E_IDENTITY_IDS in .env.testing.
  * Prints the `.env.testing` lines to paste when it finishes.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { DataContract, EvoSDK, IdentitySigner } from '@dashevo/evo-sdk';
 import {
   CRITICAL_AUTH_KEY_ID,
-  REPO_ROOT,
   criticalAuthKey,
   deriveIdentityKeys,
   loadIdentityIds,
@@ -28,7 +28,7 @@ import {
 
 // ---- Config -----------------------------------------------------------------
 const OWNER_IDENTITY_INDEX = 0;
-const SOCIAL_CONTRACT_FILE = join(REPO_ROOT, 'contracts', 'yappr-social-contract-actual.json');
+const PROD_SOCIAL_CONTRACT_ID = 'EWR695MsqPUuW8EnTbYzD4KybNQD5n7CUDWydJYNg63F';
 const PROD_PROFILE_CONTRACT_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe';
 const SDK_TIMEOUT_MS = 30000;
 // -----------------------------------------------------------------------------
@@ -59,22 +59,6 @@ function parseArgs(argv) {
     throw new Error(`--only takes "social" or "profile", got "${args.only}"`);
   }
   return args;
-}
-
-/**
- * The checked-in social contract file is a bare document-schema map (document
- * type name -> JSON schema), but a full registered-contract dump (with $id /
- * ownerId / documentSchemas) is also plausible. Accept either and return just
- * the schemas, since ownership is set fresh at publish time.
- */
-function loadSocialSchemas() {
-  const parsed = JSON.parse(readFileSync(SOCIAL_CONTRACT_FILE, 'utf8'));
-  const schemas = parsed.documentSchemas ?? parsed.documents ?? parsed;
-  const documentTypes = Object.keys(schemas).filter((key) => !key.startsWith('$'));
-  if (documentTypes.length === 0) {
-    throw new Error(`No document schemas found in ${SOCIAL_CONTRACT_FILE}`);
-  }
-  return Object.fromEntries(documentTypes.map((type) => [type, schemas[type]]));
 }
 
 /** Reads the document schemas off a fetched DataContract. */
@@ -147,10 +131,13 @@ try {
   let identityNonce = ((await sdk.identities.nonce(ownerId)) ?? 0n) + 1n;
 
   if (args.only !== 'profile') {
+    console.log(`fetching production social contract ${PROD_SOCIAL_CONTRACT_ID} …`);
+    const prodSocial = await sdk.contracts.fetch(PROD_SOCIAL_CONTRACT_ID);
+    if (!prodSocial) throw new Error(`Social contract ${PROD_SOCIAL_CONTRACT_ID} not found`);
     published.NEXT_PUBLIC_YAPPR_CONTRACT_ID = await publishContract(sdk, {
       label: 'social',
       ownerId,
-      schemas: loadSocialSchemas(),
+      schemas: schemasOf(prodSocial),
       identityNonce,
       identityKey,
       signer,
