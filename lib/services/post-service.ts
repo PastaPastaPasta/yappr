@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions } from '../../types';
 import type { BlogPost } from '@/lib/types';
-import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
+import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, documentToPlainObject } from './sdk-helpers';
 import { paginateCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
@@ -79,6 +79,8 @@ class PostService extends BaseDocumentService<Post> {
     const id = (doc.$id || doc.id) as string;
     const ownerId = (doc.$ownerId || doc.ownerId) as string;
     const createdAt = (doc.$createdAt || doc.createdAt) as number;
+    const updatedAt = (doc.$updatedAt || doc.updatedAt) as number | undefined;
+    const revision = (doc.$revision || doc.revision) as number | undefined;
 
     // Content and other fields may be in data or at root level
     const content = (data.content || doc.content || '') as string;
@@ -107,6 +109,8 @@ class PostService extends BaseDocumentService<Post> {
       author: createDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
+      updatedAt: updatedAt ? new Date(updatedAt) : undefined,
+      isEdited: typeof revision === 'number' && revision > 1, // Base revision is 1 on Dash Platform
       likes: 0,
       reposts: 0,
       replies: 0,
@@ -266,6 +270,74 @@ class PostService extends BaseDocumentService<Post> {
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     return this.create(ownerId, data);
+  }
+
+  /**
+   * Update an existing post's content.
+   *
+   * Only the content field changes — language, mediaUrl, quotedPostId and other
+   * stored fields are preserved from the current document, since Dash Platform
+   * document replacement requires the full document payload.
+   *
+   * Encrypted (private) posts cannot be edited: a content-only replacement would
+   * desync the stored ciphertext from the public teaser/placeholder.
+   */
+  async updatePost(postId: string, ownerId: string, content: string): Promise<Post> {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      throw new Error('Post content cannot be empty');
+    }
+    if (trimmed.length > 500) {
+      throw new Error('Post content exceeds 500 character limit');
+    }
+
+    // Fetch the raw document (bypassing the lossy Post transform) so the
+    // replacement payload preserves every stored field and the current revision.
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.get(this.contractId, this.documentType, postId);
+    if (!response) {
+      throw new Error('Post not found');
+    }
+    const raw = documentToPlainObject(response);
+
+    if (raw.encryptedContent) {
+      throw new Error('Encrypted posts cannot be edited');
+    }
+
+    const data: Record<string, unknown> = {
+      content: trimmed,
+      // language is required by the contract — preserve the stored value
+      language: (raw.language as string) || 'en',
+    };
+    if (raw.mediaUrl != null) data.mediaUrl = raw.mediaUrl;
+    if (raw.sensitive != null) data.sensitive = raw.sensitive;
+    const quotedPostId = identifierToBase58(raw.quotedPostId);
+    if (quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(quotedPostId);
+    const quotedPostOwnerId = identifierToBase58(raw.quotedPostOwnerId);
+    if (quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(quotedPostOwnerId);
+
+    const revision = Number(raw.$revision ?? raw.revision ?? 1);
+
+    const { stateTransitionService } = await import('./state-transition-service');
+    const result = await stateTransitionService.updateDocument(
+      this.contractId,
+      this.documentType,
+      postId,
+      ownerId,
+      data,
+      revision
+    );
+
+    if (!result.success || !result.document) {
+      throw new Error(result.error || 'Failed to update post');
+    }
+
+    // Drop any cached copy so subsequent reads see the new content and revision
+    this.clearCache(postId);
+
+    // The update result has no $createdAt — carry it over from the fetched document
+    return this.transformDocument({ $createdAt: raw.$createdAt, ...result.document });
   }
 
   /**

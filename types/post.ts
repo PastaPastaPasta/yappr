@@ -32,6 +32,8 @@ export interface Post {
   author: User
   content: string
   createdAt: Date
+  updatedAt?: Date      // When post was last edited ($updatedAt from platform, if stored)
+  isEdited?: boolean    // True if $revision > 1 (base revision is 1 on Dash Platform)
   likes: number
   reposts: number
   replies: number
@@ -72,6 +74,8 @@ export interface Reply {
   author: User
   content: string
   createdAt: Date
+  updatedAt?: Date      // When reply was last edited ($updatedAt from platform, if stored)
+  isEdited?: boolean    // True if $revision > 1 (base revision is 1 on Dash Platform)
   likes: number
   reposts: number
   replies: number
