@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { identityService } from './identity-service'
 import {
   findMatchingKeyIndex,
@@ -33,7 +34,7 @@ export interface KeyValidationResult {
  * Convert SDK public key data to Uint8Array
  * Handles multiple formats: Uint8Array, Array, base58 string, base64 string
  */
-function extractPublicKeyBytes(data: any): Uint8Array | null {
+function extractPublicKeyBytes(data: unknown): Uint8Array | null {
   if (!data) return null
 
   // Already a Uint8Array
@@ -69,10 +70,21 @@ function extractPublicKeyBytes(data: any): Uint8Array | null {
   return null
 }
 
+interface SDKPublicKey {
+  id?: number;
+  keyId?: number;
+  type?: number;
+  keyType?: number;
+  purpose?: number;
+  securityLevel?: number;
+  data?: unknown;
+  publicKey?: unknown;
+}
+
 /**
  * Convert SDK public key format to our internal format
  */
-function convertPublicKeys(sdkPublicKeys: any[]): IdentityPublicKeyInfo[] {
+function convertPublicKeys(sdkPublicKeys: SDKPublicKey[]): IdentityPublicKeyInfo[] {
   const result: IdentityPublicKeyInfo[] = []
 
   for (const key of sdkPublicKeys) {
@@ -81,7 +93,7 @@ function convertPublicKeys(sdkPublicKeys: any[]): IdentityPublicKeyInfo[] {
 
     const data = extractPublicKeyBytes(rawData)
     if (!data) {
-      console.warn('Could not extract public key bytes for key:', key.id)
+      logger.warn('Could not extract public key bytes for key:', key.id)
       continue
     }
 

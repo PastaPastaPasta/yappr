@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Retry utility functions for handling network errors and transient failures
  */
@@ -7,7 +8,7 @@ export interface RetryOptions {
   initialDelayMs?: number
   maxDelayMs?: number
   backoffMultiplier?: number
-  retryCondition?: (error: any) => boolean
+  retryCondition?: (error: unknown) => boolean
 }
 
 export interface RetryResult<T> {
@@ -20,11 +21,12 @@ export interface RetryResult<T> {
 /**
  * Default retry condition - retries on network errors and temporary failures
  */
-function defaultRetryCondition(error: any): boolean {
+function defaultRetryCondition(error: unknown): boolean {
   if (!error) return false
-  
-  const errorMessage = error.message?.toLowerCase() || ''
-  const errorString = error.toString?.()?.toLowerCase() || ''
+
+  const errObj = error as { message?: string; toString?: () => string }
+  const errorMessage = errObj.message?.toLowerCase() || ''
+  const errorString = errObj.toString?.()?.toLowerCase() || ''
   
   // Network-related errors
   const networkErrors = [
@@ -84,9 +86,9 @@ export async function retryAsync<T>(
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      console.log(`Retry attempt ${attempt}/${maxAttempts}`)
+      logger.info(`Retry attempt ${attempt}/${maxAttempts}`)
       const result = await operation()
-      console.log(`Operation succeeded on attempt ${attempt}`)
+      logger.info(`Operation succeeded on attempt ${attempt}`)
       
       return {
         success: true,
@@ -95,17 +97,17 @@ export async function retryAsync<T>(
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
-      console.warn(`Attempt ${attempt} failed:`, lastError.message)
+      logger.warn(`Attempt ${attempt} failed:`, lastError.message)
       
       // Don't retry if this is the last attempt or if error is not retryable
       if (attempt === maxAttempts || !retryCondition(lastError)) {
-        console.log(attempt === maxAttempts ? 'Max attempts reached' : 'Error not retryable')
+        logger.info(attempt === maxAttempts ? 'Max attempts reached' : 'Error not retryable')
         break
       }
       
       // Calculate delay for next attempt
       const delay = calculateDelay(attempt, initialDelayMs, maxDelayMs, backoffMultiplier)
-      console.log(`Waiting ${Math.round(delay)}ms before retry...`)
+      logger.info(`Waiting ${Math.round(delay)}ms before retry...`)
       await sleep(delay)
     }
   }
@@ -130,11 +132,13 @@ export async function retryPostCreation<T>(
     maxDelayMs: 8000,
     backoffMultiplier: 2,
     retryCondition: (error) => {
-      // Use default retry condition plus Dash Platform specific errors
+      // defaultRetryCondition covers network/timeout errors — these are safe to retry
+      // because state-transition-service.createDocument() performs idempotency checks
+      // before each attempt (verifies on Platform + checks pending store).
       if (defaultRetryCondition(error)) return true
-      
-      const errorMessage = error.message?.toLowerCase() || ''
-      
+
+      const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
+
       // Dash Platform specific retryable errors
       const dashErrors = [
         'internal error',
@@ -143,7 +147,7 @@ export async function retryPostCreation<T>(
         'consensus error',
         'quorum not available'
       ]
-      
+
       return dashErrors.some(dashError => errorMessage.includes(dashError))
     },
     ...options
@@ -153,13 +157,13 @@ export async function retryPostCreation<T>(
 /**
  * Check if an error appears to be a network error
  */
-export function isNetworkError(error: any): boolean {
+export function isNetworkError(error: unknown): boolean {
   return defaultRetryCondition(error)
 }
 
 /**
  * Check if an error is retryable
  */
-export function isRetryableError(error: any): boolean {
+export function isRetryableError(error: unknown): boolean {
   return defaultRetryCondition(error)
 }

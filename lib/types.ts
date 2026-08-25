@@ -1,123 +1,9 @@
-export interface User {
-  id: string
-  documentId?: string  // The profile document $id (for updates)
-  $revision?: number   // Document revision (for updates)
-  username: string  // From DPNS - not stored in profile document
-  displayName: string
-  avatar: string // URL for display (DiceBear generated from user ID or custom URI)
-  bio?: string
-  location?: string
-  website?: string
-  followers: number
-  following: number
-  verified?: boolean
-  joinedAt: Date
-  // New unified profile fields
-  bannerUri?: string
-  paymentUris?: ParsedPaymentUri[]
-  pronouns?: string
-  nsfw?: boolean
-  socialLinks?: SocialLink[]
-  hasUnifiedProfile?: boolean  // true if migrated to new contract
-}
+export * from '../types/user'
+export * from '../types/post'
+export * from '../types/store'
+export * from '../types/notification'
 
-// Payment URI parsed from profile
-export interface ParsedPaymentUri {
-  scheme: string  // e.g., 'dash:', 'bitcoin:'
-  uri: string     // Full URI e.g., 'dash:XnNh3...'
-  label?: string  // Optional display label
-}
-
-// Social link from profile
-export interface SocialLink {
-  platform: string  // e.g., 'twitter', 'github'
-  handle: string    // e.g., '@username' or 'username'
-}
-
-export interface Post {
-  id: string
-  author: User
-  content: string
-  createdAt: Date
-  updatedAt?: Date      // When post was last edited ($updatedAt from platform)
-  isEdited?: boolean    // True if $revision > 0 (convenience for UI)
-  likes: number
-  reposts: number
-  replies: number
-  views: number
-  liked?: boolean
-  reposted?: boolean
-  bookmarked?: boolean
-  media?: Media[]
-  replyToId?: string    // ID of parent post (for fetching if replyTo not populated)
-  replyTo?: Post
-  quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
-  quotedPost?: Post
-  tipInfo?: TipInfo     // Populated if this post is a tip (parsed from content)
-  _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
-  repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it
-  repostTimestamp?: Date  // When the repost was created (for timeline sorting)
-}
-
-/** Pre-fetched enrichment data to avoid N+1 queries in feed */
-export interface PostEnrichment {
-  authorIsBlocked: boolean
-  authorIsFollowing: boolean
-  authorAvatarUrl: string
-}
-
-/** Reply thread structure for threaded post display */
-export interface ReplyThread {
-  post: Post
-  isAuthorThread: boolean       // true if same author as main post
-  isThreadContinuation: boolean // true if continues previous author reply
-  nestedReplies: ReplyThread[]  // 2nd level replies (depth limited)
-}
-
-// Tip metadata parsed from post content (format: tip:CREDITS\nmessage)
-// NOTE: Amount is currently self-reported and unverified.
-// TODO: Once SDK exposes transition IDs, format will become tip:CREDITS@TRANSITION_ID
-// which will allow on-chain verification of tip amounts.
-export interface TipInfo {
-  amount: number        // Tip amount in credits (self-reported, unverified)
-  message: string       // The tip message (content after the tip: line)
-  transitionId?: string // Future: will be used for on-chain verification
-}
-
-export interface Media {
-  id: string
-  type: 'image' | 'video' | 'gif'
-  url: string
-  thumbnail?: string
-  alt?: string
-  width?: number
-  height?: number
-}
-
-export interface Comment {
-  id: string
-  author: User
-  content: string
-  createdAt: Date
-  likes: number
-  liked?: boolean
-  postId: string
-}
-
-export interface Notification {
-  id: string
-  type: 'like' | 'repost' | 'follow' | 'reply' | 'mention'
-  from: User
-  post?: Post
-  createdAt: Date
-  read: boolean
-}
-
-export interface Trend {
-  topic: string
-  posts: number
-  category?: string
-}
+import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 
 // V3 DM contract document types (raw from platform)
 export interface ConversationInviteDocument {
@@ -166,12 +52,6 @@ export interface Conversation {
   updatedAt: Date
 }
 
-// Query options for post service methods
-export interface PostQueryOptions {
-  /** Skip automatic enrichment - caller will handle enrichment manually */
-  skipEnrichment?: boolean
-}
-
 // Block contract document types (enhanced blocking with bloom filters)
 export interface BlockDocument {
   $id: string
@@ -209,22 +89,83 @@ export interface BlockFollowData {
   followedUserIds: string[] // Decoded list of user IDs being followed
 }
 
-// Feed item that shows an original post with context that a followed user replied to it
-export interface FeedReplyContext {
-  type: 'reply_context'
-  originalPost: Post
-  reply: Post
-  replier: {
-    id: string
-    username?: string
-    displayName?: string
-  }
+// DPNS Multi-Username Registration Types
+export type UsernameStatus = 'pending' | 'checking' | 'available' | 'contested' | 'taken' | 'invalid'
+export type RegistrationStep = 'username-entry' | 'checking' | 'review' | 'registering' | 'complete'
+
+export interface UsernameEntry {
+  id: string
+  label: string
+  status: UsernameStatus
+  isContested: boolean
+  validationError?: string
+  registrationError?: string
+  registered?: boolean
 }
 
-// Union type for all items that can appear in a feed
-export type FeedItem = Post | FeedReplyContext
+export interface UsernameCheckResult {
+  available: boolean
+  contested: boolean
+  error?: string
+}
 
-// Type guard to check if a feed item is a reply context
-export function isFeedReplyContext(item: FeedItem): item is FeedReplyContext {
-  return 'type' in item && item.type === 'reply_context'
+export interface UsernameRegistrationResult {
+  label: string
+  success: boolean
+  isContested: boolean
+  error?: string
+}
+
+export interface Blog {
+  id: string
+  ownerId: string
+  createdAt: Date
+  updatedAt?: Date
+  $revision?: number
+  name: string
+  description?: string
+  headerImage?: string
+  avatar?: string
+  themeConfig?: BlogThemeConfig
+  commentsEnabledDefault?: boolean
+  labels?: string
+}
+
+export interface BlogPost {
+  id: string
+  ownerId: string
+  createdAt: Date
+  updatedAt?: Date
+  $revision?: number
+  blogId: string
+  title: string
+  subtitle?: string
+  content: Record<string, unknown>[]
+  coverImage?: string
+  labels?: string
+  commentsEnabled?: boolean
+  slug: string
+  publishedAt?: number
+}
+
+export interface BlogComment {
+  id: string
+  ownerId: string
+  createdAt: Date
+  blogPostId: string
+  blogPostOwnerId: string
+  content: string
+}
+
+export interface BlogPostWithAuthor extends BlogPost {
+  authorUsername?: string
+  authorDisplayName?: string
+  blogName?: string
+}
+
+export interface BlogFollow {
+  id: string
+  ownerId: string
+  blogId: string
+  createdAt: Date
 }

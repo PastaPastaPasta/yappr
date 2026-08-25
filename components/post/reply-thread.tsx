@@ -1,38 +1,41 @@
 'use client'
 
 import Link from 'next/link'
-import { ReplyThread, Post } from '@/lib/types'
-import { PostCard } from './post-card'
+import { ReplyThread, Reply, Post } from '@/lib/types'
+import { PostCard, ProgressiveEnrichment } from './post-card'
 
 /**
- * Get the display identifier for a post author.
- * Priority: DPNS username > Profile display name > Truncated identity ID
+ * Convert a Reply to a Post-like object for PostCard rendering.
+ * This is a temporary adapter until PostCard is updated to handle both types.
+ * Preserves parentId/parentOwnerId so PostCard can detect replies for deletion.
  */
-function getDisplayUsername(author: Post['author']): { display: string; type: 'dpns' | 'profile' | 'id' } {
-  const hasDpns = (author as any).hasDpns
-  const username = author.username
-  const displayName = author.displayName
-
-  // If we have a confirmed DPNS name, use it
-  if (hasDpns && username && !username.startsWith('user_')) {
-    return { display: `@${username}`, type: 'dpns' }
-  }
-
-  // If we have a profile display name (not a placeholder), use it
-  if (displayName && displayName !== 'Unknown User' && !displayName.startsWith('User ')) {
-    return { display: displayName, type: 'profile' }
-  }
-
-  // Otherwise show truncated identity ID
+function replyToPostLike(reply: Reply): Post {
   return {
-    display: `${author.id.slice(0, 8)}...${author.id.slice(-6)}`,
-    type: 'id'
+    id: reply.id,
+    author: reply.author,
+    content: reply.content,
+    createdAt: reply.createdAt,
+    likes: reply.likes,
+    reposts: reply.reposts,
+    replies: reply.replies,
+    views: reply.views,
+    liked: reply.liked,
+    reposted: reply.reposted,
+    bookmarked: reply.bookmarked,
+    media: reply.media,
+    _enrichment: reply._enrichment,
+    encryptedContent: reply.encryptedContent,
+    epoch: reply.epoch,
+    nonce: reply.nonce,
+    parentId: reply.parentId,
+    parentOwnerId: reply.parentOwnerId,
   }
 }
 
 interface ReplyThreadItemProps {
   thread: ReplyThread
   mainPostAuthorId: string
+  getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
 }
 
 /**
@@ -40,8 +43,9 @@ interface ReplyThreadItemProps {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemProps) {
-  const { post, isAuthorThread, isThreadContinuation, nestedReplies } = thread
+export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }: ReplyThreadItemProps) {
+  const { content, isAuthorThread, isThreadContinuation, nestedReplies } = thread
+  const postLike = replyToPostLike(content)
 
   return (
     <div className="relative">
@@ -63,16 +67,21 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
         </div>
       )}
 
-      <PostCard post={post} />
+      <PostCard
+        post={postLike}
+        enrichment={getPostEnrichment?.(postLike)}
+        rootPostOwnerId={mainPostAuthorId}
+      />
 
       {/* Nested replies (2nd level) - indented */}
       {nestedReplies.length > 0 && (
         <div className="ml-12 border-l-2 border-gray-200 dark:border-gray-700">
           {nestedReplies.map((nested) => (
             <NestedReply
-              key={nested.post.id}
-              reply={nested}
-              parentPost={post}
+              key={nested.content.id}
+              thread={nested}
+              mainPostAuthorId={mainPostAuthorId}
+              getPostEnrichment={getPostEnrichment}
             />
           ))}
         </div>
@@ -82,50 +91,35 @@ export function ReplyThreadItem({ thread, mainPostAuthorId }: ReplyThreadItemPro
 }
 
 interface NestedReplyProps {
-  reply: ReplyThread
-  parentPost: Post
+  thread: ReplyThread
+  mainPostAuthorId: string
+  getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
 }
 
 /**
- * Renders a nested (2nd level) reply with context about who it's replying to.
+ * Renders a nested (2nd level) reply. The indentation and left border
+ * visually indicate the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ reply, parentPost }: NestedReplyProps) {
-  const { post } = reply
-  const parentAuthorDisplay = getDisplayUsername(parentPost.author)
-
-  // Style based on display type: DPNS gets blue, profile gets normal, ID gets monospace
-  const linkClassName = parentAuthorDisplay.type === 'dpns'
-    ? 'text-yappr-500 hover:underline'
-    : parentAuthorDisplay.type === 'id'
-      ? 'text-gray-500 font-mono text-xs hover:underline'
-      : 'text-yappr-500 hover:underline'  // Profile gets same style as DPNS
+function NestedReply({ thread, mainPostAuthorId, getPostEnrichment }: NestedReplyProps) {
+  const { content } = thread
+  const postLike = replyToPostLike(content)
 
   return (
     <div className="relative">
-      {/* Context: who this is replying to */}
-      <div className="px-4 pt-2 pb-0">
-        <span className="text-sm text-gray-500">
-          Replying to{' '}
-          <Link
-            href={`/user?id=${parentPost.author.id}`}
-            className={linkClassName}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {parentAuthorDisplay.display}
-          </Link>
-        </span>
-      </div>
-
-      <PostCard post={post} />
+      <PostCard
+        post={postLike}
+        enrichment={getPostEnrichment?.(postLike)}
+        rootPostOwnerId={mainPostAuthorId}
+      />
 
       {/* Show "View more replies" if this reply has replies (3+ level) */}
-      {post.replies > 0 && (
+      {content.replies > 0 && (
         <div className="px-4 pb-3 pl-16">
           <Link
-            href={`/post?id=${post.id}`}
+            href={`/post?id=${content.id}`}
             className="text-sm text-yappr-500 hover:underline"
           >
-            View {post.replies} more {post.replies === 1 ? 'reply' : 'replies'}
+            View {content.replies} more {content.replies === 1 ? 'reply' : 'replies'}
           </Link>
         </div>
       )}

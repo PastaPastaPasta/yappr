@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { SocialLink } from '@/lib/types'
 
@@ -9,10 +9,15 @@ interface SocialLinksInputProps {
   onChange: (links: SocialLink[]) => void
   maxLinks?: number
   disabled?: boolean
+  allowedPlatforms?: string[]
+  label?: string
+  description?: string
 }
 
 // Supported social platforms
 const SOCIAL_PLATFORMS = [
+  { id: 'email', label: 'Email', placeholder: 'email@example.com' },
+  { id: 'signal', label: 'Signal', placeholder: 'phone or username' },
   { id: 'twitter', label: 'Twitter/X', placeholder: '@username' },
   { id: 'github', label: 'GitHub', placeholder: 'username' },
   { id: 'discord', label: 'Discord', placeholder: 'username#1234' },
@@ -38,15 +43,102 @@ function getPlatformPlaceholder(platformId: string): string {
   return platform?.placeholder || 'handle'
 }
 
+function validateHandle(platform: string, handle: string): string | null {
+  const trimmed = handle.trim()
+
+  switch (platform) {
+    case 'twitter':
+    case 'github':
+    case 'twitch':
+    case 'instagram':
+    case 'telegram':
+      if (!/^@?[\w]+$/.test(trimmed)) {
+        return 'Only letters, numbers, and underscores allowed'
+      }
+      break
+    case 'youtube':
+      if (!/^@?[\w.-]+$/.test(trimmed)) {
+        return 'Invalid YouTube handle'
+      }
+      break
+    case 'linkedin':
+      if (!/^[\w-]+$/.test(trimmed)) {
+        return 'Only letters, numbers, and hyphens allowed'
+      }
+      break
+    case 'email':
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+        return 'Invalid email address'
+      }
+      break
+    case 'mastodon':
+      if (!/^@?[\w]+@[a-zA-Z0-9.-]+$/.test(trimmed)) {
+        return 'Use format @user@instance.social'
+      }
+      break
+    case 'discord':
+      if (!/^[\w.]+(?:#\d{4})?$/.test(trimmed)) {
+        return 'Invalid Discord username (e.g., username or username#1234)'
+      }
+      break
+    case 'nostr':
+      if (!/^npub1[a-z0-9]{58}$/.test(trimmed)) {
+        return 'Invalid npub format'
+      }
+      break
+    case 'other':
+      if (/^https?:\/\//i.test(trimmed)) {
+        try {
+          const url = new URL(trimmed)
+          if (!['http:', 'https:'].includes(url.protocol)) {
+            return 'Only http/https URLs allowed'
+          }
+        } catch {
+          return 'Invalid URL'
+        }
+      }
+      break
+  }
+  return null
+}
+
 export function SocialLinksInput({
   links,
   onChange,
   maxLinks = 10,
   disabled = false,
+  allowedPlatforms,
+  label = 'Social Links',
+  description = 'Add links to your social media profiles',
 }: SocialLinksInputProps) {
-  const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>('twitter')
+  // Filter platforms based on allowedPlatforms prop
+  const availablePlatforms = allowedPlatforms
+    ? SOCIAL_PLATFORMS.filter(p => allowedPlatforms.includes(p.id))
+    : SOCIAL_PLATFORMS
+
+  // Get default platform from available platforms, or fall back to first global platform
+  const getDefaultPlatform = (): SocialPlatform => {
+    if (availablePlatforms.length > 0) {
+      return availablePlatforms[0].id as SocialPlatform
+    }
+    return SOCIAL_PLATFORMS[0].id as SocialPlatform
+  }
+
+  const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>(getDefaultPlatform())
   const [handle, setHandle] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Sync selectedPlatform when allowedPlatforms changes
+  useEffect(() => {
+    const validPlatforms = availablePlatforms.map(p => p.id)
+    if (!validPlatforms.includes(selectedPlatform)) {
+      // Inline the default platform logic to avoid dependency on unstable function reference
+      const defaultPlatform = availablePlatforms.length > 0
+        ? availablePlatforms[0].id as SocialPlatform
+        : SOCIAL_PLATFORMS[0].id as SocialPlatform
+      setSelectedPlatform(defaultPlatform)
+    }
+  }, [allowedPlatforms, availablePlatforms, selectedPlatform])
 
   const handleAddLink = () => {
     if (!handle.trim()) {
@@ -59,9 +151,9 @@ export function SocialLinksInput({
       return
     }
 
-    // Check for duplicate platform (except 'other')
-    if (selectedPlatform !== 'other' && links.some(l => l.platform === selectedPlatform)) {
-      setError(`${getPlatformLabel(selectedPlatform)} is already added`)
+    const validationError = validateHandle(selectedPlatform, handle)
+    if (validationError) {
+      setError(validationError)
       return
     }
 
@@ -85,10 +177,10 @@ export function SocialLinksInput({
   return (
     <div className="space-y-3">
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-        Social Links
+        {label}
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Add links to your social media profiles
+        {description}
       </p>
 
       {/* Existing links */}
@@ -130,7 +222,7 @@ export function SocialLinksInput({
                        focus:ring-2 focus:ring-blue-500 focus:border-transparent
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {SOCIAL_PLATFORMS.map(platform => (
+            {availablePlatforms.map(platform => (
               <option key={platform.id} value={platform.id}>
                 {platform.label}
               </option>

@@ -1,177 +1,311 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { 
-  HeartIcon, 
-  ArrowPathRoundedSquareIcon, 
-  ChatBubbleLeftIcon,
+import {
   UserPlusIcon,
   BellIcon,
-  Cog6ToothIcon
+  Cog6ToothIcon,
+  AtSymbolIcon,
+  LockClosedIcon,
+  LockOpenIcon,
+  ShieldExclamationIcon,
+  HeartIcon,
+  ArrowPathRoundedSquareIcon,
+  ChatBubbleLeftIcon,
+  ChevronDownIcon,
+  FunnelIcon,
+  BookOpenIcon,
 } from '@heroicons/react/24/outline'
-import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { withAuth, useAuth } from '@/contexts/auth-context'
+import { Spinner } from '@/components/ui/spinner'
+import { withAuth } from '@/contexts/auth-context'
+import { useSettingsStore } from '@/lib/store'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { formatTimeCompact } from '@/lib/utils'
 import Link from 'next/link'
+import { useNotificationStore } from '@/lib/stores/notification-store'
+import { getBlogPostUrl } from '@/lib/blog/content-utils'
+import { Notification } from '@/lib/types'
 
-type NotificationType = 'like' | 'repost' | 'reply' | 'follow' | 'mention'
+/**
+ * Get the URL to navigate to when clicking a notification.
+ * For reply notifications, navigates to the parent post (so you can see the reply in context).
+ * For like/repost/mention notifications, navigates to the relevant post.
+ * Returns null for follow and private feed notifications (no associated post).
+ */
+function getNotificationUrl(notification: Notification): string | null {
+  // Follow and private feed notifications don't have an associated post
+  if (
+    notification.type === 'follow' ||
+    notification.type === 'privateFeedRequest' ||
+    notification.type === 'privateFeedApproved' ||
+    notification.type === 'privateFeedRevoked'
+  ) {
+    return null
+  }
 
-interface Notification {
-  id: string
-  type: NotificationType
-  message: string
-  timestamp: Date
-  read: boolean
-  actorId: string
-  postId?: string
-  postContent?: string
+  // For blog post notifications, navigate to the blog post
+  if (notification.type === 'blogPost' && notification.blogId && notification.blogPostSlug) {
+    return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
+  }
+
+  // For reply notifications, navigate to the parent post (where the reply appears)
+  // The post.parentId contains the ID of the post/reply that was replied to
+  if (notification.type === 'reply' && notification.post?.parentId) {
+    return `/post?id=${notification.post.parentId}`
+  }
+
+  // For like, repost, mention - navigate to the post itself
+  if (notification.post) {
+    return `/post?id=${notification.post.id}`
+  }
+
+  return null
+}
+
+// Map notification types to settings keys
+const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> = {
+  like: 'likes',
+  repost: 'reposts',
+  reply: 'replies',
+  follow: 'follows',
+  mention: 'mentions',
+  blogPost: 'blogPosts',
+  // Private feed notifications always show (no setting)
+  privateFeedRequest: null,
+  privateFeedApproved: null,
+  privateFeedRevoked: null,
+}
+
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed'
+
+const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }[] = [
+  { key: 'all', label: 'All', icon: <BellIcon className="h-4 w-4" /> },
+  { key: 'like', label: 'Likes', icon: <HeartIcon className="h-4 w-4 text-red-500" /> },
+  { key: 'repost', label: 'Reposts', icon: <ArrowPathRoundedSquareIcon className="h-4 w-4 text-green-500" /> },
+  { key: 'reply', label: 'Replies', icon: <ChatBubbleLeftIcon className="h-4 w-4 text-blue-500" /> },
+  { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-purple-500" /> },
+  { key: 'mention', label: 'Mentions', icon: <AtSymbolIcon className="h-4 w-4 text-yellow-500" /> },
+  { key: 'blogPost', label: 'Blog', icon: <BookOpenIcon className="h-4 w-4 text-yappr-500" /> },
+  { key: 'privateFeed', label: 'Private', icon: <LockClosedIcon className="h-4 w-4 text-blue-500" /> }
+]
+
+const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
+  follow: <UserPlusIcon className="h-5 w-5 text-purple-500" />,
+  mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />,
+  like: <HeartIcon className="h-5 w-5 text-red-500" />,
+  repost: <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />,
+  reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
+  blogPost: <BookOpenIcon className="h-5 w-5 text-yappr-500" />,
+  privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
+  privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
+  privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
+}
+
+const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
+  follow: 'started following you',
+  mention: 'mentioned you in a post',
+  like: 'liked your post',
+  repost: 'reposted your post',
+  reply: 'replied to your post',
+  blogPost: 'published a new blog post',
+  privateFeedRequest: 'requested access to your private feed',
+  privateFeedApproved: 'approved your private feed request',
+  privateFeedRevoked: 'revoked your private feed access'
+}
+
+const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
+  all: 'When someone interacts with you, you\'ll see it here',
+  like: 'When someone likes your post, you\'ll see it here',
+  repost: 'When someone reposts your post, you\'ll see it here',
+  reply: 'When someone replies to your post, you\'ll see it here',
+  follow: 'When someone follows you, you\'ll see it here',
+  mention: 'When someone mentions you, you\'ll see it here',
+  blogPost: 'When a blog you follow publishes, you\'ll see it here',
+  privateFeed: 'Private feed requests and updates will appear here'
 }
 
 function NotificationsPage() {
-  const { user } = useAuth()
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [filter, setFilter] = useState<NotificationType | 'all'>('all')
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
+  // Store - polling is handled by Sidebar, we just display data
+  const filter = useNotificationStore((s) => s.filter)
+  const isLoading = useNotificationStore((s) => s.isLoading)
+  const hasFetchedOnce = useNotificationStore((s) => s.hasFetchedOnce)
+  const setFilter = useNotificationStore((s) => s.setFilter)
+  const markAsRead = useNotificationStore((s) => s.markAsRead)
+  const markAllAsRead = useNotificationStore((s) => s.markAllAsRead)
+  // Subscribe to notifications array directly so component re-renders when markAllAsRead updates it
+  // This fixes the bug where tab indicators didn't clear when marking all as read
+  const notifications = useNotificationStore((s) => s.notifications)
 
-  useEffect(() => {
-    // In a real app, this would fetch notifications from Dash Platform
-    // For now, we'll simulate some notifications
-    setTimeout(() => {
-      setNotifications([
-        {
-          id: '1',
-          type: 'like',
-          message: 'liked your post',
-          timestamp: new Date(Date.now() - 1000 * 60 * 5), // 5 minutes ago
-          read: false,
-          actorId: 'user123',
-          postContent: 'Just deployed my first dApp on Dash Platform! 🚀'
-        },
-        {
-          id: '2',
-          type: 'follow',
-          message: 'started following you',
-          timestamp: new Date(Date.now() - 1000 * 60 * 30), // 30 minutes ago
-          read: false,
-          actorId: 'user456'
-        },
-        {
-          id: '3',
-          type: 'repost',
-          message: 'reposted your post',
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 hours ago
-          read: true,
-          actorId: 'user789',
-          postContent: 'Building decentralized social media is the future'
-        },
-        {
-          id: '4',
-          type: 'reply',
-          message: 'replied to your post',
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-          read: true,
-          actorId: 'user101',
-          postContent: 'What do you think about Web3 social platforms?'
-        }
-      ])
-      setIsLoading(false)
-    }, 1000)
-  }, [])
+  // Get notification settings from settings store
+  const notificationSettings = useSettingsStore((s) => s.notificationSettings)
 
-  const getIcon = (type: NotificationType) => {
-    switch (type) {
-      case 'like':
-        return <HeartIconSolid className="h-5 w-5 text-red-500" />
-      case 'repost':
-        return <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />
-      case 'reply':
-        return <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />
-      case 'follow':
-        return <UserPlusIcon className="h-5 w-5 text-purple-500" />
-      case 'mention':
-        return <BellIcon className="h-5 w-5 text-yellow-500" />
+  // Filter notifications by current tab
+  const getFilteredByTab = (notifs: Notification[], tabFilter: NotificationFilter) => {
+    if (tabFilter === 'all') return notifs
+    if (tabFilter === 'privateFeed') {
+      return notifs.filter(n =>
+        n.type === 'privateFeedRequest' ||
+        n.type === 'privateFeedApproved' ||
+        n.type === 'privateFeedRevoked'
+      )
     }
+    return notifs.filter(n => n.type === tabFilter)
   }
 
-  const formatTime = (date: Date) => {
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-    const days = Math.floor(diff / 86400000)
-
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes}m`
-    if (hours < 24) return `${hours}h`
-    if (days < 7) return `${days}d`
-    return date.toLocaleDateString()
+  // Get unread count for a specific filter, respecting user settings
+  const getUnreadCountForTab = (tabFilter: NotificationFilter) => {
+    const unread = notifications.filter(n => {
+      if (n.read) return false
+      // Respect notification settings (private feed notifications always count)
+      const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
+      if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
+        return false
+      }
+      return true
+    })
+    return getFilteredByTab(unread, tabFilter).length
   }
 
-  const filteredNotifications = filter === 'all' 
-    ? notifications 
-    : notifications.filter(n => n.type === filter)
-
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-  }
+  // Filter by tab first, then by user settings
+  const tabFilteredNotifications = getFilteredByTab(notifications, filter)
+  const filteredNotifications = tabFilteredNotifications.filter((notification) => {
+    const settingKey = NOTIFICATION_TYPE_TO_SETTING[notification.type]
+    // If no setting key (e.g., private feed notifications), always show
+    if (settingKey === null) return true
+    // Check if this notification type is enabled in settings
+    return notificationSettings[settingKey as keyof typeof notificationSettings]
+  })
+  // Overall unread count respecting user settings
+  const unreadCount = notifications.filter(n => {
+    if (n.read) return false
+    const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
+    if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
+      return false
+    }
+    return true
+  }).length
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+      <div className="flex-1 flex justify-center min-w-0">
+      <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
-              <Cog6ToothIcon className="h-5 w-5" />
-            </button>
-          </div>
-          
-          <div className="flex border-b border-gray-200 dark:border-gray-800">
-            {['all', 'like', 'repost', 'reply', 'follow'].map((filterType) => (
-              <button
-                key={filterType}
-                onClick={() => setFilter(filterType as any)}
-                className={`flex-1 py-4 text-sm font-medium capitalize transition-colors relative ${
-                  filter === filterType
-                    ? 'text-gray-900 dark:text-white'
-                    : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                }`}
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={markAllAsRead}
+                  className="text-yappr-500 hover:text-yappr-600 text-sm"
+                >
+                  Mark all as read
+                </Button>
+              )}
+              {/* Mobile filter dropdown */}
+              <div className="md:hidden">
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      data-testid="notification-filter-dropdown"
+                    >
+                      <FunnelIcon className="h-4 w-4" />
+                      <span>{FILTER_TABS.find(t => t.key === filter)?.label}</span>
+                      {getUnreadCountForTab(filter) > 0 && (
+                        <span className="w-2 h-2 bg-yappr-500 rounded-full" />
+                      )}
+                      <ChevronDownIcon className="h-4 w-4" />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
+                      sideOffset={8}
+                      align="end"
+                    >
+                      {FILTER_TABS.map((tab) => {
+                        const tabUnreadCount = getUnreadCountForTab(tab.key)
+                        return (
+                          <DropdownMenu.Item
+                            key={tab.key}
+                            data-testid={`notification-filter-${tab.key}`}
+                            onClick={() => setFilter(tab.key)}
+                            className={`flex items-center justify-between px-4 py-3 text-sm cursor-pointer outline-none transition-colors ${
+                              filter === tab.key
+                                ? 'bg-yappr-50 dark:bg-yappr-950/30 text-yappr-600 dark:text-yappr-400'
+                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                            }`}
+                          >
+                            <span className="flex items-center gap-3">
+                              {tab.icon}
+                              <span className="font-medium">{tab.label}</span>
+                            </span>
+                            {tabUnreadCount > 0 && (
+                              <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold bg-yappr-500 text-white rounded-full">
+                                {tabUnreadCount > 99 ? '99+' : tabUnreadCount}
+                              </span>
+                            )}
+                          </DropdownMenu.Item>
+                        )
+                      })}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
+              <Link
+                href="/settings?section=notifications"
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
               >
-                {filterType === 'all' ? 'All' : filterType === 'repost' ? 'Reposts' : filterType + 's'}
-                {filter === filterType && (
-                  <motion.div
-                    layoutId="notificationTab"
-                    className="absolute bottom-0 left-0 right-0 h-1 bg-yappr-500"
-                  />
-                )}
-              </button>
-            ))}
+                <Cog6ToothIcon className="h-5 w-5" />
+              </Link>
+            </div>
+          </div>
+
+          {/* Desktop tabs - hidden on mobile */}
+          <div className="hidden md:flex border-b border-gray-200 dark:border-gray-800">
+            {FILTER_TABS.map((tab) => {
+              const tabUnreadCount = getUnreadCountForTab(tab.key)
+              return (
+                <button
+                  key={tab.key}
+                  data-testid={`notification-tab-${tab.key}`}
+                  onClick={() => setFilter(tab.key)}
+                  className={`flex-1 py-4 text-sm font-medium transition-colors relative ${
+                    filter === tab.key
+                      ? 'text-gray-900 dark:text-white'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {tab.label}
+                    {tabUnreadCount > 0 && (
+                      <span className="w-2 h-2 bg-yappr-500 rounded-full" />
+                    )}
+                  </span>
+                  {filter === tab.key && (
+                    <motion.div
+                      layoutId="notificationTab"
+                      className="absolute bottom-0 left-0 right-0 h-1 bg-yappr-500"
+                    />
+                  )}
+                </button>
+              )
+            })}
           </div>
         </header>
 
-        {notifications.some(n => !n.read) && (
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={markAllAsRead}
-              className="text-yappr-500 hover:text-yappr-600"
-            >
-              Mark all as read
-            </Button>
-          </div>
-        )}
-
-        {isLoading ? (
+        {isLoading || !hasFetchedOnce ? (
           <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+            <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading notifications...</p>
           </div>
         ) : filteredNotifications.length === 0 ? (
@@ -179,7 +313,7 @@ function NotificationsPage() {
             <BellIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No notifications yet</p>
             <p className="text-sm text-gray-400 mt-2">
-              When someone interacts with your posts, you&apos;ll see it here
+              {EMPTY_STATE_MESSAGES[filter]}
             </p>
           </div>
         ) : (
@@ -189,43 +323,88 @@ function NotificationsPage() {
                 key={notification.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors ${
+                onClick={() => {
+                  if (!notification.read) {
+                    markAsRead(notification.id)
+                  }
+                }}
+                className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
                   !notification.read ? 'bg-yappr-50/20 dark:bg-yappr-950/10' : ''
                 }`}
               >
-                <div className="flex gap-3">
-                  <div className="mt-1">{getIcon(notification.type)}</div>
-                  
-                  <div className="flex-1">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900">
-                        <UserAvatar userId={notification.actorId} size="md" alt="User avatar" />
-                      </div>
-                      
-                      <div className="flex-1">
-                        <p className="text-sm">
-                          <span className="font-semibold">{notification.actorId.slice(0, 8)}...</span>
-                          {' '}
-                          {notification.message}
-                          <span className="text-gray-500 ml-2">
-                            {formatTime(notification.timestamp)}
-                          </span>
-                        </p>
-                        
-                        {notification.postContent && (
-                          <Link
-                            href={`/post?id=${notification.postId}`}
-                            className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
-                          >
-                            {notification.postContent}
-                          </Link>
-                        )}
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0">
+                    {NOTIFICATION_ICONS[notification.type] || <BellIcon className="h-5 w-5 text-gray-500" />}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3">
+                      <Link
+                        href={`/user?id=${notification.from?.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0"
+                      >
+                        <UserAvatar userId={notification.from?.id || ''} size="md" alt="User avatar" />
+                      </Link>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm flex-1">
+                            <Link
+                              href={`/user?id=${notification.from?.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="font-semibold hover:underline"
+                            >
+                              {notification.from?.displayName || notification.from?.username || 'Unknown User'}
+                            </Link>
+                            {' '}
+                            {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
+                            <span className="text-gray-500 ml-2">
+                              {formatTimeCompact(notification.createdAt)}
+                            </span>
+                          </p>
+
+                          {/* Action buttons for private feed notifications */}
+                          {notification.type === 'privateFeedRequest' && (
+                            <Link
+                              href="/settings?section=privateFeed"
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950 dark:hover:bg-blue-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Requests
+                            </Link>
+                          )}
+                          {notification.type === 'privateFeedApproved' && (
+                            <Link
+                              href={`/user?id=${notification.from?.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 rounded-full transition-colors flex-shrink-0"
+                            >
+                              View Profile
+                            </Link>
+                          )}
+                        </div>
+
+                        {(() => {
+                          const notifUrl = getNotificationUrl(notification)
+                          if (!notifUrl) return null
+                          const post = notification.post
+                          return (
+                            <Link
+                              href={notifUrl}
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
+                            >
+                              {post?.content || 'View post'}
+                            </Link>
+                          )
+                        })()}
                       </div>
                     </div>
                   </div>
-                  
+
                   {!notification.read && (
-                    <div className="w-2 h-2 bg-yappr-500 rounded-full mt-2" />
+                    <div data-testid="unread-badge" className="w-2 h-2 bg-yappr-500 rounded-full flex-shrink-0" />
                   )}
                 </div>
               </motion.div>
@@ -233,6 +412,7 @@ function NotificationsPage() {
           </div>
         )}
       </main>
+      </div>
 
       <RightSidebar />
     </div>

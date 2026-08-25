@@ -1,11 +1,256 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, createContext, useContext } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { LinkIcon, SparklesIcon } from '@heroicons/react/24/outline'
-import { useSettingsStore } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
+import { LinkIcon, SparklesIcon, PlayIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/solid'
+import { useSettingsStore, LinkPreviewChoice } from '@/lib/store'
+import { CORS_PROXY_INFO, isDirectImageUrl, isYouTubeUrl } from '@/hooks/use-link-preview'
+import { YouTubeIcon } from '@/components/ui/brand-icons'
+
+// Context for managing the link preview modal state
+interface LinkPreviewModalContextType {
+  isOpen: boolean
+  openModal: () => void
+  closeModal: () => void
+}
+
+const LinkPreviewModalContext = createContext<LinkPreviewModalContextType>({
+  isOpen: false,
+  openModal: () => {},
+  closeModal: () => {},
+})
+
+export function useLinkPreviewModal() {
+  return useContext(LinkPreviewModalContext)
+}
+
+/**
+ * Provider component that manages the link preview settings modal.
+ * Wrap your app or page with this to enable the modal functionality.
+ */
+export function LinkPreviewModalProvider({ children }: { children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false)
+
+  return (
+    <LinkPreviewModalContext.Provider
+      value={{
+        isOpen,
+        openModal: () => setIsOpen(true),
+        closeModal: () => setIsOpen(false),
+      }}
+    >
+      {children}
+      {isOpen && <LinkPreviewModal onClose={() => setIsOpen(false)} />}
+    </LinkPreviewModalContext.Provider>
+  )
+}
+
+/**
+ * Modal that explains link previews and lets users enable/disable them.
+ */
+function LinkPreviewModal({ onClose }: { onClose: () => void }) {
+  const [showDetails, setShowDetails] = useState(false)
+  const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
+
+  const handleChoice = (choice: LinkPreviewChoice) => {
+    setLinkPreviewsChoice(choice)
+    onClose()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="bg-white dark:bg-neutral-900 rounded-xl max-w-md w-full max-h-[90vh] flex flex-col shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-700 flex-shrink-0">
+          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+            Link Preview Settings
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+          {/* Simple explanation for most users */}
+          <div className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
+            <p>
+              Link previews show images and other rich content for links in posts.
+            </p>
+            <p>
+              To do this, Yappr needs to fetch preview content from the web. In some cases, the service providing the preview may see the URL being viewed.
+            </p>
+          </div>
+
+          {/* Learn more toggle */}
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="flex items-center gap-1 text-sm text-yappr-500 hover:text-yappr-600 dark:text-yappr-400 dark:hover:text-yappr-300"
+          >
+            <span>{showDetails ? 'Hide details' : 'Learn more about how this works'}</span>
+            <svg
+              className={`h-4 w-4 transition-transform ${showDetails ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Collapsible technical details */}
+          {showDetails && (
+            <div className="space-y-4 pt-3 border-t border-neutral-200 dark:border-neutral-700">
+              {/* Direct services */}
+              <div>
+                <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
+                  Direct previews
+                </h3>
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+                  {CORS_PROXY_INFO.directServices.map((service) => (
+                    <li key={service.name}>
+                      <span className="font-medium">{service.name}</span>
+                      <span className="text-neutral-500 dark:text-neutral-500"> — {service.description}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* IPFS gateways */}
+              <div>
+                <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
+                  IPFS content
+                </h3>
+                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
+                  For ipfs:// links, content is fetched from public gateways:
+                </p>
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+                  {CORS_PROXY_INFO.ipfsGateways.map((gateway) => (
+                    <li key={gateway.name}>
+                      <a
+                        href={gateway.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-neutral-800 dark:hover:text-neutral-300"
+                      >
+                        {gateway.name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Proxy services */}
+              <div>
+                <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
+                  Other links
+                </h3>
+                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
+                  For sites not listed above, previews are fetched through external services to avoid browser restrictions. External providers may see the requested URL. Currently used providers:
+                </p>
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+                  {CORS_PROXY_INFO.proxies.map((proxy) => (
+                    <li key={proxy.name}>
+                      <a
+                        href={proxy.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-neutral-800 dark:hover:text-neutral-300"
+                      >
+                        {proxy.name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-neutral-500 dark:text-neutral-500">
+            You can change this anytime in{' '}
+            <Link href="/settings" className="underline hover:text-neutral-600 dark:hover:text-neutral-400" onClick={onClose}>
+              Settings
+            </Link>
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3 p-4 border-t border-neutral-200 dark:border-neutral-700 flex-shrink-0">
+          <button
+            onClick={() => handleChoice('disabled')}
+            className="flex-1 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-lg transition-colors"
+          >
+            Not now
+          </button>
+          <button
+            onClick={() => handleChoice('enabled')}
+            className="flex-1 px-4 py-2 text-sm font-medium text-white bg-yappr-500 hover:bg-yappr-600 rounded-lg transition-colors"
+          >
+            Enable previews
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Prompt shown when user hasn't made a choice about link previews yet.
+ * Only shown when linkPreviewsChoice is 'undecided'.
+ */
+export function LinkPreviewEnablePrompt() {
+  const { openModal } = useLinkPreviewModal()
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          openModal()
+        }}
+        className="flex items-center gap-1.5 px-3 py-2 text-sm text-yappr-500 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-900/20 hover:bg-yappr-100 dark:hover:bg-yappr-900/30 border border-yappr-200 dark:border-yappr-800 rounded-lg transition-colors"
+      >
+        <SparklesIcon className="h-4 w-4" />
+        <span className="font-medium">Enable link previews</span>
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Small info icon shown next to truncated URLs when link previews are disabled.
+ * Clicking opens the modal to let users re-enable previews.
+ */
+export function LinkPreviewInfoIcon() {
+  const { openModal } = useLinkPreviewModal()
+
+  return (
+    <button
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        openModal()
+      }}
+      className="inline-flex items-center justify-center ml-1 p-0.5 text-neutral-400 hover:text-yappr-500 dark:hover:text-yappr-400 transition-colors"
+      title="Enable link previews"
+    >
+      <InformationCircleIcon className="h-4 w-4" />
+    </button>
+  )
+}
 
 // Note: We use next/image for favicon (small, fixed size) but regular img
 // for preview images so we can check naturalWidth/Height on load
@@ -19,6 +264,10 @@ export interface LinkPreviewData {
   imageHeight?: number
   siteName?: string
   favicon?: string
+  /** True if URL points directly to an image (detected via Content-Type or extension) */
+  isDirectImage?: boolean
+  /** YouTube video ID for embedded player (when URL is a YouTube video) */
+  youtubeVideoId?: string
 }
 
 interface LinkPreviewProps {
@@ -53,10 +302,13 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     return false
   })
   const [faviconError, setFaviconError] = useState(false)
-  const [showEnableHint, setShowEnableHint] = useState(false)
-
-  const richLinkPreviews = useSettingsStore((s) => s.richLinkPreviews)
-  const setRichLinkPreviews = useSettingsStore((s) => s.setRichLinkPreviews)
+  // YouTube player state
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [thumbnailUrl, setThumbnailUrl] = useState(() =>
+    data.youtubeVideoId
+      ? `https://img.youtube.com/vi/${data.youtubeVideoId}/maxresdefault.jpg`
+      : ''
+  )
 
   const safeUrl = sanitizeUrl(data.url)
 
@@ -75,8 +327,9 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
 
   // Hide image if error, too small, or dimensions indicate it's not useful
   const showImage = data.image && !imageError && !imageTooSmall
-  const hasRichContent = data.title || data.description || data.image
-  const isBasicPreview = !hasRichContent
+
+  // Check if URL points directly to an image (via Content-Type detection or file extension)
+  const isDirectImage = data.isDirectImage || isDirectImageUrl(data.url)
 
   // Handler to check actual image dimensions after load
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -86,13 +339,123 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     }
   }
 
-  const handleEnableRichPreviews = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setRichLinkPreviews(true)
+  // YouTube video preview with click-to-play embedded player
+  if (data.youtubeVideoId) {
+    return (
+      <div className={`mt-3 ${className}`}>
+        <div className="border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+          {!isPlaying ? (
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setIsPlaying(true)
+              }}
+              className="relative w-full aspect-video bg-black cursor-pointer group"
+            >
+              {/* Thumbnail */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={thumbnailUrl}
+                alt="YouTube video thumbnail"
+                className="w-full h-full object-cover"
+                onError={() => {
+                  // Fallback from maxresdefault to hqdefault if maxres doesn't exist
+                  if (thumbnailUrl.includes('maxresdefault')) {
+                    setThumbnailUrl(
+                      `https://img.youtube.com/vi/${data.youtubeVideoId}/hqdefault.jpg`
+                    )
+                  }
+                }}
+              />
+              {/* Play button overlay */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center shadow-lg group-hover:bg-red-700 transition-colors">
+                  <PlayIcon className="h-8 w-8 text-white ml-1" />
+                </div>
+              </div>
+              {/* Gradient overlay for better play button visibility */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent pointer-events-none" />
+            </button>
+          ) : (
+            <div className="relative w-full aspect-video bg-black">
+              <iframe
+                src={`https://www.youtube-nocookie.com/embed/${data.youtubeVideoId}?autoplay=1`}
+                title="YouTube video player"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="absolute inset-0 w-full h-full"
+                // credentialless attribute helps with COEP restrictions
+                {...{ credentialless: 'true' } as React.IframeHTMLAttributes<HTMLIFrameElement>}
+              />
+            </div>
+          )}
+          {/* Footer with YouTube branding */}
+          <a
+            href={safeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+          >
+            <YouTubeIcon className="h-4 w-4 text-red-600 flex-shrink-0" />
+            <span>YouTube</span>
+          </a>
+        </div>
+      </div>
+    )
   }
 
-  // Compact horizontal layout with small thumbnail
+  // Direct image URL - use larger layout with prominent image display
+  if (isDirectImage) {
+    return (
+      <div className={`mt-3 ${className}`}>
+        <a
+          href={safeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="block border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+        >
+          {/* Large image display */}
+          {!imageError ? (
+            <div className="relative bg-neutral-100 dark:bg-neutral-800">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={safeUrl}
+                alt="Image preview"
+                className="w-full max-h-[400px] object-contain"
+                onError={() => setImageError(true)}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-32 bg-neutral-100 dark:bg-neutral-800 text-neutral-400">
+              Failed to load image
+            </div>
+          )}
+          {/* Domain info footer */}
+          <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700">
+            {data.favicon && !faviconError ? (
+              <Image
+                src={data.favicon}
+                alt=""
+                width={14}
+                height={14}
+                className="rounded-sm flex-shrink-0"
+                onError={() => setFaviconError(true)}
+                unoptimized
+              />
+            ) : (
+              <LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />
+            )}
+            <span className="truncate">{hostname}</span>
+          </div>
+        </a>
+      </div>
+    )
+  }
+
+  // Compact horizontal layout with small thumbnail (for articles/pages)
   return (
     <div className={`mt-3 ${className}`}>
       <a
@@ -149,85 +512,61 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           </div>
         )}
       </a>
-
-      {/* Enable rich previews hint - only show for basic previews */}
-      {isBasicPreview && !richLinkPreviews && (
-        <div className="mt-1.5 text-xs text-neutral-400 dark:text-neutral-500">
-          {showEnableHint ? (
-            <div className="p-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg space-y-2">
-              <p className="text-neutral-600 dark:text-neutral-400">
-                {CORS_PROXY_INFO.warning}
-              </p>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleEnableRichPreviews}
-                  className="text-yappr-500 hover:text-yappr-600 font-medium"
-                >
-                  Enable rich previews
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setShowEnableHint(false)
-                  }}
-                  className="text-neutral-500 hover:text-neutral-600"
-                >
-                  Cancel
-                </button>
-              </div>
-              <p className="text-neutral-500 text-[10px]">
-                Uses:{' '}
-                {CORS_PROXY_INFO.proxies.map((p, i) => (
-                  <span key={p.name}>
-                    {i > 0 && ', '}
-                    <a
-                      href={p.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-neutral-600"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {p.name}
-                    </a>
-                  </span>
-                ))}
-              </p>
-              <p className="text-neutral-500 text-[10px]">
-                You can change this anytime in{' '}
-                <Link
-                  href="/settings"
-                  className="underline hover:text-neutral-600"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Settings
-                </Link>
-              </p>
-            </div>
-          ) : (
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setShowEnableHint(true)
-              }}
-              className="flex items-center gap-1 hover:text-neutral-500 dark:hover:text-neutral-400 transition-colors"
-            >
-              <SparklesIcon className="h-3 w-3" />
-              <span>Enable rich previews</span>
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }
 
 interface LinkPreviewSkeletonProps {
   className?: string
+  /** Optional URL to determine skeleton layout (larger for direct images) */
+  url?: string
 }
 
-export function LinkPreviewSkeleton({ className = '' }: LinkPreviewSkeletonProps) {
+export function LinkPreviewSkeleton({ className = '', url }: LinkPreviewSkeletonProps) {
+  // Check if URL points directly to an image file for larger skeleton
+  const isDirectImage = url ? isDirectImageUrl(url) : false
+  // Check if URL is a YouTube video for video-style skeleton
+  const isYouTube = url ? isYouTubeUrl(url) : false
+
+  // YouTube video skeleton - 16:9 aspect ratio with play button placeholder
+  if (isYouTube) {
+    return (
+      <div
+        className={`mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden ${className}`}
+      >
+        {/* Video thumbnail skeleton with 16:9 aspect ratio */}
+        <div className="relative w-full aspect-video bg-neutral-200 dark:bg-neutral-700 animate-pulse">
+          {/* Play button placeholder */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-16 h-16 bg-neutral-300 dark:bg-neutral-600 rounded-full" />
+          </div>
+        </div>
+        {/* YouTube footer skeleton */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-t border-neutral-200 dark:border-neutral-700">
+          <div className="w-4 h-4 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+          <div className="h-3 w-16 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+
+  if (isDirectImage) {
+    return (
+      <div
+        className={`mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden ${className}`}
+      >
+        {/* Large image skeleton */}
+        <div className="h-48 bg-neutral-200 dark:bg-neutral-700 animate-pulse" />
+        {/* Domain footer skeleton */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-t border-neutral-200 dark:border-neutral-700">
+          <div className="w-3.5 h-3.5 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+          <div className="h-3 w-24 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+
+  // Compact skeleton for articles/pages
   return (
     <div
       className={`flex mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden ${className}`}

@@ -14,6 +14,7 @@ interface PaymentUriInputProps {
 // Helper to get scheme display name
 const SCHEME_LABELS: Record<string, string> = {
   'dash:': 'Dash',
+  'tdash:': 'tDash',
   'bitcoin:': 'Bitcoin',
   'litecoin:': 'Litecoin',
   'ethereum:': 'Ethereum',
@@ -44,14 +45,6 @@ function isValidPaymentUri(uri: string): boolean {
   if (!uri.trim()) return false
   const lowerUri = uri.toLowerCase()
   return APPROVED_PAYMENT_SCHEMES.some(scheme => lowerUri.startsWith(scheme))
-}
-
-function extractScheme(uri: string): string {
-  const colonIndex = uri.indexOf(':')
-  if (colonIndex > 0) {
-    return uri.substring(0, colonIndex + 1).toLowerCase()
-  }
-  return ''
 }
 
 export function PaymentUriInput({

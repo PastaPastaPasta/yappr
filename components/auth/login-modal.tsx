@@ -1,0 +1,600 @@
+'use client'
+
+import { logger } from '@/lib/logger';
+import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
+import { X, Eye, EyeOff, KeyRound, QrCode } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useAuth } from '@/contexts/auth-context'
+import { useSettingsStore } from '@/lib/store'
+import { useLoginModal } from '@/hooks/use-login-modal'
+import { Button } from '@/components/ui/button'
+import { identityService } from '@/lib/services/identity-service'
+import { dpnsService } from '@/lib/services/dpns-service'
+import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
+import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
+import { authVaultService } from '@/lib/services/auth-vault-service'
+import { isLikelyWif } from '@/lib/crypto/wif'
+import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
+import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
+import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
+
+// Check if input looks like an Identity ID (base58, ~44 chars)
+function isLikelyIdentityId(input: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(input)
+}
+
+interface IdentityPublicKey {
+  id: number
+  type: number
+  purpose: number
+  securityLevel: number
+  data: string | Uint8Array
+}
+
+interface ResolvedIdentity {
+  id: string
+  balance: number
+  publicKeys: IdentityPublicKey[]
+  dpnsUsername?: string
+}
+
+type CredentialType = 'key' | 'password' | null
+
+export function LoginModal() {
+  const router = useRouter()
+  const { isOpen, close } = useLoginModal()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
+
+  // Identity lookup states
+  const [identityInput, setIdentityInput] = useState('')
+  const [isLookingUp, setIsLookingUp] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [resolvedIdentity, setResolvedIdentity] = useState<ResolvedIdentity | null>(null)
+
+  // Unified credential field (password OR private key)
+  const [credential, setCredential] = useState('')
+  const [showCredential, setShowCredential] = useState(false)
+  const [detectedCredentialType, setDetectedCredentialType] = useState<CredentialType>(null)
+  const [hasOnchainBackup, setHasOnchainBackup] = useState<boolean | null>(null)
+  const [hasPasskeyAccess, setHasPasskeyAccess] = useState(false)
+  const [passkeySupportMessage, setPasskeySupportMessage] = useState<string | null>(null)
+
+  // Key validation states
+  const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle')
+  const [keyValidationResult, setKeyValidationResult] = useState<KeyValidationResult | null>(null)
+
+  // Form states
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isShaking, setIsShaking] = useState(false)
+
+  const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setErrorWithShake = (msg: string | null) => {
+    setError(msg)
+    if (msg) {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+      setIsShaking(true)
+      shakeTimerRef.current = setTimeout(() => setIsShaking(false), 500)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+    }
+  }, [])
+
+  const { login, loginWithPassword, loginWithPasskey } = useAuth()
+  const openBackupModal = useKeyBackupModal((state) => state.open)
+  const openKeyExchangeModal = useKeyExchangeModal((state) => state.open)
+
+  // Reset form when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setIdentityInput('')
+      setCredential('')
+      setShowCredential(false)
+      setIsLookingUp(false)
+      setResolvedIdentity(null)
+      setLookupError(null)
+      setError(null)
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+      setDetectedCredentialType(null)
+      setHasOnchainBackup(null)
+      setHasPasskeyAccess(false)
+      setPasskeySupportMessage(null)
+    }
+  }, [isOpen])
+
+  // Debounced identity lookup
+  useEffect(() => {
+    if (!identityInput || identityInput.length < 3) {
+      setResolvedIdentity(null)
+      setLookupError(null)
+      setHasOnchainBackup(null)
+      return
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsLookingUp(true)
+      setLookupError(null)
+      setResolvedIdentity(null)
+      setHasOnchainBackup(null)
+      setHasPasskeyAccess(false)
+      setPasskeySupportMessage(null)
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+
+      try {
+        let identityId = identityInput.trim()
+
+        if (!isLikelyIdentityId(identityId)) {
+          const resolved = await dpnsService.resolveIdentity(identityId)
+          if (!resolved) {
+            setLookupError('Username not found')
+            setIsLookingUp(false)
+            return
+          }
+          identityId = resolved
+        }
+
+        const identity = await identityService.getIdentity(identityId)
+        if (!identity) {
+          setLookupError('Identity not found')
+          setIsLookingUp(false)
+          return
+        }
+
+        let dpnsUsername: string | undefined
+        if (isLikelyIdentityId(identityInput.trim())) {
+          dpnsUsername = await dpnsService.resolveUsername(identityId) || undefined
+        } else {
+          dpnsUsername = identityInput.trim().toLowerCase().replace(/\.dash$/, '') + '.dash'
+        }
+
+        setResolvedIdentity({
+          id: identity.id,
+          balance: identity.balance,
+          publicKeys: identity.publicKeys,
+          dpnsUsername
+        })
+
+        // Check unified auth vault first.
+        try {
+          if (authVaultService.isConfigured()) {
+            const status = await authVaultService.getStatus(identityId)
+            setHasOnchainBackup(status.hasPasswordAccess)
+            setHasPasskeyAccess(status.passkeyCount > 0)
+
+            if (status.passkeyCount > 0) {
+              const support = await getPasskeyPrfSupport()
+              if (!support.likelyPrfCapable && support.blockedReason) {
+                setPasskeySupportMessage(support.blockedReason)
+              } else if (support.platformHint === 'apple') {
+                setPasskeySupportMessage('Platform passkeys are preferred here. External security-key PRF may not work on iPhone or iPad.')
+              } else {
+                setPasskeySupportMessage(null)
+              }
+            }
+
+            if (status.hasPasswordAccess || status.passkeyCount > 0) {
+              return
+            }
+          }
+        } catch (err) {
+          logger.error('Auth vault lookup failed during login identity resolution:', err)
+          if (authVaultService.isConfigured()) {
+            setHasOnchainBackup(false)
+            return
+          }
+        }
+
+        // Check legacy vault contract next.
+        try {
+          const { vaultService } = await import('@/lib/services/vault-service')
+          if (vaultService.isConfigured()) {
+            const hasVaultBackup = await vaultService.hasPasswordBackup(identityId)
+            if (hasVaultBackup) {
+              setHasOnchainBackup(true)
+              return
+            }
+          }
+        } catch {
+          // Vault check failed — continue to legacy fallback
+        }
+        try {
+          if (encryptedKeyService.isConfigured()) {
+            const hasBackup = await encryptedKeyService.hasBackup(identityId)
+            setHasOnchainBackup(hasBackup)
+          } else {
+            setHasOnchainBackup(false)
+          }
+        } catch {
+          setHasOnchainBackup(false)
+        }
+      } catch (err) {
+        logger.error('Identity lookup error:', err)
+        setLookupError('Failed to lookup identity')
+      } finally {
+        setIsLookingUp(false)
+      }
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+  }, [identityInput])
+
+  // Credential type detection and key validation
+  useEffect(() => {
+    if (!credential) {
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+      setDetectedCredentialType(null)
+      return
+    }
+
+    const isKey = isLikelyWif(credential)
+    setDetectedCredentialType(isKey ? 'key' : 'password')
+
+    if (!isKey) {
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+      return
+    }
+
+    if (!resolvedIdentity) {
+      setKeyValidationStatus('idle')
+      setKeyValidationResult(null)
+      return
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setKeyValidationStatus('validating')
+
+      try {
+        const result = await keyValidationService.validatePrivateKey(
+          credential,
+          resolvedIdentity.id,
+          'testnet'
+        )
+        setKeyValidationResult(result)
+        setKeyValidationStatus(result.isValid ? 'valid' : 'invalid')
+      } catch (err) {
+        logger.error('Key validation error:', err)
+        setKeyValidationStatus('invalid')
+        setKeyValidationResult({
+          isValid: false,
+          error: 'Failed to validate key',
+          errorType: 'INVALID_WIF'
+        })
+      }
+    }, 300)
+
+    return () => clearTimeout(timeoutId)
+  }, [credential, resolvedIdentity])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    // Guard against submit when form is not ready (e.g., Enter key bypass)
+    if (isLoading || !credential || !resolvedIdentity) {
+      return
+    }
+
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      const identityId = resolvedIdentity.id
+
+      if (detectedCredentialType === 'key') {
+        if (keyValidationStatus !== 'valid') {
+          setErrorWithShake('Private key does not match this identity')
+          setIsLoading(false)
+          return
+        }
+
+        await login(identityId, credential)
+
+        if (!sessionStorage.getItem('yappr_backup_prompt_shown')) {
+          let unifiedStatus = null
+          let authVaultUnavailable = false
+
+          if (authVaultService.isConfigured()) {
+            try {
+              unifiedStatus = await authVaultService.getStatus(identityId)
+            } catch (statusError) {
+              logger.error('Auth vault status lookup failed after key login:', statusError)
+              authVaultUnavailable = true
+            }
+          }
+
+          const hasBackup = authVaultUnavailable
+            ? false
+            : unifiedStatus
+              ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
+              : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
+          if (!authVaultUnavailable && !hasBackup) {
+            sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
+            openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', false)
+          }
+        }
+      } else {
+        const username = resolvedIdentity?.dpnsUsername || identityInput
+        await loginWithPassword(username, credential)
+      }
+
+      close()
+    } catch (err) {
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handlePasskeySignIn = async () => {
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      const passkeyLoginTarget = identityInput.trim() || undefined
+      await loginWithPasskey(passkeyLoginTarget)
+      close()
+    } catch (err) {
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login with passkey')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleClose = () => {
+    close()
+    // If we're on /login, navigate away
+    if (typeof window !== 'undefined' && window.location.pathname === '/login') {
+      router.push('/')
+    }
+  }
+
+  const canSubmit = (() => {
+    if (!resolvedIdentity || isLoading || !credential) return false
+
+    if (detectedCredentialType === 'key') {
+      return keyValidationStatus === 'valid'
+    } else if (detectedCredentialType === 'password') {
+      return hasOnchainBackup && credential.length >= 16
+    }
+
+    return false
+  })()
+
+  const passkeyDisabledForIdentity = Boolean(resolvedIdentity && !hasPasskeyAccess)
+  const passkeyHint = passkeyDisabledForIdentity
+    ? (passkeySupportMessage
+        ? `${passkeySupportMessage} No passkey is enrolled for this identity yet.`
+        : 'No passkey is enrolled for this identity yet.')
+    : passkeySupportMessage
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* Modal container - handles backdrop click for dismissal */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={handleClose}
+            className={`fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+          >
+            {/* Modal content - stop propagation to prevent dismiss when clicking inside */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+            >
+              {/* Header */}
+              <div className="sticky top-0 bg-white dark:bg-neutral-900 px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+                <button
+                  onClick={handleClose}
+                  aria-label="Close"
+                  className="absolute top-4 left-4 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <div className="text-center">
+                  <h1 className="text-2xl font-bold text-gradient">Yappr</h1>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Your decentralized social feed — powered by Dash</p>
+                </div>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSubmit} className="p-6 space-y-5">
+                {/* Identity ID / DPNS Input */}
+                <div>
+                  <label htmlFor="loginIdentityInput" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Dash Username or Identity ID
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="loginIdentityInput"
+                      type="text"
+                      value={identityInput}
+                      onChange={(e) => setIdentityInput(e.target.value)}
+                      placeholder="e.g., john.dash or 5DbLwAxGBzUzo..."
+                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      required
+                    />
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                      {isLookingUp && (
+                        <Spinner size="sm" className="text-gray-400" />
+                      )}
+                      {!isLookingUp && resolvedIdentity && (
+                        <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      {!isLookingUp && lookupError && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button type="button" aria-label={lookupError} className="flex items-center text-red-500 cursor-help">
+                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{lookupError}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Password or Private Key Input */}
+                <div>
+                  <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    {hasOnchainBackup ? 'Password or Private Key' : 'Private Key (High or Critical)'}
+                  </label>
+                  <motion.div
+                    className="relative"
+                    animate={isShaking ? { x: [0, -8, 8, -5, 5, -2, 2, 0] } : { x: 0 }}
+                    transition={{ duration: 0.4 }}
+                  >
+                    <input
+                      id="loginCredential"
+                      type={showCredential ? 'text' : 'password'}
+                      value={credential}
+                      onChange={(e) => setCredential(e.target.value)}
+                      placeholder="Enter your password or private key..."
+                      className={`w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors ${
+                        error
+                          ? 'border-red-400 dark:border-red-500'
+                          : isLoading
+                          ? 'border-yappr-400 dark:border-yappr-500'
+                          : 'border-gray-200 dark:border-gray-800'
+                      }`}
+                      required
+                    />
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
+                      {isLoading ? (
+                        <Spinner size="sm" className="text-yappr-400" />
+                      ) : (
+                        <>
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'validating' && (
+                            <Spinner size="sm" className="text-gray-400" />
+                          )}
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'valid' && (
+                            <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'invalid' && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" aria-label={keyValidationResult?.error ?? 'Invalid private key'} className="flex items-center text-red-500 cursor-help">
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {keyValidationResult?.error || 'Invalid private key'}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowCredential(!showCredential)}
+                        className="text-gray-400 hover:text-gray-600"
+                        tabIndex={-1}
+                      >
+                        {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      </button>
+                    </div>
+                  </motion.div>
+                  <p className={`mt-2 text-xs transition-colors ${error ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                    {error ? `⚠ ${error}` : '🔒 Your keys never leave this device. All signing happens locally.'}
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={!canSubmit}
+                  className="w-full shadow-yappr-lg"
+                  size="lg"
+                >
+                  {isLoading ? (
+                    <span className="flex items-center justify-center">
+                      <Spinner size="sm" className="-ml-1 mr-3 border-white" />
+                      Signing in...
+                    </span>
+                  ) : (
+                    'Sign In'
+                  )}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isLoading || passkeyDisabledForIdentity}
+                  className="w-full"
+                  size="lg"
+                  onClick={handlePasskeySignIn}
+                >
+                  <KeyRound className="w-4 h-4 mr-2" />
+                  Sign In with Passkey
+                </Button>
+
+                {passkeyHint && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {passkeyHint}
+                  </p>
+                )}
+
+                {/* Wallet Login Option - available immediately without identity */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    close()
+                    openKeyExchangeModal()
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Login with Wallet (QR)
+                </button>
+
+                {/* Onboarding Gateway */}
+                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    Don&apos;t have an identity yet? Create one to start posting on Yappr.
+                  </p>
+                  <a
+                    href="https://bridge.thepasta.org"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                  >
+                    Create Identity
+                  </a>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  )
+}

@@ -1,0 +1,631 @@
+{
+  "store": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "owner",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "name",
+      "status"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "position": 0,
+        "maxLength": 100,
+        "minLength": 1,
+        "description": "Store name"
+      },
+      "description": {
+        "type": "string",
+        "position": 1,
+        "maxLength": 500,
+        "description": "Store description"
+      },
+      "logoUrl": {
+        "type": "string",
+        "pattern": "^https?://.+$",
+        "position": 2,
+        "maxLength": 512,
+        "description": "URL to store logo image"
+      },
+      "bannerUrl": {
+        "type": "string",
+        "pattern": "^https?://.+$",
+        "position": 3,
+        "maxLength": 512,
+        "description": "URL to store banner image"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["active", "paused", "closed"],
+        "position": 4,
+        "description": "Store status"
+      },
+      "paymentUris": {
+        "type": "string",
+        "position": 5,
+        "maxLength": 2000,
+        "description": "JSON array of payment URIs (dash:, bitcoin:, etc.)"
+      },
+      "defaultCurrency": {
+        "type": "string",
+        "position": 6,
+        "maxLength": 10,
+        "description": "Default currency code (USD, EUR, DASH, etc.)"
+      },
+      "policies": {
+        "type": "string",
+        "position": 7,
+        "maxLength": 2000,
+        "description": "Store policies (shipping, returns, etc.)"
+      },
+      "location": {
+        "type": "string",
+        "position": 8,
+        "maxLength": 100,
+        "description": "Store location"
+      },
+      "contactMethods": {
+        "type": "string",
+        "position": 9,
+        "maxLength": 1000,
+        "description": "JSON object of contact methods (email, signal, twitter, telegram)"
+      }
+    },
+    "description": "A merchant store profile (one per user)",
+    "additionalProperties": false
+  },
+  "storeItem": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "storeAndTime",
+        "properties": [
+          {
+            "storeId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "ownerAndTime",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "categoryAndTime",
+        "properties": [
+          {
+            "section": "asc"
+          },
+          {
+            "category": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "statusAndTime",
+        "properties": [
+          {
+            "status": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "storeId",
+      "title",
+      "status"
+    ],
+    "properties": {
+      "storeId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the store this item belongs to",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "title": {
+        "type": "string",
+        "position": 1,
+        "maxLength": 200,
+        "minLength": 1,
+        "description": "Product title"
+      },
+      "description": {
+        "type": "string",
+        "position": 2,
+        "maxLength": 2000,
+        "description": "Product description"
+      },
+      "section": {
+        "type": "string",
+        "position": 3,
+        "maxLength": 50,
+        "description": "Top-level category section (e.g., Toys and Games)"
+      },
+      "category": {
+        "type": "string",
+        "position": 4,
+        "maxLength": 50,
+        "description": "Category within section (e.g., Table Top Games)"
+      },
+      "subcategory": {
+        "type": "string",
+        "position": 5,
+        "maxLength": 50,
+        "description": "Subcategory (e.g., Catan Pieces)"
+      },
+      "tags": {
+        "type": "string",
+        "position": 6,
+        "maxLength": 500,
+        "description": "JSON array of searchable tags"
+      },
+      "imageUrls": {
+        "type": "string",
+        "position": 7,
+        "maxLength": 2100,
+        "description": "JSON array of up to 4 image URLs"
+      },
+      "basePrice": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 8,
+        "description": "Base price in smallest currency unit (cents/satoshis). Null if variants define pricing."
+      },
+      "currency": {
+        "type": "string",
+        "position": 9,
+        "maxLength": 10,
+        "description": "Currency code (USD, EUR, DASH, etc.)"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["active", "paused", "sold_out", "deleted"],
+        "position": 10,
+        "maxLength": 20,
+        "description": "Item status"
+      },
+      "weight": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 11,
+        "description": "Weight in grams (for shipping calculation)"
+      },
+      "stockQuantity": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 12,
+        "description": "Available stock (informational only)"
+      },
+      "sku": {
+        "type": "string",
+        "position": 13,
+        "maxLength": 50,
+        "description": "Stock keeping unit identifier"
+      },
+      "variants": {
+        "type": "string",
+        "position": 14,
+        "maxLength": 10000,
+        "description": "JSON object with axes and combinations for product variants"
+      }
+    },
+    "description": "A product listing with optional embedded variants",
+    "additionalProperties": false
+  },
+  "shippingZone": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "storeAndName",
+        "unique": true,
+        "properties": [
+          {
+            "storeId": "asc"
+          },
+          {
+            "name": "asc"
+          }
+        ]
+      },
+      {
+        "name": "storeAndPriority",
+        "properties": [
+          {
+            "storeId": "asc"
+          },
+          {
+            "priority": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "storeId",
+      "name",
+      "rateType"
+    ],
+    "properties": {
+      "storeId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the store this zone belongs to",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "name": {
+        "type": "string",
+        "position": 1,
+        "maxLength": 63,
+        "minLength": 1,
+        "description": "Zone name (e.g., Domestic, Europe, Local)"
+      },
+      "postalPatterns": {
+        "type": "string",
+        "position": 2,
+        "maxLength": 2000,
+        "description": "JSON array of regex patterns for postal codes"
+      },
+      "countryPattern": {
+        "type": "string",
+        "position": 3,
+        "maxLength": 200,
+        "description": "Regex pattern for country codes"
+      },
+      "rateType": {
+        "type": "string",
+        "enum": ["flat", "weight_tiered", "price_tiered"],
+        "position": 4,
+        "description": "How shipping rate is calculated"
+      },
+      "flatRate": {
+        "type": "integer",
+        "minimum": 0,
+        "position": 5,
+        "description": "Flat shipping rate (when rateType is flat)"
+      },
+      "tiers": {
+        "type": "string",
+        "position": 6,
+        "maxLength": 5000,
+        "description": "JSON array of tier definitions [{min, max, rate}]"
+      },
+      "currency": {
+        "type": "string",
+        "position": 7,
+        "maxLength": 10,
+        "description": "Currency for shipping rates"
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000,
+        "position": 8,
+        "description": "Zone matching priority (lower = higher priority)"
+      }
+    },
+    "description": "Shipping zone configuration for a store",
+    "additionalProperties": false
+  },
+  "storeOrder": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "buyerOrders",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "sellerOrders",
+        "properties": [
+          {
+            "sellerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "storeOrders",
+        "properties": [
+          {
+            "storeId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "mutable": false,
+    "required": [
+      "$createdAt",
+      "storeId",
+      "sellerId",
+      "encryptedPayload",
+      "nonce"
+    ],
+    "properties": {
+      "storeId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the store",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "sellerId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 1,
+        "byteArray": true,
+        "description": "Identity ID of the store owner (for seller queries)",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "encryptedPayload": {
+        "type": "array",
+        "maxItems": 16000,
+        "minItems": 1,
+        "position": 2,
+        "byteArray": true,
+        "description": "XChaCha20-Poly1305 encrypted order data (items, address, payment info)"
+      },
+      "nonce": {
+        "type": "array",
+        "maxItems": 24,
+        "minItems": 24,
+        "position": 3,
+        "byteArray": true,
+        "description": "24-byte nonce for XChaCha20-Poly1305 encryption"
+      }
+    },
+    "description": "An encrypted order created by a buyer",
+    "additionalProperties": false
+  },
+  "orderStatusUpdate": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "orderAndTime",
+        "properties": [
+          {
+            "orderId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "sellerStatusUpdates",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "mutable": false,
+    "required": [
+      "$createdAt",
+      "orderId",
+      "status"
+    ],
+    "properties": {
+      "orderId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the order being updated",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["pending", "payment_received", "processing", "shipped", "delivered", "cancelled", "refunded", "disputed"],
+        "position": 1,
+        "description": "Order status"
+      },
+      "trackingNumber": {
+        "type": "string",
+        "position": 2,
+        "maxLength": 100,
+        "description": "Shipping tracking number"
+      },
+      "trackingCarrier": {
+        "type": "string",
+        "position": 3,
+        "maxLength": 50,
+        "description": "Shipping carrier name"
+      },
+      "message": {
+        "type": "string",
+        "position": 4,
+        "maxLength": 500,
+        "description": "Optional message to buyer"
+      }
+    },
+    "description": "A status update for an order (append-only history)",
+    "additionalProperties": false
+  },
+  "storeReview": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "storeReviews",
+        "properties": [
+          {
+            "storeId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "sellerReviews",
+        "properties": [
+          {
+            "sellerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "buyerReviews",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "orderReview",
+        "unique": true,
+        "properties": [
+          {
+            "orderId": "asc"
+          }
+        ]
+      }
+    ],
+    "mutable": false,
+    "required": [
+      "$createdAt",
+      "storeId",
+      "orderId",
+      "sellerId",
+      "rating"
+    ],
+    "properties": {
+      "storeId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the store being reviewed",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "orderId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 1,
+        "byteArray": true,
+        "description": "ID of the completed order (proves purchase)",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "sellerId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 2,
+        "byteArray": true,
+        "description": "Identity ID of the store owner (for seller queries)",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "rating": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5,
+        "position": 3,
+        "description": "Star rating (1-5)"
+      },
+      "title": {
+        "type": "string",
+        "position": 4,
+        "maxLength": 100,
+        "description": "Review title"
+      },
+      "content": {
+        "type": "string",
+        "position": 5,
+        "maxLength": 1000,
+        "description": "Review content"
+      }
+    },
+    "description": "A review of a store from a buyer who completed an order",
+    "additionalProperties": false
+  },
+  "savedAddress": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "owner",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "encryptedPayload"
+    ],
+    "properties": {
+      "encryptedPayload": {
+        "type": "array",
+        "maxItems": 5000,
+        "minItems": 1,
+        "position": 0,
+        "byteArray": true,
+        "description": "ECIES encrypted JSON array of saved addresses"
+      }
+    },
+    "description": "Encrypted saved shipping addresses (one document per user)",
+    "additionalProperties": false
+  }
+}

@@ -1,7 +1,8 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { logger } from '@/lib/logger';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58 } from './sdk-helpers';
-import { HASHTAG_CONTRACT_ID, YAPPR_CONTRACT_ID } from '../constants';
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
+import { paginateCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
   $id: string;
@@ -24,28 +25,29 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   private readonly TRENDING_CACHE_TTL = 300000; // 5 minutes
 
   constructor() {
-    super('postHashtag', HASHTAG_CONTRACT_ID);
+    super('postHashtag');
   }
 
   /**
    * Transform document from SDK response to typed object
-   * SDK v3: System fields ($id, $ownerId) are base58, byte array fields (postId) are base64
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
    */
-  protected transformDocument(doc: any): PostHashtagDocument {
-    const data = doc.data || doc;
+  protected transformDocument(doc: Record<string, unknown>): PostHashtagDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
-    const hashtag = data.hashtag || doc.hashtag;
+    const hashtag = (data.hashtag || doc.hashtag) as string;
 
-    // Convert postId from base64 to base58 (byte array field)
+    // Normalize the identifier-like postId field to base58.
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     if (rawPostId && !postId) {
-      console.error('HashtagService: Invalid postId format:', rawPostId);
+      logger.error('HashtagService: Invalid postId format:', rawPostId);
     }
 
     return {
-      $id: doc.$id,
-      $ownerId: doc.$ownerId,
-      $createdAt: doc.$createdAt,
+      $id: doc.$id as string,
+      $ownerId: doc.$ownerId as string,
+      $createdAt: doc.$createdAt as number,
       postId: postId || '',
       hashtag
     };
@@ -58,7 +60,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     // Validate and normalize hashtag
     const normalizedTag = this.normalizeHashtag(hashtag);
     if (!normalizedTag) {
-      console.warn('Invalid hashtag:', hashtag);
+      logger.warn('Invalid hashtag:', hashtag);
       return false;
     }
 
@@ -66,14 +68,9 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Check if already exists (unique index on postId + hashtag)
       const existing = await this.getHashtagForPost(postId, normalizedTag);
       if (existing) {
-        console.log('Hashtag already exists for post:', normalizedTag);
+        logger.info('Hashtag already exists for post:', normalizedTag);
         return true;
       }
-
-      // Convert postId to byte array
-      const bs58Module = await import('bs58');
-      const bs58 = bs58Module.default;
-      const postIdBytes = Array.from(bs58.decode(postId));
 
       // Create document via state transition
       const result = await stateTransitionService.createDocument(
@@ -81,7 +78,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         this.documentType,
         ownerId,
         {
-          postId: postIdBytes,
+          postId: identifierStringToDocumentBytes(postId),
           hashtag: normalizedTag
         }
       );
@@ -91,7 +88,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error creating hashtag:', error);
+      logger.error('Error creating hashtag:', error);
       return false;
     }
   }
@@ -135,28 +132,12 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
           ['hashtag', '==', normalizedTag]
         ],
         limit: 1
-      } as any);
+      });
 
-      // Handle Map response (v3 SDK)
-      let documents: any[];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      } else {
-        documents = [];
-      }
-
+      const documents = normalizeSDKResponse(response);
       return documents.length > 0 ? this.transformDocument(documents[0]) : null;
     } catch (error) {
-      console.error('Error getting hashtag for post:', error);
+      logger.error('Error getting hashtag for post:', error);
       return null;
     }
   }
@@ -173,37 +154,23 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         documentTypeName: this.documentType,
         where: [
           ['postId', '==', postId],
-          ['hashtag', '>', '']  // Range query to enable ordering
+          ['hashtag', '>', '']  // Range query on string field for ordering
         ],
         orderBy: [['postId', 'asc'], ['hashtag', 'asc']],
         limit: 20
-      } as any);
+      });
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting hashtags for post:', error);
+      logger.error('Error getting hashtags for post:', error);
       return [];
     }
   }
 
   /**
-   * Get the count of posts with a specific hashtag
-   * Uses a reasonable limit for performance - returns approximate count for high-volume hashtags
+   * Get the count of posts with a specific hashtag.
+   * Paginates through all results for accurate count.
    */
   async getPostCountByHashtag(hashtag: string): Promise<number> {
     try {
@@ -212,85 +179,62 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       if (!normalizedTag) return 0;
 
-      // Query with a reasonable limit to get approximate count
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['hashtag', '==', normalizedTag],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
-        limit: 100
-      } as any);
+      const { count } = await paginateCount(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [
+            ['hashtag', '==', normalizedTag],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']]
+        })
+      );
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values()).filter(Boolean);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.length;
+      return count;
     } catch (error) {
-      console.error('Error getting post count by hashtag:', error);
+      logger.error('Error getting post count by hashtag:', error);
       return 0;
     }
   }
 
   /**
-   * Get post IDs that have a specific hashtag
-   * Returns postHashtag documents - caller should fetch actual posts and filter by ownership
+   * Get post IDs that have a specific hashtag.
+   * Paginates through all results to return complete list.
+   * Returns postHashtag documents - caller should fetch actual posts and filter by ownership.
    */
-  async getPostIdsByHashtag(hashtag: string, options: QueryOptions = {}): Promise<PostHashtagDocument[]> {
+  async getPostIdsByHashtag(hashtag: string): Promise<PostHashtagDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const normalizedTag = this.normalizeHashtag(hashtag);
 
       if (!normalizedTag) return [];
 
-      // Use byHashtag index: [hashtag, $createdAt] - desc supported at query time
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['hashtag', '==', normalizedTag],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
-        limit: options.limit || 50
-      } as any);
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [
+            ['hashtag', '==', normalizedTag],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      return documents;
     } catch (error) {
-      console.error('Error getting posts by hashtag:', error);
+      logger.error('Error getting posts by hashtag:', error);
       return [];
     }
   }
 
   /**
-   * Get recent hashtag documents for trending calculation
+   * Get recent hashtag documents for trending calculation.
+   * Paginates through all results to return complete list.
    */
   async getRecentHashtags(hours: number = 24): Promise<PostHashtagDocument[]> {
     try {
@@ -299,35 +243,20 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Calculate timestamp for X hours ago
       const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
 
-      // Use byTime index: [$createdAt] - desc supported at query time
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['$createdAt', '>', cutoffTime]
-        ],
-        orderBy: [['$createdAt', 'desc']],
-        limit: 100
-      } as any);
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [['$createdAt', '>', cutoffTime]],
+          orderBy: [['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
 
-      // Handle Map response (v3 SDK)
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      } else if (response && typeof (response as any).toJSON === 'function') {
-        const json = (response as any).toJSON();
-        documents = Array.isArray(json) ? json : json.documents || [];
-      }
-
-      return documents.map((doc: any) => this.transformDocument(doc));
+      return documents;
     } catch (error) {
-      console.error('Error getting recent hashtags:', error);
+      logger.error('Error getting recent hashtags:', error);
       return [];
     }
   }
@@ -382,7 +311,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       return trending.slice(0, limit);
     } catch (error) {
-      console.error('Error calculating trending hashtags:', error);
+      logger.error('Error calculating trending hashtags:', error);
       return [];
     }
   }

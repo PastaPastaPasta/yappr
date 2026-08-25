@@ -1,19 +1,23 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
+import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
-import { Loader2 } from 'lucide-react'
-import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { Spinner } from '@/components/ui/spinner'
+import Image from 'next/image'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
-import type { MigrationStatus, LegacyProfileData, LegacyAvatarData } from '@/lib/services/profile-migration-service'
+import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
 import {
   unifiedProfileService,
   DICEBEAR_STYLES,
@@ -22,6 +26,8 @@ import {
   type DiceBearStyle,
 } from '@/lib/services/unified-profile-service'
 
+type AvatarSource = 'generated' | 'custom'
+
 function CreateProfilePage() {
   const router = useRouter()
   const { user, logout } = useAuth()
@@ -29,9 +35,15 @@ function CreateProfilePage() {
   const [showPrivateKeyInput, setShowPrivateKeyInput] = useState(false)
   const [privateKey, setPrivateKey] = useState('')
   const [isCheckingProfile, setIsCheckingProfile] = useState(true)
-  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus>('no_profile')
+
+  // Avatar state
+  const [avatarSource, setAvatarSource] = useState<AvatarSource>('generated')
   const [avatarStyle, setAvatarStyle] = useState<DiceBearStyle>(DEFAULT_AVATAR_STYLE)
   const [avatarSeed, setAvatarSeed] = useState<string>('')
+  const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null)
+
+  // Banner state
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
     displayName: '',
@@ -48,56 +60,31 @@ function CreateProfilePage() {
   // Social links (array of {platform, handle})
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>([])
 
-  // Check for existing profile and migration status on mount
+  // Check for existing profile on mount
   useEffect(() => {
     const checkExistingProfile = async () => {
       if (!user) return
 
       try {
-        const { profileMigrationService } = await import('@/lib/services/profile-migration-service')
-        const status = await profileMigrationService.getMigrationStatus(user.identityId)
-        setMigrationStatus(status)
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+        const existingProfile = await unifiedProfileService.getProfile(user.identityId)
 
-        if (status === 'migrated') {
+        if (existingProfile) {
           toast.success('You already have a profile!')
           router.push(`/user?id=${user.identityId}`)
           return
         }
 
-        if (status === 'needs_migration') {
-          // Pre-fill form with old profile data
-          const { profile, avatar } = await profileMigrationService.getOldDataForMigration(user.identityId)
-
-          if (profile) {
-            setFormData({
-              displayName: profile.displayName || '',
-              bio: profile.bio || '',
-              location: profile.location || '',
-              website: profile.website || '',
-              pronouns: '',
-              nsfw: false,
-            })
-          }
-
-          if (avatar) {
-            setAvatarStyle(avatar.style as DiceBearStyle)
-            setAvatarSeed(avatar.seed)
-          } else {
-            // Default seed to user ID if no avatar
-            setAvatarSeed(user.identityId)
-          }
-        } else {
-          // New profile - default seed to user ID
-          setAvatarSeed(user.identityId)
-        }
+        // New profile - default seed to user ID
+        setAvatarSeed(user.identityId)
       } catch (error) {
-        console.error('Error checking profile status:', error)
+        logger.error('Error checking profile status:', error)
       } finally {
         setIsCheckingProfile(false)
       }
     }
 
-    checkExistingProfile()
+    checkExistingProfile().catch(err => logger.error('Failed to check profile:', err))
   }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -106,6 +93,21 @@ function CreateProfilePage() {
     if (!formData.displayName.trim()) {
       toast.error('Display name is required')
       return
+    }
+
+    const normalizedWebsite = formData.website.trim()
+
+    if (normalizedWebsite) {
+      try {
+        const url = new URL(normalizedWebsite)
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          toast.error('Website must use http or https')
+          return
+        }
+      } catch {
+        toast.error('Invalid website URL')
+        return
+      }
     }
 
     // Check if private key is in secure storage
@@ -130,46 +132,83 @@ function CreateProfilePage() {
         throw new Error('User not authenticated')
       }
 
-      console.log('Creating profile with data:', formData)
+      logger.info('Creating profile with data:', formData)
 
-      // Build avatar data from current settings
-      const avatarData = avatarSeed
-        ? unifiedProfileService.encodeAvatarData(avatarSeed, avatarStyle)
-        : undefined
+      // Build avatar data - either custom URL or generated DiceBear settings
+      let avatarData: string | undefined
+      if (avatarSource === 'custom' && customAvatarUrl) {
+        // Store custom image URL directly
+        avatarData = customAvatarUrl
+      } else if (avatarSeed) {
+        // Store DiceBear settings as JSON
+        avatarData = unifiedProfileService.encodeAvatarData(avatarSeed, avatarStyle)
+      }
 
       // Create the profile on the new unified profile contract
       await unifiedProfileService.createProfile(user.identityId, {
         displayName: formData.displayName,
         bio: formData.bio || undefined,
         location: formData.location || undefined,
-        website: formData.website || undefined,
+        website: normalizedWebsite || undefined,
         pronouns: formData.pronouns || undefined,
         nsfw: formData.nsfw || undefined,
         avatar: avatarData,
+        bannerUri: bannerUrl || undefined,
         paymentUris: paymentUris.length > 0 ? paymentUris : undefined,
         socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
       })
 
-      if (migrationStatus === 'needs_migration') {
-        toast.success('Profile migrated successfully!')
-      } else {
-        toast.success('Profile created successfully!')
-      }
+      toast.success('Profile created successfully!')
 
-      // Redirect to home
-      router.push('/')
-    } catch (error: any) {
-      console.error('Failed to create profile:', error)
+      // Redirect to feed
+      router.push('/feed')
+    } catch (error: unknown) {
+      logger.error('Failed to create profile:', error)
+
+      const errorMessage = extractErrorMessage(error)
 
       // Check if it's a duplicate profile error
-      if (error.message?.includes('duplicate unique properties') ||
-          error.message?.includes('already exists')) {
+      if (errorMessage.includes('duplicate unique properties') ||
+          errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
         setTimeout(() => {
           router.push(`/user?id=${user?.identityId}`)
         }, 2000)
+        return
+      }
+
+      // Check if it's a timeout error - the profile might have been created successfully
+      if (isTimeoutError(error) && user) {
+        toast.loading('Request timed out. Checking if profile was created...', { duration: 3000 })
+
+        // Wait a moment for the network to propagate, then check if profile exists
+        await new Promise(resolve => setTimeout(resolve, 2000))
+
+        try {
+          const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+          const { cacheManager } = await import('@/lib/cache-manager')
+
+          // Clear cache to ensure we get fresh data from the network
+          cacheManager.invalidateByTag(`user:${user.identityId}`)
+
+          const profile = await unifiedProfileService.getProfile(user.identityId)
+
+          if (profile) {
+            // Profile was actually created despite the timeout
+            toast.dismiss()
+            toast.success('Profile created successfully!')
+            router.push('/feed')
+            return
+          }
+        } catch (checkError) {
+          logger.error('Error checking for profile:', checkError)
+        }
+
+        // Profile doesn't exist - show helpful timeout error
+        toast.dismiss()
+        toast.error('Request timed out. Please try again.')
       } else {
-        toast.error(error instanceof Error ? error.message : 'Failed to create profile')
+        toast.error('Failed to create profile. Please try again.')
       }
     } finally {
       setIsSubmitting(false)
@@ -181,7 +220,7 @@ function CreateProfilePage() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
         <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-yappr-500 mx-auto mb-4" />
+          <Spinner size="lg" className="mx-auto mb-4" />
           <p className="text-gray-600 dark:text-gray-400">Checking profile status...</p>
         </div>
       </div>
@@ -194,9 +233,7 @@ function CreateProfilePage() {
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8">
           {/* Header with logout button */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold">
-              {migrationStatus === 'needs_migration' ? 'Migrate Your Profile' : 'Create Your Profile'}
-            </h1>
+            <h1 className="text-3xl font-bold">Create Your Profile</h1>
             <button
               onClick={logout}
               className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
@@ -205,26 +242,8 @@ function CreateProfilePage() {
             </button>
           </div>
 
-          {migrationStatus === 'needs_migration' && (
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
-              <div className="flex items-start gap-3">
-                <ArrowPathIcon className="h-5 w-5 text-blue-500 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                    Profile Migration
-                  </p>
-                  <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                    We found your existing profile! Review and update your info, then save to migrate to the new profile system.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
           <p className="text-gray-600 dark:text-gray-400 text-center mb-8">
-            {migrationStatus === 'needs_migration'
-              ? 'Your existing data has been pre-filled below'
-              : 'Set up your Yappr profile to start connecting'}
+            Set up your Yappr profile to start connecting
           </p>
 
           {/* Display username if available */}
@@ -260,49 +279,137 @@ function CreateProfilePage() {
             <div className="space-y-4">
               <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avatar</h3>
 
-              <div className="flex items-start gap-6">
-                {/* Avatar Preview */}
-                <div className="flex-shrink-0">
-                  <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
-                    {avatarSeed && (
-                      <img
-                        src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
-                        alt="Avatar preview"
-                        className="w-full h-full object-cover"
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {/* Avatar Controls */}
-                <div className="flex-1 space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Style
-                    </label>
-                    <select
-                      value={avatarStyle}
-                      onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                    >
-                      {DICEBEAR_STYLES.map((style) => (
-                        <option key={style} value={style}>
-                          {DICEBEAR_STYLE_LABELS[style]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setAvatarSeed(unifiedProfileService.generateRandomSeed())}
-                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400 dark:hover:text-yappr-300 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 rounded-lg transition-colors"
-                  >
+              {/* Avatar Source Tabs */}
+              <div className="flex border-b border-gray-200 dark:border-gray-700">
+                <button
+                  type="button"
+                  onClick={() => setAvatarSource('generated')}
+                  className={`flex-1 py-2 px-4 text-sm font-medium transition-colors relative ${
+                    avatarSource === 'generated'
+                      ? 'text-yappr-600 dark:text-yappr-400'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-2">
                     <SparklesIcon className="h-4 w-4" />
-                    Randomize
-                  </button>
-                </div>
+                    Generated
+                  </span>
+                  {avatarSource === 'generated' && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yappr-500" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAvatarSource('custom')}
+                  className={`flex-1 py-2 px-4 text-sm font-medium transition-colors relative ${
+                    avatarSource === 'custom'
+                      ? 'text-yappr-600 dark:text-yappr-400'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <PhotoIcon className="h-4 w-4" />
+                    Custom Image
+                  </span>
+                  {avatarSource === 'custom' && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yappr-500" />
+                  )}
+                </button>
               </div>
+
+              {avatarSource === 'generated' ? (
+                <div className="flex items-start gap-6">
+                  {/* Avatar Preview */}
+                  <div className="flex-shrink-0">
+                    <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700">
+                      {avatarSeed && (
+                        <Image
+                          src={unifiedProfileService.getAvatarUrlFromConfig({ style: avatarStyle, seed: avatarSeed })}
+                          alt="Avatar preview"
+                          width={96}
+                          height={96}
+                          className="w-full h-full object-cover"
+                          unoptimized
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Avatar Controls */}
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Style
+                      </label>
+                      <select
+                        value={avatarStyle}
+                        onChange={(e) => setAvatarStyle(e.target.value as DiceBearStyle)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      >
+                        {DICEBEAR_STYLES.map((style) => (
+                          <option key={style} value={style}>
+                            {DICEBEAR_STYLE_LABELS[style]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setAvatarSeed(unifiedProfileService.generateRandomSeed())}
+                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400 dark:hover:text-yappr-300 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 rounded-lg transition-colors"
+                    >
+                      <SparklesIcon className="h-4 w-4" />
+                      Randomize
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <ProfileImageUpload
+                    currentUrl={customAvatarUrl || undefined}
+                    onUpload={(url) => setCustomAvatarUrl(url)}
+                    onClear={() => setCustomAvatarUrl(null)}
+                    aspectRatio="square"
+                    maxSizeMB={2}
+                    label=""
+                    placeholder="Click to upload your avatar"
+                  />
+                  <p className="text-xs text-gray-500 text-center">
+                    Upload a custom image for your avatar. Recommended: square image, at least 200x200px.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Banner Section */}
+            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Banner (Optional)</h3>
+
+              {/* Banner Preview */}
+              {bannerUrl && (
+                <div className="relative aspect-[3/1] rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={isIpfsProtocol(bannerUrl) ? ipfsToGatewayUrl(bannerUrl) : bannerUrl}
+                    alt="Banner preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+
+              <ProfileImageUpload
+                currentUrl={bannerUrl || undefined}
+                onUpload={(url) => setBannerUrl(url)}
+                onClear={() => setBannerUrl(null)}
+                aspectRatio="banner"
+                maxSizeMB={5}
+                label=""
+                placeholder="Click to upload banner image"
+              />
+              <p className="text-xs text-gray-500">
+                Recommended: 1500x500 pixels (3:1 aspect ratio). Max 5MB.
+              </p>
             </div>
 
             {/* Basic Info Section */}
@@ -425,10 +532,7 @@ function CreateProfilePage() {
               className="w-full"
               disabled={isSubmitting || !formData.displayName.trim()}
             >
-              {isSubmitting
-                ? (migrationStatus === 'needs_migration' ? 'Migrating Profile...' : 'Creating Profile...')
-                : (migrationStatus === 'needs_migration' ? 'Migrate Profile' : 'Create Profile')
-              }
+              {isSubmitting ? 'Creating Profile...' : 'Create Profile'}
             </Button>
           </form>
 

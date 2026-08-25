@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -15,44 +16,87 @@ import {
   SunIcon,
   ComputerDesktopIcon,
   ExclamationTriangleIcon,
-  UserGroupIcon
+  UserGroupIcon,
+  UserPlusIcon,
+  LockClosedIcon,
+  CloudArrowUpIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useTheme } from 'next-themes'
-import * as Switch from '@radix-ui/react-switch'
 import * as RadioGroup from '@radix-ui/react-radio-group'
+import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
+import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
+import { PrivateFeedFollowRequests } from '@/components/settings/private-feed-follow-requests'
+import { PrivateFeedFollowers } from '@/components/settings/private-feed-followers'
+import { PrivateFeedDashboard } from '@/components/settings/private-feed-dashboard'
 import { BlockListSettings } from '@/components/settings/block-list-settings'
+import { SavedAddressesSettings } from '@/components/settings/saved-addresses-settings'
+import { StorachaSettings } from '@/components/settings/storacha-settings'
+import { PinataSettings } from '@/components/settings/pinata-settings'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
+import { UsernameModal } from '@/components/dpns/username-modal'
 
-type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'appearance' | 'about'
-const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'appearance', 'about']
+type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'about'
+const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'about']
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
   { id: 'contacts', label: 'Contacts', icon: UserGroupIcon, description: 'Import contacts from Dash Pay' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, description: 'Control your notification preferences' },
-  { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your privacy settings' },
+  { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your encryption keys, privacy settings, and blocked users' },
+  { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Manage approved followers and private feed access' },
+  { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Connect storage for image uploads' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
+
+const NOTIFICATION_LABELS: Record<string, string> = {
+  likes: 'Likes',
+  reposts: 'Reposts',
+  replies: 'Replies',
+  follows: 'Follows',
+  mentions: 'Mentions',
+  messages: 'Messages',
+  blogPosts: 'Blog posts',
+}
+
+const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
+  likes: 'When someone likes your posts',
+  reposts: 'When someone reposts your content',
+  replies: 'When someone replies to you',
+  follows: 'When someone follows you',
+  mentions: 'When someone mentions you',
+  messages: 'When you receive new messages',
+  blogPosts: 'When a blog you follow publishes a new post',
+}
 
 function SettingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const { theme, setTheme } = useTheme()
-  const richLinkPreviews = useSettingsStore((s) => s.richLinkPreviews)
-  const setRichLinkPreviews = useSettingsStore((s) => s.setRichLinkPreviews)
+  const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
+  const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
+  const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
+  const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
+  const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
+  const notificationSettings = useSettingsStore((s) => s.notificationSettings)
+  const setNotificationSettings = useSettingsStore((s) => s.setNotificationSettings)
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
+  const feedLanguage = useSettingsStore((s) => s.feedLanguage)
+  const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -69,25 +113,18 @@ function SettingsPage() {
     }
   }
   
-  // Notification settings
-  const [notificationSettings, setNotificationSettings] = useState({
-    likes: true,
-    reposts: true,
-    replies: true,
-    follows: true,
-    mentions: true,
-    messages: true,
-  })
-  
   // Privacy settings
   const [privacySettings, setPrivacySettings] = useState({
     publicProfile: true,
     showActivity: true,
-    allowMessages: 'everyone', // 'everyone', 'followers', 'none'
   })
 
   // Account creation date from profile
   const [accountCreatedAt, setAccountCreatedAt] = useState<Date | null>(null)
+
+  // DPNS username state
+  const [dpnsUsernames, setDpnsUsernames] = useState<string[]>([])
+  const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
 
   // Fetch account creation date from profile
   useEffect(() => {
@@ -105,20 +142,59 @@ function SettingsPage() {
           }
         }
       } catch (error) {
-        console.error('Failed to fetch profile creation date:', error)
+        logger.error('Failed to fetch profile creation date:', error)
       }
     }
 
-    fetchProfileCreatedAt()
+    fetchProfileCreatedAt().catch(err => logger.error('Failed to fetch profile created at:', err))
   }, [user?.identityId])
 
-  const handleBack = () => {
-    if (activeSection === 'main') {
-      router.back()
-    } else {
-      // Navigate to main settings (removes query param)
-      router.push('/settings')
+  // Fetch DPNS usernames
+  useEffect(() => {
+    if (!user?.identityId) return
+
+    const fetchUsernames = async () => {
+      try {
+        const { dpnsService } = await import('@/lib/services/dpns-service')
+        const usernames = await dpnsService.getAllUsernames(user.identityId)
+        if (usernames.length > 0) {
+          // Sort usernames: contested first, then shortest, then alphabetically
+          // This matches the selection logic used across the app
+          const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+          setDpnsUsernames(sortedUsernames)
+        } else {
+          setDpnsUsernames([])
+        }
+      } catch (error) {
+        logger.error('Failed to fetch DPNS usernames:', error)
+      }
     }
+
+    fetchUsernames().catch(err => logger.error('Failed to fetch usernames:', err))
+  }, [user?.identityId])
+
+  // Refresh DPNS usernames after registration
+  const refreshUsernames = async () => {
+    if (!user?.identityId) return
+    try {
+      const { dpnsService } = await import('@/lib/services/dpns-service')
+      // Clear cache to get fresh data (pass undefined for username, identityId second)
+      dpnsService.clearCache(undefined, user.identityId)
+      const usernames = await dpnsService.getAllUsernames(user.identityId)
+      if (usernames.length > 0) {
+        // Sort usernames: contested first, then shortest, then alphabetically
+        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+        setDpnsUsernames(sortedUsernames)
+      } else {
+        setDpnsUsernames([])
+      }
+    } catch (error) {
+      logger.error('Failed to refresh usernames:', error)
+    }
+  }
+
+  const handleBack = () => {
+    router.back()
   }
 
   // TODO: Implement account deletion
@@ -179,7 +255,48 @@ function SettingsPage() {
           </div>
         </div>
       </div>
-      
+
+      {/* DPNS Username Registration */}
+      <div>
+        <h3 className="font-semibold mb-4">DPNS Usernames</h3>
+        <div className="space-y-4">
+          {dpnsUsernames.length > 0 ? (
+            <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+              <p className="text-sm text-gray-500 mb-2">Registered Usernames</p>
+              <div className="flex flex-wrap gap-2">
+                {dpnsUsernames.map((username, index) => (
+                  <span
+                    key={username}
+                    className="inline-flex items-center px-3 py-1 bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded-full text-sm font-medium"
+                  >
+                    @{username}
+                    {index === 0 && (
+                      <span className="ml-1.5 text-xs bg-yappr-500 text-white px-1.5 py-0.5 rounded-full">
+                        Primary
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                No usernames registered yet. Register a username to make it easier for others to find you.
+              </p>
+            </div>
+          )}
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() => setIsUsernameModalOpen(true)}
+          >
+            <UserPlusIcon className="h-4 w-4 mr-2" />
+            {dpnsUsernames.length > 0 ? 'Register More Usernames' : 'Register Username'}
+          </Button>
+        </div>
+      </div>
+
       <div>
         <h3 className="font-semibold mb-4">Account Actions</h3>
         <div className="space-y-3">
@@ -187,8 +304,8 @@ function SettingsPage() {
             <KeyIcon className="h-4 w-4 mr-2" />
             Log Out
           </Button>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             className="w-full justify-start text-red-600 hover:text-red-700 hover:border-red-300"
             onClick={handleDeleteAccount}
           >
@@ -229,27 +346,17 @@ function SettingsPage() {
           {Object.entries(notificationSettings).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between">
               <div>
-                <p className="font-medium capitalize">{key}</p>
+                <p className="font-medium">{NOTIFICATION_LABELS[key] || key}</p>
                 <p className="text-sm text-gray-500">
-                  {key === 'likes' && 'When someone likes your posts'}
-                  {key === 'reposts' && 'When someone reposts your content'}
-                  {key === 'replies' && 'When someone replies to you'}
-                  {key === 'follows' && 'When someone follows you'}
-                  {key === 'mentions' && 'When someone mentions you'}
-                  {key === 'messages' && 'When you receive new messages'}
+                  {NOTIFICATION_DESCRIPTIONS[key]}
                 </p>
               </div>
-              <Switch.Root
+              <SettingsSwitch
                 checked={value}
-                onCheckedChange={(checked) => 
-                  setNotificationSettings(prev => ({ ...prev, [key]: checked }))
+                onCheckedChange={(checked) =>
+                  setNotificationSettings({ [key as keyof typeof notificationSettings]: checked })
                 }
-                className={`w-11 h-6 rounded-full relative transition-colors ${
-                  value ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-                }`}
-              >
-                <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-              </Switch.Root>
+              />
             </div>
           ))}
         </div>
@@ -270,17 +377,12 @@ function SettingsPage() {
               <p className="font-medium">Public Profile</p>
               <p className="text-sm text-gray-500">Allow anyone to view your profile</p>
             </div>
-            <Switch.Root
+            <SettingsSwitch
               checked={privacySettings.publicProfile}
-              onCheckedChange={(checked) => 
+              onCheckedChange={(checked) =>
                 setPrivacySettings(prev => ({ ...prev, publicProfile: checked }))
               }
-              className={`w-11 h-6 rounded-full relative transition-colors ${
-                privacySettings.publicProfile ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-              }`}
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-            </Switch.Root>
+            />
           </div>
           
           <div className="flex items-center justify-between">
@@ -288,35 +390,25 @@ function SettingsPage() {
               <p className="font-medium">Show Activity Status</p>
               <p className="text-sm text-gray-500">Let others see when you&apos;re active</p>
             </div>
-            <Switch.Root
+            <SettingsSwitch
               checked={privacySettings.showActivity}
               onCheckedChange={(checked) =>
                 setPrivacySettings(prev => ({ ...prev, showActivity: checked }))
               }
-              className={`w-11 h-6 rounded-full relative transition-colors ${
-                privacySettings.showActivity ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-              }`}
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-            </Switch.Root>
+            />
           </div>
 
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Rich Link Previews</p>
-              <p className="text-sm text-gray-500">Fetch page titles, descriptions, and images for links</p>
+              <p className="font-medium">Link Previews</p>
+              <p className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
             </div>
-            <Switch.Root
-              checked={richLinkPreviews}
-              onCheckedChange={setRichLinkPreviews}
-              className={`w-11 h-6 rounded-full relative transition-colors ${
-                richLinkPreviews ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800'
-              }`}
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-5 translate-x-0.5" />
-            </Switch.Root>
+            <SettingsSwitch
+              checked={linkPreviewsEnabled}
+              onCheckedChange={(checked) => setLinkPreviewsChoice(checked ? 'enabled' : 'disabled')}
+            />
           </div>
-          {richLinkPreviews && (
+          {linkPreviewsEnabled && (
             <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
               <p className="text-sm text-amber-800 dark:text-amber-200">
                 <strong>Privacy note:</strong> {CORS_PROXY_INFO.warning}
@@ -344,52 +436,16 @@ function SettingsPage() {
       
       <div>
         <h3 className="font-semibold mb-4">Direct Messages</h3>
-        <RadioGroup.Root
-          value={privacySettings.allowMessages}
-          onValueChange={(value) => 
-            setPrivacySettings(prev => ({ ...prev, allowMessages: value }))
-          }
-          className="space-y-3"
-        >
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950">
-            <RadioGroup.Item
-              value="everyone"
-              className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-700 data-[state=checked]:border-yappr-500"
-            >
-              <RadioGroup.Indicator className="flex items-center justify-center w-full h-full after:block after:w-2.5 after:h-2.5 after:rounded-full after:bg-yappr-500" />
-            </RadioGroup.Item>
-            <label htmlFor="everyone" className="flex-1 cursor-pointer">
-              <p className="font-medium">Everyone</p>
-              <p className="text-sm text-gray-500">Anyone can message you</p>
-            </label>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium">Read Receipts</p>
+            <p className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
           </div>
-          
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950">
-            <RadioGroup.Item
-              value="followers"
-              className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-700 data-[state=checked]:border-yappr-500"
-            >
-              <RadioGroup.Indicator className="flex items-center justify-center w-full h-full after:block after:w-2.5 after:h-2.5 after:rounded-full after:bg-yappr-500" />
-            </RadioGroup.Item>
-            <label htmlFor="followers" className="flex-1 cursor-pointer">
-              <p className="font-medium">Followers Only</p>
-              <p className="text-sm text-gray-500">Only people you follow can message you</p>
-            </label>
-          </div>
-          
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950">
-            <RadioGroup.Item
-              value="none"
-              className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-700 data-[state=checked]:border-yappr-500"
-            >
-              <RadioGroup.Indicator className="flex items-center justify-center w-full h-full after:block after:w-2.5 after:h-2.5 after:rounded-full after:bg-yappr-500" />
-            </RadioGroup.Item>
-            <label htmlFor="none" className="flex-1 cursor-pointer">
-              <p className="font-medium">No One</p>
-              <p className="text-sm text-gray-500">Disable direct messages</p>
-            </label>
-          </div>
-        </RadioGroup.Root>
+          <SettingsSwitch
+            checked={sendReadReceipts}
+            onCheckedChange={setSendReadReceipts}
+          />
+        </div>
       </div>
 
       {/* Block Lists Section */}
@@ -400,6 +456,11 @@ function SettingsPage() {
       {/* Blocked Users Section */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
         <BlockedUsersSettings />
+      </div>
+
+      {/* Saved Addresses Section */}
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <SavedAddressesSettings />
       </div>
     </div>
   )
@@ -459,6 +520,124 @@ function SettingsPage() {
           </div>
         </RadioGroup.Root>
       </div>
+
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-4">Performance</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium">Potato Mode</p>
+            <p className="text-sm text-gray-500">
+              Disable blur effects and visual flair. Enable this if Yappr feels sluggish on your device.
+            </p>
+          </div>
+          <SettingsSwitch
+            checked={potatoMode}
+            onCheckedChange={setPotatoMode}
+          />
+        </div>
+      </div>
+
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-4">Feed Language</h3>
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Choose the language for the &quot;For You&quot; feed. Posts in other languages will not appear.
+          </p>
+          <select
+            value={feedLanguage}
+            onChange={(e) => setFeedLanguage(e.target.value)}
+            className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+          >
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="ar">Arabic</option>
+            <option value="hi">Hindi</option>
+            <option value="it">Italian</option>
+            <option value="nl">Dutch</option>
+            <option value="pl">Polish</option>
+            <option value="tr">Turkish</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderPrivateFeedSettings = () => {
+    // Check for action=reset URL param to auto-open reset dialog
+    const actionParam = searchParams.get('action')
+    const shouldOpenReset = actionParam === 'reset'
+
+    // Clear the URL param when opening the reset dialog to prevent re-open on re-render
+    const handleResetDialogOpened = () => {
+      if (shouldOpenReset) {
+        router.replace('/settings?section=privateFeed', { scroll: false })
+      }
+    }
+
+    return (
+      <div className="p-6 space-y-6">
+        <PrivateFeedSettings openReset={shouldOpenReset} onResetOpened={handleResetDialogOpened} />
+        <PrivateFeedDashboard />
+        <div id="private-feed-requests">
+          <PrivateFeedFollowRequests />
+        </div>
+        <div id="private-feed-followers">
+          <PrivateFeedFollowers />
+        </div>
+      </div>
+    )
+  }
+
+  // Storage provider connection state
+  const [storachaConnected, setStorachaConnected] = useState(false)
+  const [pinataConnected, setPinataConnected] = useState(false)
+
+  const renderStorageSettings = () => (
+    <div className="p-6 space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Storage Provider</CardTitle>
+          <CardDescription>
+            Connect a storage provider to attach images to your posts. Only one provider can be connected at a time.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <StorachaSettings
+            disabled={pinataConnected}
+            onConnectionChange={setStorachaConnected}
+          />
+          <div className="border-t border-gray-200 dark:border-gray-800" />
+          <PinataSettings
+            disabled={storachaConnected}
+            onConnectionChange={setPinataConnected}
+          />
+        </CardContent>
+      </Card>
+
+      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+        <h4 className="font-medium mb-2 text-sm">How it works:</h4>
+        <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+          <li className="flex gap-2">
+            <span className="text-yappr-500">&bull;</span>
+            Images are uploaded to IPFS via your chosen provider
+          </li>
+          <li className="flex gap-2">
+            <span className="text-yappr-500">&bull;</span>
+            Posts reference images using <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">ipfs://CID</code> URLs
+          </li>
+          <li className="flex gap-2">
+            <span className="text-yappr-500">&bull;</span>
+            Images are publicly accessible via IPFS gateways
+          </li>
+        </ul>
+      </div>
     </div>
   )
 
@@ -466,8 +645,6 @@ function SettingsPage() {
     const commitHash = process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'
     const commitDate = process.env.NEXT_PUBLIC_GIT_COMMIT_DATE
     const branch = process.env.NEXT_PUBLIC_GIT_BRANCH || 'unknown'
-    const buildTime = process.env.NEXT_PUBLIC_BUILD_TIME
-
     const formatDate = (dateStr: string | undefined) => {
       if (!dateStr) return ''
       try {
@@ -513,12 +690,6 @@ function SettingsPage() {
             </>
           )}
 
-          {buildTime && (
-            <>
-              <span className="text-gray-500">Build Time:</span>
-              <span className="text-gray-700 dark:text-gray-300">{formatDate(buildTime)}</span>
-            </>
-          )}
         </div>
       </div>
 
@@ -555,6 +726,10 @@ function SettingsPage() {
         return renderNotificationSettings()
       case 'privacy':
         return renderPrivacySettings()
+      case 'privateFeed':
+        return renderPrivateFeedSettings()
+      case 'storage':
+        return renderStorageSettings()
       case 'appearance':
         return renderAppearanceSettings()
       case 'about':
@@ -576,7 +751,7 @@ function SettingsPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}
@@ -601,6 +776,16 @@ function SettingsPage() {
       </div>
 
       <RightSidebar />
+
+      {/* Username Registration Modal */}
+      <UsernameModal
+        isOpen={isUsernameModalOpen}
+        onClose={() => {
+          setIsUsernameModalOpen(false)
+          refreshUsernames().catch(err => logger.error('Failed to refresh usernames:', err))
+        }}
+        hasExistingUsernames={dpnsUsernames.length > 0}
+      />
     </div>
   )
 }

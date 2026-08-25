@@ -83,3 +83,26 @@ export function extractAllTags(content: string): string[] {
   const cashtags = extractCashtags(content)
   return Array.from(new Set([...hashtags, ...cashtags]))
 }
+
+/**
+ * Normalize a DPNS username by removing .dash suffix
+ * e.g., "pasta.dash" -> "pasta", "Pasta" -> "pasta"
+ */
+export function normalizeDpnsUsername(username: string): string {
+  return username.toLowerCase().replace(/\.dash$/i, '')
+}
+
+/**
+ * Extract @mentions from post content
+ * Returns usernames without the @ prefix, normalized (lowercase, .dash removed), and deduplicated
+ * Handles both @pasta and @pasta.dash formats
+ * Max 100 chars to accommodate DPNS username constraints
+ */
+export function extractMentions(content: string): string[] {
+  // Match @username or @username.dash format (no hyphens - DPNS doesn't allow them)
+  const regex = /@([a-zA-Z0-9_]{1,100}(?:\.dash)?)/gi
+  const matches = content.match(regex) || []
+  return Array.from(new Set(
+    matches.map(mention => normalizeDpnsUsername(mention.slice(1))) // Remove @ prefix, normalize, dedupe
+  ))
+}

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -7,11 +8,13 @@ import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
+import { ComposeModal } from '@/components/compose/compose-modal'
+import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { hashtagService } from '@/lib/services/hashtag-service'
-import { HASHTAG_CONTRACT_ID } from '@/lib/constants'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
+import { useSettingsStore } from '@/lib/store'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 
@@ -20,6 +23,7 @@ function HashtagPageContent() {
   const searchParams = useSearchParams()
   const tag = searchParams.get('tag') || ''
   const { user } = useAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -40,17 +44,8 @@ function HashtagPageContent() {
 
       setIsLoading(true)
       try {
-        // Check if hashtag contract is deployed
-        if (!HASHTAG_CONTRACT_ID) {
-          console.log('Hashtag contract not deployed, showing empty state')
-          setPosts([])
-          setPostCount(0)
-          setIsLoading(false)
-          return
-        }
-
         // Get post IDs that have this hashtag
-        const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag, { limit: 50 })
+        const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag)
         setPostCount(hashtagDocs.length)
 
         if (hashtagDocs.length === 0) {
@@ -77,7 +72,7 @@ function HashtagPageContent() {
               }
             }
           } catch (error) {
-            console.error('Failed to fetch post:', postId, error)
+            logger.error('Failed to fetch post:', postId, error)
           }
         }
 
@@ -97,15 +92,15 @@ function HashtagPageContent() {
         setPosts(enrichedPosts)
         setPostCount(enrichedPosts.length)
       } catch (error) {
-        console.error('Failed to load hashtag posts:', error)
+        logger.error('Failed to load hashtag posts:', error)
         setPosts([])
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadHashtagPosts()
-  }, [tag])
+    loadHashtagPosts().catch(err => logger.error('Failed to load hashtag posts:', err))
+  }, [tag, user?.identityId])
 
   if (!tag) {
     return (
@@ -134,7 +129,7 @@ function HashtagPageContent() {
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
           {/* Header */}
-          <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -158,7 +153,7 @@ function HashtagPageContent() {
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
             {isLoading ? (
               <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                <Spinner size="md" className="mx-auto mb-4" />
                 <p className="text-gray-500">Loading posts with {tagSymbol}{displayTag}...</p>
               </div>
             ) : posts.length === 0 ? (
@@ -168,11 +163,6 @@ function HashtagPageContent() {
                 <p className="text-gray-500 mb-4">
                   Be the first to post with {tagSymbol}{displayTag}
                 </p>
-                {!HASHTAG_CONTRACT_ID && (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">
-                    Hashtag contract not deployed. Run `node register-hashtag-contract.js` to enable.
-                  </p>
-                )}
               </div>
             ) : (
               posts.map((post, index) => (
@@ -191,6 +181,7 @@ function HashtagPageContent() {
       </div>
 
       <RightSidebar />
+      <ComposeModal />
     </div>
   )
 }
@@ -199,7 +190,7 @@ export default function HashtagPage() {
   return (
     <Suspense fallback={
       <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+        <Spinner size="md" />
       </div>
     }>
       <HashtagPageContent />

@@ -1,47 +1,36 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
+import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
-import { identifierToBase58 } from './sdk-helpers';
-
-interface DpnsDocument {
-  $id: string;
-  $ownerId: string;
-  $revision: number;
-  $createdAt?: number;
-  $updatedAt?: number;
-  label: string;
-  normalizedLabel: string;
-  normalizedParentDomainName: string;
-  preorderSalt: string;
-  records: {
-    identity?: string;
-    dashUniqueIdentityId?: string;
-    dashAliasIdentityId?: string;
-  };
-  subdomainRules?: {
-    allowSubdomains: boolean;
-  };
-}
+import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
+import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
+import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
  */
-function extractDocuments(response: unknown): any[] {
+function extractDocuments(response: unknown): Record<string, unknown>[] {
   if (response instanceof Map) {
     return Array.from(response.values())
       .filter(Boolean)
-      .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
+      .map(documentToPlainObject);
   }
   if (Array.isArray(response)) {
-    return response.map((doc: any) =>
-      typeof doc.toJSON === 'function' ? doc.toJSON() : doc
-    );
+    return response.map(documentToPlainObject);
   }
-  if ((response as any)?.documents) {
-    return (response as any).documents;
+  const maybeDocument = response as { toObject?: () => unknown };
+  if (typeof maybeDocument.toObject === 'function') {
+    return [documentToPlainObject(response)];
   }
-  if ((response as any)?.toJSON) {
-    const json = (response as any).toJSON();
-    return Array.isArray(json) ? json : json.documents || [];
+  const respObj = response as { documents?: unknown[]; toJSON?: () => unknown };
+  if (respObj?.documents) {
+    return respObj.documents.map(documentToPlainObject);
+  }
+  if (respObj?.toJSON) {
+    const json = respObj.toJSON() as { documents?: unknown[] } | unknown[];
+    if (Array.isArray(json)) return json.map(documentToPlainObject);
+    return ((json as { documents?: unknown[] }).documents || []).map(documentToPlainObject);
   }
   return [];
 }
@@ -83,21 +72,21 @@ class DpnsService {
         documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [['records.identity', '==', identityId]],
         limit: 20
-      } as any);
+      });
 
       const documents = extractDocuments(response);
-      return documents.map((doc: any) => {
-        const data = doc.data || doc;
+      return documents.map((doc) => {
+        const data = (doc.data || doc) as Record<string, unknown>;
         return `${data.label}.${data.normalizedParentDomainName}`;
       });
     } catch (error) {
-      console.error('DPNS: Error fetching all usernames:', error);
+      logger.error('DPNS: Error fetching all usernames:', error);
       return [];
     }
   }
 
   /**
-   * Sort usernames by contested status (contested usernames first)
+   * Sort usernames by: contested first, then shortest, then alphabetically
    */
   async sortUsernamesByContested(usernames: string[]): Promise<string[]> {
     const sdk = await getEvoSdk();
@@ -112,9 +101,14 @@ class DpnsService {
 
     return contestedStatuses
       .sort((a, b) => {
+        // 1. Contested usernames first
         if (a.contested && !b.contested) return -1;
         if (!a.contested && b.contested) return 1;
-        // If both contested or both not contested, sort alphabetically
+        // 2. Shorter usernames first
+        if (a.username.length !== b.username.length) {
+          return a.username.length - b.username.length;
+        }
+        // 3. Alphabetically
         return a.username.localeCompare(b.username);
       })
       .map(item => item.username);
@@ -123,6 +117,12 @@ class DpnsService {
   /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
+   * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   async resolveUsernamesBatch(identityIds: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
@@ -157,12 +157,16 @@ class DpnsService {
         where: [['records.identity', 'in', uncachedIds]],
         orderBy: [['records.identity', 'asc']],
         limit: 100
-      } as any);
+      });
 
       const documents = extractDocuments(response);
+
+      // Collect ALL usernames per identity (some users have multiple)
+      const usernamesByIdentity = new Map<string, string[]>();
       for (const doc of documents) {
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId;
         // Convert base64 identity to base58 for consistent map keys
         const identityId = identifierToBase58(rawId);
         const label = data.label || data.normalizedLabel;
@@ -170,12 +174,39 @@ class DpnsService {
         const username = `${label}.${parentDomain}`;
 
         if (identityId && label) {
-          results.set(identityId, username);
-          this._cacheEntry(username, identityId);
+          const existing = usernamesByIdentity.get(identityId) || [];
+          existing.push(username);
+          usernamesByIdentity.set(identityId, existing);
         }
       }
+
+      // For identities with multiple usernames, sort and pick the best one
+      // For identities with one username, use it directly
+      for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
+        let bestUsername: string;
+        if (usernames.length === 1) {
+          bestUsername = usernames[0];
+        } else {
+          // Sort: contested first, then shortest, then alphabetically
+          // Wrap in try-catch so one failed contested lookup doesn't break the batch
+          try {
+            const sortedUsernames = await this.sortUsernamesByContested(usernames);
+            bestUsername = sortedUsernames[0];
+          } catch (err) {
+            logger.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
+            // Fallback: sort by length then alphabetically (skip contested check)
+            const sorted = [...usernames].sort((a, b) => {
+              if (a.length !== b.length) return a.length - b.length;
+              return a.localeCompare(b);
+            });
+            bestUsername = sorted[0];
+          }
+        }
+        results.set(identityId, bestUsername);
+        this._cacheEntry(bestUsername, identityId);
+      }
     } catch (error) {
-      console.error('DPNS: Batch resolution error:', error);
+      logger.error('DPNS: Batch resolution error:', error);
     }
 
     return results;
@@ -207,7 +238,7 @@ class DpnsService {
       this._cacheEntry(bestUsername, identityId);
       return bestUsername;
     } catch (error) {
-      console.error('DPNS: Error resolving username:', error);
+      logger.error('DPNS: Error resolving username:', error);
       return null;
     }
   }
@@ -239,7 +270,7 @@ class DpnsService {
           }
         }
       } catch (error) {
-        console.warn('DPNS: Native resolver failed, falling back to document query:', error);
+        logger.warn('DPNS: Native resolver failed, falling back to document query:', error);
       }
 
       // Fallback: Query DPNS documents directly
@@ -255,13 +286,14 @@ class DpnsService {
           ['normalizedParentDomainName', '==', parentDomain.toLowerCase()]
         ],
         limit: 1
-      } as any);
+      });
 
       const documents = extractDocuments(response);
       if (documents.length > 0) {
         const doc = documents[0];
-        const data = doc.data || doc;
-        const rawId = data.records?.identity || data.records?.dashUniqueIdentityId || data.records?.dashAliasIdentityId;
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const rawId = records?.identity || records?.dashUniqueIdentityId || records?.dashAliasIdentityId;
         const identityId = identifierToBase58(rawId);
 
         if (identityId) {
@@ -272,7 +304,7 @@ class DpnsService {
 
       return null;
     } catch (error) {
-      console.error('DPNS: Error resolving identity:', error);
+      logger.error('DPNS: Error resolving identity:', error);
       return null;
     }
   }
@@ -296,7 +328,7 @@ class DpnsService {
       const identity = await this.resolveIdentity(normalizedUsername);
       return identity === null;
     } catch (error) {
-      console.error('DPNS: Error checking username availability:', error);
+      logger.error('DPNS: Error checking username availability:', error);
       // If error, assume not available to be safe
       return false;
     }
@@ -324,14 +356,14 @@ class DpnsService {
         ],
         orderBy: [['normalizedLabel', 'asc']],
         limit
-      } as any);
+      });
 
       const documents = extractDocuments(response);
-      return documents.map((doc: any) => {
-        const data = doc.data || doc;
-        const label = data.label || data.normalizedLabel || 'unknown';
-        const parentDomain = data.normalizedParentDomainName || 'dash';
-        const ownerId = doc.ownerId || doc.$ownerId || '';
+      return documents.map((doc) => {
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const label = (data.label || data.normalizedLabel || 'unknown') as string;
+        const parentDomain = (data.normalizedParentDomainName || 'dash') as string;
+        const ownerId = (doc.ownerId || doc.$ownerId || '') as string;
 
         return {
           username: `${label}.${parentDomain}`,
@@ -339,7 +371,7 @@ class DpnsService {
         };
       });
     } catch (error) {
-      console.error('DPNS: Error searching usernames with details:', error);
+      logger.error('DPNS: Error searching usernames with details:', error);
       return [];
     }
   }
@@ -353,15 +385,87 @@ class DpnsService {
   }
 
   /**
-   * Register a new username
+   * Find the WASM identity public key that matches the stored private key.
+   *
+   * This is critical for the typed API: we must use the key that matches our signer's private key.
+   * The signer only has one private key, so we find which identity key it corresponds to.
+   *
+   * DPNS registration operations require CRITICAL (1) or HIGH (2) security level keys.
+   *
+   * @param privateKeyWif - The private key in WIF format
+   * @param wasmPublicKeys - The identity's WASM public keys
+   * @param requiredSecurityLevel - Maximum allowed security level (lower = more secure)
+   * @returns The matching WASM key or null if not found/not suitable
+   */
+  private findMatchingSigningKey(
+    privateKeyWif: string,
+    wasmPublicKeys: WasmIdentityPublicKey[],
+    requiredSecurityLevel: number = SecurityLevel.CRITICAL
+  ): WasmIdentityPublicKey | null {
+    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+
+    // Filter out disabled keys before processing
+    const activeWasmKeys = wasmPublicKeys.filter(k => !k.disabledAt);
+
+    // Convert WASM keys to the format expected by findMatchingKeyIndex
+    const keyInfos: IdentityPublicKeyInfo[] = activeWasmKeys.map(key => {
+      // WASM key.data getter returns hex string - convert to Uint8Array
+      const dataHex = key.data;
+      const data = dataHex && dataHex.length > 0
+        ? new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || [])
+        : new Uint8Array(0);
+
+      return {
+        id: key.keyId ?? 0,
+        type: key.keyTypeNumber ?? 0,
+        purpose: key.purposeNumber ?? 0,
+        securityLevel: key.securityLevelNumber ?? 0,
+        data
+      };
+    });
+
+    // Find which key matches our private key
+    const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
+
+    if (!match) {
+      logger.error('DPNS: Private key does not match any key on this identity');
+      return null;
+    }
+
+    logger.info(`DPNS: Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
+
+    // Check if the matched key is suitable for DPNS operations
+    // Must be AUTHENTICATION purpose
+    if (match.purpose !== KeyPurpose.AUTHENTICATION) {
+      logger.error(`DPNS: Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
+      return null;
+    }
+
+    // Must be CRITICAL (1) or HIGH (2) - NOT MASTER (0) and not below required level
+    if (match.securityLevel < SecurityLevel.CRITICAL) {
+      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for DPNS operations (only CRITICAL or HIGH)`);
+      return null;
+    }
+
+    if (match.securityLevel > requiredSecurityLevel) {
+      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
+      return null;
+    }
+
+    // Return the WASM key object for the matched key (from filtered active keys)
+    const wasmKey = activeWasmKeys.find(k => k.keyId === match.keyId);
+    return wasmKey || null;
+  }
+
+  /**
+   * Register a new username using the SDK API
    */
   async registerUsername(
     label: string,
     identityId: string,
-    publicKeyId: number,
     privateKeyWif: string,
     onPreorderSuccess?: () => void
-  ): Promise<any> {
+  ): Promise<{ success: boolean }> {
     try {
       const sdk = await getEvoSdk();
 
@@ -374,7 +478,7 @@ class DpnsService {
       // Check if it's contested
       const isContested = await sdk.dpns.isContestedUsername(label);
       if (isContested) {
-        console.warn(`Username ${label} is contested and will require masternode voting`);
+        logger.warn(`Username ${label} is contested and will require masternode voting`);
       }
 
       // Check availability
@@ -383,22 +487,46 @@ class DpnsService {
         throw new Error(`Username ${label} is already taken`);
       }
 
-      // Register the name using EvoSDK facade
-      console.log(`Registering DPNS name: ${label}`);
-      const result = await sdk.dpns.registerName({
-        label,
-        identityId,
-        publicKeyId,
+      // Fetch identity to validate and get public key info
+      const identity = await sdk.identities.fetch(identityId);
+      if (!identity) {
+        throw new Error('Identity not found');
+      }
+
+      // Get WASM public keys to find the matching signing key
+      const wasmPublicKeys = identity.publicKeys;
+
+      // Find a signing key that matches the provided private key
+      // DPNS operations require CRITICAL or HIGH security level
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH);
+      if (!identityKey) {
+        throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+      }
+
+      logger.info(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+
+      // Create signer and identity key for the state transition
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
         privateKeyWif,
-        onPreorder: onPreorderSuccess
+        identityKey
+      );
+
+      // Register the name
+      logger.info(`Registering DPNS name: ${label}`);
+      await sdk.dpns.registerName({
+        label,
+        identity,
+        identityKey: signingKey,
+        signer,
+        preorderCallback: onPreorderSuccess
       });
 
       // Clear cache for this identity
       this.clearCache(undefined, identityId);
 
-      return result;
+      return { success: true };
     } catch (error) {
-      console.error('Error registering username:', error);
+      logger.error('Error registering username:', error);
       throw error;
     }
   }
@@ -455,6 +583,92 @@ class DpnsService {
     return null;
   }
 
+
+  /**
+   * Batch check availability and contested status for multiple usernames
+   */
+  async batchCheckAvailability(labels: string[]): Promise<Map<string, UsernameCheckResult>> {
+    const results = new Map<string, UsernameCheckResult>();
+
+    // Check each username in parallel
+    const checks = await Promise.allSettled(
+      labels.map(async (label) => {
+        const normalizedLabel = label.toLowerCase().replace(/\.dash$/, '');
+        try {
+          const sdk = await getEvoSdk();
+          const [available, contested] = await Promise.all([
+            sdk.dpns.isNameAvailable(normalizedLabel),
+            sdk.dpns.isContestedUsername(normalizedLabel),
+          ]);
+          return { label: normalizedLabel, available, contested };
+        } catch (error) {
+          return {
+            label: normalizedLabel,
+            available: false,
+            contested: false,
+            error: error instanceof Error ? error.message : 'Check failed',
+          };
+        }
+      })
+    );
+
+    // Process results
+    for (const result of checks) {
+      if (result.status === 'fulfilled') {
+        const { label, available, contested, error } = result.value;
+        results.set(label, { available, contested, error });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Register multiple usernames sequentially with progress callback
+   * Uses typed API (publicKeyId no longer needed - key is found from identity)
+   */
+  async registerUsernamesSequentially(
+    registrations: Array<{
+      label: string;
+      identityId: string;
+      privateKeyWif: string;
+      publicKeyId?: number; // Deprecated, kept for backwards compatibility but ignored
+    }>,
+    onProgress?: (index: number, total: number, label: string) => void
+  ): Promise<UsernameRegistrationResult[]> {
+    const results: UsernameRegistrationResult[] = [];
+
+    for (let i = 0; i < registrations.length; i++) {
+      const reg = registrations[i];
+      onProgress?.(i, registrations.length, reg.label);
+
+      try {
+        const sdk = await getEvoSdk();
+        const isContested = await sdk.dpns.isContestedUsername(reg.label);
+
+        await this.registerUsername(
+          reg.label,
+          reg.identityId,
+          reg.privateKeyWif
+        );
+
+        results.push({
+          label: reg.label,
+          success: true,
+          isContested,
+        });
+      } catch (error) {
+        results.push({
+          label: reg.label,
+          success: false,
+          isContested: false,
+          error: error instanceof Error ? error.message : 'Registration failed',
+        });
+      }
+    }
+
+    return results;
+  }
 
   /**
    * Clear cache entries

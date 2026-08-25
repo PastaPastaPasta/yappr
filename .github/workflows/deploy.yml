@@ -1,8 +1,13 @@
 name: Deploy to GitHub Pages
 
+# Unified deploy: the Pages artifact always contains the production site
+# (built from master, served at the root / yap.pr) plus the staging site
+# (built from the staging branch, served under /staging). A push to either
+# branch rebuilds both so neither deploy can wipe the other.
+
 on:
   push:
-    branches: [master]
+    branches: [master, staging]
   workflow_dispatch:
 
 permissions:
@@ -17,26 +22,68 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      staging_ok: ${{ steps.staging-build.outcome }}
     steps:
-      - name: Checkout
+      - name: Checkout master
         uses: actions/checkout@v4
+        with:
+          ref: master
+          path: master
+
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          path: staging
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            master/package-lock.json
+            staging/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Build production (master)
+        working-directory: master
+        run: |
+          npm ci
+          npm run build
+        env:
+          # Set BASE_PATH via GitHub repository variables
+          # Leave unset for root deployments (custom domains), set to /repo-name for subpath deployments
+          BASE_PATH: ${{ vars.BASE_PATH }}
 
-      - name: Build
-        run: npm run build
+      # continue-on-error so a broken staging build can never block a
+      # production deploy; the deploy job re-raises the failure when the
+      # push that triggered this run was to staging itself.
+      - name: Build staging
+        id: staging-build
+        continue-on-error: true
+        working-directory: staging
+        run: |
+          npm ci
+          npm run build
+        env:
+          BASE_PATH: /staging
+
+      - name: Combine site artifact
+        run: |
+          mkdir -p site
+          cp -R master/out/. site/
+          if [ "${{ steps.staging-build.outcome }}" = "success" ] && [ -d staging/out ]; then
+            mkdir -p site/staging
+            cp -R staging/out/. site/staging/
+          else
+            echo "::warning::staging build failed — deploying without an updated /staging"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ./site
 
   deploy:
     environment:
@@ -48,3 +95,9 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Fail if the staging push did not deploy
+        if: github.ref_name == 'staging' && needs.build.outputs.staging_ok != 'success'
+        run: |
+          echo "This run was triggered from staging but the staging build failed."
+          exit 1

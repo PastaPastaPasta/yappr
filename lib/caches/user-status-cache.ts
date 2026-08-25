@@ -83,3 +83,81 @@ export function seedFollowStatusCache(
     followCache.set(cacheKey, { isFollowing, timestamp: now })
   })
 }
+
+// Blog follow status cache
+const blogFollowCache = new Map<string, { isFollowing: boolean; timestamp: number }>()
+
+export function getBlogFollowStatus(cacheKey: string): boolean | null {
+  const cached = blogFollowCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.isFollowing
+  }
+  return null
+}
+
+export function setBlogFollowStatus(cacheKey: string, isFollowing: boolean): void {
+  blogFollowCache.set(cacheKey, { isFollowing, timestamp: Date.now() })
+}
+
+export function deleteBlogFollowStatus(cacheKey: string): void {
+  blogFollowCache.delete(cacheKey)
+}
+
+export function clearBlogFollowCache(): void {
+  blogFollowCache.clear()
+}
+
+export function seedBlogFollowStatusCache(
+  userId: string,
+  statusMap: Map<string, boolean>
+): void {
+  if (!userId) return
+  const now = Date.now()
+  statusMap.forEach((isFollowing, blogId) => {
+    const cacheKey = `blog:${userId}:${blogId}`
+    blogFollowCache.set(cacheKey, { isFollowing, timestamp: now })
+  })
+}
+
+// Private feed request status cache
+// Tracks pending requests by ownerId so all posts from the same author show consistent state
+export type PrivateFeedRequestStatus = 'none' | 'pending' | 'loading' | 'error'
+
+const privateFeedRequestCache = new Map<string, { status: PrivateFeedRequestStatus; timestamp: number }>()
+const privateFeedRequestListeners = new Set<() => void>()
+
+export function getPrivateFeedRequestStatus(cacheKey: string): PrivateFeedRequestStatus | null {
+  const cached = privateFeedRequestCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.status
+  }
+  return null
+}
+
+export function setPrivateFeedRequestStatus(cacheKey: string, status: PrivateFeedRequestStatus): void {
+  privateFeedRequestCache.set(cacheKey, { status, timestamp: Date.now() })
+  // Notify all listeners that status changed
+  privateFeedRequestListeners.forEach(listener => listener())
+}
+
+export function deletePrivateFeedRequestStatus(cacheKey: string): void {
+  privateFeedRequestCache.delete(cacheKey)
+  privateFeedRequestListeners.forEach(listener => listener())
+}
+
+export function clearPrivateFeedRequestCache(): void {
+  privateFeedRequestCache.clear()
+  // Notify all listeners that cache was cleared
+  privateFeedRequestListeners.forEach(listener => listener())
+}
+
+/**
+ * Subscribe to private feed request status changes.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToPrivateFeedRequestStatus(listener: () => void): () => void {
+  privateFeedRequestListeners.add(listener)
+  return () => {
+    privateFeedRequestListeners.delete(listener)
+  }
+}

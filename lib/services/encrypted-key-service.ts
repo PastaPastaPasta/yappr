@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { dpnsService } from './dpns-service';
@@ -7,14 +8,17 @@ import {
   decryptKeyFromOnchain,
   validateBackupPassword,
   benchmarkPbkdf2,
+  decryptBackupPayload,
   OnchainEncryptedData,
-  BenchmarkResult
+  BenchmarkResult,
+  StorachaBackupCredentials,
 } from '../onchain-key-encryption';
 
 export interface EncryptedKeyBackupDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
+  $revision: number;
   encryptedKey: string;
   iv: string;
   version: number;
@@ -30,6 +34,7 @@ export interface CreateBackupResult {
 export interface LoginWithPasswordResult {
   identityId: string;
   privateKey: string;
+  storachaCredentials?: StorachaBackupCredentials;
 }
 
 class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument> {
@@ -48,16 +53,17 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
    * Transform raw document to typed object
    * SDK v3: System fields use $ prefix
    */
-  protected transformDocument(doc: any): EncryptedKeyBackupDocument {
-    const data = doc.data || doc;
+  protected transformDocument(doc: Record<string, unknown>): EncryptedKeyBackupDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
     return {
-      $id: doc.$id,
-      $ownerId: doc.$ownerId,
-      $createdAt: doc.$createdAt,
-      encryptedKey: data.encryptedKey,
-      iv: data.iv,
-      version: data.version,
-      kdfIterations: data.kdfIterations
+      $id: doc.$id as string,
+      $ownerId: doc.$ownerId as string,
+      $createdAt: doc.$createdAt as number,
+      $revision: (doc.$revision as number) ?? 1,
+      encryptedKey: data.encryptedKey as string,
+      iv: data.iv as string,
+      version: data.version as number,
+      kdfIterations: data.kdfIterations as number
     };
   }
 
@@ -73,7 +79,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       const backup = await this.getBackupByIdentityId(identityId);
       return backup !== null;
     } catch (error) {
-      console.error('Error checking backup existence:', error);
+      logger.error('Error checking backup existence:', error);
       return false;
     }
   }
@@ -93,7 +99,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       }
       return this.hasBackup(identityId);
     } catch (error) {
-      console.error('Error checking backup by username:', error);
+      logger.error('Error checking backup by username:', error);
       return false;
     }
   }
@@ -114,7 +120,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
       return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
-      console.error('Error getting backup by identity:', error);
+      logger.error('Error getting backup by identity:', error);
       return null;
     }
   }
@@ -134,7 +140,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       }
       return this.getBackupByIdentityId(identityId);
     } catch (error) {
-      console.error('Error getting backup by username:', error);
+      logger.error('Error getting backup by username:', error);
       return null;
     }
   }
@@ -211,10 +217,10 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
       return {
         success: true,
-        documentId: result.document?.$id
+        documentId: result.document?.$id as string | undefined
       };
     } catch (error) {
-      console.error('Error creating backup:', error);
+      logger.error('Error creating backup:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to create backup'
@@ -238,14 +244,15 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
 
       return await this.delete(backup.$id, identityId);
     } catch (error) {
-      console.error('Error deleting backup:', error);
+      logger.error('Error deleting backup:', error);
       return false;
     }
   }
 
   /**
    * Login with username + password
-   * Resolves username to identity, fetches encrypted backup, decrypts and returns credentials
+   * Resolves username to identity, fetches encrypted backup, decrypts and returns credentials.
+   * Supports both v1 (login key only) and v2 (extended with Storacha) formats.
    */
   async loginWithPassword(
     username: string,
@@ -255,8 +262,10 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       throw new Error('Encrypted key backup feature is not configured');
     }
 
-    // Resolve username to identity ID
-    const identityId = await dpnsService.resolveIdentity(username);
+    // Resolve username to identity ID (skip if already an identity ID)
+    const normalizedUsername = username.trim();
+    const isIdentityId = /^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(normalizedUsername);
+    const identityId = isIdentityId ? normalizedUsername : await dpnsService.resolveIdentity(normalizedUsername);
     if (!identityId) {
       throw new Error('Username not found');
     }
@@ -267,7 +276,7 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       throw new Error('No key backup found for this account');
     }
 
-    // Decrypt the private key
+    // Decrypt the backup (handles both v1 and v2 formats)
     const encryptedData: OnchainEncryptedData = {
       encryptedKey: backup.encryptedKey,
       iv: backup.iv,
@@ -275,11 +284,12 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       kdfIterations: backup.kdfIterations
     };
 
-    const privateKey = await decryptKeyFromOnchain(encryptedData, identityId, password);
+    const decrypted = await decryptBackupPayload(encryptedData, identityId, password);
 
     return {
       identityId,
-      privateKey
+      privateKey: decrypted.loginKey,
+      storachaCredentials: decrypted.storachaCredentials
     };
   }
 

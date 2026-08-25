@@ -1,8 +1,11 @@
+import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
-import { postService } from './post-service';
+import { signerService, KeyPurpose } from './signer-service';
 import { wallet } from '@dashevo/evo-sdk';
-import { TipInfo } from '../types';
+import { TipInfo } from '../../types';
+import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 
 export interface TipResult {
   success: boolean;
@@ -29,10 +32,65 @@ export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
   /**
-   * Send a tip (credit transfer) to another user and create a tip post
+   * Find the transfer key that matches the provided private key
+   *
+   * This verifies that the private key corresponds to one of the identity's
+   * transfer keys, preventing signer/key mismatches.
+   *
+   * @param privateKeyWif - The private key in WIF format
+   * @param wasmPublicKeys - The identity's WASM public keys
+   * @param specificKeyId - Optional specific key ID to use
+   * @returns The matching transfer key or null if not found
+   */
+  private findMatchingTransferKey(
+    privateKeyWif: string,
+    wasmPublicKeys: WasmIdentityPublicKey[],
+    specificKeyId?: number
+  ): WasmIdentityPublicKey | null {
+    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+    const activeKeys = wasmPublicKeys.filter(k => !k.disabledAt);
+    const transferKeys = activeKeys.filter(k => k.purposeNumber === KeyPurpose.TRANSFER);
+
+    if (transferKeys.length === 0) {
+      return null;
+    }
+
+    // Convert transfer keys to format for matching
+    const keyInfos: IdentityPublicKeyInfo[] = transferKeys.map(key => {
+      const dataHex = key.data;
+      const data = new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
+      return {
+        id: key.keyId,
+        type: key.keyTypeNumber,
+        purpose: key.purposeNumber,
+        securityLevel: key.securityLevelNumber,
+        data
+      };
+    });
+
+    // Find which transfer key matches the provided private key
+    const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
+
+    if (!match) {
+      logger.error('Transfer private key does not match any transfer key on this identity');
+      return null;
+    }
+
+    // If a specific key ID was requested, verify it matches
+    if (specificKeyId !== undefined && match.keyId !== specificKeyId) {
+      logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${match.keyId}`);
+      return null;
+    }
+
+    logger.info(`Matched transfer key: id=${match.keyId}`);
+    return transferKeys.find(k => k.keyId === match.keyId) || null;
+  }
+
+  /**
+   * Send a tip (credit transfer) to another user and optionally create a tip post
    * @param senderId - The sender's identity ID
-   * @param recipientId - The recipient's identity ID (post author)
-   * @param postId - The post being tipped
+   * @param recipientId - The recipient's identity ID (post author or user being tipped)
+   * @param postId - The post being tipped (optional - when null, no tip post is created)
    * @param amountCredits - Amount in credits
    * @param transferKeyWif - The sender's transfer private key in WIF format
    * @param message - Optional tip message
@@ -41,7 +99,7 @@ class TipService {
   async sendTip(
     senderId: string,
     recipientId: string,
-    postId: string,
+    postId: string | null,
     amountCredits: number,
     transferKeyWif: string,
     message?: string,
@@ -80,31 +138,32 @@ class TipService {
       const sdk = await getEvoSdk();
 
       // Log transfer details for debugging
-      console.log('=== Credit Transfer Debug ===');
-      console.log(`Sender ID: ${senderId}`);
-      console.log(`Recipient ID: ${recipientId}`);
-      console.log(`Amount: ${amountCredits} credits`);
-      console.log(`Key ID: ${keyId !== undefined ? keyId : 'auto-detect'}`);
-      console.log(`Private key length: ${transferKeyWif.trim().length}`);
-      console.log(`Private key starts with: ${transferKeyWif.trim().substring(0, 4)}...`);
+      logger.info('=== Credit Transfer Debug ===');
+      logger.info(`Sender ID: ${senderId}`);
+      logger.info(`Recipient ID: ${recipientId}`);
+      logger.info(`Amount: ${amountCredits} credits`);
+      logger.info(`Key ID: ${keyId !== undefined ? keyId : 'auto-detect'}`);
+      logger.info(`Private key length: ${transferKeyWif.trim().length}`);
+      logger.info(`Private key starts with: ${transferKeyWif.trim().substring(0, 4)}...`);
 
       // Fetch sender identity to see available keys
       try {
         const identity = await sdk.identities.fetch(senderId);
         if (identity) {
           const identityJson = identity.toJSON();
-          console.log('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
+          logger.info('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
 
           // Try to derive public key from the provided private key and compare
           try {
             const keyPair = await wallet.keyPairFromWif(transferKeyWif.trim());
-            console.log('Derived key pair from WIF:', keyPair);
+            logger.info('Derived key pair from WIF:', keyPair);
 
             // Find transfer keys (purpose 3) on the identity
-            const transferKeys = identityJson.publicKeys.filter((k: any) => k.purpose === 3);
-            console.log('Transfer keys on identity:', transferKeys);
+            interface IdentityPublicKey { id: number; purpose: number; data?: string }
+            const transferKeys = identityJson.publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
+            logger.info('Transfer keys on identity:', transferKeys);
 
-            if (keyPair && keyPair.publicKey) {
+            if (keyPair?.publicKey) {
               // public_key is a hex string, convert to base64 for comparison
               const hexToBytes = (hex: string) => {
                 const bytes = [];
@@ -115,63 +174,80 @@ class TipService {
               };
               const pubKeyBytes = hexToBytes(keyPair.publicKey);
               const pubKeyBase64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
-              console.log('Derived public key (hex):', keyPair.publicKey);
-              console.log('Derived public key (base64):', pubKeyBase64);
+              logger.info('Derived public key (hex):', keyPair.publicKey);
+              logger.info('Derived public key (base64):', pubKeyBase64);
 
               // Compare with key 3's public key
-              const key3 = identityJson.publicKeys.find((k: any) => k.id === 3);
+              const key3 = identityJson.publicKeys.find((k: IdentityPublicKey) => k.id === 3);
               if (key3) {
-                console.log('Key 3 public key (from identity):', key3.data);
-                console.log('Keys match:', pubKeyBase64 === key3.data);
+                logger.info('Key 3 public key (from identity):', key3.data);
+                logger.info('Keys match:', pubKeyBase64 === key3.data);
               }
             }
           } catch (keyError) {
-            console.log('Error deriving key pair:', keyError);
+            logger.info('Error deriving key pair:', keyError);
           }
         }
       } catch (e) {
-        console.log('Could not fetch identity for debugging:', e);
+        logger.info('Could not fetch identity for debugging:', e);
       }
 
-      // Execute credit transfer
-      const transferArgs: {
-        senderId: string;
-        recipientId: string;
-        amount: bigint;
-        privateKeyWif: string;
-        keyId?: number;
-      } = {
+      // Fetch sender identity WASM object
+      const identity = await sdk.identities.fetch(senderId);
+      if (!identity) {
+        return {
+          success: false,
+          error: 'Sender identity not found',
+          errorCode: 'NETWORK_ERROR'
+        };
+      }
+
+      // Get WASM public keys and find the transfer key that matches the private key
+      const wasmPublicKeys = identity.publicKeys;
+      const transferKey = this.findMatchingTransferKey(transferKeyWif.trim(), wasmPublicKeys, keyId);
+      if (!transferKey) {
+        return {
+          success: false,
+          error: 'No matching transfer key found. The provided private key does not match any transfer key on this identity.',
+          errorCode: 'INVALID_KEY'
+        };
+      }
+
+      // Log transfer details
+      logger.info('Transfer args:', JSON.stringify({
         senderId,
         recipientId,
-        amount: BigInt(amountCredits),
-        privateKeyWif: transferKeyWif.trim()
-      };
-
-      // Add keyId - use provided value or default to 3 (transfer key)
-      const effectiveKeyId = keyId !== undefined ? keyId : 3;
-      transferArgs.keyId = effectiveKeyId;
-      console.log(`Using key ID: ${effectiveKeyId}${keyId === undefined ? ' (defaulting to transfer key)' : ''}`);
-
-      // Log the exact args being sent
-      console.log('Transfer args:', JSON.stringify({
-        senderId: transferArgs.senderId,
-        recipientId: transferArgs.recipientId,
-        amount: transferArgs.amount.toString(),
-        keyId: transferArgs.keyId,
-        privateKeyWifLength: transferArgs.privateKeyWif.length
+        amount: amountCredits.toString(),
+        keyId: transferKey.keyId
       }, null, 2));
 
-      console.log('Calling sdk.identities.creditTransfer...');
-      const result = await sdk.identities.creditTransfer(transferArgs);
+      // Create signer with the transfer key
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
+        transferKeyWif.trim(),
+        transferKey
+      );
+
+      logger.info('Calling sdk.identities.creditTransfer...');
+      // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
+      // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
+      const result = await sdk.identities.creditTransfer({
+        identity,
+        recipientId,
+        amount: BigInt(amountCredits),
+        signer,
+        signingKey
+      } as Parameters<typeof sdk.identities.creditTransfer>[0]);
 
       // Clear sender's balance cache so it refreshes
       identityService.clearCache(senderId);
 
-      console.log('Tip transfer result:', result);
+      logger.info('Tip transfer result:', result);
 
-      // Create tip post as a reply to the tipped post
+      // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
-      await this.createTipPost(senderId, postId, amountCredits, message);
+      if (postId) {
+        await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
+      }
 
       return {
         success: true,
@@ -179,10 +255,12 @@ class TipService {
         transactionHash: 'confirmed'
       };
 
-    } catch (error: any) {
-      console.error('Tip transfer error:', error);
+    } catch (error) {
+      logger.error('Tip transfer error:', error);
       // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
-      const errorMessage = error?.message || (typeof error === 'string' ? error : 'Unknown error');
+      const errorMessage = (error instanceof Error ? error.message : null) ||
+        ((error as { message?: string })?.message) ||
+        (typeof error === 'string' ? error : 'Unknown error');
 
       // Handle known DAPI timeout issue (like in state-transition-service)
       if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
@@ -190,7 +268,9 @@ class TipService {
         identityService.clearCache(senderId);
 
         // Create tip post (amount is known even if confirmation timed out)
-        await this.createTipPost(senderId, postId, amountCredits, message);
+        if (postId) {
+          await this.createTipPost(senderId, postId, recipientId, amountCredits, message);
+        }
 
         return {
           success: true,
@@ -235,6 +315,7 @@ class TipService {
   private async createTipPost(
     senderId: string,
     postId: string,
+    postOwnerId: string,
     amountCredits: number,
     tipMessage?: string
   ): Promise<void> {
@@ -245,14 +326,14 @@ class TipService {
         ? `tip:${amountCredits}\n${tipMessage}`
         : `tip:${amountCredits}`;
 
-      await postService.createPost(senderId, content, {
-        replyToId: postId
-      });
+      // Tips are created as replies to the tipped post
+      const { replyService } = await import('./reply-service');
+      await replyService.createReply(senderId, content, postId, postOwnerId);
 
-      console.log('Tip post created successfully');
+      logger.info('Tip reply created successfully');
     } catch (error) {
       // Log but don't fail the tip - the credit transfer already succeeded
-      console.error('Failed to create tip post:', error);
+      logger.error('Failed to create tip post:', error);
     }
   }
 
@@ -318,7 +399,7 @@ class TipService {
   async getTransitionAmount(transitionId: string): Promise<number | null> {
     // For now, return null - amount display is optional
     // In the future, we could look up the transition to get the actual amount
-    console.log('getTransitionAmount not yet implemented for:', transitionId);
+    logger.info('getTransitionAmount not yet implemented for:', transitionId);
     return null;
   }
 }

@@ -8,7 +8,7 @@ import {
 import { PostCard } from '@/components/post/post-card'
 import { Button } from '@/components/ui/button'
 import { Post } from '@/lib/types'
-import Link from 'next/link'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 interface FeaturedPostsProps {
   posts: Post[]
@@ -46,6 +46,8 @@ export function FeaturedPosts({
   error,
   onRetry
 }: FeaturedPostsProps) {
+  const openLoginModal = useLoginModal((s) => s.open)
+
   return (
     <section className="py-12">
       <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
@@ -74,8 +76,8 @@ export function FeaturedPosts({
           <p className="text-gray-500 dark:text-gray-400 mb-4">
             No posts yet. Be the first to share something!
           </p>
-          <Button asChild>
-            <Link href="/login">Get Started</Link>
+          <Button onClick={openLoginModal}>
+            Get Started
           </Button>
         </div>
       ) : (
@@ -93,8 +95,8 @@ export function FeaturedPosts({
           ))}
 
           <div className="text-center pt-8">
-            <Button variant="outline" asChild>
-              <Link href="/login">Sign in to see more</Link>
+            <Button variant="outline" onClick={openLoginModal}>
+              Sign in to see more
             </Button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { logger } from '@/lib/logger';
+import { useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -29,9 +30,9 @@ interface LikeWithUser extends LikeDocument {
 
 export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
   const likesState = useAsyncState<LikeWithUser[]>([])
+  const { setLoading, setError, setData } = likesState
 
-  const loadLikes = async () => {
-    const { setLoading, setError, setData } = likesState
+  const loadLikes = useCallback(async () => {
     setLoading(true)
     setError(null)
 
@@ -54,14 +55,13 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
       ])
 
       // Create profile lookup map
-      const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Transform likes with resolved user info
       const likesWithUsers: LikeWithUser[] = likes.map(like => {
         const username = usernameMap.get(like.$ownerId)
         const profile = profileMap.get(like.$ownerId)
-        const profileData = (profile as any)?.data || profile
-        const profileDisplayName = profileData?.displayName
+        const profileDisplayName = profile?.displayName
 
         return {
           ...like,
@@ -74,18 +74,18 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
 
       setData(likesWithUsers)
     } catch (error) {
-      console.error('Failed to load likes:', error)
+      logger.error('Failed to load likes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load likes')
     } finally {
       setLoading(false)
     }
-  }
+  }, [postId, setLoading, setError, setData])
 
   useEffect(() => {
     if (isOpen) {
-      loadLikes()
+      loadLikes().catch(err => logger.error('Failed to load likes:', err))
     }
-  }, [isOpen])
+  }, [isOpen, loadLikes])
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onClose}>
@@ -139,7 +139,8 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         navigator.clipboard.writeText(like.$ownerId)
-                                        toast.success('Identity ID copied')
+                                          .then(() => toast.success('Identity ID copied'))
+                                          .catch(() => toast.error('Failed to copy ID'))
                                       }}
                                       className="font-mono text-xs hover:text-gray-700 dark:hover:text-gray-300"
                                     >

@@ -1,6 +1,8 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
+import { logger } from '@/lib/logger';
+import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { transformDocumentWithField } from './sdk-helpers';
+import { transformDocumentWithField, identifierStringToDocumentBytes } from './sdk-helpers';
+import { paginateFetchAll } from './pagination-utils';
 
 export interface BookmarkDocument {
   $id: string;
@@ -26,7 +28,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
       // Check if already bookmarked
       const existing = await this.getBookmark(postId, ownerId);
       if (existing) {
-        console.log('Post already bookmarked');
+        logger.info('Post already bookmarked');
         return true;
       }
 
@@ -35,12 +37,12 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
         this.contractId,
         this.documentType,
         ownerId,
-        { postId }
+        { postId: identifierStringToDocumentBytes(postId) }
       );
 
       return result.success;
     } catch (error) {
-      console.error('Error bookmarking post:', error);
+      logger.error('Error bookmarking post:', error);
       return false;
     }
   }
@@ -52,7 +54,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     try {
       const bookmark = await this.getBookmark(postId, ownerId);
       if (!bookmark) {
-        console.log('Post not bookmarked');
+        logger.info('Post not bookmarked');
         return true;
       }
 
@@ -66,7 +68,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return result.success;
     } catch (error) {
-      console.error('Error removing bookmark:', error);
+      logger.error('Error removing bookmark:', error);
       return false;
     }
   }
@@ -94,26 +96,36 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
-      console.error('Error getting bookmark:', error);
+      logger.error('Error getting bookmark:', error);
       return null;
     }
   }
 
   /**
-   * Get user's bookmarks
+   * Get user's bookmarks.
+   * Paginates through all results to return complete list.
    */
-  async getUserBookmarks(userId: string, options: QueryOptions = {}): Promise<BookmarkDocument[]> {
+  async getUserBookmarks(userId: string): Promise<BookmarkDocument[]> {
     try {
-      const result = await this.query({
-        where: [['$ownerId', '==', userId]],
-        orderBy: [['$createdAt', 'desc']],
-        limit: 50,
-        ...options
-      });
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      return result.documents;
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: 'bookmark',
+          where: [
+            ['$ownerId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['$createdAt', 'desc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
     } catch (error) {
-      console.error('Error getting user bookmarks:', error);
+      logger.error('Error getting user bookmarks:', error);
       return [];
     }
   }
@@ -124,6 +136,35 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   async countUserBookmarks(userId: string): Promise<number> {
     const bookmarks = await this.getUserBookmarks(userId);
     return bookmarks.length;
+  }
+
+  /**
+   * Get user's bookmarks for specific posts.
+   * Uses the ownerAndPost index: [$ownerId, postId]
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
+   */
+  async getUserBookmarksForPosts(userId: string, postIds: string[]): Promise<BookmarkDocument[]> {
+    if (postIds.length === 0) return [];
+
+    try {
+      const result = await this.query({
+        where: [
+          ['$ownerId', '==', userId],
+          ['postId', 'in', postIds]
+        ],
+        orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
+        limit: postIds.length
+      });
+
+      return result.documents;
+    } catch (error) {
+      logger.error('Error getting user bookmarks for posts:', error);
+      return [];
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
@@ -70,7 +71,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
       }
       setIsBlocked(blocked)
     } catch (error) {
-      console.error('useBlock: Error checking block status:', error)
+      logger.error('useBlock: Error checking block status:', error)
     } finally {
       setIsLoading(false)
     }
@@ -114,14 +115,21 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
         throw new Error(result.error || 'Block operation failed')
       }
 
-      toast.success(wasBlocked ? 'User unblocked' : 'User blocked')
+      // Show appropriate message based on whether auto-revocation occurred
+      if (wasBlocked) {
+        toast.success('User unblocked')
+      } else if ('autoRevoked' in result && result.autoRevoked) {
+        toast.success('User blocked and private feed access revoked')
+      } else {
+        toast.success('User blocked')
+      }
     } catch (error) {
       // Rollback
       setIsBlocked(wasBlocked)
       if (cacheKey) {
         setBlockStatus(cacheKey, wasBlocked)
       }
-      console.error('useBlock: Error toggling block:', error)
+      logger.error('useBlock: Error toggling block:', error)
       toast.error('Failed to update block status')
     } finally {
       setIsLoading(false)
@@ -155,7 +163,7 @@ export async function checkBlockedForAuthors(
     const { blockService } = await import('@/lib/services/block-service')
     return await blockService.checkBlockedBatch(userId, authorIds)
   } catch (error) {
-    console.error('checkBlockedForAuthors: Error:', error)
+    logger.error('checkBlockedForAuthors: Error:', error)
     return new Map()
   }
 }

@@ -3,6 +3,139 @@
 import { useState, useEffect } from 'react'
 import type { LinkPreviewData } from '@/components/post/link-preview'
 
+// YouTube domain patterns for URL detection
+const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
+const YAPPR_POST_HOSTS = new Set(['yap.pr', 'www.yap.pr'])
+
+function normalizeOrigin(origin?: string): string | null {
+  if (!origin) return null
+  try {
+    return new URL(origin).origin.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Extract Yappr post ID from URLs that target this app's post route.
+ * This function uses `new URL(url)` (no base URL), so callers must pass
+ * absolute URLs.
+ * Supports:
+ * - https://yap.pr/post/?id=POST_ID
+ * - https://www.yap.pr/post/?id=POST_ID
+ * - same-origin absolute URL, e.g. https://your-host/post/?id=POST_ID
+ * - absolute /post/POST_ID path fallback on supported hosts/origins
+ * Returns null when URL is not a supported Yappr post URL or has no valid ID.
+ */
+export function extractYapprPostId(url: string, currentOrigin?: string): string | null {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+    const normalizedCurrentOrigin = normalizeOrigin(currentOrigin)
+      ?? (typeof window !== 'undefined' ? normalizeOrigin(window.location.origin) : null)
+    const isSameOrigin = normalizedCurrentOrigin ? parsed.origin.toLowerCase() === normalizedCurrentOrigin : false
+    const isSupportedHost = YAPPR_POST_HOSTS.has(hostname) || isSameOrigin
+
+    if (!isSupportedHost) return null
+
+    const pathSegments = parsed.pathname.split('/').filter(Boolean)
+    if (pathSegments.length === 0) return null
+
+    const lastSegment = pathSegments[pathSegments.length - 1].toLowerCase()
+    const penultimateSegment = pathSegments.length > 1
+      ? pathSegments[pathSegments.length - 2].toLowerCase()
+      : null
+
+    // Match /.../post or /.../post/{id}
+    const hasPostPath = lastSegment === 'post' || penultimateSegment === 'post'
+    if (!hasPostPath) return null
+
+    // Prefer query parameter style: /post?id=...
+    const idParam = parsed.searchParams.get('id')?.trim()
+    if (idParam) return idParam
+
+    // Fallback path style: /post/{id}
+    if (penultimateSegment === 'post') {
+      const pathId = decodeURIComponent(pathSegments[pathSegments.length - 1]).trim()
+      if (pathId) return pathId
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Returns true when a URL points to an internal Yappr post route and includes a valid post ID.
+ */
+export function isYapprPostUrl(url: string, currentOrigin?: string): boolean {
+  return extractYapprPostId(url, currentOrigin) !== null
+}
+
+/**
+ * Extract YouTube video ID from various YouTube URL formats.
+ * Returns null if the URL is not a YouTube video URL.
+ *
+ * Supported formats:
+ * - youtube.com/watch?v=VIDEO_ID
+ * - youtu.be/VIDEO_ID
+ * - youtube.com/embed/VIDEO_ID
+ * - youtube.com/v/VIDEO_ID
+ * - youtube.com/shorts/VIDEO_ID
+ * - youtube.com/live/VIDEO_ID
+ */
+export function extractYouTubeVideoId(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+
+    // Check if it's a YouTube domain
+    if (!YOUTUBE_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
+      return null
+    }
+
+    // youtu.be/VIDEO_ID
+    if (hostname === 'youtu.be') {
+      const videoId = parsed.pathname.slice(1).split('/')[0]
+      return videoId || null
+    }
+
+    // youtube.com/watch?v=VIDEO_ID
+    const vParam = parsed.searchParams.get('v')
+    if (vParam) return vParam
+
+    // youtube.com/embed/VIDEO_ID or /v/VIDEO_ID or /shorts/VIDEO_ID or /live/VIDEO_ID
+    const pathMatch = parsed.pathname.match(/\/(embed|v|shorts|live)\/([^/?]+)/)
+    if (pathMatch) return pathMatch[2]
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if a URL is a YouTube video URL.
+ */
+export function isYouTubeUrl(url: string): boolean {
+  return extractYouTubeVideoId(url) !== null
+}
+
+/**
+ * Create preview data for a YouTube video URL.
+ * Uses YouTube's thumbnail service which has CORS headers enabled.
+ */
+function createYouTubePreview(url: string, videoId: string): LinkPreviewData {
+  return {
+    url,
+    siteName: 'YouTube',
+    // Use maxresdefault with hqdefault fallback (handled in component via onError)
+    image: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+    youtubeVideoId: videoId,
+  }
+}
+
 // Client-side cache for link previews
 const previewCache = new Map<string, LinkPreviewData>()
 const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
@@ -19,7 +152,23 @@ const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
  * - corsproxy.io: https://corsproxy.io/ (no formal policy)
  */
 export const CORS_PROXY_INFO = {
-  warning: 'Rich previews send URLs to third-party proxy servers to fetch metadata. These services may log the URLs you view.',
+  warning: 'Some URLs (YouTube, Reddit, IPFS, etc.) are fetched directly from their services. Other URLs use third-party proxy servers to fetch metadata. These services may log the URLs you view.',
+  /** Services that are fetched directly without a proxy */
+  directServices: [
+    { name: 'YouTube', description: 'Video thumbnails (img.youtube.com)' },
+    { name: 'Reddit', description: 'Image hosting (i.redd.it)' },
+    { name: 'Imgur', description: 'Image hosting (i.imgur.com)' },
+    { name: 'Giphy', description: 'GIF hosting (media.giphy.com)' },
+    { name: 'GitHub', description: 'Raw files (raw.githubusercontent.com)' },
+    { name: 'Twitter/X', description: 'Images (pbs.twimg.com)' },
+  ],
+  /** IPFS gateways used for ipfs:// URLs */
+  ipfsGateways: [
+    { name: 'dweb.link', url: 'https://dweb.link' },
+    { name: 'ipfs.io', url: 'https://ipfs.io' },
+    { name: 'gateway.pinata.cloud', url: 'https://gateway.pinata.cloud' },
+  ],
+  /** Third-party proxies used for other URLs */
   proxies: [
     { name: 'allorigins.win', url: 'https://allorigins.win/' },
     { name: 'corsproxy.io', url: 'https://corsproxy.io/' },
@@ -31,6 +180,32 @@ const CORS_PROXIES = [
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
 ]
 
+/**
+ * Domains that are known to have CORS headers enabled.
+ * These can be fetched directly without a proxy, improving privacy and speed.
+ * Only include major, trusted services to avoid IP harvesting concerns.
+ */
+const CORS_ALLOWED_DOMAINS = [
+  'media.giphy.com',
+  'i.giphy.com',
+  'i.imgur.com',
+  'i.redd.it',
+  'pbs.twimg.com',
+  'raw.githubusercontent.com',
+]
+
+/**
+ * Check if a URL's hostname is in the CORS-allowed whitelist.
+ */
+function isCorsAllowedDomain(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return CORS_ALLOWED_DOMAINS.includes(parsed.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
 // URLs that commonly don't have good previews or should be skipped
 const SKIP_DOMAINS = [
   'localhost',
@@ -38,7 +213,163 @@ const SKIP_DOMAINS = [
   '0.0.0.0',
 ]
 
+// Common image file extensions
+const IMAGE_EXTENSIONS = [
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'
+]
+
+/**
+ * IPFS Gateway Configuration
+ * These public gateways are used to resolve ipfs:// protocol URLs.
+ * Gateways are tried in order until one succeeds.
+ *
+ * Two formats are supported:
+ * - subdomain: https://CID.ipfs.dweb.link/path (better origin isolation)
+ * - path: https://ipfs.io/ipfs/CID/path (traditional format)
+ */
+interface IpfsGateway {
+  /** Base domain for the gateway */
+  domain: string
+  /** Gateway format: 'subdomain' or 'path' */
+  format: 'subdomain' | 'path'
+}
+
+const IPFS_GATEWAYS: IpfsGateway[] = [
+  // Subdomain gateway (preferred for origin isolation)
+  { domain: 'ipfs.dweb.link', format: 'subdomain' },
+  // Path gateways (fallback)
+  { domain: 'ipfs.io', format: 'path' },
+  { domain: 'gateway.pinata.cloud', format: 'path' },
+]
+
+/**
+ * Check if a URL uses the ipfs:// protocol.
+ */
+export function isIpfsProtocol(url: string): boolean {
+  return url.toLowerCase().startsWith('ipfs://')
+}
+
+/**
+ * Extract CID from an ipfs:// URL.
+ * Handles formats like:
+ * - ipfs://CID
+ * - ipfs://CID/path/to/file
+ */
+function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | null {
+  if (!isIpfsProtocol(url)) return null
+
+  // Remove ipfs:// prefix
+  const remainder = url.slice(7)
+  if (!remainder) return null
+
+  // Split into CID and optional path
+  const slashIndex = remainder.indexOf('/')
+  if (slashIndex === -1) {
+    return { cid: remainder, path: '' }
+  }
+
+  return {
+    cid: remainder.slice(0, slashIndex),
+    path: remainder.slice(slashIndex),
+  }
+}
+
+/**
+ * Check if a CID is version 0 (starts with "Qm").
+ * CIDv0 uses base58btc which is case-sensitive, making it incompatible
+ * with subdomain gateways (DNS is case-insensitive).
+ */
+function isCidV0(cid: string): boolean {
+  return cid.startsWith('Qm')
+}
+
+/**
+ * Convert an ipfs:// URL to an HTTP gateway URL.
+ * Supports both subdomain and path gateway formats.
+ *
+ * Note: CIDv0 (Qm...) is incompatible with subdomain gateways because
+ * base58btc is case-sensitive but DNS is not. Returns null for CIDv0
+ * with subdomain gateways, allowing fallback to path gateways.
+ */
+function ipfsToGatewayUrl(ipfsUrl: string, gateway: IpfsGateway): string | null {
+  const parsed = extractCidFromIpfsUrl(ipfsUrl)
+  if (!parsed) return null
+
+  if (gateway.format === 'subdomain') {
+    // CIDv0 is case-sensitive (base58btc) - incompatible with DNS subdomains
+    if (isCidV0(parsed.cid)) {
+      return null // Skip this gateway, try next one
+    }
+    // Subdomain format: https://CID.ipfs.dweb.link/path
+    return `https://${parsed.cid}.${gateway.domain}${parsed.path}`
+  } else {
+    // Path format: https://ipfs.io/ipfs/CID/path
+    return `https://${gateway.domain}/ipfs/${parsed.cid}${parsed.path}`
+  }
+}
+
+/**
+ * Check if a URL points to IPFS content.
+ * IPFS gateways typically have CORS headers enabled, so we can fetch directly.
+ *
+ * Matches:
+ * - Protocol: ipfs:// URLs
+ * - Subdomain gateways: hostname contains ".ipfs." (e.g., bafybeib.ipfs.dweb.link)
+ * - Direct gateways: ipfs.io domain (e.g., gateway.ipfs.io, ipfs.io)
+ * - Path gateways: path starts with /ipfs/ (e.g., https://gateway.pinata.cloud/ipfs/Qm...)
+ */
+export function isIpfsUrl(url: string): boolean {
+  // Check for ipfs:// protocol first (before URL parsing which doesn't support it)
+  if (isIpfsProtocol(url)) {
+    return true
+  }
+
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+    const pathname = parsed.pathname.toLowerCase()
+
+    // Check for subdomain gateway pattern: *.ipfs.* (e.g., cid.ipfs.dweb.link)
+    if (hostname.includes('.ipfs.')) {
+      return true
+    }
+
+    // Check for ipfs.io domain specifically (e.g., ipfs.io, gateway.ipfs.io)
+    if (hostname === 'ipfs.io' || hostname.endsWith('.ipfs.io')) {
+      return true
+    }
+
+    // Check for path gateway pattern: /ipfs/ in the path
+    if (pathname.startsWith('/ipfs/')) {
+      return true
+    }
+
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Check if a URL points directly to an image file based on its extension.
+ * This is used to render direct image links with a larger preview format.
+ */
+export function isDirectImageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const pathname = parsed.pathname.toLowerCase()
+    return IMAGE_EXTENSIONS.some(ext => pathname.endsWith(ext))
+  } catch {
+    return false
+  }
+}
+
 function shouldSkipUrl(url: string): boolean {
+  // Never skip ipfs:// protocol URLs
+  if (isIpfsProtocol(url)) {
+    return false
+  }
+
   try {
     const parsed = new URL(url)
     return SKIP_DOMAINS.some(domain => parsed.hostname.includes(domain))
@@ -168,6 +499,73 @@ function parseHtmlForPreview(html: string, url: string): LinkPreviewData {
   }
 }
 
+interface FetchResult {
+  content: string
+  contentType: string | null
+  /** For ipfs:// URLs, the resolved HTTP gateway URL that browsers can load */
+  resolvedUrl?: string
+}
+
+// Maximum content size to download for preview metadata (5MB)
+const MAX_PREVIEW_SIZE_BYTES = 5 * 1024 * 1024
+
+/**
+ * Check if a Content-Type header indicates an image.
+ */
+function isImageContentType(contentType: string | null): boolean {
+  if (!contentType) return false
+  // Split on semicolon to handle "image/png; charset=utf-8"
+  const mimeType = contentType.split(';')[0].trim().toLowerCase()
+  return mimeType.startsWith('image/')
+}
+
+/**
+ * Fetch content directly without CORS proxy.
+ * Used for IPFS gateways which typically have CORS headers enabled.
+ * Returns both content and Content-Type header for detecting images.
+ *
+ * For images, skips downloading content (we only need Content-Type).
+ * Rejects files larger than MAX_PREVIEW_SIZE_BYTES to prevent memory issues.
+ */
+async function fetchDirectly(url: string): Promise<FetchResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 8000)
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    const contentType = response.headers.get('content-type')
+
+    // For images, we only need the Content-Type - skip downloading the body
+    if (isImageContentType(contentType)) {
+      return { content: '', contentType }
+    }
+
+    // Check Content-Length to prevent downloading huge files
+    const contentLength = response.headers.get('content-length')
+    if (contentLength) {
+      const size = parseInt(contentLength, 10)
+      if (!isNaN(size) && size > MAX_PREVIEW_SIZE_BYTES) {
+        throw new Error('Content too large for preview')
+      }
+    }
+
+    const content = await response.text()
+    return { content, contentType }
+  } catch (err) {
+    clearTimeout(timeout)
+    throw err instanceof Error ? err : new Error('Unknown error')
+  }
+}
+
 /**
  * Fetch HTML via CORS proxy with fallback support
  * Tries each proxy in order until one succeeds
@@ -202,6 +600,64 @@ async function fetchViaProxy(url: string): Promise<string> {
   throw lastError || new Error('All proxies failed')
 }
 
+/**
+ * Fetch content from an ipfs:// URL by trying multiple gateways.
+ * Returns the result from the first gateway that succeeds, including the resolved gateway URL.
+ */
+async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
+  let lastError: Error | null = null
+
+  for (const gateway of IPFS_GATEWAYS) {
+    const gatewayUrl = ipfsToGatewayUrl(ipfsUrl, gateway)
+    if (!gatewayUrl) {
+      continue
+    }
+
+    try {
+      const result = await fetchDirectly(gatewayUrl)
+      // Include the resolved gateway URL so browsers can load it
+      return { ...result, resolvedUrl: gatewayUrl }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error('Unknown error')
+      // Continue to next gateway
+    }
+  }
+
+  throw lastError || new Error('All IPFS gateways failed')
+}
+
+/**
+ * Fetch content for a URL.
+ * - ipfs:// URLs: tries multiple gateways
+ * - IPFS gateway URLs: fetches directly (CORS enabled)
+ * - CORS-allowed domains: fetches directly (with proxy fallback)
+ * - Other URLs: uses CORS proxy with fallbacks
+ */
+async function fetchContent(url: string): Promise<FetchResult> {
+  // Handle ipfs:// protocol URLs with gateway fallback
+  if (isIpfsProtocol(url)) {
+    return fetchIpfsProtocol(url)
+  }
+
+  // Handle IPFS gateway URLs directly
+  if (isIpfsUrl(url)) {
+    return fetchDirectly(url)
+  }
+
+  // Handle CORS-allowed domains directly (with proxy fallback)
+  if (isCorsAllowedDomain(url)) {
+    try {
+      return await fetchDirectly(url)
+    } catch {
+      // Fall back to proxy if direct fetch fails
+    }
+  }
+
+  // CORS proxies don't preserve Content-Type reliably, so treat as HTML
+  const content = await fetchViaProxy(url)
+  return { content, contentType: 'text/html' }
+}
+
 async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
   // Check cache first
   const cached = previewCache.get(url)
@@ -215,11 +671,39 @@ async function fetchRichPreview(url: string): Promise<LinkPreviewData> {
     return pending
   }
 
-  // Create new request using CORS proxy with fallbacks
+  // Create new request - uses direct fetch for IPFS, CORS proxy for others
   const request = (async () => {
     try {
-      const html = await fetchViaProxy(url)
-      const data = parseHtmlForPreview(html, url)
+      // Skip fetch for URLs with obvious image extensions - no network request needed
+      if (isDirectImageUrl(url)) {
+        const data = createDirectImagePreview(url)
+        previewCache.set(url, data)
+        return data
+      }
+
+      // Skip fetch for YouTube URLs - we can construct preview from URL alone
+      // This improves privacy (no proxy needed) and performance
+      const youtubeVideoId = extractYouTubeVideoId(url)
+      if (youtubeVideoId) {
+        const data = createYouTubePreview(url, youtubeVideoId)
+        previewCache.set(url, data)
+        return data
+      }
+
+      const { content, contentType, resolvedUrl } = await fetchContent(url)
+
+      // If content is an image (common for IPFS), return as direct image preview
+      // Use resolvedUrl for ipfs:// URLs so browsers can load the image
+      if (isImageContentType(contentType)) {
+        const previewUrl = resolvedUrl || url
+        const data = createDirectImagePreview(previewUrl)
+        previewCache.set(url, data)
+        return data
+      }
+
+      // Use resolvedUrl for parsing so relative URLs resolve correctly
+      const previewUrl = resolvedUrl || url
+      const data = parseHtmlForPreview(content, previewUrl)
       previewCache.set(url, data)
       return data
     } catch {
@@ -253,56 +737,64 @@ function createBasicPreview(url: string): LinkPreviewData {
   }
 }
 
+/**
+ * Create preview data for a URL that points directly to an image.
+ * Used when Content-Type indicates image (e.g., IPFS images without file extensions).
+ */
+function createDirectImagePreview(url: string): LinkPreviewData {
+  try {
+    const parsed = new URL(url)
+    return {
+      url,
+      siteName: parsed.hostname.replace(/^www\./, ''),
+      favicon: `${parsed.origin}/favicon.ico`,
+      isDirectImage: true,
+    }
+  } catch {
+    return { url, isDirectImage: true }
+  }
+}
+
 interface UseLinkPreviewOptions {
   /** Disable preview entirely */
   disabled?: boolean
-  /** Enable rich preview (uses third-party proxy) */
-  richPreview?: boolean
 }
 
 interface UseLinkPreviewResult {
   data: LinkPreviewData | null
   loading: boolean
   error: boolean
-  /** Whether this is a basic (privacy-preserving) or rich preview */
-  isRichPreview: boolean
 }
 
 /**
  * Hook to get link preview data for a URL
  *
- * By default, returns basic preview (domain + favicon) without network requests.
- * When richPreview is enabled, fetches full metadata via third-party CORS proxy.
+ * When enabled, fetches full metadata (title, description, image) via third-party CORS proxy.
+ * Returns null when disabled.
  */
 export function useLinkPreview(
   url: string | null,
   options: UseLinkPreviewOptions = {}
 ): UseLinkPreviewResult {
-  const { disabled = false, richPreview = false } = options
+  const { disabled = false } = options
 
-  // For basic preview, we can compute immediately without state
-  const basicData = url && !disabled && !shouldSkipUrl(url)
-    ? createBasicPreview(url)
-    : null
-
-  // Initialize data from cache if available (for rich preview)
-  const [richData, setRichData] = useState<LinkPreviewData | null>(() => {
-    if (!url || disabled || !richPreview) return null
+  // Initialize data from cache if available
+  const [data, setData] = useState<LinkPreviewData | null>(() => {
+    if (!url || disabled || shouldSkipUrl(url)) return null
     return previewCache.get(url) || null
   })
 
-  // Initialize loading state for rich preview
+  // Initialize loading state
   const [loading, setLoading] = useState(() => {
-    if (!url || disabled || !richPreview || shouldSkipUrl(url)) return false
+    if (!url || disabled || shouldSkipUrl(url)) return false
     return !previewCache.has(url)
   })
 
   const [error, setError] = useState(false)
 
   useEffect(() => {
-    // Only fetch if rich preview is enabled
-    if (!url || disabled || !richPreview || shouldSkipUrl(url)) {
-      setRichData(null)
+    if (!url || disabled || shouldSkipUrl(url)) {
+      setData(null)
       setLoading(false)
       setError(false)
       return
@@ -311,7 +803,7 @@ export function useLinkPreview(
     // Check cache first
     const cached = previewCache.get(url)
     if (cached) {
-      setRichData(cached)
+      setData(cached)
       setLoading(false)
       setError(false)
       return
@@ -324,7 +816,7 @@ export function useLinkPreview(
     fetchRichPreview(url)
       .then((result) => {
         if (!cancelled) {
-          setRichData(result)
+          setData(result)
           setLoading(false)
         }
       })
@@ -338,16 +830,12 @@ export function useLinkPreview(
     return () => {
       cancelled = true
     }
-  }, [url, disabled, richPreview])
-
-  // Return rich data if available, otherwise basic data
-  const data = richPreview ? (richData || basicData) : basicData
+  }, [url, disabled])
 
   return {
     data,
-    loading: richPreview ? loading : false,
+    loading,
     error,
-    isRichPreview: richPreview && !!richData && !loading,
   }
 }
 
@@ -355,7 +843,7 @@ export function useLinkPreview(
  * Strip trailing punctuation while preserving balanced parentheses
  * This handles URLs like https://en.wikipedia.org/wiki/Foo_(bar)
  */
-function stripTrailingPunctuation(url: string): string {
+export function stripTrailingPunctuation(url: string): string {
   // Characters to strip from end (excluding closing paren which needs balance check)
   const punctuation = /[.,;:!?]+$/
 
@@ -382,16 +870,18 @@ function stripTrailingPunctuation(url: string): string {
 }
 
 /**
- * Extract the first URL from content text
+ * Extract the first URL from content text.
+ * Supports http://, https://, ipfs://, and www. URLs.
  */
 export function extractFirstUrl(content: string): string | null {
-  const urlPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
+  // Match http(s)://, ipfs://, or www. URLs
+  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
   const match = content.match(urlPattern)
   if (!match?.[0]) return null
 
   let url = match[0]
-  // Add protocol if missing
-  if (url.startsWith('www.')) {
+  // Add protocol if missing (for www. URLs)
+  if (url.toLowerCase().startsWith('www.')) {
     url = `https://${url}`
   }
   // Clean trailing punctuation while preserving balanced parens
@@ -401,16 +891,18 @@ export function extractFirstUrl(content: string): string | null {
 }
 
 /**
- * Extract all URLs from content text
+ * Extract all URLs from content text.
+ * Supports http://, https://, ipfs://, and www. URLs.
  */
 export function extractAllUrls(content: string): string[] {
-  const urlPattern = /(https?:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
+  // Match http(s)://, ipfs://, or www. URLs
+  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
   const matches = content.match(urlPattern)
   if (!matches) return []
 
   return matches.map(url => {
-    // Add protocol if missing
-    if (url.startsWith('www.')) {
+    // Add protocol if missing (for www. URLs)
+    if (url.toLowerCase().startsWith('www.')) {
       url = `https://${url}`
     }
     // Clean trailing punctuation while preserving balanced parens

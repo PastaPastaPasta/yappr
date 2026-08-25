@@ -10,12 +10,78 @@ npm run build    # Build for production
 npm run lint     # Run linting
 ```
 
-### Dash Platform Scripts
+## Workflow
+
+When completing a task, commit the changes automatically unless directed otherwise.
+
+## Validating Changes
+
+**Always validate your changes before committing.** Follow this checklist:
+
+### 1. Run the Linter
 ```bash
-node register-contract.js           # Register contract on Dash Platform
-node register-contract-with-nonce.js # Register contract with specific nonce
-node test-dpns-resolve.js           # Test DPNS resolution
+npm run lint
 ```
+- Fix all errors and warnings properly (see Code Quality Guidelines below)
+- Do not commit code with linter failures
+
+### 2. Run the Build
+```bash
+npm run build
+```
+- Ensures TypeScript compilation succeeds
+- Verifies static export works correctly
+- Catches missing imports, type errors, and build-time issues
+- Do not commit code that fails to build
+
+### 3. Code Review for Complex Changes
+For complex or multi-file changes, use a code review sub-agent to identify potential issues:
+
+```
+Use the Task tool with subagent_type=Plan to review the changes for:
+- Logic errors or edge cases
+- Security vulnerabilities (XSS, injection, etc.)
+- Consistency with existing patterns in the codebase
+- Missing error handling
+- Potential performance issues
+```
+
+**Trust but verify**: The review agent may flag potential issues that aren't actually problems, or miss real issues. Treat its output as suggestions to investigate, not definitive judgments. Verify each finding before acting on it.
+
+### 4. Manual Verification (when applicable)
+- For UI changes: Run `npm run dev` and visually verify the changes
+- For new features: Test the happy path and common error cases
+- For bug fixes: Confirm the original issue is resolved
+
+### Validation Summary
+| Check | Command | Required |
+|-------|---------|----------|
+| Linter | `npm run lint` | Always |
+| Build | `npm run build` | Always |
+| Code Review | Task sub-agent | Complex changes |
+| Dev Server | `npm run dev` | UI changes |
+
+## Code Quality Guidelines
+
+### Linter Errors and Warnings
+**Always fix linter issues properly.** Do not suppress, disable, or work around linter warnings without a genuinely compelling reason.
+
+**Do NOT:**
+- Add `// eslint-disable-next-line` comments to silence warnings
+- Use `@ts-ignore` or `@ts-expect-error` to bypass TypeScript errors
+- Add `any` types to avoid proper typing
+- Rename unused variables with `_` prefix just to quiet the linter
+- Use `void` to silence floating promise warnings (e.g., `void someAsyncFn()`)
+- Use other suppression patterns that hide problems rather than fix them
+
+**Instead:**
+- Fix the underlying issue the linter is flagging
+- If a variable is unused, remove it entirely
+- If a type is wrong, correct the type properly
+- If code triggers a legitimate warning, refactor the code
+- For floating promises, add proper `.catch()` error handling
+
+Linter rules exist to catch real problems. Suppression comments should be rare exceptions with clear justification, not a standard way to make warnings disappear.
 
 ## Architecture Overview
 
@@ -29,6 +95,9 @@ This app is fully decentralized with **NO backend server**. All code and archite
 - Server-side rendering that requires a Node.js server
 - Database connections or server-side state
 - Any architecture requiring a hosted backend
+- Dynamic routes (e.g., `[id]`, `[slug]`, `[...params]`) - only static routes are allowed
+
+**Routing constraint:** All routes must be statically defined. Use query parameters (e.g., `/post?id=123`) instead of dynamic path segments (e.g., `/post/[id]`). This ensures the app can be fully exported as static files.
 
 **All data operations must go through:**
 - Dash Platform DAPI (via `@dashevo/evo-sdk`)
@@ -39,6 +108,7 @@ This app is fully decentralized with **NO backend server**. All code and archite
 - `lib/services/evo-sdk-service.ts` manages SDK initialization and connection
 - SDK runs in trusted mode with 8-second timeout for network requests
 - Contract ID and network config in `lib/constants.ts`
+- **Index ordering**: Dash Platform indices support both `asc` and `desc` queries regardless of how the index is defined in the contract. Don't assume an index only works in one direction.
 
 ### Services Layer (`lib/services/`)
 Singleton service classes handle all Dash Platform operations:

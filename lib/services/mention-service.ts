@@ -1,0 +1,244 @@
+import { logger } from '@/lib/logger';
+import { BaseDocumentService } from './document-service';
+import { stateTransitionService } from './state-transition-service';
+import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes } from './sdk-helpers';
+import { dpnsService } from './dpns-service';
+import { paginateFetchAll } from './pagination-utils';
+
+export interface PostMentionDocument {
+  $id: string;
+  $ownerId: string;
+  $createdAt: number;
+  postId: string;
+  mentionedUserId: string;
+}
+
+class MentionService extends BaseDocumentService<PostMentionDocument> {
+  constructor() {
+    super('postMention');
+  }
+
+  /**
+   * Transform document from SDK response to typed object
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
+   */
+  protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
+    const rawPostId = data.postId || doc.postId;
+    const rawMentionedUserId = data.mentionedUserId || doc.mentionedUserId;
+
+    // Normalize identifier-like fields to base58 for app-level use.
+    const postId = rawPostId ? identifierToBase58(rawPostId) : '';
+    const mentionedUserId = rawMentionedUserId ? identifierToBase58(rawMentionedUserId) : '';
+
+    if (rawPostId && !postId) {
+      logger.error('MentionService: Invalid postId format:', rawPostId);
+    }
+    if (rawMentionedUserId && !mentionedUserId) {
+      logger.error('MentionService: Invalid mentionedUserId format:', rawMentionedUserId);
+    }
+
+    return {
+      $id: doc.$id as string,
+      $ownerId: doc.$ownerId as string,
+      $createdAt: doc.$createdAt as number,
+      postId: postId || '',
+      mentionedUserId: mentionedUserId || ''
+    };
+  }
+
+  /**
+   * Create a single mention document for a post
+   */
+  async createPostMention(postId: string, ownerId: string, mentionedUserId: string): Promise<boolean> {
+    if (!postId) {
+      logger.warn('MentionService: Invalid postId');
+      return false;
+    }
+    if (!mentionedUserId) {
+      logger.warn('MentionService: Invalid mentionedUserId');
+      return false;
+    }
+
+    try {
+      // Check if already exists (unique index on postId + mentionedUserId)
+      const existing = await this.getMentionForPost(postId, mentionedUserId);
+      if (existing) {
+        logger.info('Mention already exists for post:', mentionedUserId);
+        return true;
+      }
+
+      // Typed writes use Uint8Array for identifier-like fields.
+      let postIdBytes: Uint8Array;
+      let mentionedUserIdBytes: Uint8Array;
+
+      try {
+        postIdBytes = identifierStringToDocumentBytes(postId);
+      } catch (decodeError) {
+        logger.error('MentionService: Invalid base58 postId:', postId, decodeError);
+        return false;
+      }
+
+      try {
+        mentionedUserIdBytes = identifierStringToDocumentBytes(mentionedUserId);
+      } catch (decodeError) {
+        logger.error('MentionService: Invalid base58 mentionedUserId:', mentionedUserId, decodeError);
+        return false;
+      }
+
+      // Create document via state transition
+      const result = await stateTransitionService.createDocument(
+        this.contractId,
+        this.documentType,
+        ownerId,
+        {
+          postId: postIdBytes,
+          mentionedUserId: mentionedUserIdBytes
+        }
+      );
+
+      return result.success;
+    } catch (error) {
+      logger.error('Error creating mention:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Create multiple mention documents for a post from username list
+   * Resolves usernames to identity IDs via DPNS
+   */
+  async createPostMentionsFromUsernames(
+    postId: string,
+    ownerId: string,
+    usernames: string[]
+  ): Promise<boolean[]> {
+    const results: boolean[] = [];
+
+    // Deduplicate usernames (case-insensitive)
+    const uniqueUsernames = Array.from(new Set(
+      usernames.map(u => u.toLowerCase())
+    ));
+
+    for (const username of uniqueUsernames) {
+      try {
+        // Resolve username to identity ID via DPNS
+        const identityId = await dpnsService.resolveIdentity(username);
+        if (!identityId) {
+          logger.warn('MentionService: Could not resolve username:', username);
+          results.push(false);
+          continue;
+        }
+
+        const result = await this.createPostMention(postId, ownerId, identityId);
+        results.push(result);
+      } catch (error) {
+        logger.error('Error creating mention for username:', username, error);
+        results.push(false);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Get a specific mention document for a post
+   */
+  async getMentionForPost(postId: string, mentionedUserId: string): Promise<PostMentionDocument | null> {
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+
+      // Use strings for identifiers in queries - SDK handles conversion
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [
+          ['postId', '==', postId],
+          ['mentionedUserId', '==', mentionedUserId]
+        ],
+        limit: 1
+      });
+
+      // Use shared helper for response normalization
+      const documents = normalizeSDKResponse(response);
+      return documents.length > 0 ? this.transformDocument(documents[0]) : null;
+    } catch (error) {
+      logger.error('Error getting mention for post:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get all mentions for a specific post
+   */
+  async getMentionsForPost(postId: string): Promise<PostMentionDocument[]> {
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+
+      // Raw query path: postId is identifier-like, so keep the base58 string operand.
+      const response = await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [
+          ['postId', '==', postId]
+        ],
+        limit: 100
+      });
+
+      // Use shared helper for response normalization
+      const documents = normalizeSDKResponse(response);
+      return documents.map((doc) => this.transformDocument(doc));
+    } catch (error) {
+      logger.error('Error getting mentions for post:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get posts that mention a specific user.
+   * Paginates through all results to return complete list.
+   * Returns mention documents - caller should fetch actual posts and filter by ownership.
+   */
+  async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+
+      // Use strings for identifiers in queries - SDK handles conversion
+      const { documents } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [
+            ['mentionedUserId', '==', userId],
+            ['$createdAt', '>', 0]
+          ],
+          orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
+        }),
+        (doc) => this.transformDocument(doc)
+      );
+
+      return documents;
+    } catch (error) {
+      logger.error('Error getting posts mentioning user:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Count posts that mention a specific user
+   */
+  async countMentionsForUser(userId: string): Promise<number> {
+    try {
+      const mentions = await this.getPostsMentioningUser(userId);
+      return mentions.length;
+    } catch (error) {
+      logger.error('Error counting mentions for user:', error);
+      return 0;
+    }
+  }
+}
+
+// Singleton instance
+export const mentionService = new MentionService();

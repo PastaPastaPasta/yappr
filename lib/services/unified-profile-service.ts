@@ -1,14 +1,16 @@
-import { BaseDocumentService, QueryOptions } from './document-service';
-import { stateTransitionService } from './state-transition-service';
+import { logger } from '@/lib/logger';
+import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
-import { User, ParsedPaymentUri, SocialLink } from '../types';
+import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
+import { documentToPlainObject } from './sdk-helpers';
 
 // Approved payment URI schemes (whitelist)
 export const APPROVED_PAYMENT_SCHEMES = [
   'dash:',           // Dash
+  'tdash:',          // Dash (Testnet)
   'bitcoin:',        // Bitcoin
   'litecoin:',       // Litecoin
   'ethereum:',       // Ethereum
@@ -76,7 +78,7 @@ export interface UnifiedProfileDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
-  $updatedAt: number;
+  $updatedAt?: number;
   $revision?: number;
   displayName: string;
   bio?: string;
@@ -146,7 +148,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    */
   getAvatarUrlFromConfig(config: AvatarConfig): string {
     if (!config.seed) {
-      console.warn('UnifiedProfileService: getAvatarUrlFromConfig called with empty seed');
+      logger.warn('UnifiedProfileService: getAvatarUrlFromConfig called with empty seed');
       return '';
     }
     return generateAvatarDataUri(config.style, config.seed);
@@ -157,7 +159,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    */
   getDefaultAvatarUrl(userId: string): string {
     if (!userId) {
-      console.warn('UnifiedProfileService: getDefaultAvatarUrl called with empty userId');
+      logger.warn('UnifiedProfileService: getDefaultAvatarUrl called with empty userId');
       return '';
     }
     return this.getAvatarUrlFromConfig({ style: DEFAULT_AVATAR_STYLE, seed: userId });
@@ -218,7 +220,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null;
-      this.processBatch();
+      this.processBatch().catch(err => logger.error('Failed to process avatar batch:', err));
     }, 5);
   }
 
@@ -254,7 +256,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    */
   async getAvatarUrl(ownerId: string): Promise<string> {
     if (!ownerId) {
-      console.warn('UnifiedProfileService: getAvatarUrl called with empty ownerId');
+      logger.warn('UnifiedProfileService: getAvatarUrl called with empty ownerId');
       return '';
     }
 
@@ -278,6 +280,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
   /**
    * Batch fetch avatar URLs for multiple users
+   *
+   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
    */
   private async fetchAvatarUrlsBatch(userIds: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();
@@ -292,19 +299,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         where: [['$ownerId', 'in', userIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: userIds.length
-      } as any);
+      });
 
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      }
-
+      const documents = this.normalizeDocumentResponse(response);
       const foundUserIds = new Set<string>();
       for (const doc of documents) {
         const profileDoc = this.extractDocumentData(doc);
@@ -327,7 +324,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         }
       }
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting batch avatar URLs:', error);
+      logger.error('UnifiedProfileService: Error getting batch avatar URLs:', error);
       for (const userId of userIds) {
         if (!result.has(userId)) {
           result.set(userId, this.getDefaultAvatarUrl(userId));
@@ -344,19 +341,13 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Parse payment URIs from JSON string and filter to approved schemes
    */
   parsePaymentUris(paymentUrisJson: string | undefined): ParsedPaymentUri[] {
-    if (!paymentUrisJson) return [];
-
-    try {
-      const uris: string[] = JSON.parse(paymentUrisJson);
-      return uris
-        .filter(uri => this.isApprovedPaymentScheme(uri))
-        .map(uri => ({
-          scheme: this.extractScheme(uri),
-          uri,
-        }));
-    } catch {
-      return [];
-    }
+    const uris = this.parseJsonSafe<string[]>(paymentUrisJson, []);
+    return uris
+      .filter(uri => this.isApprovedPaymentScheme(uri))
+      .map(uri => ({
+        scheme: this.extractScheme(uri),
+        uri,
+      }));
   }
 
   /**
@@ -391,13 +382,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Parse social links from JSON string
    */
   parseSocialLinks(socialLinksJson: string | undefined): SocialLink[] {
-    if (!socialLinksJson) return [];
-
-    try {
-      return JSON.parse(socialLinksJson);
-    } catch {
-      return [];
-    }
+    return this.parseJsonSafe<SocialLink[]>(socialLinksJson, []);
   }
 
   /**
@@ -412,27 +397,62 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Extract raw document data handling SDK response formats
    */
-  private extractDocumentData(doc: any): UnifiedProfileDocument {
+  private extractDocumentData(doc: Record<string, unknown>): UnifiedProfileDocument {
     const isNestedFormat = doc.data && typeof doc.data === 'object' && !Array.isArray(doc.data);
-    const content = isNestedFormat ? doc.data : doc;
+    const content = (isNestedFormat ? doc.data : doc) as Record<string, unknown>;
 
     return {
-      $id: doc.$id || doc.id,
-      $ownerId: doc.$ownerId || doc.ownerId,
-      $createdAt: doc.$createdAt || doc.createdAt,
-      $updatedAt: doc.$updatedAt || doc.updatedAt,
-      $revision: doc.$revision || doc.revision,
-      displayName: content.displayName || '',
-      bio: content.bio,
-      location: content.location,
-      website: content.website,
-      bannerUri: content.bannerUri,
-      avatar: content.avatar,
-      paymentUris: content.paymentUris,
-      pronouns: content.pronouns,
-      nsfw: content.nsfw,
-      socialLinks: content.socialLinks,
+      $id: (doc.$id || doc.id) as string,
+      $ownerId: (doc.$ownerId || doc.ownerId) as string,
+      $createdAt: (doc.$createdAt || doc.createdAt) as number,
+      $updatedAt: (doc.$updatedAt || doc.updatedAt) as number | undefined,
+      $revision: (doc.$revision || doc.revision) as number | undefined,
+      displayName: (content.displayName as string) || '',
+      bio: content.bio as string | undefined,
+      location: content.location as string | undefined,
+      website: content.website as string | undefined,
+      bannerUri: content.bannerUri as string | undefined,
+      avatar: content.avatar as string | undefined,
+      paymentUris: content.paymentUris as string | undefined,
+      pronouns: content.pronouns as string | undefined,
+      nsfw: content.nsfw as boolean | undefined,
+      socialLinks: content.socialLinks as string | undefined,
     };
+  }
+
+  /**
+   * Normalize SDK response to array of documents
+   * Handles Map, Array, and {documents: []} response formats
+   */
+  private normalizeDocumentResponse(response: unknown): Record<string, unknown>[] {
+    if (response instanceof Map) {
+      return Array.from(response.values())
+        .filter(Boolean)
+        .map(documentToPlainObject);
+    }
+    if (Array.isArray(response)) {
+      return response
+        .filter(Boolean)
+        .map(documentToPlainObject);
+    }
+    if (response && typeof response === 'object' && 'documents' in response) {
+      return ((response as { documents: unknown[] }).documents || [])
+        .filter(Boolean)
+        .map(documentToPlainObject);
+    }
+    return [];
+  }
+
+  /**
+   * Parse JSON string with fallback to default value
+   */
+  private parseJsonSafe<T>(json: string | undefined, defaultValue: T): T {
+    if (!json) return defaultValue;
+    try {
+      return JSON.parse(json);
+    } catch {
+      return defaultValue;
+    }
   }
 
   /**
@@ -463,11 +483,10 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       pronouns: profileDoc.pronouns,
       nsfw: profileDoc.nsfw,
       socialLinks: this.parseSocialLinks(profileDoc.socialLinks),
-      hasUnifiedProfile: true,
     };
 
     // Queue async enrichment
-    this.enrichUser(user, !!cachedUsername);
+    this.enrichUser(user, !!cachedUsername).catch(err => logger.error('Failed to enrich user:', err));
 
     return user;
   }
@@ -489,7 +508,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       user.followers = stats.followers;
       user.following = stats.following;
     } catch (error) {
-      console.error('UnifiedProfileService: Error enriching user:', error);
+      logger.error('UnifiedProfileService: Error enriching user:', error);
     }
   }
 
@@ -510,7 +529,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       }
       return username;
     } catch (error) {
-      console.error('UnifiedProfileService: Error resolving username:', error);
+      logger.error('UnifiedProfileService: Error resolving username:', error);
       return null;
     }
   }
@@ -518,7 +537,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Get user statistics
    */
-  private async getUserStats(userId: string): Promise<{ followers: number; following: number }> {
+  private async getUserStats(_userId: string): Promise<{ followers: number; following: number }> {
     // TODO: Query follow documents for actual counts
     return { followers: 0, following: 0 };
   }
@@ -560,7 +579,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
       return null;
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting profile:', error);
+      logger.error('UnifiedProfileService: Error getting profile:', error);
       return null;
     }
   }
@@ -577,7 +596,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       }
       return profile;
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting profile with username:', error);
+      logger.error('UnifiedProfileService: Error getting profile with username:', error);
       return this.getProfile(ownerId);
     }
   }
@@ -626,38 +645,49 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     try {
       cacheManager.invalidateByTag(`user:${ownerId}`);
 
-      // Need to get raw profile document to preserve existing field values
       const rawProfile = await this.getRawProfile(ownerId);
       if (!rawProfile) {
         throw new Error('Profile not found');
       }
 
-      // Build document data, preserving existing values for fields not being updated
-      const documentData: Record<string, unknown> = {
-        // displayName is required
-        displayName: updates.displayName !== undefined
-          ? updates.displayName.trim()
-          : rawProfile.displayName,
+      const docId = rawProfile.$id;
+      if (!docId) {
+        throw new Error('Profile document ID not found');
+      }
+
+      // Helper to merge update with existing value, optionally trimming strings
+      const mergeField = (
+        updateVal: string | undefined,
+        existingVal: string | undefined,
+        trim = true
+      ): string | undefined => {
+        if (updateVal !== undefined) {
+          return trim ? updateVal.trim() : updateVal;
+        }
+        return existingVal;
       };
 
-      // For each optional field: use update value if provided, otherwise preserve existing
-      const bio = updates.bio !== undefined ? updates.bio.trim() : rawProfile.bio;
-      if (bio) documentData.bio = bio;
+      // Build document data, preserving existing values for fields not being updated
+      const documentData: Record<string, unknown> = {
+        displayName: mergeField(updates.displayName, rawProfile.displayName) || rawProfile.displayName,
+      };
 
-      const location = updates.location !== undefined ? updates.location.trim() : rawProfile.location;
-      if (location) documentData.location = location;
+      // String fields with trim
+      const stringFields = ['bio', 'location', 'website', 'bannerUri', 'pronouns'] as const;
+      for (const field of stringFields) {
+        const value = mergeField(updates[field], rawProfile[field]);
+        if (value) {
+          documentData[field] = value;
+        }
+      }
 
-      const website = updates.website !== undefined ? updates.website.trim() : rawProfile.website;
-      if (website) documentData.website = website;
+      // Avatar (no trim)
+      const avatar = mergeField(updates.avatar, rawProfile.avatar, false);
+      if (avatar) {
+        documentData.avatar = avatar;
+      }
 
-      const bannerUri = updates.bannerUri !== undefined ? updates.bannerUri.trim() : rawProfile.bannerUri;
-      if (bannerUri) documentData.bannerUri = bannerUri;
-
-      // Avatar: preserve existing if not being updated
-      const avatar = updates.avatar !== undefined ? updates.avatar : rawProfile.avatar;
-      if (avatar) documentData.avatar = avatar;
-
-      // PaymentUris: preserve existing if not being updated
+      // PaymentUris: encode if updating, preserve raw if existing
       if (updates.paymentUris !== undefined) {
         if (updates.paymentUris.length > 0) {
           documentData.paymentUris = this.encodePaymentUris(updates.paymentUris);
@@ -666,17 +696,14 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentData.paymentUris = rawProfile.paymentUris;
       }
 
-      const pronouns = updates.pronouns !== undefined ? updates.pronouns.trim() : rawProfile.pronouns;
-      if (pronouns) documentData.pronouns = pronouns;
-
-      // NSFW: preserve existing if not being updated
+      // NSFW: boolean field
       if (updates.nsfw !== undefined) {
         documentData.nsfw = updates.nsfw;
       } else if (rawProfile.nsfw !== undefined) {
         documentData.nsfw = rawProfile.nsfw;
       }
 
-      // SocialLinks: preserve existing if not being updated
+      // SocialLinks: encode if updating, preserve raw if existing
       if (updates.socialLinks !== undefined) {
         if (updates.socialLinks.length > 0) {
           documentData.socialLinks = this.encodeSocialLinks(updates.socialLinks);
@@ -685,16 +712,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentData.socialLinks = rawProfile.socialLinks;
       }
 
-      const docId = rawProfile.$id;
-      if (!docId) {
-        throw new Error('Profile document ID not found');
-      }
-
       const result = await this.update(docId, ownerId, documentData);
       cacheManager.invalidateByTag(`user:${ownerId}`);
       return result;
     } catch (error) {
-      console.error('UnifiedProfileService: Error updating profile:', error);
+      logger.error('UnifiedProfileService: Error updating profile:', error);
       throw error;
     }
   }
@@ -713,26 +735,16 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentTypeName: 'profile',
         where: [['$ownerId', '==', ownerId]],
         limit: 1
-      } as any);
+      });
 
-      let documents: any[] = [];
-      if (response instanceof Map) {
-        documents = Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => typeof doc.toJSON === 'function' ? doc.toJSON() : doc);
-      } else if (Array.isArray(response)) {
-        documents = response;
-      } else if (response && (response as any).documents) {
-        documents = (response as any).documents;
-      }
-
+      const documents = this.normalizeDocumentResponse(response);
       if (documents.length === 0) {
         return null;
       }
 
       return this.extractDocumentData(documents[0]);
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting raw profile:', error);
+      logger.error('UnifiedProfileService: Error getting raw profile:', error);
       return null;
     }
   }
@@ -766,26 +778,12 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         where: [['$ownerId', 'in', validIds]],
         orderBy: [['$ownerId', 'asc']],
         limit: 100
-      } as any);
+      });
 
-      if (response instanceof Map) {
-        return Array.from(response.values())
-          .filter(Boolean)
-          .map((doc: any) => this.extractDocumentData(
-            typeof doc.toJSON === 'function' ? doc.toJSON() : doc
-          ));
-      }
-
-      const anyResponse = response as any;
-      if (Array.isArray(anyResponse)) {
-        return anyResponse.map(doc => this.extractDocumentData(doc));
-      } else if (anyResponse?.documents) {
-        return anyResponse.documents.map((doc: any) => this.extractDocumentData(doc));
-      }
-
-      return [];
+      const documents = this.normalizeDocumentResponse(response);
+      return documents.map(doc => this.extractDocumentData(doc));
     } catch (error) {
-      console.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
+      logger.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
       return [];
     }
   }

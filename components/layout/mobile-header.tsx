@@ -7,9 +7,11 @@ import { useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ArrowRightOnRectangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 export function MobileHeader() {
   const { user, logout } = useAuth()
+  const openLoginModal = useLoginModal((s) => s.open)
   const [isHydrated, setIsHydrated] = useState(false)
 
   useEffect(() => {
@@ -18,7 +20,7 @@ export function MobileHeader() {
 
   return (
     <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-900">
-      <Link href="/" className="flex items-center gap-2">
+      <Link href="/welcome" className="flex items-center gap-2">
         <span className="text-xl font-bold text-gradient">Yappr</span>
         <Image
           src="/pbde-light.png"
@@ -73,12 +75,12 @@ export function MobileHeader() {
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       ) : isHydrated ? (
-        <Link
-          href="/login"
+        <button
+          onClick={openLoginModal}
           className="text-sm font-medium text-yappr-500 hover:text-yappr-600"
         >
           Sign In
-        </Link>
+        </button>
       ) : (
         <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
       )}

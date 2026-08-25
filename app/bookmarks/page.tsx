@@ -1,23 +1,25 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { 
+import {
   BookmarkIcon,
   MagnifyingGlassIcon,
   EllipsisHorizontalIcon,
   ShareIcon,
   TrashIcon
 } from '@heroicons/react/24/outline'
-import { BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
-import { Button } from '@/components/ui/button'
+import { ComposeModal } from '@/components/compose/compose-modal'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
+import { useSettingsStore } from '@/lib/store'
 
 interface BookmarkedPost {
   id: string
@@ -44,6 +46,7 @@ interface BookmarkedPost {
 
 function BookmarksPage() {
   const { user } = useAuth()
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [bookmarks, setBookmarks] = useState<BookmarkedPost[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -61,29 +64,44 @@ function BookmarksPage() {
         // Get bookmark documents
         const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
 
-        // Fetch full post data for each bookmark
-        const postsWithBookmarkData = await Promise.all(
+        // Fetch raw post data for each bookmark (without individual enrichment)
+        const rawPostsWithBookmarkData = await Promise.all(
           bookmarkDocs.map(async (bookmark) => {
-            const post = await postService.getEnrichedPostById(bookmark.postId)
+            const post = await postService.get(bookmark.postId)
             if (!post) return null
             return {
-              ...post,
+              post,
               bookmarkedAt: new Date(bookmark.$createdAt)
             }
           })
         )
 
-        // Filter out deleted posts and set bookmarks
+        // Filter out deleted posts
+        const validPostsWithData = rawPostsWithBookmarkData.filter(
+          (item): item is NonNullable<typeof item> => item !== null
+        )
+
+        // Batch enrich all posts at once (efficient DPNS resolution)
+        const postsToEnrich = validPostsWithData.map(item => item.post)
+        const enrichedPosts = await postService.enrichPostsBatch(postsToEnrich)
+
+        // Combine enriched posts with bookmark data
+        const postsWithBookmarkData = validPostsWithData.map((item, index) => ({
+          ...enrichedPosts[index],
+          bookmarkedAt: item.bookmarkedAt
+        }))
+
+        // Filter out any remaining invalid posts and set bookmarks
         setBookmarks(postsWithBookmarkData.filter((p): p is BookmarkedPost => p !== null))
       } catch (error) {
-        console.error('Error loading bookmarks:', error)
+        logger.error('Error loading bookmarks:', error)
         toast.error('Failed to load bookmarks')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadBookmarks()
+    loadBookmarks().catch(err => logger.error('Failed to load bookmarks:', err))
   }, [user])
 
   const removeBookmark = async (postId: string) => {
@@ -104,7 +122,7 @@ function BookmarksPage() {
         toast.error('Failed to remove bookmark')
       }
     } catch (error) {
-      console.error('Error removing bookmark:', error)
+      logger.error('Error removing bookmark:', error)
       setBookmarks(previousBookmarks)
       toast.error('Failed to remove bookmark')
     }
@@ -135,7 +153,7 @@ function BookmarksPage() {
         toast.error('Some bookmarks could not be removed')
       }
     } catch (error) {
-      console.error('Error clearing bookmarks:', error)
+      logger.error('Error clearing bookmarks:', error)
       setBookmarks(previousBookmarks)
       toast.error('Failed to clear bookmarks')
     }
@@ -158,7 +176,7 @@ function BookmarksPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className="sticky top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
@@ -217,7 +235,7 @@ function BookmarksPage() {
 
         {isLoading ? (
           <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+            <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading bookmarks...</p>
           </div>
         ) : bookmarks.length === 0 ? (
@@ -248,7 +266,7 @@ function BookmarksPage() {
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
-                      <button className="p-2 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900">
+                      <button className={`p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 ${potatoMode ? '' : 'backdrop-blur-sm'}`}>
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
                     </DropdownMenu.Trigger>
@@ -262,7 +280,8 @@ function BookmarksPage() {
                           className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
                           onClick={() => {
                             navigator.clipboard.writeText(`${window.location.origin}/post?id=${post.id}`)
-                            toast.success('Link copied to clipboard')
+                              .then(() => toast.success('Link copied to clipboard'))
+                              .catch(() => toast.error('Failed to copy link'))
                           }}
                         >
                           <ShareIcon className="h-4 w-4" />
@@ -288,6 +307,7 @@ function BookmarksPage() {
       </div>
 
       <RightSidebar />
+      <ComposeModal />
     </div>
   )
 }

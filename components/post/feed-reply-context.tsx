@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
-import { Post, FeedReplyContext as FeedReplyContextType } from '@/lib/types'
+import { Post } from '@/lib/types'
 import { PostCard, ProgressiveEnrichment } from './post-card'
 
 interface FeedReplyContextProps {
@@ -18,6 +18,8 @@ interface FeedReplyContextProps {
   /** Enrichment data for the original post */
   originalPostEnrichment?: ProgressiveEnrichment
   isOwnPost?: boolean
+  /** Callback when a post is deleted */
+  onDelete?: (postId: string) => void
 }
 
 /**
@@ -31,7 +33,8 @@ export function FeedReplyContext({
   replier,
   replyEnrichment,
   originalPostEnrichment,
-  isOwnPost
+  isOwnPost,
+  onDelete
 }: FeedReplyContextProps) {
   // Use enriched username from DPNS if available, fall back to replier data
   const replierName = replyEnrichment?.username
@@ -57,6 +60,7 @@ export function FeedReplyContext({
         <PostCard
           post={originalPost}
           enrichment={originalPostEnrichment}
+          onDelete={onDelete}
         />
       </div>
 
@@ -70,6 +74,7 @@ export function FeedReplyContext({
         post={reply}
         isOwnPost={isOwnPost}
         enrichment={replyEnrichment}
+        onDelete={onDelete}
       />
     </div>
   )

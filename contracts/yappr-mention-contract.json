@@ -1,0 +1,69 @@
+{
+  "postMention": {
+    "type": "object",
+    "indices": [
+      {
+        "name": "byTime",
+        "properties": [
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "byMentionedUser",
+        "properties": [
+          { "mentionedUserId": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      },
+      {
+        "name": "byPost",
+        "properties": [
+          { "postId": "asc" }
+        ]
+      },
+      {
+        "name": "byPostMention",
+        "properties": [
+          { "postId": "asc" },
+          { "mentionedUserId": "asc" }
+        ],
+        "unique": true
+      },
+      {
+        "name": "byOwner",
+        "properties": [
+          { "$ownerId": "asc" },
+          { "$createdAt": "asc" }
+        ]
+      }
+    ],
+    "mutable": false,
+    "required": [
+      "$createdAt",
+      "postId",
+      "mentionedUserId"
+    ],
+    "properties": {
+      "postId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 0,
+        "byteArray": true,
+        "description": "ID of the post containing this mention",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      },
+      "mentionedUserId": {
+        "type": "array",
+        "maxItems": 32,
+        "minItems": 32,
+        "position": 1,
+        "byteArray": true,
+        "description": "Identity ID of the mentioned user",
+        "contentMediaType": "application/x.dash.dpp.identifier"
+      }
+    },
+    "description": "Links a mention (@username) in a post to the mentioned user's identity ID.",
+    "additionalProperties": false
+  }
+}

@@ -1,8 +1,10 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 // Import the centralized SDK service
 import { evoSdkService } from './services/evo-sdk-service'
 import { YAPPR_CONTRACT_ID } from './constants'
+import { documentToPlainObject } from './services/sdk-helpers'
 
 export class DashPlatformClient {
   private sdk: any = null
@@ -36,7 +38,7 @@ export class DashPlatformClient {
       const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
       const contractId = YAPPR_CONTRACT_ID
       
-      console.log('DashPlatformClient: Initializing via WasmSdkService for network:', network)
+      logger.info('DashPlatformClient: Initializing via WasmSdkService for network:', network)
       
       // Initialize the WASM SDK service if not already done
       await evoSdkService.initialize({ network, contractId })
@@ -44,9 +46,9 @@ export class DashPlatformClient {
       // Get the SDK instance
       this.sdk = await evoSdkService.getSdk()
       
-      console.log('DashPlatformClient: WASM SDK initialized successfully via service')
+      logger.info('DashPlatformClient: WASM SDK initialized successfully via service')
     } catch (error) {
-      console.error('DashPlatformClient: Failed to initialize WASM SDK:', error)
+      logger.error('DashPlatformClient: Failed to initialize WASM SDK:', error)
       throw error
     } finally {
       this.isInitializing = false
@@ -59,7 +61,7 @@ export class DashPlatformClient {
    */
   setIdentity(identityId: string) {
     this.identityId = identityId
-    console.log('DashPlatformClient: Identity set to:', identityId)
+    logger.info('DashPlatformClient: Identity set to:', identityId)
   }
   
   /**
@@ -67,6 +69,7 @@ export class DashPlatformClient {
    */
   async createPost(content: string, options?: {
     replyToPostId?: string
+    replyToPostOwnerId?: string
     quotedPostId?: string
     mediaUrl?: string
     primaryHashtag?: string
@@ -85,10 +88,10 @@ export class DashPlatformClient {
             if (identityId) {
               // Set it for future use
               this.identityId = identityId
-              console.log('DashPlatformClient: Identity restored from session:', identityId)
+              logger.info('DashPlatformClient: Identity restored from session:', identityId)
             }
           } catch (e) {
-            console.error('Failed to parse session data:', e)
+            logger.error('Failed to parse session data:', e)
           }
         }
       }
@@ -100,112 +103,30 @@ export class DashPlatformClient {
     
     try {
       await this.ensureInitialized()
-      
-      console.log('Creating post for identity:', identityId)
-      
-      // Get the private key from secure storage
-      const { getPrivateKey } = await import('./secure-storage')
-      const privateKeyWIF = getPrivateKey(identityId)
 
-      if (!privateKeyWIF) {
-        throw new Error('Private key not found. Please log in again.')
-      }
-      
-      // Create the post document using WASM SDK
-      // Note: The actual contract doesn't have authorId - it uses $ownerId system field
-      const postData: any = {
-        content: content.trim()
-      }
-      
-      // Convert replyToPostId if provided
-      if (options?.replyToPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.replyToPostId = Array.from(bs58.decode(options.replyToPostId))
-        } catch (e) {
-          console.error('Failed to decode replyToPostId:', e)
-          throw new Error('Invalid reply post ID format')
-        }
-      }
+      logger.info('Creating post for identity:', identityId)
 
-      // Convert quotedPostId if provided
-      if (options?.quotedPostId) {
-        try {
-          const bs58Module = await import('bs58')
-          const bs58 = bs58Module.default
-          postData.quotedPostId = Array.from(bs58.decode(options.quotedPostId))
-        } catch (e) {
-          console.error('Failed to decode quotedPostId:', e)
-          throw new Error('Invalid quoted post ID format')
-        }
-      }
-      
-      // Add other optional fields
-      if (options?.mediaUrl) {
-        postData.mediaUrl = options.mediaUrl
-      }
-      
-      if (options?.primaryHashtag) {
-        postData.primaryHashtag = options.primaryHashtag.replace('#', '')
-      }
-      
-      // Add language (defaults to 'en' in the contract, but let's be explicit)
-      postData.language = 'en'
-      
-      console.log('Creating post with data:', postData)
-      
-      // Generate entropy (32 bytes) 
-      const entropy = new Uint8Array(32)
-      crypto.getRandomValues(entropy)
-      const entropyHex = Array.from(entropy)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-      
-      const contractId = YAPPR_CONTRACT_ID
-      
-      // Create the document using EvoSDK facade
-      let result
-      try {
-        result = await this.sdk.documents.create({
-          contractId,
-          type: 'post',
-          ownerId: identityId,
-          data: postData,
-          entropyHex,
-          privateKeyWif: privateKeyWIF
-        })
-      } catch (sdkError) {
-        console.error('SDK documents.create error:', sdkError)
-        console.error('Error type:', typeof sdkError)
-        console.error('Error details:', {
-          message: sdkError instanceof Error ? sdkError.message : String(sdkError),
-          stack: sdkError instanceof Error ? sdkError.stack : undefined,
-          keys: sdkError && typeof sdkError === 'object' ? Object.keys(sdkError) : []
-        })
-        throw sdkError
-      }
-      
-      console.log('Post created successfully!')
-      
-      // Check if we got a valid result
-      if (!result) {
-        console.error('WASM SDK returned undefined/null result')
-        throw new Error('Post creation failed - no result returned from SDK')
-      }
-      
+      // Use the post service which goes through the new state-transition-service
+      const { postService } = await import('./services/post-service')
+
+      // Create the post using the post service
+      // Note: replies are now a separate document type created via replyService
+      const post = await postService.createPost(identityId, content.trim(), {
+        quotedPostId: options?.quotedPostId,
+        mediaUrl: options?.mediaUrl,
+        primaryHashtag: options?.primaryHashtag?.replace('#', ''),
+        language: 'en'
+      })
+
+      logger.info('Post created successfully!')
+
       // Invalidate posts cache since we created a new post
       this.postsCache.clear()
-      
-      // Convert result if needed
-      if (result && typeof result.toJSON === 'function') {
-        return result.toJSON()
-      }
-      
-      return result
-      
+
+      return post
+
     } catch (error) {
-      console.error('Failed to create post:', error)
+      logger.error('Failed to create post:', error)
       throw error
     }
   }
@@ -217,7 +138,7 @@ export class DashPlatformClient {
     try {
       await this.ensureInitialized()
       
-      console.log('Fetching profile for identity:', identityId)
+      logger.info('Fetching profile for identity:', identityId)
       
       // Query profile document for this identity
       const query = {
@@ -237,22 +158,21 @@ export class DashPlatformClient {
         limit: query.limit
       })
       
-      console.log('Profile query response:', profileResponse)
+      logger.info('Profile query response:', profileResponse)
 
       // Convert Map response (v3 SDK) to array
       let profiles: unknown[] = []
       if (profileResponse instanceof Map) {
         profiles = Array.from(profileResponse.values())
           .filter(Boolean)
-          .map((doc: unknown) => {
-            const d = doc as { toJSON?: () => unknown }
-            return typeof d.toJSON === 'function' ? d.toJSON() : doc
-          })
+          .map(documentToPlainObject)
       } else if (Array.isArray(profileResponse)) {
         profiles = profileResponse
+          .filter(Boolean)
+          .map(documentToPlainObject)
       }
 
-      console.log('Profiles found:', profiles)
+      logger.info('Profiles found:', profiles)
 
       if (profiles.length > 0) {
         return profiles[0]
@@ -260,40 +180,45 @@ export class DashPlatformClient {
       
       return null
     } catch (error) {
-      console.error('Failed to fetch profile:', error)
+      logger.error('Failed to fetch profile:', error)
       // Return null if profile doesn't exist
       return null
     }
   }
   
   /**
-   * Query posts with caching
+   * Query posts with caching.
+   * Uses the languageTimeline index: [language, $createdAt].
+   * @param options.language - Language code to filter by (defaults to 'en')
    */
   async queryPosts(options?: {
     limit?: number
     startAfter?: any
     authorId?: string
     forceRefresh?: boolean
+    language?: string
   }) {
     try {
       // Create cache key based on options
       const cacheKey = JSON.stringify({
         limit: options?.limit || 20,
         authorId: options?.authorId,
-        startAfter: options?.startAfter
+        startAfter: options?.startAfter,
+        language: options?.language || 'en'
       })
       
       // Check if there's already a pending query for this exact request
-      if (!options?.forceRefresh && this.pendingQueries.has(cacheKey)) {
-        console.log('DashPlatformClient: Returning pending query result')
-        return await this.pendingQueries.get(cacheKey)!
+      const pendingQuery = this.pendingQueries.get(cacheKey)
+      if (!options?.forceRefresh && pendingQuery) {
+        logger.info('DashPlatformClient: Returning pending query result')
+        return await pendingQuery
       }
       
       // Check cache first (unless force refresh)
       if (!options?.forceRefresh) {
         const cached = this.postsCache.get(cacheKey)
         if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-          console.log('DashPlatformClient: Returning cached posts')
+          logger.info('DashPlatformClient: Returning cached posts')
           return cached.posts
         }
       }
@@ -302,7 +227,7 @@ export class DashPlatformClient {
       
       const contractId = YAPPR_CONTRACT_ID
       
-      console.log('DashPlatformClient: Querying posts from contract:', contractId)
+      logger.info('DashPlatformClient: Querying posts from contract:', contractId)
       
       // Create the query promise and store it to prevent duplicates
       const queryPromise = this._executePostsQuery(contractId, options, cacheKey)
@@ -323,7 +248,7 @@ export class DashPlatformClient {
       } else if (error instanceof Error) {
         errorMessage = error.message
       }
-      console.error('DashPlatformClient: Failed to query posts:', errorMessage, {
+      logger.error('DashPlatformClient: Failed to query posts:', errorMessage, {
         code: error?.code,
         kind: error?.kind
       })
@@ -336,22 +261,24 @@ export class DashPlatformClient {
    */
   private async _executePostsQuery(contractId: string, options: any, cacheKey: string): Promise<any[]> {
     try {
-      
+
       // Build where clause
       const where: any[] = []
+      let orderBy: any[] = []
+
       if (options?.authorId) {
-        // Query by $ownerId (system field)
+        // Query by $ownerId (system field) using ownerAndTime index
         where.push(['$ownerId', '==', options.authorId])
-      }
-
-      // Dash Platform requires a where clause on the orderBy field for ordering to work.
-      // Add a range query on $createdAt that matches all documents if no other filter.
-      if (where.length === 0) {
         where.push(['$createdAt', '>', 0])
+        orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']]
+      } else {
+        // Use languageTimeline index: [language, $createdAt]
+        // The old timeline index was removed - we now require language filter
+        const language = options?.language || 'en'
+        where.push(['language', '==', language])
+        where.push(['$createdAt', '>', 0])
+        orderBy = [['language', 'asc'], ['$createdAt', 'desc']]
       }
-
-      // Build order by clause - most recent first
-      const orderBy = [['$createdAt', 'desc']]
       
       try {
         // Use EvoSDK documents facade
@@ -364,22 +291,21 @@ export class DashPlatformClient {
           startAfter: options?.startAfter || undefined
         })
         
-        console.log('DashPlatformClient: Posts query response received')
+        logger.info('DashPlatformClient: Posts query response received')
 
         // Convert Map response (v3 SDK) to array
         let posts: unknown[] = []
         if (postsResponse instanceof Map) {
           posts = Array.from(postsResponse.values())
             .filter(Boolean)
-            .map((doc: unknown) => {
-              const d = doc as { toJSON?: () => unknown }
-              return typeof d.toJSON === 'function' ? d.toJSON() : doc
-            })
+            .map(documentToPlainObject)
         } else if (Array.isArray(postsResponse)) {
           posts = postsResponse
+            .filter(Boolean)
+            .map(documentToPlainObject)
         }
 
-        console.log(`DashPlatformClient: Found ${posts.length} posts`)
+        logger.info(`DashPlatformClient: Found ${posts.length} posts`)
         
         // Cache the results
         this.postsCache.set(cacheKey, {
@@ -413,7 +339,7 @@ export class DashPlatformClient {
           }
         }
 
-        console.log('DashPlatformClient: Document query failed:', {
+        logger.info('DashPlatformClient: Document query failed:', {
           message: errorMessage,
           code: errorCode,
           kind: errorKind,
@@ -431,7 +357,7 @@ export class DashPlatformClient {
         const isCodeNotFound = errorCode === 'NOT_FOUND' || errorCode === 'not_found'
 
         if (isContractError || isNotFoundError || isKindNotFound || isCodeNotFound) {
-          console.log('DashPlatformClient: Expected error (contract/not found), returning empty posts array')
+          logger.info('DashPlatformClient: Expected error (contract/not found), returning empty posts array')
           return []
         }
 
@@ -446,7 +372,7 @@ export class DashPlatformClient {
       } else if (error instanceof Error) {
         errorMessage = error.message
       }
-      console.error('DashPlatformClient: _executePostsQuery failed:', errorMessage, {
+      logger.error('DashPlatformClient: _executePostsQuery failed:', errorMessage, {
         code: error?.code,
         kind: error?.kind
       })
@@ -460,7 +386,7 @@ export class DashPlatformClient {
   clearPostsCache() {
     this.postsCache.clear()
     this.pendingQueries.clear()
-    console.log('DashPlatformClient: Posts cache and pending queries cleared')
+    logger.info('DashPlatformClient: Posts cache and pending queries cleared')
   }
   
   /**

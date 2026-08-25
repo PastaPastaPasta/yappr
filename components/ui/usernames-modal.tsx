@@ -87,7 +87,7 @@ export function UsernamesModal({ isOpen, onClose, usernames, primaryUsername, id
                     <p className="text-sm font-mono text-gray-900 dark:text-white break-all">{identityId}</p>
                   </div>
                   <div className="space-y-2">
-                    {sortedUsernames.map((username, index) => {
+                    {sortedUsernames.map((username) => {
                       const isContested = dpns_is_contested_username(username.split('.')[0])
                       const isPrimary = username === primaryUsername
                       
