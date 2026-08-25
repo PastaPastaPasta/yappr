@@ -39,6 +39,7 @@ import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
+import { categorizeError, isFrozenBalanceError } from '@/lib/error-utils'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
@@ -368,7 +369,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       setLiked(wasLiked)
       setLikes(prevLikes)
       logger.error('Like error:', error)
-      if (!handleInsufficientYapp(error, 'You need YAPP to like posts. Buy some to continue.')) {
+      // Frozen accounts can't spend YAPP at all, so explain the suspension
+      // instead of prompting a purchase that wouldn't help.
+      if (isFrozenBalanceError(error)) {
+        toast.error(categorizeError(error))
+      } else if (!handleInsufficientYapp(error, 'You need YAPP to like posts. Buy some to continue.')) {
         toast.error('Failed to update like. Please try again.')
       }
     } finally {
@@ -403,7 +408,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       setReposted(wasReposted)
       setReposts(prevReposts)
       logger.error('Repost error:', error)
-      if (!handleInsufficientYapp(error, 'You need YAPP to repost. Buy some to continue.')) {
+      // Frozen accounts can't spend YAPP at all, so explain the suspension
+      // instead of prompting a purchase that wouldn't help.
+      if (isFrozenBalanceError(error)) {
+        toast.error(categorizeError(error))
+      } else if (!handleInsufficientYapp(error, 'You need YAPP to repost. Buy some to continue.')) {
         toast.error('Failed to update repost. Please try again.')
       }
     } finally {

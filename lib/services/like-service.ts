@@ -3,7 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
-import { isInsufficientTokenError } from '../error-utils';
+import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
 
 export interface LikeDocument {
   $id: string;
@@ -80,8 +80,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       return true;
     } catch (error) {
       logger.error('Error liking post:', error);
-      // Let the UI prompt to buy YAPP on insufficient-token failures.
-      if (isInsufficientTokenError(error)) throw error;
+      // Let the UI prompt to buy YAPP on insufficient-token failures, and explain
+      // the suspension on frozen-account failures (buying YAPP would not help).
+      if (isInsufficientTokenError(error) || isFrozenBalanceError(error)) throw error;
       return false;
     }
   }
