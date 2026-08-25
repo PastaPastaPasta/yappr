@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+import { extractErrorMessage } from '@/lib/error-utils';
 /**
  * Retry utility functions for handling network errors and transient failures
  */
@@ -23,7 +25,7 @@ export interface RetryResult<T> {
 function defaultRetryCondition(error: unknown): boolean {
   if (!error) return false
 
-  const errorMessage = getErrorMessage(error).toLowerCase()
+  const errorText = getErrorText(error)
 
   // Network-related errors
   const networkErrors = [
@@ -42,45 +44,76 @@ function defaultRetryCondition(error: unknown): boolean {
     'transport error',
     'grpc error'
   ]
-  
+
   // Check if it's a retryable error
-  return networkErrors.some(networkError => 
-    errorMessage.includes(networkError)
+  return networkErrors.some(networkError =>
+    errorText.includes(networkError)
   )
 }
 
-function getErrorMessage(error: unknown): string {
-  if (!error) return ''
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  if (typeof error === 'object') {
-    const errObj = error as { message?: unknown }
-    if (typeof errObj.message === 'string') return errObj.message
-    if (errObj.message && typeof errObj.message === 'object') {
-      try {
-        return JSON.stringify(errObj.message)
-      } catch {
-        return String(errObj.message)
-      }
-    }
-    try {
-      const asJson = JSON.stringify(error)
-      if (asJson && asJson !== '{}') return asJson
-    } catch {
-      // Ignore JSON stringify errors
-    }
+/**
+ * Build a lowercase text representation of an error for message matching.
+ * Combines the extracted message with the error's string form so that
+ * non-Error objects and wrapped errors are still classified correctly.
+ */
+function getErrorText(error: unknown): string {
+  const message = extractErrorMessage(error)
+  let stringified = ''
+  try {
+    stringified = String(error)
+  } catch {
+    // Ignore objects whose toString throws
   }
-  return String(error)
+  return `${message} ${stringified}`.toLowerCase()
 }
 
 /**
- * Check if a post creation error is ambiguous and might have actually succeeded.
- * Includes network/timeouts and Dash Platform specific retryable errors.
+ * Thrown when a post/reply broadcast outcome is unknown: the state transition
+ * was sent (or may have been sent) to Platform, but neither success nor
+ * failure could be confirmed and the document could not be found afterwards.
+ *
+ * This error is deliberately NON-retryable: re-running the create would build
+ * a new document with fresh entropy (and, for private posts, a fresh nonce),
+ * which risks creating a duplicate if the original transition later commits.
+ */
+export class PostCreationIndeterminateError extends Error {
+  readonly documentType: string
+  readonly documentId: string
+
+  constructor(documentType: string, documentId: string, cause?: unknown) {
+    super(
+      `Your ${documentType} may have been created (document ${documentId}), but Platform did not confirm it. ` +
+      `Check your profile before trying again to avoid posting a duplicate.`
+    )
+    this.name = 'PostCreationIndeterminateError'
+    this.documentType = documentType
+    this.documentId = documentId
+    if (cause !== undefined) {
+      (this as { cause?: unknown }).cause = cause
+    }
+    // Restore prototype chain for environments that transpile class extends
+    Object.setPrototypeOf(this, PostCreationIndeterminateError.prototype)
+  }
+}
+
+/**
+ * Type guard for PostCreationIndeterminateError that also tolerates
+ * duplicate module instances from bundling by falling back to the name.
+ */
+export function isPostCreationIndeterminateError(error: unknown): error is PostCreationIndeterminateError {
+  if (error instanceof PostCreationIndeterminateError) return true
+  return error instanceof Error && error.name === 'PostCreationIndeterminateError'
+}
+
+/**
+ * Check whether a post creation error is ambiguous: the broadcast may have
+ * actually succeeded even though an error was reported. Covers network and
+ * timeout failures plus Dash Platform availability errors.
  */
 export function isPostCreationAmbiguousError(error: unknown): boolean {
   if (defaultRetryCondition(error)) return true
 
-  const errorMessage = getErrorMessage(error).toLowerCase()
+  const errorText = getErrorText(error)
 
   const dashErrors = [
     'internal error',
@@ -92,7 +125,7 @@ export function isPostCreationAmbiguousError(error: unknown): boolean {
     'tenderdash not available'
   ]
 
-  return dashErrors.some(dashError => errorMessage.includes(dashError))
+  return dashErrors.some(dashError => errorText.includes(dashError))
 }
 
 /**
@@ -131,9 +164,9 @@ export async function retryAsync<T>(
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      console.log(`Retry attempt ${attempt}/${maxAttempts}`)
+      logger.info(`Retry attempt ${attempt}/${maxAttempts}`)
       const result = await operation()
-      console.log(`Operation succeeded on attempt ${attempt}`)
+      logger.info(`Operation succeeded on attempt ${attempt}`)
       
       return {
         success: true,
@@ -142,17 +175,17 @@ export async function retryAsync<T>(
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
-      console.warn(`Attempt ${attempt} failed:`, lastError.message)
+      logger.warn(`Attempt ${attempt} failed:`, lastError.message)
       
       // Don't retry if this is the last attempt or if error is not retryable
       if (attempt === maxAttempts || !retryCondition(lastError)) {
-        console.log(attempt === maxAttempts ? 'Max attempts reached' : 'Error not retryable')
+        logger.info(attempt === maxAttempts ? 'Max attempts reached' : 'Error not retryable')
         break
       }
       
       // Calculate delay for next attempt
       const delay = calculateDelay(attempt, initialDelayMs, maxDelayMs, backoffMultiplier)
-      console.log(`Waiting ${Math.round(delay)}ms before retry...`)
+      logger.info(`Waiting ${Math.round(delay)}ms before retry...`)
       await sleep(delay)
     }
   }
@@ -176,7 +209,20 @@ export async function retryPostCreation<T>(
     initialDelayMs: 2000,
     maxDelayMs: 8000,
     backoffMultiplier: 2,
-    retryCondition: isPostCreationAmbiguousError,
+    retryCondition: (error) => {
+      // Ambiguous outcomes are terminal: the original document may still commit
+      // on Platform, and re-running the create callback would broadcast a NEW
+      // document (fresh entropy → fresh ID → duplicate). The service layer only
+      // throws PostCreationIndeterminateError after exact-ID recovery has
+      // already been attempted, so never retry it.
+      if (isPostCreationIndeterminateError(error)) return false
+
+      // Everything else that matches the ambiguous classifier is a definite
+      // PRE-broadcast failure at this point (post/reply services convert
+      // post-broadcast ambiguous failures into PostCreationIndeterminateError),
+      // so retrying cannot double-post.
+      return isPostCreationAmbiguousError(error)
+    },
     ...options
   })
 }

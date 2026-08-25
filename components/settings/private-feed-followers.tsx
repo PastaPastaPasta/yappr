@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -87,7 +88,7 @@ export function PrivateFeedFollowers() {
       setFollowers(followersWithDetails)
       setFilteredFollowers(followersWithDetails)
     } catch (error) {
-      console.error('Error loading private followers:', error)
+      logger.error('Error loading private followers:', error)
       toast.error('Failed to load private followers')
     } finally {
       setIsLoading(false)
@@ -95,7 +96,7 @@ export function PrivateFeedFollowers() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadFollowers().catch((err) => console.error('Failed to load private followers:', err))
+    loadFollowers().catch((err) => logger.error('Failed to load private followers:', err))
   }, [loadFollowers, refreshKey])
 
   // Filter followers based on search query
@@ -161,7 +162,7 @@ export function PrivateFeedFollowers() {
         throw new Error(result.error || 'Failed to revoke access')
       }
     } catch (error) {
-      console.error('Error revoking follower:', error)
+      logger.error('Error revoking follower:', error)
       toast.error('Failed to revoke access')
     } finally {
       setRevokingId(null)

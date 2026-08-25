@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Store Service
  *
@@ -15,7 +16,7 @@ import type {
   SocialLink,
   LegacyStoreContactMethods,
   ParsedPaymentUri
-} from '../types';
+} from '../../types';
 
 /**
  * Convert legacy contact methods format to SocialLink array.
@@ -50,7 +51,7 @@ function parseContactMethods(value: unknown): SocialLink[] | undefined {
       if (Array.isArray(parsed)) return parsed as SocialLink[];
       return convertLegacyContactMethods(parsed as LegacyStoreContactMethods);
     } catch {
-      console.error('Failed to parse contactMethods:', value);
+      logger.error('Failed to parse contactMethods:', value);
     }
   }
 

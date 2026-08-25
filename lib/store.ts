@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
+import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 
 export type PostVisibility = 'public' | 'private' | 'private-with-teaser'
 
@@ -180,6 +181,7 @@ interface NotificationSettings {
   follows: boolean
   mentions: boolean
   messages: boolean
+  blogPosts: boolean
 }
 
 export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
@@ -216,6 +218,7 @@ export const useSettingsStore = create<SettingsState>()(
         follows: true,
         mentions: true,
         messages: true,
+        blogPosts: true,
       },
       setNotificationSettings: (settings) =>
         set((state) => ({
@@ -229,5 +232,27 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'yappr-settings',
     }
+  )
+)
+
+// Reader preferences store (font size + reading mode for blog posts)
+interface ReaderPreferencesState {
+  readingMode: ReadingMode
+  fontSize: FontSizeLevel
+  setReadingMode: (mode: ReadingMode) => void
+  setFontSize: (size: FontSizeLevel) => void
+  resetPreferences: () => void
+}
+
+export const useReaderPreferencesStore = create<ReaderPreferencesState>()(
+  persist(
+    (set) => ({
+      readingMode: 'author',
+      fontSize: 'medium',
+      setReadingMode: (mode) => set({ readingMode: mode }),
+      setFontSize: (size) => set({ fontSize: size }),
+      resetPreferences: () => set({ readingMode: 'author', fontSize: 'medium' }),
+    }),
+    { name: 'yappr-reader-prefs' }
   )
 )

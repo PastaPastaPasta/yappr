@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -55,7 +56,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
 
       // Check if we have stored credentials
       const hasCredentials = provider.hasStoredCredentials()
-      console.log('[Storacha] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
+      logger.info('[Storacha] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
 
       if (hasCredentials) {
         try {
@@ -64,21 +65,21 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
           setConnectedEmail(provider.getConnectedEmail())
           setSpaceDid(provider.getSpaceDid())
           onConnectionChange?.(true)
-          console.log('[Storacha] Successfully connected')
+          logger.info('[Storacha] Successfully connected')
         } catch (err) {
           // Credentials may be stale
-          console.error('[Storacha] Failed to connect with stored credentials:', err)
+          logger.error('[Storacha] Failed to connect with stored credentials:', err)
           setStatus('disconnected')
           onConnectionChange?.(false)
         }
       } else {
-        console.log('[Storacha] No stored credentials found')
+        logger.info('[Storacha] No stored credentials found')
         setStatus('disconnected')
         onConnectionChange?.(false)
       }
 
     } catch (error) {
-      console.error('Error checking Storacha status:', error)
+      logger.error('Error checking Storacha status:', error)
       setStatus('error')
       onConnectionChange?.(false)
     } finally {
@@ -87,7 +88,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
   }, [user, onConnectionChange])
 
   useEffect(() => {
-    checkConnectionStatus().catch(err => console.error('Failed to check status:', err))
+    checkConnectionStatus().catch(err => logger.error('Failed to check status:', err))
   }, [checkConnectionStatus])
 
   const handleStartConnect = () => {
@@ -129,7 +130,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
       onConnectionChange?.(true)
       toast.success('Storacha connected successfully!')
     } catch (error) {
-      console.error('Failed to connect:', error)
+      logger.error('Failed to connect:', error)
       // Extract the underlying error message if available
       let message = 'Failed to connect'
       if (error instanceof Error) {
@@ -137,7 +138,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
         // Check for cause (UploadException stores original error)
         const cause = (error as { cause?: Error }).cause
         if (cause) {
-          console.error('Underlying error:', cause)
+          logger.error('Underlying error:', cause)
           message = `${error.message}: ${cause.message}`
         }
       }
@@ -166,7 +167,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
       onConnectionChange?.(false)
       toast.success('Disconnected from Storacha')
     } catch (error) {
-      console.error('Failed to disconnect:', error)
+      logger.error('Failed to disconnect:', error)
       toast.error('Failed to disconnect')
     }
   }
@@ -272,7 +273,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
             className="w-full"
             onClick={() => {
               const provider = getStorachaProvider()
-              provider.disconnect(false).catch(console.error)
+              provider.disconnect(false).catch((error) => logger.error(error))
               setStatus('disconnected')
               setIsConnecting(false)
               setShowEmailInput(false)
@@ -310,7 +311,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
             className="w-full"
             onClick={() => {
               const provider = getStorachaProvider()
-              provider.disconnect(false).catch(console.error)
+              provider.disconnect(false).catch((error) => logger.error(error))
               setStatus('disconnected')
               setIsConnecting(false)
               setShowEmailInput(false)

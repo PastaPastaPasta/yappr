@@ -84,7 +84,7 @@ async function tryConnectProvider(identityId: string): Promise<UploadProvider | 
  * const handleUpload = async (file: File) => {
  *   try {
  *     const result = await upload(file)
- *     console.log('Uploaded:', result.url) // ipfs://CID
+ *     // Use result.url (ipfs://CID) here, e.g. logger.info('Uploaded:', result.url)
  *   } catch (err) {
  *     // Error is also available in error state
  *   }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -112,13 +113,13 @@ function ItemDetailContent() {
           }
         }
       } catch (error) {
-        console.error('Failed to load item:', error)
+        logger.error('Failed to load item:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadItem().catch(console.error)
+    loadItem().catch((error) => logger.error(error))
   }, [sdkReady, itemId])
 
   // Get available options for each axis based on selections

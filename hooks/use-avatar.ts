@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import type { DiceBearStyle } from '@/lib/services/unified-profile-service'
 
@@ -78,7 +79,7 @@ export function useAvatar(userId: string): UseAvatarResult {
       avatarCache.set(userId, { url, timestamp: Date.now() })
       setAvatarUrl(url)
     } catch (error) {
-      console.error('useAvatar: Error loading avatar:', error)
+      logger.error('useAvatar: Error loading avatar:', error)
       // Use default on error
       const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
       const defaultUrl = unifiedProfileService.getDefaultAvatarUrl(userId)
@@ -193,7 +194,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
         })
       }
     } catch (err) {
-      console.error('useAvatarSettings: Error loading settings:', err)
+      logger.error('useAvatarSettings: Error loading settings:', err)
       setError('Failed to load avatar settings')
     } finally {
       setLoading(false)
@@ -231,7 +232,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
         return false
       }
     } catch (err) {
-      console.error('useAvatarSettings: Error saving:', err)
+      logger.error('useAvatarSettings: Error saving:', err)
       setError('Failed to save avatar settings')
       return false
     } finally {
@@ -263,7 +264,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
         return false
       }
     } catch (err) {
-      console.error('useAvatarSettings: Error saving custom URL:', err)
+      logger.error('useAvatarSettings: Error saving custom URL:', err)
       setError('Failed to save avatar')
       return false
     } finally {

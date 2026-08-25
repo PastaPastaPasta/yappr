@@ -1,8 +1,5 @@
-'use client'
-
 import { useState, useCallback } from 'react'
 import { CreditCardIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
-import { Button } from '@/components/ui/button'
 import { PaymentQRCode } from '@/components/ui/payment-qr-code'
 import { isDashScheme } from '@/lib/services/insight-api-service'
 import type { ParsedPaymentUri } from '@/lib/types'
@@ -13,7 +10,6 @@ interface PaymentSelectorProps {
   onSelect: (uri: ParsedPaymentUri | null) => void
   txid: string
   onTxidChange: (txid: string) => void
-  onSubmit: () => void
   orderTotal?: number
   orderCurrency?: string
 }
@@ -24,7 +20,6 @@ export function PaymentSelector({
   onSelect,
   txid,
   onTxidChange,
-  onSubmit,
   orderTotal,
   orderCurrency
 }: PaymentSelectorProps) {
@@ -132,13 +127,6 @@ export function PaymentSelector({
         </div>
       )}
 
-      <Button
-        className="w-full"
-        onClick={onSubmit}
-        disabled={!selected}
-      >
-        Review Order
-      </Button>
     </div>
   )
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -93,14 +94,14 @@ function BookmarksPage() {
         // Filter out any remaining invalid posts and set bookmarks
         setBookmarks(postsWithBookmarkData.filter((p): p is BookmarkedPost => p !== null))
       } catch (error) {
-        console.error('Error loading bookmarks:', error)
+        logger.error('Error loading bookmarks:', error)
         toast.error('Failed to load bookmarks')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadBookmarks().catch(err => console.error('Failed to load bookmarks:', err))
+    loadBookmarks().catch(err => logger.error('Failed to load bookmarks:', err))
   }, [user])
 
   const removeBookmark = async (postId: string) => {
@@ -121,7 +122,7 @@ function BookmarksPage() {
         toast.error('Failed to remove bookmark')
       }
     } catch (error) {
-      console.error('Error removing bookmark:', error)
+      logger.error('Error removing bookmark:', error)
       setBookmarks(previousBookmarks)
       toast.error('Failed to remove bookmark')
     }
@@ -152,7 +153,7 @@ function BookmarksPage() {
         toast.error('Some bookmarks could not be removed')
       }
     } catch (error) {
-      console.error('Error clearing bookmarks:', error)
+      logger.error('Error clearing bookmarks:', error)
       setBookmarks(previousBookmarks)
       toast.error('Failed to clear bookmarks')
     }

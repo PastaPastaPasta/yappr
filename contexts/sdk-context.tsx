@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
@@ -18,7 +19,7 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeSdk = async () => {
       try {
-        console.log('SdkProvider: Starting EvoSDK initialization for testnet...')
+        logger.info('SdkProvider: Starting EvoSDK initialization for testnet...')
 
         // Initialize with testnet configuration
         await evoSdkService.initialize({
@@ -27,9 +28,9 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
         })
 
         setIsReady(true)
-        console.log('SdkProvider: EvoSDK initialized successfully, isReady = true')
+        logger.info('SdkProvider: EvoSDK initialized successfully, isReady = true')
       } catch (err) {
-        console.error('SdkProvider: Failed to initialize EvoSDK:', err)
+        logger.error('SdkProvider: Failed to initialize EvoSDK:', err)
         setError(err instanceof Error ? err.message : 'Failed to initialize SDK')
         // Still set isReady to false explicitly
         setIsReady(false)
@@ -38,10 +39,10 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
 
     // Only initialize in browser
     if (typeof window !== 'undefined') {
-      console.log('SdkProvider: Running in browser, starting initialization...')
+      logger.info('SdkProvider: Running in browser, starting initialization...')
       initializeSdk()
     } else {
-      console.log('SdkProvider: Not in browser, skipping initialization')
+      logger.info('SdkProvider: Not in browser, skipping initialization')
     }
   }, [])
 

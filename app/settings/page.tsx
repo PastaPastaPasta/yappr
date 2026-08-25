@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -53,12 +54,22 @@ const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
   { id: 'contacts', label: 'Contacts', icon: UserGroupIcon, description: 'Import contacts from Dash Pay' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, description: 'Control your notification preferences' },
-  { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your privacy settings' },
-  { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Encrypted posts for approved followers' },
+  { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your encryption keys, privacy settings, and blocked users' },
+  { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Manage approved followers and private feed access' },
   { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Connect storage for image uploads' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
+
+const NOTIFICATION_LABELS: Record<string, string> = {
+  likes: 'Likes',
+  reposts: 'Reposts',
+  replies: 'Replies',
+  follows: 'Follows',
+  mentions: 'Mentions',
+  messages: 'Messages',
+  blogPosts: 'Blog posts',
+}
 
 const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   likes: 'When someone likes your posts',
@@ -67,6 +78,7 @@ const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   follows: 'When someone follows you',
   mentions: 'When someone mentions you',
   messages: 'When you receive new messages',
+  blogPosts: 'When a blog you follow publishes a new post',
 }
 
 function SettingsPage() {
@@ -130,11 +142,11 @@ function SettingsPage() {
           }
         }
       } catch (error) {
-        console.error('Failed to fetch profile creation date:', error)
+        logger.error('Failed to fetch profile creation date:', error)
       }
     }
 
-    fetchProfileCreatedAt().catch(err => console.error('Failed to fetch profile created at:', err))
+    fetchProfileCreatedAt().catch(err => logger.error('Failed to fetch profile created at:', err))
   }, [user?.identityId])
 
   // Fetch DPNS usernames
@@ -154,11 +166,11 @@ function SettingsPage() {
           setDpnsUsernames([])
         }
       } catch (error) {
-        console.error('Failed to fetch DPNS usernames:', error)
+        logger.error('Failed to fetch DPNS usernames:', error)
       }
     }
 
-    fetchUsernames().catch(err => console.error('Failed to fetch usernames:', err))
+    fetchUsernames().catch(err => logger.error('Failed to fetch usernames:', err))
   }, [user?.identityId])
 
   // Refresh DPNS usernames after registration
@@ -177,7 +189,7 @@ function SettingsPage() {
         setDpnsUsernames([])
       }
     } catch (error) {
-      console.error('Failed to refresh usernames:', error)
+      logger.error('Failed to refresh usernames:', error)
     }
   }
 
@@ -334,7 +346,7 @@ function SettingsPage() {
           {Object.entries(notificationSettings).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between">
               <div>
-                <p className="font-medium capitalize">{key}</p>
+                <p className="font-medium">{NOTIFICATION_LABELS[key] || key}</p>
                 <p className="text-sm text-gray-500">
                   {NOTIFICATION_DESCRIPTIONS[key]}
                 </p>
@@ -770,7 +782,7 @@ function SettingsPage() {
         isOpen={isUsernameModalOpen}
         onClose={() => {
           setIsUsernameModalOpen(false)
-          refreshUsernames().catch(err => console.error('Failed to refresh usernames:', err))
+          refreshUsernames().catch(err => logger.error('Failed to refresh usernames:', err))
         }}
         hasExistingUsernames={dpnsUsernames.length > 0}
       />

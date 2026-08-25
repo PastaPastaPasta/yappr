@@ -13,7 +13,8 @@ import {
   ArrowPathRoundedSquareIcon,
   ChatBubbleLeftIcon,
   ChevronDownIcon,
-  FunnelIcon
+  FunnelIcon,
+  BookOpenIcon,
 } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -26,6 +27,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatTimeCompact } from '@/lib/utils'
 import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
+import { getBlogPostUrl } from '@/lib/blog/content-utils'
 import { Notification } from '@/lib/types'
 
 /**
@@ -43,6 +45,11 @@ function getNotificationUrl(notification: Notification): string | null {
     notification.type === 'privateFeedRevoked'
   ) {
     return null
+  }
+
+  // For blog post notifications, navigate to the blog post
+  if (notification.type === 'blogPost' && notification.blogId && notification.blogPostSlug) {
+    return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
   }
 
   // For reply notifications, navigate to the parent post (where the reply appears)
@@ -66,13 +73,14 @@ const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> 
   reply: 'replies',
   follow: 'follows',
   mention: 'mentions',
+  blogPost: 'blogPosts',
   // Private feed notifications always show (no setting)
   privateFeedRequest: null,
   privateFeedApproved: null,
   privateFeedRevoked: null,
 }
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeed'
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed'
 
 const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }[] = [
   { key: 'all', label: 'All', icon: <BellIcon className="h-4 w-4" /> },
@@ -81,6 +89,7 @@ const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }
   { key: 'reply', label: 'Replies', icon: <ChatBubbleLeftIcon className="h-4 w-4 text-blue-500" /> },
   { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-purple-500" /> },
   { key: 'mention', label: 'Mentions', icon: <AtSymbolIcon className="h-4 w-4 text-yellow-500" /> },
+  { key: 'blogPost', label: 'Blog', icon: <BookOpenIcon className="h-4 w-4 text-yappr-500" /> },
   { key: 'privateFeed', label: 'Private', icon: <LockClosedIcon className="h-4 w-4 text-blue-500" /> }
 ]
 
@@ -90,6 +99,7 @@ const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   like: <HeartIcon className="h-5 w-5 text-red-500" />,
   repost: <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />,
   reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
+  blogPost: <BookOpenIcon className="h-5 w-5 text-yappr-500" />,
   privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
   privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
   privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
@@ -101,6 +111,7 @@ const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   like: 'liked your post',
   repost: 'reposted your post',
   reply: 'replied to your post',
+  blogPost: 'published a new blog post',
   privateFeedRequest: 'requested access to your private feed',
   privateFeedApproved: 'approved your private feed request',
   privateFeedRevoked: 'revoked your private feed access'
@@ -113,6 +124,7 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
   reply: 'When someone replies to your post, you\'ll see it here',
   follow: 'When someone follows you, you\'ll see it here',
   mention: 'When someone mentions you, you\'ll see it here',
+  blogPost: 'When a blog you follow publishes, you\'ll see it here',
   privateFeed: 'Private feed requests and updates will appear here'
 }
 
@@ -182,11 +194,22 @@ function NotificationsPage() {
     <div className="min-h-[calc(100vh-40px)] flex">
       <Sidebar />
 
-      <main className="flex-1 min-w-0 md:max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <div className="flex-1 flex justify-center min-w-0">
+      <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
         <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={markAllAsRead}
+                  className="text-yappr-500 hover:text-yappr-600 text-sm"
+                >
+                  Mark all as read
+                </Button>
+              )}
               {/* Mobile filter dropdown */}
               <div className="md:hidden">
                 <DropdownMenu.Root>
@@ -280,19 +303,6 @@ function NotificationsPage() {
           </div>
         </header>
 
-        {unreadCount > 0 && (
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={markAllAsRead}
-              className="text-yappr-500 hover:text-yappr-600"
-            >
-              Mark all as read
-            </Button>
-          </div>
-        )}
-
         {isLoading || !hasFetchedOnce ? (
           <div className="p-8 text-center">
             <Spinner size="md" className="mx-auto mb-4" />
@@ -376,17 +386,18 @@ function NotificationsPage() {
                         </div>
 
                         {(() => {
+                          const notifUrl = getNotificationUrl(notification)
+                          if (!notifUrl) return null
                           const post = notification.post
-                          const postUrl = post && getNotificationUrl(notification)
-                          return postUrl && post ? (
+                          return (
                             <Link
-                              href={postUrl}
+                              href={notifUrl}
                               onClick={(e) => e.stopPropagation()}
                               className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
                             >
-                              {post.content}
+                              {post?.content || 'View post'}
                             </Link>
-                          ) : null
+                          )
                         })()}
                       </div>
                     </div>
@@ -401,6 +412,7 @@ function NotificationsPage() {
           </div>
         )}
       </main>
+      </div>
 
       <RightSidebar />
     </div>

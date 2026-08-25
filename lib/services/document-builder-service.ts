@@ -5,13 +5,17 @@
  * for use with the new typed state transition APIs in @dashevo/evo-sdk
  *
  * The new API requires Document WASM objects instead of plain data objects.
+ * Binary properties on this path should stay as `Uint8Array`; this layer does not convert them
+ * into JSON-style `number[]`.
  *
  * IMPORTANT: We import the Document class from @dashevo/evo-sdk which re-exports
  * from the shared @dashevo/wasm-sdk module. By calling getEvoSdk() first, we ensure
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
+import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 import { Document } from '@dashevo/evo-sdk';
+import bs58 from 'bs58';
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -22,6 +26,22 @@ async function ensureWasmReady(): Promise<void> {
 }
 
 class DocumentBuilderService {
+  async generateDocumentIdentity(
+    contractId: string,
+    documentTypeName: string,
+    ownerId: string
+  ): Promise<{ id: string; entropy: Uint8Array }> {
+    await ensureWasmReady();
+
+    const entropy = crypto.getRandomValues(new Uint8Array(32));
+    const idBytes = Document.generateId(documentTypeName, ownerId, contractId, entropy);
+
+    return {
+      id: bs58.encode(idBytes),
+      entropy,
+    };
+  }
+
   /**
    * Build a Document object for document creation
    *
@@ -31,30 +51,32 @@ class DocumentBuilderService {
    * @param contractId - The data contract ID
    * @param documentTypeName - The document type name (e.g., 'post', 'profile')
    * @param ownerId - The identity ID that owns this document
-   * @param data - The document data fields
+   * @param data - The document data fields (`Uint8Array` for binary fields on typed writes)
    * @returns A WASM Document object ready for creation
    */
   async buildDocumentForCreate(
     contractId: string,
     documentTypeName: string,
     ownerId: string,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    options?: {
+      id?: string;
+      entropy?: Uint8Array;
+    }
   ): Promise<InstanceType<typeof Document>> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // Create document with revision 1 for new documents
-    // Document ID is undefined to let the SDK generate it based on entropy
-    // Note: TypeScript types are stricter than the actual WASM API - undefined is valid
-    // and causes the SDK to auto-generate the document ID from entropy
-    const document = new Document(
-      data,              // Document data fields
-      documentTypeName,  // Document type name
-      BigInt(1),         // Revision (must be BigInt, 1 for new documents)
-      contractId,        // Data contract ID
-      ownerId,           // Owner identity ID
-      undefined as unknown as string  // Document ID (undefined = auto-generated)
-    );
+    // v3.1: Document constructor takes a single DocumentOptions object
+    const document = new Document({
+      properties: data,
+      documentTypeName,
+      dataContractId: contractId,
+      ownerId,
+      revision: BigInt(1),
+      id: options?.id,
+      entropy: options?.entropy,
+    });
 
     return document;
   }
@@ -69,7 +91,7 @@ class DocumentBuilderService {
    * @param documentTypeName - The document type name
    * @param documentId - The existing document's ID
    * @param ownerId - The identity ID that owns this document
-   * @param data - The updated document data fields
+   * @param data - The updated document data fields (`Uint8Array` for binary fields on typed writes)
    * @param newRevision - The new revision number (current revision + 1)
    * @returns A WASM Document object ready for replacement
    */
@@ -84,15 +106,15 @@ class DocumentBuilderService {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // Create document with the incremented revision
-    const document = new Document(
-      data,              // Updated document data fields
-      documentTypeName,  // Document type name
-      BigInt(newRevision), // New revision (must be BigInt)
-      contractId,        // Data contract ID
-      ownerId,           // Owner identity ID
-      documentId         // Existing document ID
-    );
+    // v3.1: Document constructor takes a single DocumentOptions object
+    const document = new Document({
+      properties: data,
+      documentTypeName,
+      dataContractId: contractId,
+      ownerId,
+      revision: BigInt(newRevision),
+      id: documentId,
+    });
 
     return document;
   }
@@ -138,9 +160,9 @@ class DocumentBuilderService {
    * @returns Normalized document data with $ prefixed fields
    */
   normalizeDocumentResponse(document: Document | Record<string, unknown>): Record<string, unknown> {
-    // Check if it's a WASM Document with toJSON method
-    if (document && typeof (document as Document).toJSON === 'function') {
-      return (document as Document).toJSON();
+    // Check if it's a WASM Document and extract its JSON-like normalized form.
+    if (document && typeof (document as Document).toObject === 'function') {
+      return documentToPlainObject(document);
     }
 
     // Handle raw objects - normalize field names
@@ -181,9 +203,15 @@ class DocumentBuilderService {
     if (id && typeof (id as { toString?: () => string }).toString === 'function') {
       return (id as { toString: () => string }).toString();
     }
-    // Fallback: try to get from JSON
-    const json = document.toJSON();
-    return json.$id || json.id || '';
+    // Fallback: convert via toObject() and extract the id field
+    const obj = document.toObject() as { $id?: unknown };
+    if (obj.$id) {
+      const rawId = obj.$id;
+      if (typeof rawId === 'string') return rawId;
+      const base58 = identifierToBase58(rawId);
+      if (base58) return base58;
+    }
+    throw new Error('Unable to extract document ID from Document object');
   }
 }
 

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Dash Pay Contacts Service
  *
@@ -7,7 +8,7 @@
  */
 
 import { getEvoSdk } from './evo-sdk-service';
-import { queryDocuments, identifierToBase58 } from './sdk-helpers';
+import { identifierStringToLegacyNumberArray, queryDocuments, identifierToBase58 } from './sdk-helpers';
 import { followService } from './follow-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
@@ -108,23 +109,23 @@ class DashPayContactsService {
 
       return documents.map(doc => this.transformDocument(doc));
     } catch (error) {
-      console.error('DashPayContactsService: Error fetching outgoing requests:', error);
+      logger.error('DashPayContactsService: Error fetching outgoing requests:', error);
       return [];
     }
   }
 
   /**
    * Get all contact requests sent TO the user (incoming)
-   * Uses index: userIdCreatedAt
-   * Note: toUserId is a 32-byte array field, requires byte array for query
+   * Uses index: userIdCreatedAt.
+   *
+   * This is a raw query over an ordinary byte-array field, so it uses the legacy
+   * JSON `number[]` operand shape instead of the typed-write `Uint8Array` helper.
    */
   async getIncomingContactRequests(userId: string): Promise<ContactRequestDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
-      // Convert userId from base58 to byte array for the query
-      // toUserId is stored as a 32-byte array in the contract
-      const userIdBytes = Array.from(bs58.decode(userId));
+      const userIdBytes = identifierStringToLegacyNumberArray(userId);
 
       const documents = await queryDocuments(sdk, {
         dataContractId: DASHPAY_CONTRACT_ID,
@@ -136,7 +137,7 @@ class DashPayContactsService {
 
       return documents.map(doc => this.transformDocument(doc));
     } catch (error) {
-      console.error('DashPayContactsService: Error fetching incoming requests:', error);
+      logger.error('DashPayContactsService: Error fetching incoming requests:', error);
       return [];
     }
   }
@@ -163,7 +164,7 @@ class DashPayContactsService {
     }
 
     if (outgoingSet.size === 0) {
-      console.log('DashPayContactsService: No outgoing contact requests found');
+      logger.info('DashPayContactsService: No outgoing contact requests found');
       return [];
     }
 
@@ -179,7 +180,7 @@ class DashPayContactsService {
     }
 
     if (incomingMap.size === 0) {
-      console.log('DashPayContactsService: No incoming contact requests found');
+      logger.info('DashPayContactsService: No incoming contact requests found');
       return [];
     }
 
@@ -195,7 +196,7 @@ class DashPayContactsService {
       }
     });
 
-    console.log(`DashPayContactsService: Found ${mutualContacts.length} mutual contacts`);
+    logger.info(`DashPayContactsService: Found ${mutualContacts.length} mutual contacts`);
     return mutualContacts;
   }
 
@@ -226,7 +227,7 @@ class DashPayContactsService {
     // Check cache first
     const cached = this.cache.get(userId);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-      console.log('DashPayContactsService: Returning cached result');
+      logger.info('DashPayContactsService: Returning cached result');
       return cached.data;
     }
 
@@ -305,10 +306,10 @@ class DashPayContactsService {
       // Cache the result
       this.cache.set(userId, { data: result, timestamp: Date.now() });
 
-      console.log(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
+      logger.info(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
       return result;
     } catch (error) {
-      console.error('DashPayContactsService: Error getting unfollowed contacts:', error);
+      logger.error('DashPayContactsService: Error getting unfollowed contacts:', error);
       throw error;
     }
   }

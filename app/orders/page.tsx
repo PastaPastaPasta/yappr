@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -19,6 +20,7 @@ import { orderStatusService } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { identityService } from '@/lib/services/identity-service'
+import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload } from '@/lib/types'
 
@@ -126,16 +128,14 @@ function OrdersPage() {
                 try {
                   // Fetch seller's public key for decryption
                   const sellerIdentity = await identityService.getIdentity(order.sellerId)
-                  const sellerEncryptionKey = sellerIdentity?.publicKeys.find(
-                    (k) => k.purpose === 1 && k.type === 0 && !k.disabledAt
-                  )
+                  const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
                   const sellerPubKey = sellerEncryptionKey?.data
                     ? normalizeKeyData(sellerEncryptionKey.data)
                     : null
 
                   // Skip decryption if seller public key is missing
                   if (!sellerPubKey) {
-                    console.warn(`Skipping order ${order.id} decryption: seller public key not found`)
+                    logger.warn(`Skipping order ${order.id} decryption: seller public key not found`)
                   } else {
                     const payload = await storeOrderService.decryptOrderPayload(
                       order.encryptedPayload,
@@ -151,7 +151,7 @@ function OrdersPage() {
                     }
                   }
                 } catch (decryptError) {
-                  console.warn(`Failed to decrypt order ${order.id}:`, decryptError)
+                  logger.warn(`Failed to decrypt order ${order.id}:`, decryptError)
                 }
               }
             } catch (e) {
@@ -165,20 +165,20 @@ function OrdersPage() {
         setStores(storeMap)
         setReviewedOrders(reviewedSet)
       } catch (error) {
-        console.error('Failed to load orders:', error)
+        logger.error('Failed to load orders:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadOrders().catch(console.error)
+    loadOrders().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
   // Refresh statuses when page becomes visible again
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && orders.length > 0) {
-        refreshStatuses(orders)
+        refreshStatuses(orders).catch((err) => logger.error('Failed to refresh order statuses:', err))
       }
     }
 

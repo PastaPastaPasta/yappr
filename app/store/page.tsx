@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -44,7 +45,7 @@ export default function StoreBrowsePage() {
       const exists = await storeService.hasStore(user.identityId)
       setHasStore(exists)
     }
-    checkUserStore().catch(console.error)
+    checkUserStore().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
   // Load active stores
@@ -70,12 +71,12 @@ export default function StoreBrowsePage() {
         )
         setStoreRatings(ratingsMap)
       } catch (error) {
-        console.error('Failed to load stores:', error)
+        logger.error('Failed to load stores:', error)
       } finally {
         setIsLoading(false)
       }
     }
-    loadStores().catch(console.error)
+    loadStores().catch((error) => logger.error(error))
   }, [sdkReady])
 
   // Filter stores by search query

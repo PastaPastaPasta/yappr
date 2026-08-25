@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
@@ -37,7 +38,7 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
         .then(name => {
           if (active) setUsername(name)
         })
-        .catch(err => console.error('Failed to resolve username:', err))
+        .catch(err => logger.error('Failed to resolve username:', err))
     }
 
     // Fetch display name if not provided in props
@@ -48,7 +49,7 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
             setDisplayName(profile.displayName)
           }
         })
-        .catch(err => console.error('Failed to fetch profile:', err))
+        .catch(err => logger.error('Failed to fetch profile:', err))
     }
 
     return () => {

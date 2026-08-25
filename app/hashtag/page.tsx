@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -71,7 +72,7 @@ function HashtagPageContent() {
               }
             }
           } catch (error) {
-            console.error('Failed to fetch post:', postId, error)
+            logger.error('Failed to fetch post:', postId, error)
           }
         }
 
@@ -91,14 +92,14 @@ function HashtagPageContent() {
         setPosts(enrichedPosts)
         setPostCount(enrichedPosts.length)
       } catch (error) {
-        console.error('Failed to load hashtag posts:', error)
+        logger.error('Failed to load hashtag posts:', error)
         setPosts([])
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadHashtagPosts().catch(err => console.error('Failed to load hashtag posts:', err))
+    loadHashtagPosts().catch(err => logger.error('Failed to load hashtag posts:', err))
   }, [tag, user?.identityId])
 
   if (!tag) {

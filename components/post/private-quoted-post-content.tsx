@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
@@ -7,7 +8,8 @@ import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid
 import { Post } from '@/lib/types'
 import { PostContent } from './post-content'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { cn, formatTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { useRelativeTime } from '@/hooks/use-relative-time'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { useAuth } from '@/contexts/auth-context'
 
@@ -38,6 +40,7 @@ export function PrivateQuotedPostContent({
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = quotedPost.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
+  const createdAtLabel = useRelativeTime(quotedPost.createdAt)
 
   // Get display name for author
   const authorDisplay = getAuthorDisplay(quotedPost.author)
@@ -127,7 +130,7 @@ export function PrivateQuotedPostContent({
         setState({ status: 'locked' })
       }
     } catch (error) {
-      console.error('Error decrypting quoted private post:', error)
+      logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
     }
   }, [quotedPost, user])
@@ -141,7 +144,7 @@ export function PrivateQuotedPostContent({
   // Attempt decryption on mount
   useEffect(() => {
     if (state.status === 'idle') {
-      attemptDecryption()
+      attemptDecryption().catch((err) => logger.error('Decryption failed:', err))
     }
   }, [state.status, attemptDecryption])
 
@@ -166,7 +169,7 @@ export function PrivateQuotedPostContent({
         </span>
       )}
       <span>·</span>
-      <span>{formatTime(quotedPost.createdAt)}</span>
+      <span>{createdAtLabel}</span>
       <LockClosedIcon className="h-3.5 w-3.5 ml-1" />
     </div>
   )
@@ -210,7 +213,7 @@ export function PrivateQuotedPostContent({
           </div>
         )}
         <div className="mt-1">
-          <PostContent content={state.content} className="text-sm line-clamp-3" />
+          <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed />
         </div>
       </Link>
     )

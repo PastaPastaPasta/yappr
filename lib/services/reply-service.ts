@@ -1,11 +1,10 @@
+import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Reply, PostQueryOptions } from '../types';
+import { Reply, PostQueryOptions } from '../../types';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, stringToIdentifierBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
-import { isPostCreationAmbiguousError } from '../retry-utils';
-import { POST_RECOVERY_LOOKBACK_MS, POST_RECOVERY_POLL_ATTEMPTS, POST_RECOVERY_POLL_DELAY_MS } from '../constants';
 
 export interface ReplyDocument {
   $id: string;
@@ -31,15 +30,6 @@ export interface EncryptionSource {
   epoch: number;       // The epoch at which the root private post was created
   inherited: boolean;  // True if encryption is inherited from parent
 }
-
-type ExpectedReplyMatch = {
-  content: string;
-  parentId: string;
-  parentOwnerId: string;
-  encryptedContent?: Uint8Array;
-  nonce?: Uint8Array;
-  epoch?: number;
-};
 
 class ReplyService extends BaseDocumentService<Reply> {
   // Request deduplicators for batch operations
@@ -130,7 +120,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return result.success;
     } catch (error) {
-      console.error('Error deleting reply:', error);
+      logger.error('Error deleting reply:', error);
       return false;
     }
   }
@@ -157,8 +147,8 @@ class ReplyService extends BaseDocumentService<Reply> {
   ): Promise<Reply> {
     const PRIVATE_REPLY_PLACEHOLDER = '🔒';
     const data: Record<string, unknown> = {
-      parentId: stringToIdentifierBytes(parentId),
-      parentOwnerId: stringToIdentifierBytes(parentOwnerId),
+      parentId: identifierStringToDocumentBytes(parentId),
+      parentOwnerId: identifierStringToDocumentBytes(parentOwnerId),
     };
 
     // Handle encryption if provided
@@ -197,96 +187,7 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
-    const attemptStartedAt = Date.now();
-    const expected: ExpectedReplyMatch = {
-      content: data.content as string,
-      parentId,
-      parentOwnerId,
-      encryptedContent: data.encryptedContent as Uint8Array | undefined,
-      nonce: data.nonce as Uint8Array | undefined,
-      epoch: data.epoch as number | undefined,
-    };
-
-    try {
-      return await this.create(ownerId, data);
-    } catch (error) {
-      if (isPostCreationAmbiguousError(error)) {
-        const recovered = await this.recoverRecentReplyMatch(ownerId, expected, attemptStartedAt);
-        if (recovered) {
-          console.warn('Reply recovery succeeded after ambiguous error:', recovered.id);
-          this.clearCache();
-          return recovered;
-        }
-        console.warn('Reply recovery failed after ambiguous error; rethrowing original error');
-      }
-      throw error;
-    }
-  }
-
-  private async recoverRecentReplyMatch(
-    ownerId: string,
-    expected: ExpectedReplyMatch,
-    attemptStartedAt: number
-  ): Promise<Reply | null> {
-    const minCreatedAt = attemptStartedAt - POST_RECOVERY_LOOKBACK_MS;
-    const isPrivateExpected = !!expected.encryptedContent && !!expected.nonce && typeof expected.epoch === 'number';
-
-    for (let attempt = 1; attempt <= POST_RECOVERY_POLL_ATTEMPTS; attempt++) {
-      try {
-        const result = await this.query({
-          where: [
-            ['$ownerId', '==', ownerId],
-            ['$createdAt', '>', minCreatedAt]
-          ],
-          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-          limit: 20
-        });
-
-        const match = result.documents.find((reply) =>
-          this.matchesExpectedReply(reply, expected, isPrivateExpected)
-        );
-
-        if (match) {
-          return match;
-        }
-      } catch (error) {
-        console.warn(`Reply recovery query failed (attempt ${attempt}/${POST_RECOVERY_POLL_ATTEMPTS}):`, error);
-      }
-
-      if (attempt < POST_RECOVERY_POLL_ATTEMPTS) {
-        await this.sleep(POST_RECOVERY_POLL_DELAY_MS);
-      }
-    }
-
-    return null;
-  }
-
-  private matchesExpectedReply(reply: Reply, expected: ExpectedReplyMatch, isPrivateExpected: boolean): boolean {
-    if (isPrivateExpected) {
-      return !!reply.encryptedContent &&
-        !!reply.nonce &&
-        typeof reply.epoch === 'number' &&
-        this.bytesEqual(expected.encryptedContent, reply.encryptedContent) &&
-        this.bytesEqual(expected.nonce, reply.nonce) &&
-        expected.epoch === reply.epoch;
-    }
-
-    return reply.content === expected.content &&
-      reply.parentId === expected.parentId &&
-      reply.parentOwnerId === expected.parentOwnerId;
-  }
-
-  private bytesEqual(a?: Uint8Array, b?: Uint8Array): boolean {
-    if (!a || !b) return false;
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i] !== b[i]) return false;
-    }
-    return true;
-  }
-
-  private async sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return this.create(ownerId, data);
   }
 
   /**
@@ -377,7 +278,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       const documents = normalizeSDKResponse(response);
       return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      console.error('Error getting replies to my content:', error);
+      logger.error('Error getting replies to my content:', error);
       return [];
     }
   }
@@ -438,7 +339,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return result;
     } catch (error) {
-      console.error('Error getting nested replies:', error);
+      logger.error('Error getting nested replies:', error);
       const result = new Map<string, Reply[]>();
       parentIds.forEach(id => result.set(id, []));
       return result;
@@ -507,7 +408,7 @@ class ReplyService extends BaseDocumentService<Reply> {
         }
       }
     } catch (error) {
-      console.error('Error getting replies batch:', error);
+      logger.error('Error getting replies batch:', error);
     }
 
     return result;
@@ -527,7 +428,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return reply;
     } catch (error) {
-      console.error('Error getting reply by ID:', error);
+      logger.error('Error getting reply by ID:', error);
       return null;
     }
   }
@@ -552,7 +453,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       return replies;
     } catch (error) {
-      console.error('Error getting replies by IDs:', error);
+      logger.error('Error getting replies by IDs:', error);
       return [];
     }
   }
@@ -594,7 +495,7 @@ class ReplyService extends BaseDocumentService<Reply> {
         };
       }
     } catch (error) {
-      console.error('Error resolving reply authors:', error);
+      logger.error('Error resolving reply authors:', error);
     }
   }
 }
@@ -616,7 +517,7 @@ export async function getEncryptionSource(
 ): Promise<EncryptionSource | null> {
   const MAX_DEPTH = 100;
   if (depth >= MAX_DEPTH) {
-    console.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
+    logger.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
     return null;
   }
 
@@ -643,7 +544,7 @@ export async function getEncryptionSource(
     const parentReply = await replyService.getReplyById(parentId, { skipEnrichment: true });
 
     if (!parentReply) {
-      console.warn('Parent not found:', parentId);
+      logger.warn('Parent not found:', parentId);
       return null;
     }
 
@@ -665,7 +566,7 @@ export async function getEncryptionSource(
     // Parent reply is not encrypted - no inherited encryption
     return null;
   } catch (error) {
-    console.error('Error getting encryption source:', error);
+    logger.error('Error getting encryption source:', error);
     return null;
   }
 }

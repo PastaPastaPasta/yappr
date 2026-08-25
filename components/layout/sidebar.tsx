@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState, useEffect } from 'react'
@@ -18,6 +19,7 @@ import {
   ArrowPathIcon,
   BellIcon,
   BuildingStorefrontIcon,
+  BookOpenIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeIconSolid,
@@ -29,6 +31,7 @@ import {
   HashtagIcon as HashtagIconSolid,
   BellIcon as BellIconSolid,
   BuildingStorefrontIcon as BuildingStorefrontIconSolid,
+  BookOpenIcon as BookOpenIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn, truncateId } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -46,6 +49,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
       { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
       { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
+      { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
     ]
   }
 
@@ -55,6 +59,7 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     { name: 'Followers', href: '/followers', icon: UsersIcon, activeIcon: UsersIconSolid },
     { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
     { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
     { name: 'Notifications', href: '/notifications', icon: BellIcon, activeIcon: BellIconSolid },
     { name: 'Messages', href: '/messages', icon: EnvelopeIcon, activeIcon: EnvelopeIconSolid },
     { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon, activeIcon: BookmarkIconSolid },
@@ -101,14 +106,14 @@ export function Sidebar() {
           setDisplayName(profile?.displayName ?? null)
         }
       } catch (error) {
-        console.error('Failed to fetch display name:', error)
+        logger.error('Failed to fetch display name:', error)
         if (mounted) {
           setDisplayName(null)
         }
       }
     }
 
-    fetchDisplayName()
+    fetchDisplayName().catch((err) => logger.error('Failed to fetch display name:', err))
 
     return () => {
       mounted = false
@@ -155,7 +160,7 @@ export function Sidebar() {
         }
         store.setLastFetchTimestamp(result.latestTimestamp)
       } catch (error) {
-        console.error('Notification fetch error:', error)
+        logger.error('Notification fetch error:', error)
       } finally {
         if (isInitial && !cancelled) {
           store.setLoading(false)
@@ -168,7 +173,7 @@ export function Sidebar() {
       }
     }
 
-    fetchAndSchedule(true)
+    fetchAndSchedule(true).catch((err) => logger.error('Notification fetch failed:', err))
 
     return () => {
       cancelled = true
@@ -185,7 +190,7 @@ export function Sidebar() {
   return (
     <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
-        <Link href="/" className="flex items-center px-3 py-4 mb-2 group">
+        <Link href="/welcome" className="flex items-center px-3 py-4 mb-2 group">
           <div className="text-2xl font-bold text-gradient">Yappr</div>
         </Link>
 

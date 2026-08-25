@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -17,6 +18,7 @@ import {
   KeyIcon,
   CreditCardIcon,
   ArrowUpTrayIcon,
+  ArrowDownTrayIcon,
   TableCellsIcon
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -37,6 +39,7 @@ import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { identityService } from '@/lib/services/identity-service'
+import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 
 function StoreManagePage() {
@@ -67,6 +70,7 @@ function StoreManagePage() {
   const [deleteZoneId, setDeleteZoneId] = useState<string | null>(null)
   const [deletePaymentIndex, setDeletePaymentIndex] = useState<number | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
 
   // Load store data
   useEffect(() => {
@@ -108,35 +112,35 @@ function StoreManagePage() {
         if (itemsResult.status === 'fulfilled') {
           setItems(itemsResult.value.items)
         } else {
-          console.error('Failed to load items:', itemsResult.reason)
+          logger.error('Failed to load items:', itemsResult.reason)
         }
 
         if (zonesResult.status === 'fulfilled') {
           setZones(zonesResult.value)
         } else {
-          console.error('Failed to load zones:', zonesResult.reason)
+          logger.error('Failed to load zones:', zonesResult.reason)
         }
 
         if (ordersResult.status === 'fulfilled') {
           setPendingOrdersCount(ordersResult.value.orders.length)
         } else {
-          console.error('Failed to load orders:', ordersResult.reason)
+          logger.error('Failed to load orders:', ordersResult.reason)
         }
 
         if (encKeyResult.status === 'fulfilled') {
           setHasEncryptionKey(encKeyResult.value)
         } else {
-          console.error('Failed to check encryption key:', encKeyResult.reason)
+          logger.error('Failed to check encryption key:', encKeyResult.reason)
           setHasEncryptionKey(false)
         }
       } catch (error) {
-        console.error('Failed to load store data:', error)
+        logger.error('Failed to load store data:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadData().catch(console.error)
+    loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, user?.identityId, router])
 
   const handleDeleteItem = async () => {
@@ -148,7 +152,7 @@ function StoreManagePage() {
       setItems(items.filter(i => i.id !== deleteItemId))
       setDeleteItemId(null)
     } catch (error) {
-      console.error('Failed to delete item:', error)
+      logger.error('Failed to delete item:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -163,7 +167,7 @@ function StoreManagePage() {
       setZones(zones.filter(z => z.id !== deleteZoneId))
       setDeleteZoneId(null)
     } catch (error) {
-      console.error('Failed to delete zone:', error)
+      logger.error('Failed to delete zone:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -184,7 +188,7 @@ function StoreManagePage() {
       setZones([...zones, newZone])
       setShowZoneModal(false)
     } catch (err) {
-      console.error('Failed to create shipping zone:', err)
+      logger.error('Failed to create shipping zone:', err)
       toast.error('Failed to create shipping zone')
     }
   }
@@ -204,7 +208,7 @@ function StoreManagePage() {
       setZones(zones.map(z => z.id === editingZone.id ? updatedZone : z))
       setEditingZone(null)
     } catch (err) {
-      console.error('Failed to update shipping zone:', err)
+      logger.error('Failed to update shipping zone:', err)
       toast.error('Failed to update shipping zone')
     }
   }
@@ -229,8 +233,47 @@ function StoreManagePage() {
       setStore(updatedStore)
       setShowPaymentModal(false)
     } catch (error) {
-      console.error('Failed to add payment method:', error)
+      logger.error('Failed to add payment method:', error)
       toast.error('Failed to add payment method')
+    }
+  }
+
+  const handleImportFromProfile = async () => {
+    if (!user?.identityId || !store?.id) return
+
+    setIsImporting(true)
+    try {
+      const profileUris = await unifiedProfileService.getPaymentUris(user.identityId)
+
+      if (profileUris.length === 0) {
+        toast('No payment addresses found on your profile', { icon: 'ℹ️' })
+        return
+      }
+
+      const currentUris = store.paymentUris || []
+      const currentUriSet = new Set(currentUris.map(u => u.uri))
+      const seenUris = new Set<string>()
+      const newUris = profileUris.filter(u => {
+        if (currentUriSet.has(u.uri) || seenUris.has(u.uri)) return false
+        seenUris.add(u.uri)
+        return true
+      })
+
+      if (newUris.length === 0) {
+        toast('All profile payment methods already added', { icon: 'ℹ️' })
+        return
+      }
+
+      const updatedStore = await storeService.patchStore(store.id, user.identityId, {
+        paymentUris: [...currentUris, ...newUris]
+      })
+      setStore(updatedStore)
+      toast.success(`Imported ${newUris.length} payment method${newUris.length !== 1 ? 's' : ''} from profile`)
+    } catch (error) {
+      logger.error('Failed to import payment methods:', error)
+      toast.error('Failed to import payment methods')
+    } finally {
+      setIsImporting(false)
     }
   }
 
@@ -246,7 +289,7 @@ function StoreManagePage() {
       setStore(updatedStore)
       setDeletePaymentIndex(null)
     } catch (error) {
-      console.error('Failed to remove payment method:', error)
+      logger.error('Failed to remove payment method:', error)
     } finally {
       setIsDeleting(false)
     }
@@ -608,7 +651,7 @@ function StoreManagePage() {
                             })
                             setStore(updated)
                           } catch (error) {
-                            console.error('Failed to update status:', error)
+                            logger.error('Failed to update status:', error)
                           }
                         }}
                         className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
@@ -634,10 +677,16 @@ function StoreManagePage() {
               <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-medium">Payment Methods</h3>
-                  <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
-                    <PlusIcon className="h-4 w-4 mr-1" />
-                    Add
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={handleImportFromProfile} disabled={isImporting}>
+                      <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
+                      {isImporting ? 'Importing...' : 'Import from Profile'}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowPaymentModal(true)}>
+                      <PlusIcon className="h-4 w-4 mr-1" />
+                      Add
+                    </Button>
+                  </div>
                 </div>
                 {store.paymentUris && store.paymentUris.length > 0 ? (
                   <div className="space-y-2">
@@ -718,7 +767,7 @@ function StoreManagePage() {
             if (store?.id) {
               storeItemService.getByStore(store.id, { limit: 100 })
                 .then(result => setItems(result.items))
-                .catch(console.error)
+                .catch((error) => logger.error(error))
             }
           }
         }}

@@ -2,7 +2,7 @@
 
 A decentralized social media platform and marketplace built on Dash Platform. All data—posts, profiles, likes, follows, bookmarks, mentions, tips, direct messages, stores, and orders—is stored on-chain with full user ownership.
 
-<img src="yappr.png" alt="Yappr Screenshot" width="200">
+<img src="assets/yappr.png" alt="Yappr Screenshot" width="200">
 
 ## Features
 
@@ -273,11 +273,7 @@ yappr/
 │
 ├── next.config.js         # Next.js configuration (static export, WASM)
 ├── tailwind.config.js     # Tailwind CSS configuration
-├── register-contract.js   # Register contract on Dash Platform
-├── register-contract-with-nonce.js # Register contract with specific nonce
-├── register-hashtag-contract.js    # Register hashtag contract
-├── test-dpns-resolve.js   # Test DPNS name resolution
-└── TODO-MAINNET.md        # Pre-mainnet task tracking
+└── docs/archive/TODO-MAINNET.md        # Pre-mainnet task tracking
 ```
 
 ## Dash Platform Integration
@@ -364,22 +360,6 @@ Documents use `$ownerId` (automatic platform field) for ownership. Do not includ
 | `/privacy` | Privacy policy |
 | `/terms` | Terms of service |
 | `/cookies` | Cookie policy |
-
-## Platform Scripts
-
-```bash
-# Register a contract on Dash Platform
-node register-contract.js
-
-# Register contract with specific nonce
-node register-contract-with-nonce.js
-
-# Register hashtag tracking contract
-node register-hashtag-contract.js
-
-# Test DPNS name resolution
-node test-dpns-resolve.js
-```
 
 ## Architecture Notes
 

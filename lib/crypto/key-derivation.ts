@@ -68,13 +68,11 @@ export function deriveEncryptionKey(
  *
  * @param derivedPrivateKey - The derived 32-byte private key
  * @param identityId - The user's identity ID
- * @param purpose - The key purpose (must be 1 for encryption key)
  * @returns True if the derived key matches the identity's encryption key
  */
 export async function validateDerivedKeyMatchesIdentity(
   derivedPrivateKey: Uint8Array,
   identityId: string,
-  purpose: 1
 ): Promise<boolean> {
   // Get the public key from derived private key
   const { privateFeedCryptoService } = await import('@/lib/services')
@@ -93,9 +91,9 @@ export async function validateDerivedKeyMatchesIdentity(
   }
 
   // Find the encryption key (purpose=1, type=0 is ECDSA_SECP256K1)
-  const targetKey = identityData.publicKeys.find(
-    (key) => key.purpose === purpose && key.type === 0
-  )
+  // Use shared helper for contract-bound key preference
+  const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
+  const targetKey = findEncryptionKey(identityData.publicKeys)
 
   if (!targetKey?.data) {
     return false
@@ -139,25 +137,21 @@ export async function validateDerivedKeyMatchesIdentity(
  *
  * @param authPrivateKey - The 32-byte auth private key
  * @param identityId - The user's identity ID
- * @param purpose - The key purpose (must be 1 for encryption key)
  * @returns The key type ('derived' if matches, 'external' if not, or null if no key on identity)
  */
 export async function determineKeyType(
   authPrivateKey: Uint8Array,
   identityId: string,
-  purpose: 1
 ): Promise<KeyType | null> {
   // First check if identity has an encryption key
   const { identityService } = await import('@/lib/services/identity-service')
+  const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup')
   const identityData = await identityService.getIdentity(identityId)
   if (!identityData) {
     return null
   }
 
-  const hasKey = identityData.publicKeys.some(
-    (key) => key.purpose === purpose && key.type === 0
-  )
-  if (!hasKey) {
+  if (!hasEncryptionKeyOnIdentity(identityData.publicKeys)) {
     return null
   }
 
@@ -165,6 +159,6 @@ export async function determineKeyType(
   const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
 
   // Check if derived matches identity
-  const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId, purpose)
+  const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId)
   return matches ? 'derived' : 'external'
 }

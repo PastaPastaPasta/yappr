@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -16,6 +17,7 @@ import {
   BuildingStorefrontIcon,
   BellIcon,
   BookmarkIcon,
+  BookOpenIcon,
   UserIcon,
   Cog6ToothIcon,
   UserGroupIcon,
@@ -75,6 +77,7 @@ export function MobileBottomNav() {
   // More menu items - Store first for prominence, then user-specific items
   const moreMenuItems = [
     { name: 'Store', href: '/store', icon: BuildingStorefrontIcon },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon },
     ...(user ? [
       { name: 'Profile', href: `/user?id=${user.identityId}`, icon: UserIcon },
       { name: 'Notifications', href: '/notifications', icon: BellIcon, badge: isHydrated && unreadNotificationCount > 0 ? unreadNotificationCount : undefined },
@@ -148,7 +151,7 @@ export function MobileBottomNav() {
                 <button
                   onClick={() => {
                     setMoreMenuOpen(false)
-                    logout()
+                    logout().catch((err) => logger.error('Logout failed:', err))
                   }}
                   className="flex items-center gap-3 w-full p-3 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                 >

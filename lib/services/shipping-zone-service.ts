@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Shipping Zone Service
  *
@@ -7,7 +8,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, stringToIdentifierBytes } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
   ShippingZone,
   ShippingZoneDocument,
@@ -16,7 +17,7 @@ import type {
   ShippingPricingConfig,
   SubtotalMultiplier,
   ShippingAddress
-} from '../types';
+} from '../../types';
 import { gramsToUnit } from '../utils/weight';
 
 class ShippingZoneService extends BaseDocumentService<ShippingZone> {
@@ -39,7 +40,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
         try {
           postalPatterns = JSON.parse(data.postalPatterns);
         } catch {
-          console.error('Failed to parse postalPatterns:', data.postalPatterns);
+          logger.error('Failed to parse postalPatterns:', data.postalPatterns);
         }
       }
     }
@@ -54,7 +55,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
         try {
           tiers = JSON.parse(data.tiers);
         } catch {
-          console.error('Failed to parse tiers:', data.tiers);
+          logger.error('Failed to parse tiers:', data.tiers);
         }
       }
     }
@@ -107,7 +108,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
     }
   ): Promise<ShippingZone> {
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(storeId),
+      storeId: identifierStringToDocumentBytes(storeId),
       name: data.name,
       rateType: data.rateType
     };
@@ -147,7 +148,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
     }
 
     const documentData: Record<string, unknown> = {
-      storeId: stringToIdentifierBytes(storeId),
+      storeId: identifierStringToDocumentBytes(storeId),
       name: data.name ?? existing.name,
       rateType: data.rateType ?? existing.rateType
     };
@@ -212,7 +213,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
           return true;
         }
       } catch {
-        console.error('Invalid postal pattern:', pattern);
+        logger.error('Invalid postal pattern:', pattern);
       }
     }
 
@@ -283,7 +284,7 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
       const regex = new RegExp(`^(${pattern})$`, 'i');
       return regex.test(country);
     } catch {
-      console.error('Invalid country pattern:', pattern);
+      logger.error('Invalid country pattern:', pattern);
       return false;
     }
   }

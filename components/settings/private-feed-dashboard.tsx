@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -121,7 +122,7 @@ export function PrivateFeedDashboard() {
 
         setPrivatePostCount(privatePosts.length)
       } catch (err) {
-        console.error('Failed to count private posts:', err)
+        logger.error('Failed to count private posts:', err)
         if (currentRequestId !== requestIdRef.current) return
         setPrivatePostCount(0)
       }
@@ -174,7 +175,7 @@ export function PrivateFeedDashboard() {
       setRecentActivity(activity.slice(0, 5))
 
     } catch (error) {
-      console.error('Error loading dashboard data:', error)
+      logger.error('Error loading dashboard data:', error)
     } finally {
       // Only update loading state if this is still the current request
       if (currentRequestId === requestIdRef.current) {
@@ -184,7 +185,7 @@ export function PrivateFeedDashboard() {
   }, [user?.identityId])
 
   useEffect(() => {
-    loadDashboardData().catch(err => console.error('Failed to load dashboard:', err))
+    loadDashboardData().catch(err => logger.error('Failed to load dashboard:', err))
   }, [loadDashboardData, refreshKey])
 
   // Calculate epoch usage percentage with clamping to avoid NaN/overflow

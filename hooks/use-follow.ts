@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
@@ -70,7 +71,7 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
       }
       setIsFollowing(following)
     } catch (error) {
-      console.error('useFollow: Error checking follow status:', error)
+      logger.error('useFollow: Error checking follow status:', error)
     } finally {
       setIsLoading(false)
     }
@@ -121,7 +122,7 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
       if (cacheKey) {
         setFollowStatus(cacheKey, wasFollowing)
       }
-      console.error('useFollow: Error toggling follow:', error)
+      logger.error('useFollow: Error toggling follow:', error)
       toast.error('Failed to update follow status')
     } finally {
       setIsLoading(false)

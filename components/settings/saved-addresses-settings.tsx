@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { MapPinIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -51,7 +52,7 @@ export function SavedAddressesSettings() {
       const loadedAddresses = await savedAddressService.getDecryptedAddresses(user.identityId, privKey)
       setAddresses(loadedAddresses)
     } catch (error) {
-      console.error('Failed to load saved addresses:', error)
+      logger.error('Failed to load saved addresses:', error)
       setAddresses([])
     } finally {
       setIsLoading(false)
@@ -59,7 +60,7 @@ export function SavedAddressesSettings() {
   }, [sdkReady, user?.identityId])
 
   useEffect(() => {
-    loadAddresses().catch(console.error)
+    loadAddresses().catch((error) => logger.error(error))
   }, [loadAddresses])
 
   const handleAdd = async (address: ShippingAddress, contact: BuyerContact, label: string) => {

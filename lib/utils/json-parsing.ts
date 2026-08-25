@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Shared JSON parsing utilities for document services
  */
@@ -13,7 +14,7 @@ export function parseJsonArray<T>(value: unknown, fieldName: string): T[] | unde
     try {
       return JSON.parse(value) as T[]
     } catch {
-      console.error(`Failed to parse ${fieldName}:`, value)
+      logger.error(`Failed to parse ${fieldName}:`, value)
     }
   }
   return undefined
@@ -30,7 +31,7 @@ export function parseJsonObject<T>(value: unknown, fieldName: string): T | undef
     try {
       return JSON.parse(value) as T
     } catch {
-      console.error(`Failed to parse ${fieldName}:`, value)
+      logger.error(`Failed to parse ${fieldName}:`, value)
     }
   }
   return undefined

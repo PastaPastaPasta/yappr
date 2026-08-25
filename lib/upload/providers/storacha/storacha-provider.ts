@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 /**
  * Storacha Upload Provider
  *
@@ -155,7 +156,7 @@ export class StorachaProvider implements UploadProvider {
       // Login with email - this sends verification email and waits for click
       let account: Account
       try {
-        console.log('[Storacha] Starting login for:', email)
+        logger.info('[Storacha] Starting login for:', email)
         account = await Promise.race([
           this.client.login(email as `${string}@${string}`, { signal }),
           new Promise<never>((_, reject) =>
@@ -165,11 +166,11 @@ export class StorachaProvider implements UploadProvider {
             )
           )
         ])
-        console.log('[Storacha] Login completed successfully')
+        logger.info('[Storacha] Login completed successfully')
       } catch (error) {
-        console.error('[Storacha] Login error:', error)
-        console.error('[Storacha] Error type:', typeof error)
-        console.error('[Storacha] Error constructor:', error?.constructor?.name)
+        logger.error('[Storacha] Login error:', error)
+        logger.error('[Storacha] Error type:', typeof error)
+        logger.error('[Storacha] Error constructor:', error?.constructor?.name)
         if (error instanceof UploadException) {
           throw error
         }
@@ -182,13 +183,13 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Wait for plan - user needs to select a plan on console.storacha.network
-      console.log('[Storacha] Waiting for plan selection...')
+      logger.info('[Storacha] Waiting for plan selection...')
       this.status = 'awaiting_plan'
       try {
         await account.plan.wait()
-        console.log('[Storacha] Plan confirmed')
+        logger.info('[Storacha] Plan confirmed')
       } catch (error) {
-        console.warn('[Storacha] Plan wait failed:', error)
+        logger.warn('[Storacha] Plan wait failed:', error)
         throw new UploadException(
           UploadErrorCode.CONNECTION_FAILED,
           'Failed to confirm plan. Please select a plan at console.storacha.network',
@@ -197,9 +198,9 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Check for existing spaces or create new one
-      console.log('[Storacha] Checking for existing spaces...')
+      logger.info('[Storacha] Checking for existing spaces...')
       const spaces = this.client.spaces()
-      console.log('[Storacha] Found spaces:', spaces.length)
+      logger.info('[Storacha] Found spaces:', spaces.length)
       const space = spaces.find(s => s.name === SPACE_NAME)
       let spaceDid: `did:key:${string}`
 
@@ -220,17 +221,17 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Set as current space
-      console.log('[Storacha] Setting current space:', spaceDid)
+      logger.info('[Storacha] Setting current space:', spaceDid)
       await this.client.setCurrentSpace(spaceDid)
 
       // Export and store credentials
-      console.log('[Storacha] Saving credentials...')
+      logger.info('[Storacha] Saving credentials...')
       await this.saveCredentials(email, spaceDid)
-      console.log('[Storacha] Credentials saved')
+      logger.info('[Storacha] Credentials saved')
 
       this.connectedEmail = email
       this.status = 'connected'
-      console.log('[Storacha] Setup complete, status:', this.status)
+      logger.info('[Storacha] Setup complete, status:', this.status)
     } catch (error) {
       this.status = 'error'
       this.client = null
@@ -316,7 +317,7 @@ export class StorachaProvider implements UploadProvider {
       const jsonStr = JSON.stringify(exported, jsonReplacer)
       const agentDataB64 = btoa(jsonStr)
 
-      console.log('[Storacha] Credential sizes:', {
+      logger.info('[Storacha] Credential sizes:', {
         jsonLength: jsonStr.length,
         base64Length: agentDataB64.length,
         delegationsCount: Array.isArray(exported.delegations)
@@ -443,7 +444,7 @@ export class StorachaProvider implements UploadProvider {
         onShardStored: (meta) => {
           // Approximate progress based on shards
           // This is a rough estimate since we don't know total shards upfront
-          console.log('Shard stored:', meta.cid.toString())
+          logger.info('Shard stored:', meta.cid.toString())
           options?.onProgress?.(50)
         }
       })

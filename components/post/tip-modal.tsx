@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
@@ -29,7 +30,7 @@ type KeySource = 'prefilled' | 'manual' | null
 
 export function TipModal() {
   const { isOpen, post, recipient, close } = useTipModal()
-  const { user, refreshBalance } = useAuth()
+  const { user, refreshBalance, mergeSecretsIntoAuthVault } = useAuth()
 
   // Derive recipient info from either post.author or direct recipient
   const recipientInfo = useMemo(() => {
@@ -201,7 +202,7 @@ export function TipModal() {
         .then(b => setBalance(b.confirmed))
         .catch(() => {})
       // Update global balance in auth context (persists to localStorage)
-      refreshBalance().catch(err => console.error('Failed to refresh balance:', err))
+      refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
 
       // If key was manually entered and not already saved, offer to save
       if (keySource === 'manual' && usedTransferKeyRef.current && !hasTransferKey(user.identityId)) {
@@ -229,17 +230,29 @@ export function TipModal() {
   }
 
   // Handle saving the transfer key for future use
-  const handleSaveKey = () => {
+  const handleSaveKey = async () => {
     if (!user || !usedTransferKeyRef.current) {
       setState('success')
       return
     }
 
-    // Store the key locally and go to success
+    let normalizedTransferKey: string | null = null
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
+      normalizedTransferKey = getTransferKey(user.identityId)
     } catch (err) {
-      console.error('Failed to store transfer key:', err)
+      logger.error('Failed to store transfer key:', err)
+      setError('Failed to save transfer key')
+      setState('error')
+      return
+    }
+
+    if (normalizedTransferKey) {
+      try {
+        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
+      } catch (err) {
+        logger.error('Failed to merge transfer key into auth vault:', err)
+      }
     }
     usedTransferKeyRef.current = null
     setState('success')

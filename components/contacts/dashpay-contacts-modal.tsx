@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, UserGroupIcon } from '@heroicons/react/24/outline'
@@ -49,7 +50,7 @@ export function DashPayContactsModal() {
   // Load contacts when modal opens
   useEffect(() => {
     if (isOpen && user) {
-      loadContacts().catch(err => console.error('Failed to load contacts:', err))
+      loadContacts().catch(err => logger.error('Failed to load contacts:', err))
     }
   }, [isOpen, user, loadContacts])
 
@@ -92,7 +93,7 @@ export function DashPayContactsModal() {
           setFollowComplete(contact.identityId)
         }
       } catch (err) {
-        console.error('Failed to follow:', contact.identityId, err)
+        logger.error('Failed to follow:', contact.identityId, err)
       }
     }
 

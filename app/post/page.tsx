@@ -130,7 +130,6 @@ function PostDetailContent() {
                     />
                     <PostCard
                       post={chainPost}
-                      hideReplyTo
                     />
                   </div>
                 ))}
@@ -139,7 +138,7 @@ function PostDetailContent() {
 
             {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} enrichment={postEnrichment} hideReplyTo />
+              <PostCard post={post} enrichment={postEnrichment} />
             </div>
 
             {user ? (

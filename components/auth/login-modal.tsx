@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { logger } from '@/lib/logger';
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Eye, EyeOff } from 'lucide-react'
+import { X, Eye, EyeOff, KeyRound, QrCode } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -13,8 +15,11 @@ import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
+import { authVaultService } from '@/lib/services/auth-vault-service'
 import { isLikelyWif } from '@/lib/crypto/wif'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
+import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
+import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 
 // Check if input looks like an Identity ID (base58, ~44 chars)
 function isLikelyIdentityId(input: string): boolean {
@@ -54,6 +59,8 @@ export function LoginModal() {
   const [showCredential, setShowCredential] = useState(false)
   const [detectedCredentialType, setDetectedCredentialType] = useState<CredentialType>(null)
   const [hasOnchainBackup, setHasOnchainBackup] = useState<boolean | null>(null)
+  const [hasPasskeyAccess, setHasPasskeyAccess] = useState(false)
+  const [passkeySupportMessage, setPasskeySupportMessage] = useState<string | null>(null)
 
   // Key validation states
   const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle')
@@ -62,10 +69,28 @@ export function LoginModal() {
   // Form states
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [rememberMe, setRememberMe] = useState(true)
+  const [isShaking, setIsShaking] = useState(false)
 
-  const { login, loginWithPassword } = useAuth()
+  const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setErrorWithShake = (msg: string | null) => {
+    setError(msg)
+    if (msg) {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+      setIsShaking(true)
+      shakeTimerRef.current = setTimeout(() => setIsShaking(false), 500)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+    }
+  }, [])
+
+  const { login, loginWithPassword, loginWithPasskey } = useAuth()
   const openBackupModal = useKeyBackupModal((state) => state.open)
+  const openKeyExchangeModal = useKeyExchangeModal((state) => state.open)
 
   // Reset form when modal closes
   useEffect(() => {
@@ -81,6 +106,8 @@ export function LoginModal() {
       setKeyValidationResult(null)
       setDetectedCredentialType(null)
       setHasOnchainBackup(null)
+      setHasPasskeyAccess(false)
+      setPasskeySupportMessage(null)
     }
   }, [isOpen])
 
@@ -98,6 +125,8 @@ export function LoginModal() {
       setLookupError(null)
       setResolvedIdentity(null)
       setHasOnchainBackup(null)
+      setHasPasskeyAccess(false)
+      setPasskeySupportMessage(null)
       setKeyValidationStatus('idle')
       setKeyValidationResult(null)
 
@@ -135,15 +164,61 @@ export function LoginModal() {
           dpnsUsername
         })
 
-        if (encryptedKeyService.isConfigured()) {
-          encryptedKeyService.hasBackup(identityId)
-            .then(hasBackup => setHasOnchainBackup(hasBackup))
-            .catch(() => setHasOnchainBackup(false))
-        } else {
+        // Check unified auth vault first.
+        try {
+          if (authVaultService.isConfigured()) {
+            const status = await authVaultService.getStatus(identityId)
+            setHasOnchainBackup(status.hasPasswordAccess)
+            setHasPasskeyAccess(status.passkeyCount > 0)
+
+            if (status.passkeyCount > 0) {
+              const support = await getPasskeyPrfSupport()
+              if (!support.likelyPrfCapable && support.blockedReason) {
+                setPasskeySupportMessage(support.blockedReason)
+              } else if (support.platformHint === 'apple') {
+                setPasskeySupportMessage('Platform passkeys are preferred here. External security-key PRF may not work on iPhone or iPad.')
+              } else {
+                setPasskeySupportMessage(null)
+              }
+            }
+
+            if (status.hasPasswordAccess || status.passkeyCount > 0) {
+              return
+            }
+          }
+        } catch (err) {
+          logger.error('Auth vault lookup failed during login identity resolution:', err)
+          if (authVaultService.isConfigured()) {
+            setHasOnchainBackup(false)
+            return
+          }
+        }
+
+        // Check legacy vault contract next.
+        try {
+          const { vaultService } = await import('@/lib/services/vault-service')
+          if (vaultService.isConfigured()) {
+            const hasVaultBackup = await vaultService.hasPasswordBackup(identityId)
+            if (hasVaultBackup) {
+              setHasOnchainBackup(true)
+              return
+            }
+          }
+        } catch {
+          // Vault check failed — continue to legacy fallback
+        }
+        try {
+          if (encryptedKeyService.isConfigured()) {
+            const hasBackup = await encryptedKeyService.hasBackup(identityId)
+            setHasOnchainBackup(hasBackup)
+          } else {
+            setHasOnchainBackup(false)
+          }
+        } catch {
           setHasOnchainBackup(false)
         }
       } catch (err) {
-        console.error('Identity lookup error:', err)
+        logger.error('Identity lookup error:', err)
         setLookupError('Failed to lookup identity')
       } finally {
         setIsLookingUp(false)
@@ -189,7 +264,7 @@ export function LoginModal() {
         setKeyValidationResult(result)
         setKeyValidationStatus(result.isValid ? 'valid' : 'invalid')
       } catch (err) {
-        console.error('Key validation error:', err)
+        logger.error('Key validation error:', err)
         setKeyValidationStatus('invalid')
         setKeyValidationResult({
           isValid: false,
@@ -218,28 +293,59 @@ export function LoginModal() {
 
       if (detectedCredentialType === 'key') {
         if (keyValidationStatus !== 'valid') {
-          setError('Private key does not match this identity')
+          setErrorWithShake('Private key does not match this identity')
           setIsLoading(false)
           return
         }
 
-        await login(identityId, credential, { rememberMe })
+        await login(identityId, credential)
 
-        if (encryptedKeyService.isConfigured() && !sessionStorage.getItem('yappr_backup_prompt_shown')) {
-          const hasBackup = await encryptedKeyService.hasBackup(identityId)
-          if (!hasBackup) {
+        if (!sessionStorage.getItem('yappr_backup_prompt_shown')) {
+          let unifiedStatus = null
+          let authVaultUnavailable = false
+
+          if (authVaultService.isConfigured()) {
+            try {
+              unifiedStatus = await authVaultService.getStatus(identityId)
+            } catch (statusError) {
+              logger.error('Auth vault status lookup failed after key login:', statusError)
+              authVaultUnavailable = true
+            }
+          }
+
+          const hasBackup = authVaultUnavailable
+            ? false
+            : unifiedStatus
+              ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
+              : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
+          if (!authVaultUnavailable && !hasBackup) {
             sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
-            openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', credential, false)
+            openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', false)
           }
         }
       } else {
         const username = resolvedIdentity?.dpnsUsername || identityInput
-        await loginWithPassword(username, credential, rememberMe)
+        await loginWithPassword(username, credential)
       }
 
       close()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to login')
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handlePasskeySignIn = async () => {
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      const passkeyLoginTarget = identityInput.trim() || undefined
+      await loginWithPasskey(passkeyLoginTarget)
+      close()
+    } catch (err) {
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login with passkey')
     } finally {
       setIsLoading(false)
     }
@@ -264,6 +370,13 @@ export function LoginModal() {
 
     return false
   })()
+
+  const passkeyDisabledForIdentity = Boolean(resolvedIdentity && !hasPasskeyAccess)
+  const passkeyHint = passkeyDisabledForIdentity
+    ? (passkeySupportMessage
+        ? `${passkeySupportMessage} No passkey is enrolled for this identity yet.`
+        : 'No passkey is enrolled for this identity yet.')
+    : passkeySupportMessage
 
   return (
     <AnimatePresence>
@@ -328,15 +441,21 @@ export function LoginModal() {
                         </svg>
                       )}
                       {!isLookingUp && lookupError && (
-                        <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button type="button" aria-label={lookupError} className="flex items-center text-red-500 cursor-help">
+                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{lookupError}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                   </div>
-                  {lookupError && (
-                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{lookupError}</p>
-                  )}
                 </div>
 
                 {/* Password or Private Key Input */}
@@ -344,17 +463,57 @@ export function LoginModal() {
                   <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     {hasOnchainBackup ? 'Password or Private Key' : 'Private Key (High or Critical)'}
                   </label>
-                  <div className="relative">
+                  <motion.div
+                    className="relative"
+                    animate={isShaking ? { x: [0, -8, 8, -5, 5, -2, 2, 0] } : { x: 0 }}
+                    transition={{ duration: 0.4 }}
+                  >
                     <input
                       id="loginCredential"
                       type={showCredential ? 'text' : 'password'}
                       value={credential}
                       onChange={(e) => setCredential(e.target.value)}
                       placeholder="Enter your password or private key..."
-                      className="w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+                      className={`w-full px-3 py-2 pr-20 bg-gray-50 dark:bg-gray-950 border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors ${
+                        error
+                          ? 'border-red-400 dark:border-red-500'
+                          : isLoading
+                          ? 'border-yappr-400 dark:border-yappr-500'
+                          : 'border-gray-200 dark:border-gray-800'
+                      }`}
                       required
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
+                      {isLoading ? (
+                        <Spinner size="sm" className="text-yappr-400" />
+                      ) : (
+                        <>
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'validating' && (
+                            <Spinner size="sm" className="text-gray-400" />
+                          )}
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'valid' && (
+                            <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                          {detectedCredentialType === 'key' && keyValidationStatus === 'invalid' && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" aria-label={keyValidationResult?.error ?? 'Invalid private key'} className="flex items-center text-red-500 cursor-help">
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {keyValidationResult?.error || 'Invalid private key'}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => setShowCredential(!showCredential)}
@@ -363,84 +522,12 @@ export function LoginModal() {
                       >
                         {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                       </button>
-                      {detectedCredentialType === 'key' && keyValidationStatus === 'validating' && (
-                        <Spinner size="sm" className="text-gray-400" />
-                      )}
-                      {detectedCredentialType === 'key' && keyValidationStatus === 'valid' && (
-                        <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      )}
-                      {detectedCredentialType === 'key' && keyValidationStatus === 'invalid' && (
-                        <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      )}
                     </div>
-                  </div>
-                  {credential && detectedCredentialType && (
-                    <p className={`mt-1 text-sm ${
-                      (detectedCredentialType === 'key' && keyValidationStatus === 'invalid') ||
-                      (detectedCredentialType === 'password' && resolvedIdentity && !hasOnchainBackup)
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-gray-500 dark:text-gray-400'
-                    }`}>
-                      {detectedCredentialType === 'key' ? (
-                        !resolvedIdentity
-                          ? 'Detected as private key - waiting for identity...'
-                          : keyValidationStatus === 'valid'
-                          ? 'Valid private key for this identity'
-                          : keyValidationStatus === 'validating'
-                          ? 'Validating key...'
-                          : keyValidationStatus === 'invalid' && keyValidationResult?.error
-                          ? keyValidationResult.error
-                          : 'Detected as private key'
-                      ) : !resolvedIdentity ? (
-                        credential.length < 16
-                          ? `Detected as password (${credential.length}/16 characters) - waiting for identity...`
-                          : 'Detected as password - waiting for identity...'
-                      ) : hasOnchainBackup ? (
-                        credential.length < 16
-                          ? `Password must be at least 16 characters (${credential.length}/16)`
-                          : 'Will use as backup password'
-                      ) : (
-                        'No backup found - please enter your private key'
-                      )}
-                    </p>
-                  )}
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    🔒 Your keys never leave this device. All signing happens locally.
+                  </motion.div>
+                  <p className={`mt-2 text-xs transition-colors ${error ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                    {error ? `⚠ ${error}` : '🔒 Your keys never leave this device. All signing happens locally.'}
                   </p>
                 </div>
-
-                {/* Remember Me Toggle */}
-                <div className="flex items-center justify-between">
-                  <label htmlFor="loginRememberMe" className="text-sm text-gray-600 dark:text-gray-400">
-                    Stay signed in across tabs
-                  </label>
-                  <button
-                    id="loginRememberMe"
-                    type="button"
-                    role="switch"
-                    aria-checked={rememberMe}
-                    onClick={() => setRememberMe(!rememberMe)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
-                      rememberMe ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-700'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        rememberMe ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {error && (
-                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-600 rounded-lg p-3">
-                    <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-                  </div>
-                )}
 
                 <Button
                   type="submit"
@@ -457,6 +544,37 @@ export function LoginModal() {
                     'Sign In'
                   )}
                 </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isLoading || passkeyDisabledForIdentity}
+                  className="w-full"
+                  size="lg"
+                  onClick={handlePasskeySignIn}
+                >
+                  <KeyRound className="w-4 h-4 mr-2" />
+                  Sign In with Passkey
+                </Button>
+
+                {passkeyHint && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {passkeyHint}
+                  </p>
+                )}
+
+                {/* Wallet Login Option - available immediately without identity */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    close()
+                    openKeyExchangeModal()
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Login with Wallet (QR)
+                </button>
 
                 {/* Onboarding Gateway */}
                 <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">

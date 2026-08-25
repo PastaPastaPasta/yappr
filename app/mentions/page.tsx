@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -78,7 +79,7 @@ function MentionsPageContent() {
               }
             }
           } catch (error) {
-            console.error('Failed to fetch post:', postId, error)
+            logger.error('Failed to fetch post:', postId, error)
           }
         }
 
@@ -98,14 +99,14 @@ function MentionsPageContent() {
         setPosts(enrichedPosts)
         setMentionCount(enrichedPosts.length)
       } catch (error) {
-        console.error('Failed to load mentioned posts:', error)
+        logger.error('Failed to load mentioned posts:', error)
         setPosts([])
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadMentionedPosts().catch(err => console.error('Failed to load mentioned posts:', err))
+    loadMentionedPosts().catch(err => logger.error('Failed to load mentioned posts:', err))
   }, [targetUserId, currentUser?.identityId])
 
   // If not logged in and no user specified

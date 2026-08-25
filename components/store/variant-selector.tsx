@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { storeItemService } from '@/lib/services/store-item-service'
-import type { StoreItem, VariantAxis } from '@/lib/types'
+import type { StoreItem } from '@/lib/types'
 
 interface VariantSelectorProps {
   item: StoreItem
