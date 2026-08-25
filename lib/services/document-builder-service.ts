@@ -11,11 +11,51 @@
  * IMPORTANT: We import the Document class from @dashevo/evo-sdk which re-exports
  * from the shared @dashevo/wasm-sdk module. By calling getEvoSdk() first, we ensure
  * the WASM module is initialized before creating any Document objects.
+ *
+ * BINARY FIELDS: documents are assembled with `Document.fromObject`, never with
+ * `new Document({ properties })`. The constructor converts its `properties` through JSON
+ * (`Uint8Array` → array of numbers), and since wasm-sdk 4.1 those arrays stay
+ * `Value::Array` of `Value::U64` instead of collapsing back into `Value::Bytes`. Drive then
+ * rejects the write with "structure error: not an array of bytes", which breaks every
+ * document type with a byteArray/identifier field. `fromObject` uses the byte-preserving
+ * converter, so `Uint8Array` properties survive as `Value::Bytes`.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
-import { Document } from '@dashevo/evo-sdk';
+import { documentToPlainObject, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { Document, PlatformVersion } from '@dashevo/evo-sdk';
+import type { DocumentObject } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
+
+/**
+ * Assemble the canonical tagged object shape `Document.fromObject` expects.
+ *
+ * `$formatVersion` is mandatory on wasm-sdk 4.1+ and ignored by 4.0, and the identifier
+ * fields are passed as raw bytes because that is the one form both accept — 4.0 rejects
+ * base58 strings, and every version rejects `Identifier` instances even though the
+ * generated `DocumentObject` type asks for them (hence the cast below).
+ */
+function toCanonicalDocumentObject(fields: {
+  id: string;
+  ownerId: string;
+  contractId: string;
+  documentTypeName: string;
+  revision: number;
+  entropy?: Uint8Array;
+  data: Record<string, unknown>;
+}): DocumentObject {
+  const canonical: Record<string, unknown> = {
+    $formatVersion: '0',
+    $id: requireDocumentIdentifierBytes(fields.id, 'document id'),
+    $ownerId: requireDocumentIdentifierBytes(fields.ownerId, 'ownerId'),
+    $dataContractId: requireDocumentIdentifierBytes(fields.contractId, 'dataContractId'),
+    $type: fields.documentTypeName,
+    $revision: BigInt(fields.revision),
+    ...(fields.entropy ? { $entropy: fields.entropy } : {}),
+    ...fields.data,
+  };
+
+  return canonical as unknown as DocumentObject;
+}
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -67,18 +107,25 @@ class DocumentBuilderService {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // v3.1: Document constructor takes a single DocumentOptions object
-    const document = new Document({
-      properties: data,
-      documentTypeName,
-      dataContractId: contractId,
-      ownerId,
-      revision: BigInt(1),
-      id: options?.id,
-      entropy: options?.entropy,
-    });
+    // The constructor generated missing entropy and derived the id from it; `fromObject`
+    // takes both as given, so fill them in the same way here.
+    const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
+    const id = options?.id ?? bs58.encode(
+      Document.generateId(documentTypeName, ownerId, contractId, entropy)
+    );
 
-    return document;
+    return Document.fromObject(
+      toCanonicalDocumentObject({
+        id,
+        ownerId,
+        contractId,
+        documentTypeName,
+        revision: 1,
+        entropy,
+        data,
+      }),
+      PlatformVersion.current()
+    );
   }
 
   /**
@@ -106,17 +153,18 @@ class DocumentBuilderService {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // v3.1: Document constructor takes a single DocumentOptions object
-    const document = new Document({
-      properties: data,
-      documentTypeName,
-      dataContractId: contractId,
-      ownerId,
-      revision: BigInt(newRevision),
-      id: documentId,
-    });
-
-    return document;
+    // Replacements keep the existing id and carry no entropy — only creates need it.
+    return Document.fromObject(
+      toCanonicalDocumentObject({
+        id: documentId,
+        ownerId,
+        contractId,
+        documentTypeName,
+        revision: newRevision,
+        data,
+      }),
+      PlatformVersion.current()
+    );
   }
 
   /**
