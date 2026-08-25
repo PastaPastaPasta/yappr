@@ -39,6 +39,7 @@ import { useAppStore } from '@/lib/store'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { YappBalanceItem } from '@/components/token/yapp-balance-item'
 import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -308,8 +309,13 @@ export function Sidebar() {
                       onClick={async (e) => {
                         e.stopPropagation()
                         setIsRefreshingBalance(true)
-                        await refreshBalance()
-                        setIsRefreshingBalance(false)
+                        try {
+                          await refreshBalance()
+                        } catch (error) {
+                          logger.error('Failed to refresh balance:', error)
+                        } finally {
+                          setIsRefreshingBalance(false)
+                        }
                       }}
                       disabled={isRefreshingBalance}
                       className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -320,7 +326,8 @@ export function Sidebar() {
                   </div>
                 </DropdownMenu.Item>
                 <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />
-                <DropdownMenu.Item 
+                <YappBalanceItem />
+                <DropdownMenu.Item
                   className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
                   onClick={logout}
                 >

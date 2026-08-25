@@ -86,6 +86,10 @@ function EngagementsPageContent() {
   const repostsState = useAsyncState<EngagementUser[]>(null)
   const likesState = useAsyncState<EngagementUser[]>(null)
 
+  // O(1) count-tree tab counts, loaded once independent of which tab's full
+  // list is active - avoids paginating a full list just to show a number.
+  const [tabCounts, setTabCounts] = useState<Record<TabType, number> | null>(null)
+
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
 
   // Load likes
@@ -210,6 +214,26 @@ function EngagementsPageContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, postId])
+
+  // Load tab-bar counts once, in parallel, independent of which tab is active.
+  useEffect(() => {
+    if (!postId) return
+
+    let cancelled = false
+
+    Promise.all([
+      postService.countQuotes(postId),
+      repostService.countReposts(postId),
+      likeService.countLikes(postId),
+    ]).then(([quotes, reposts, likes]) => {
+      if (cancelled) return
+      setTabCounts({ quotes, reposts, likes })
+    }).catch(err => logger.error('Failed to load engagement tab counts:', err))
+
+    return () => {
+      cancelled = true
+    }
+  }, [postId])
 
   const handleFollow = async (userId: string) => {
     const authedUser = requireAuth('follow')
@@ -351,6 +375,11 @@ function EngagementsPageContent() {
                   )}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {tabCounts !== null && tabCounts[tab] > 0 && (
+                    <span className="ml-1 text-gray-500 dark:text-gray-400 font-normal">
+                      {tabCounts[tab]}
+                    </span>
+                  )}
                   {activeTab === tab && (
                     <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
                   )}

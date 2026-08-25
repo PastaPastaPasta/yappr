@@ -112,6 +112,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     likes: (doc.likes as number | undefined) || 0,
     replies: (doc.replies as number | undefined) || 0,
     reposts: (doc.reposts as number | undefined) || 0,
+    quotes: (doc.quotes as number | undefined) || 0,
     views: (doc.views as number | undefined) || 0,
     liked: (doc.liked as boolean | undefined) || false,
     reposted: (doc.reposted as boolean | undefined) || false,

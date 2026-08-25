@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { documentCount, paginateFetchAll } from './pagination-utils';
 
 export interface PostHashtagDocument {
   $id: string;
@@ -169,8 +169,8 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   }
 
   /**
-   * Get the count of posts with a specific hashtag.
-   * Paginates through all results for accurate count.
+   * Get the count of posts with a specific hashtag via the `byHashtag`
+   * count tree (O(1)).
    */
   async getPostCountByHashtag(hashtag: string): Promise<number> {
     try {
@@ -179,20 +179,11 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       if (!normalizedTag) return 0;
 
-      const { count } = await paginateCount(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: this.documentType,
-          where: [
-            ['hashtag', '==', normalizedTag],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']]
-        })
-      );
-
-      return count;
+      return await documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [['hashtag', '==', normalizedTag]],
+      });
     } catch (error) {
       logger.error('Error getting post count by hashtag:', error);
       return 0;

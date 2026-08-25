@@ -11,6 +11,7 @@ import { MentionRecoveryModal } from '@/components/post/mention-recovery-modal'
 import { DeleteConfirmationModal } from '@/components/post/delete-confirmation-modal'
 import { DashPayContactsModal } from '@/components/contacts/dashpay-contacts-modal'
 import { EncryptionKeyModal } from '@/components/auth/encryption-key-modal'
+import { BuyYappModal } from '@/components/token/buy-yapp-modal'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -26,6 +27,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <UsernameModalProvider />
           <KeyBackupModal />
           <TipModal />
+          <BuyYappModal />
           <HashtagRecoveryModal />
           <MentionRecoveryModal />
           <DeleteConfirmationModal />

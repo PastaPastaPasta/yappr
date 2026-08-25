@@ -235,8 +235,10 @@ class IdentityService {
       return balanceInfo;
     } catch (error) {
       logger.error('Error fetching balance:', error);
-      // Return zero balance on error
-      return { confirmed: 0, total: 0 };
+      // Rethrow so callers can tell "balance unknown" from a real zero —
+      // returning 0 here made transient DAPI failures block valid purchases
+      // ("Not enough DASH credits") and report "You have 0 DASH" on tips.
+      throw error;
     }
   }
 

@@ -6,6 +6,7 @@ import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
+import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION } from '../constants';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
 import {
@@ -15,6 +16,7 @@ import {
   StateTransition,
   PrivateKey,
   Identifier,
+  TokenPaymentInfo,
 } from '@dashevo/evo-sdk';
 
 
@@ -289,6 +291,21 @@ class StateTransitionService {
    * recognizes it's already processed (replay). No new nonce = no
    * double post, enforced at the protocol level.
    */
+  /**
+   * Resolve the automatic token-payment agreement for a token-paid document type
+   * on the v2 social contract (post/reply/like/repost). Returns undefined for
+   * free document types or documents on other contracts.
+   */
+  private resolveTokenPayment(
+    contractId: string,
+    documentType: string
+  ): { tokenContractPosition?: number; maximumTokenCost: number } | undefined {
+    if (contractId !== YAPPR_CONTRACT_ID) return undefined;
+    const amount = (YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
+    if (!amount) return undefined;
+    return { maximumTokenCost: amount };
+  }
+
   async createDocument(
     contractId: string,
     documentType: string,
@@ -297,6 +314,16 @@ class StateTransitionService {
     options?: {
       documentId?: string;
       entropy?: Uint8Array;
+      /**
+       * Token payment agreement for document types that declare a tokenCost.create
+       * (e.g. post/reply/like/repost). `maximumTokenCost` is the cap the user agrees
+       * to spend — set it to the contract's declared amount to guard against price
+       * changes. Token position defaults to 0 (the YAPP token).
+       */
+      tokenPayment?: {
+        tokenContractPosition?: number;
+        maximumTokenCost: number;
+      };
     }
   ): Promise<StateTransitionResult> {
     try {
@@ -406,10 +433,27 @@ class StateTransitionService {
       const newNonce = sequenceNumber + BigInt(1);
       logger.info(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
+      // Build the token payment agreement for token-paid document types
+      // (post/reply/like/repost on the v2 social contract). Callers may pass an
+      // explicit `options.tokenPayment`; otherwise we auto-attach based on the
+      // document type's declared tokenCost so every write path is covered. The
+      // signed bytes that include this are cached below, so the rebroadcast path
+      // above replays the same agreement verbatim.
+      const effectivePayment = options?.tokenPayment ?? this.resolveTokenPayment(contractId, documentType);
+      let tokenPaymentInfo: TokenPaymentInfo | undefined;
+      if (effectivePayment) {
+        tokenPaymentInfo = new TokenPaymentInfo({
+          tokenContractPosition: effectivePayment.tokenContractPosition ?? YAPP_TOKEN_POSITION,
+          maximumTokenCost: BigInt(effectivePayment.maximumTokenCost),
+        });
+        logger.info(`Attaching tokenPaymentInfo for ${documentType}: maxCost=${effectivePayment.maximumTokenCost}`);
+      }
+
       // v3.1: DocumentCreateTransition takes an options object
       const createTransition = new DocumentCreateTransition({
         document,
         identityContractNonce: newNonce,
+        ...(tokenPaymentInfo ? { tokenPaymentInfo } : {}),
       });
 
       // Wrap in a BatchTransition

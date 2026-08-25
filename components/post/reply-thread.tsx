@@ -18,6 +18,7 @@ function replyToPostLike(reply: Reply): Post {
     likes: reply.likes,
     reposts: reply.reposts,
     replies: reply.replies,
+    quotes: 0,
     views: reply.views,
     liked: reply.liked,
     reposted: reply.reposted,

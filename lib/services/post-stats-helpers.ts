@@ -34,10 +34,16 @@ export async function fetchPostStats(
       return replyService.countReplies(postId);
     };
 
-    const [likes, reposts, replies] = await Promise.all([
+    const countQuotes = async (): Promise<number> => {
+      const { postService } = await import('./post-service');
+      return postService.countQuotes(postId);
+    };
+
+    const [likes, reposts, replies, quotes] = await Promise.all([
       countLikes(),
       countReposts(),
       countReplies(),
+      countQuotes(),
     ]);
 
     const stats: PostStats = {
@@ -45,6 +51,7 @@ export async function fetchPostStats(
       likes,
       reposts,
       replies,
+      quotes,
       views: 0,
     };
 
@@ -56,7 +63,7 @@ export async function fetchPostStats(
     return stats;
   } catch (error) {
     logger.error('Error getting post stats:', error);
-    return { postId, likes: 0, reposts: 0, replies: 0, views: 0 };
+    return { postId, likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 };
   }
 }
 
@@ -109,18 +116,15 @@ export async function fetchBatchUserInteractions(
       import('./bookmark-service'),
     ]);
 
-    const [allLikesForPosts, allRepostsForPosts, userBookmarks] = await Promise.all([
-      likeService.getLikesByPostIds(postIds),
-      repostService.getRepostsByPostIds(postIds),
+    // Query only the CURRENT user's own likes/reposts (bounded by page size via
+    // the composite indexes) instead of fetching all users' likes capped at 100
+    // and filtering client-side — which could miss the user's own on busy pages.
+    const [likedPostIds, repostedPostIds, userBookmarks] = await Promise.all([
+      likeService.getUserLikedPostIds(currentUserId, postIds),
+      repostService.getUserRepostedPostIds(currentUserId, postIds),
       bookmarkService.getUserBookmarksForPosts(currentUserId, postIds),
     ]);
 
-    const likedPostIds = new Set(
-      allLikesForPosts.filter((like) => like.$ownerId === currentUserId).map((like) => like.postId)
-    );
-    const repostedPostIds = new Set(
-      allRepostsForPosts.filter((repost) => repost.$ownerId === currentUserId).map((repost) => repost.postId)
-    );
     const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
 
     postIds.forEach((postId) => {
@@ -141,7 +145,7 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
   const result = new Map<string, PostStats>();
 
   postIds.forEach((id) => {
-    result.set(id, { postId: id, likes: 0, reposts: 0, replies: 0, views: 0 });
+    result.set(id, { postId: id, likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 });
   });
 
   if (postIds.length === 0) {
@@ -149,31 +153,32 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
   }
 
   try {
-    const [{ likeService }, { repostService }, { replyService }] = await Promise.all([
+    const [{ likeService }, { repostService }, { replyService }, { postService }] = await Promise.all([
       import('./like-service'),
       import('./repost-service'),
       import('./reply-service'),
+      import('./post-service'),
     ]);
 
-    const [likes, reposts, replyCounts] = await Promise.all([
-      likeService.getLikesByPostIds(postIds),
-      repostService.getRepostsByPostIds(postIds),
-      replyService.countRepliesByParentIds(postIds),
+    // One grouped count-tree query per stat type (no 100-cap undercount the old
+    // batched `in`-queries had once a page collectively exceeded ~100
+    // engagements) instead of 3xN per-post reads; each transparently falls
+    // back to per-post reads if the grouped response doesn't decode as expected.
+    const [likeCounts, repostCounts, replyCounts, quoteCounts] = await Promise.all([
+      likeService.countLikesForPosts(postIds),
+      repostService.countRepostsForPosts(postIds),
+      replyService.countRepliesForPosts(postIds),
+      postService.countQuotesForPosts(postIds),
     ]);
 
-    for (const like of likes) {
-      const stats = result.get(like.postId);
-      if (stats) stats.likes++;
-    }
-
-    for (const repost of reposts) {
-      const stats = result.get(repost.postId);
-      if (stats) stats.reposts++;
-    }
-
-    replyCounts.forEach((count, postId) => {
-      const stats = result.get(postId);
-      if (stats) stats.replies = count;
+    postIds.forEach((id) => {
+      const stats = result.get(id);
+      if (stats) {
+        stats.likes = likeCounts.get(id) ?? 0;
+        stats.reposts = repostCounts.get(id) ?? 0;
+        stats.replies = replyCounts.get(id) ?? 0;
+        stats.quotes = quoteCounts.get(id) ?? 0;
+      }
     });
   } catch (error) {
     logger.error('Error getting batch post stats:', error);

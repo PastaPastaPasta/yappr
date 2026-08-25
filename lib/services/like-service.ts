@@ -2,7 +2,8 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
+import { isInsufficientTokenError } from '../error-utils';
 
 export interface LikeDocument {
   $id: string;
@@ -73,9 +74,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         documentData
       );
 
-      return result.success;
+      if (!result.success) {
+        throw new Error(result.error || 'Like failed');
+      }
+      return true;
     } catch (error) {
       logger.error('Error liking post:', error);
+      // Let the UI prompt to buy YAPP on insufficient-token failures.
+      if (isInsufficientTokenError(error)) throw error;
       return false;
     }
   }
@@ -171,43 +177,49 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   /**
    * Count likes for a post
    */
-  async countLikes(postId: string): Promise<number> {
-    // In a real implementation, this would be more efficient
-    const likes = await this.getPostLikes(postId);
-    return likes.length;
+  /**
+   * Which of the given posts the user has liked — queries only the user's OWN
+   * likes via the unique `postAndOwner` [postId, $ownerId] index, so the result
+   * is bounded by the number of posts (not total likes) and never undercounts.
+   */
+  async getUserLikedPostIds(userId: string, postIds: string[]): Promise<Set<string>> {
+    // like's `postAndOwner` index is [postId, $ownerId] → ownerFirst: false.
+    return queryOwnedPostIds({
+      getSdk: () => import('../services/evo-sdk-service').then(m => m.getEvoSdk()),
+      dataContractId: this.contractId,
+      documentTypeName: 'like',
+      userId,
+      postIds,
+      ownerFirst: false,
+      getPostId: (doc) => this.transformDocument(doc)?.postId,
+      errorLabel: 'Error fetching user liked post ids:',
+    });
   }
 
-  /**
-   * Get likes for multiple posts in a single batch query
-   * Uses 'in' operator for efficient querying
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  async getLikesByPostIds(postIds: string[]): Promise<LikeDocument[]> {
-    if (postIds.length === 0) return [];
-
+  async countLikes(postId: string): Promise<number> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-
-      // Use 'in' operator for batch query on postId
-      // Must include orderBy to match the postLikes index: [postId, $createdAt]
-      const response = await sdk.documents.query({
+      // O(1) count tree on the `byPost` index [postId].
+      return await documentCount(sdk, {
         dataContractId: this.contractId,
         documentTypeName: 'like',
-        where: [['postId', 'in', postIds]],
-        orderBy: [['postId', 'asc']],
-        limit: 100
+        where: [['postId', '==', postId]],
       });
-
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
     } catch (error) {
-      logger.error('Error getting likes batch:', error);
-      return [];
+      logger.error('Error counting likes:', error);
+      return 0;
     }
+  }
+
+  /** Like counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
+  async countLikesForPosts(postIds: string[]): Promise<Map<string, number>> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: 'like', groupField: 'postId' },
+      postIds,
+      (id) => this.countLikes(id)
+    );
   }
 
   /**

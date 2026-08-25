@@ -38,6 +38,7 @@ import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
+import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
@@ -118,7 +119,7 @@ export interface ProgressiveEnrichment {
   username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
   displayName: string | undefined
   avatarUrl: string | undefined
-  stats: { likes: number; reposts: number; replies: number; views: number } | undefined
+  stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined
   interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
   isBlocked: boolean | undefined
   isFollowing: boolean | undefined
@@ -165,6 +166,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const statsLikes = progressiveEnrichment?.stats?.likes ?? post.likes
   const statsReposts = progressiveEnrichment?.stats?.reposts ?? post.reposts
   const statsReplies = progressiveEnrichment?.stats?.replies ?? post.replies
+  const statsQuotes = progressiveEnrichment?.stats?.quotes ?? post.quotes
 
   // Interactions: use progressive enrichment > post data
   const initialLiked = progressiveEnrichment?.interactions?.liked ?? post.liked ?? false
@@ -262,6 +264,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [reposted, setReposted] = useState(initialReposted)
   const [reposts, setReposts] = useState(statsReposts)
   const [bookmarked, setBookmarked] = useState(initialBookmarked)
+  // The repost control shows reposts + quote-posts combined.
+  const totalReposts = reposts + statsQuotes
   const [showLikesModal, setShowLikesModal] = useState(false)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
@@ -364,7 +368,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       setLiked(wasLiked)
       setLikes(prevLikes)
       logger.error('Like error:', error)
-      toast.error('Failed to update like. Please try again.')
+      if (!handleInsufficientYapp(error, 'You need YAPP to like posts. Buy some to continue.')) {
+        toast.error('Failed to update like. Please try again.')
+      }
     } finally {
       setLikeLoading(false)
     }
@@ -397,7 +403,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       setReposted(wasReposted)
       setReposts(prevReposts)
       logger.error('Repost error:', error)
-      toast.error('Failed to update repost. Please try again.')
+      if (!handleInsufficientYapp(error, 'You need YAPP to repost. Buy some to continue.')) {
+        toast.error('Failed to update repost. Please try again.')
+      }
     } finally {
       setRepostLoading(false)
     }
@@ -515,6 +523,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         likes: statsLikes,
         reposts: statsReposts,
         replies: statsReplies,
+        quotes: statsQuotes,
         views: post.views
       },
       interactions: progressiveEnrichment?.interactions ?? {
@@ -805,7 +814,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       'text-sm transition-colors',
                       reposted ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500'
                     )}>
-                      {reposts > 0 && formatNumber(reposts)}
+                      {totalReposts > 0 && formatNumber(totalReposts)}
                     </span>
                   </button>
                 </DropdownMenu.Trigger>

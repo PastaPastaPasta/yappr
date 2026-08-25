@@ -3,7 +3,7 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { Post, PostQueryOptions } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
-import { paginateCount } from './pagination-utils';
+import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
@@ -17,8 +17,6 @@ export interface PostDocument {
   mediaUrl?: string;
   quotedPostId?: string;
   quotedPostOwnerId?: string;
-  firstMentionId?: string;
-  primaryHashtag?: string;
   language?: string;
   sensitive?: boolean;
   // Private feed fields
@@ -46,6 +44,7 @@ export interface PostStats {
   likes: number;
   reposts: number;
   replies: number;
+  quotes: number;
   views: number;
 }
 
@@ -110,6 +109,7 @@ class PostService extends BaseDocumentService<Post> {
       likes: 0,
       reposts: 0,
       replies: 0,
+      quotes: 0,
       views: 0,
       liked: false,
       reposted: false,
@@ -206,8 +206,6 @@ class PostService extends BaseDocumentService<Post> {
       mediaUrl?: string;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
-      firstMentionId?: string;
-      primaryHashtag?: string;
       language?: string;
       sensitive?: boolean;
       /** Encryption options for private posts */
@@ -261,8 +259,6 @@ class PostService extends BaseDocumentService<Post> {
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
-    if (options.firstMentionId) data.firstMentionId = options.firstMentionId;
-    if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     return this.create(ownerId, data);
@@ -370,8 +366,7 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count posts by user.
-   * Paginates through all results for accurate count.
+   * Count posts by user via the `byOwner` count tree (O(1)).
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -380,20 +375,11 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'post',
-            where: [
-              ['$ownerId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            orderBy: [['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
+          where: [['$ownerId', '==', userId]],
+        });
       } catch (error) {
         logger.error('Error counting user posts:', error);
         return 0;
@@ -402,11 +388,8 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count all posts on the platform - paginates through all results.
-   * Uses the languageTimeline index [language, $createdAt] to scan posts.
-   * Note: Currently only counts English posts (language='en') since most posts
-   * use the default language. For accurate total counts across all languages,
-   * would need to iterate through all language codes or add a dedicated index.
+   * Count all posts on the platform via the doctype's primary-key count tree
+   * (`documentsCountable`, O(1) — counts every post regardless of language).
    * Deduplicates in-flight requests.
    */
   async countAllPosts(): Promise<number> {
@@ -416,42 +399,15 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
-        // Use languageTimeline index: [language, $createdAt]
-        // This requires a language prefix to use the index
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'post',
-            where: [
-              ['language', '==', 'en'],
-              ['$createdAt', '>', 0]
-            ],
-            orderBy: [['language', 'asc'], ['$createdAt', 'asc']]
-          }),
-          { maxResults: 10000 } // Higher limit for platform-wide count
-        );
-
-        return count;
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'post',
+        });
       } catch (error) {
         logger.error('Error counting all posts:', error);
         return 0;
       }
     });
-  }
-
-  /**
-   * Get posts by hashtag
-   */
-  async getPostsByHashtag(hashtag: string, options: QueryOptions = {}): Promise<DocumentResult<Post>> {
-    const queryOptions: QueryOptions = {
-      where: [['primaryHashtag', '==', hashtag.replace('#', '')]],
-      orderBy: [['$createdAt', 'desc']],
-      limit: 20,
-      ...options
-    };
-
-    return this.query(queryOptions);
   }
 
   /**
@@ -572,6 +528,34 @@ class PostService extends BaseDocumentService<Post> {
     );
   }
 
+  /** Count quotes of a post — O(1) `quoteCount` count tree. */
+  async countQuotes(quotedPostId: string): Promise<number> {
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+      return await documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [['quotedPostId', '==', quotedPostId]],
+      });
+    } catch (error) {
+      logger.error('Error counting quotes:', error);
+      return 0;
+    }
+  }
+
+  /** Quote counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
+  async countQuotesForPosts(quotedPostIds: string[]): Promise<Map<string, number>> {
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'quotedPostId' },
+      quotedPostIds,
+      (id) => this.countQuotes(id)
+    );
+  }
+
   /**
    * Get quotes of posts owned by a specific user (for notification queries).
    * Uses the quotedPostOwnerAndTime index: [quotedPostOwnerId, $createdAt]
@@ -621,6 +605,7 @@ class PostService extends BaseDocumentService<Post> {
       likes: reply.likes,
       reposts: reply.reposts,
       replies: reply.replies,
+      quotes: 0,
       views: reply.views,
       liked: reply.liked,
       reposted: reply.reposted,
@@ -681,6 +666,7 @@ class PostService extends BaseDocumentService<Post> {
           likes: 0,
           reposts: 0,
           replies: 0,
+          quotes: 0,
           views: 0,
           liked: false,
           reposted: false,
