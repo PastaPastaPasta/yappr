@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Notification } from '../types';
+import { scopedKey } from '@/lib/storage-scope';
 
 // Maximum number of read IDs to store in localStorage
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
@@ -176,7 +177,7 @@ export const useNotificationStore = create<NotificationState>()(
       getReadIdsSet: () => new Set(get().readIds)
     }),
     {
-      name: 'yappr-notifications',
+      name: scopedKey('yappr-notifications'),
       // Only persist read state and timestamp (not the full notifications array)
       partialize: (state) => ({
         readIds: state.readIds,

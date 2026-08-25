@@ -6,8 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "build:subpath": "BASE_PATH=/yappr next build",
+    "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@blocknote/core": "^0.47.0",
@@ -58,6 +61,9 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@scure/bip32": "^2.3.0",
+    "@scure/bip39": "^2.3.0",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",

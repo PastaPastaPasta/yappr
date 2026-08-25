@@ -1,6 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
+import { scopedKey } from '@/lib/storage-scope';
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -300,7 +301,7 @@ export function LoginModal() {
 
         await login(identityId, credential)
 
-        if (!sessionStorage.getItem('yappr_backup_prompt_shown')) {
+        if (!sessionStorage.getItem(scopedKey('yappr_backup_prompt_shown'))) {
           let unifiedStatus = null
           let authVaultUnavailable = false
 
@@ -319,7 +320,7 @@ export function LoginModal() {
               ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
               : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
           if (!authVaultUnavailable && !hasBackup) {
-            sessionStorage.setItem('yappr_backup_prompt_shown', 'true')
+            sessionStorage.setItem(scopedKey('yappr_backup_prompt_shown'), 'true')
             openBackupModal(identityId, resolvedIdentity?.dpnsUsername || '', false)
           }
         }

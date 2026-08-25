@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
@@ -27,7 +28,7 @@ export interface StateTransitionResult {
 }
 
 /** Key for localStorage ST cache */
-const ST_CACHE_PREFIX = 'yappr:pending-st:';
+const ST_CACHE_PREFIX = scopedKey('yappr:pending-st:');
 
 /** Max age for cached ST entries (24 hours in ms) */
 const ST_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;

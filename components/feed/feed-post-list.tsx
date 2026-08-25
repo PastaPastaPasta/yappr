@@ -67,7 +67,7 @@ export function FeedPostList({
             : 'Be the first to share something!'
         }
       >
-        <div>
+        <div data-testid="feed-post-list">
           {posts?.map((post) => (
             <ErrorBoundary key={post.id} level="component">
               <PostCard

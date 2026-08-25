@@ -268,7 +268,7 @@ export function Sidebar() {
         {user && isHydrated && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button className="flex items-center gap-3 p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors w-full">
+              <button data-testid="user-menu-trigger" className="flex items-center gap-3 p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors w-full">
                 <UserAvatar userId={user.identityId} size="md" alt="Your avatar" />
                 <div className="flex flex-1 text-left">
                   <div className="flex-1 min-w-0">

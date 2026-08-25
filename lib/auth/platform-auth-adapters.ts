@@ -1,5 +1,6 @@
 'use client'
 
+import { scopedKey, SESSION_STORAGE_KEY } from '@/lib/storage-scope'
 import type {
   AuthSessionSnapshot,
   AuthUser,
@@ -238,9 +239,9 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 }
 
 async function runLogoutCleanup(identityId: string): Promise<void> {
-  sessionStorage.removeItem('yappr_dpns_username')
-  sessionStorage.removeItem('yappr_skip_dpns')
-  sessionStorage.removeItem('yappr_backup_prompt_shown')
+  sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
+  sessionStorage.removeItem(scopedKey('yappr_skip_dpns'))
+  sessionStorage.removeItem(scopedKey('yappr_backup_prompt_shown'))
   invalidateBlockCache(identityId)
   privateFeedKeyStore.clearAllKeys()
 }
@@ -251,7 +252,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     sessionStore: {
       getSession() {
         if (typeof window === 'undefined') return null
-        const savedSession = localStorage.getItem('yappr_session')
+        const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
         if (!savedSession) return null
 
         try {
@@ -267,11 +268,11 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       },
       setSession(snapshot) {
         if (typeof window === 'undefined') return
-        localStorage.setItem('yappr_session', JSON.stringify(toStoredSession(snapshot)))
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession(snapshot)))
       },
       clearSession() {
         if (typeof window === 'undefined') return
-        localStorage.removeItem('yappr_session')
+        localStorage.removeItem(SESSION_STORAGE_KEY)
       },
     },
     secretStore: {

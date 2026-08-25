@@ -1,13 +1,22 @@
 name: Deploy to GitHub Pages
 
 # Unified deploy: the Pages artifact always contains the production site
-# (built from master, served at the root / yap.pr) plus the staging site
-# (built from the staging branch, served under /staging). A push to either
-# branch rebuilds both so neither deploy can wipe the other.
+# (built from master, served at the root / yap.pr), the testing site (built
+# from the same master commit against the test contracts, served under
+# /testing) and the staging site (built from the staging branch, served under
+# /staging). A push to either branch rebuilds all three so no deploy can wipe
+# another.
 
 on:
+  # Master deploys are gated on CI: CI runs on every push to master, and this
+  # workflow starts once that run completes (see the job-level `if`). Staging
+  # pushes are not gated — they deploy directly, as before.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
   push:
-    branches: [master, staging]
+    branches: [staging]
   workflow_dispatch:
 
 permissions:
@@ -22,9 +31,21 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # workflow_run runs only proceed when the CI run they follow passed and was
+    # a real push to master (a fork PR whose head branch happens to be named
+    # "master" also matches the branch filter). Staging pushes and manual
+    # dispatches are unconditional.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || (github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.event == 'push') }}
     outputs:
       staging_ok: ${{ steps.staging-build.outcome }}
     steps:
+      # Both checkouts pin an explicit ref, so they resolve identically for
+      # push, workflow_dispatch and workflow_run events (for workflow_run,
+      # github.ref points at the default branch, never at the triggering run's
+      # head — nothing here relies on it).
       - name: Checkout master
         uses: actions/checkout@v4
         with:
@@ -69,10 +90,23 @@ jobs:
         env:
           BASE_PATH: /staging
 
+      # Same master checkout and the same commit as the production build, so no
+      # second `npm ci` — but the production output has to be moved aside first
+      # and .next dropped so the /testing build cannot inherit its artifacts.
+      # Not continue-on-error: identical code must build both ways.
+      - name: Build testing (master)
+        working-directory: master
+        run: |
+          mv out out-production
+          rm -rf .next
+          npm run build:testing
+
       - name: Combine site artifact
         run: |
           mkdir -p site
-          cp -R master/out/. site/
+          cp -R master/out-production/. site/
+          mkdir -p site/testing
+          cp -R master/out/. site/testing/
           if [ "${{ steps.staging-build.outcome }}" = "success" ] && [ -d staging/out ]; then
             mkdir -p site/staging
             cp -R staging/out/. site/staging/
@@ -91,6 +125,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    # Redundant with `needs` (a skipped build skips this job too), but kept
+    # explicit so the CI gate is readable from either job.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || (github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.event == 'push') }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
