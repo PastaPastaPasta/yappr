@@ -185,6 +185,11 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    which is why they are recorded in `.env.testing`. The script prints the ID to
    append to `E2E_IDENTITY_IDS`.
 
+   Then **create the identity's profile by hand**: seed the session per §3 and
+   complete `/profile/create`. The restore-time profile gate redirects every
+   non-exempt page for a profile-less identity, which strands the write suite
+   before it reaches its own profile-creating test — see §7.
+
 3. **Register the test contracts** (owner defaults to identity index 0):
 
    ```bash
@@ -290,13 +295,44 @@ Register test copies first (`scripts/register-test-contracts.mjs` is the
 pattern — extend it), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
 `.env.testing`, and only then write the specs.
 
-### Session restore does not run the profile gate
+### Session restore runs the profile gate too (it used to not)
 
-The `profile-required` intent is only applied by the interactive login path
-(`applyIntent` in `contexts/auth-context.tsx`). `restoreSession()` does not go
-through it, so a seeded profile-less identity is *not* bounced to
-`/profile/create` — except on the own-profile page (`app/user/page.tsx`), which
-redirects on its own. Do not rely on the redirect to prove a profile exists.
+It used to be that the `profile-required` intent was only applied by the
+interactive login path, so a seeded profile-less identity was never bounced to
+`/profile/create` on reload. That is fixed: `AuthProvider` now re-derives the
+intent after `restoreSession()` resolves and applies it through the same
+`applyIntent`, so **a seeded identity without a profile document will be
+redirected to `/profile/create`** on the first navigation.
+
+What this means for tests:
+
+- The provisioned bot identities have profiles, so the gate resolves to "no
+  redirect" and the write specs pass unaffected.
+- **A freshly provisioned pool slot must have its profile created before the
+  write suite can pass.** `post-lifecycle.spec.ts` is no longer self-
+  bootstrapping: "the bot identity has a profile" is the third test, but the two
+  ahead of it navigate to `/about/` and `/feed/`, and neither is gate-exempt —
+  so on a slot with no profile document both get redirected to `/profile/create`
+  and fail. The group is `mode: 'serial'`, so retries restart at test 1 and the
+  profile-creating test never runs. The first test cannot simply be reordered
+  after it: it is what proves the bundle targets the *test* contracts, and
+  creating a profile ahead of that check risks writing to production.
+  Create the profile by hand once (log in as the bot per §3 and complete
+  `/profile/create`) as part of the §4 provisioning runbook. The same applies
+  after a chain rollback that wipes documents but leaves identities.
+- The gate is skipped entirely on `/profile/create`, `/dpns/register`,
+  `/login`, and `/welcome` (suffix-matched, so `basePath` is fine), and it
+  yields to the DPNS gate when the restored session has no username and
+  `yappr_skip_dpns` is not set.
+- It fails **open**: the profile lookup swallows query errors and returns
+  `null`, so a redirect additionally requires `identityService.getIdentity` to
+  succeed. A DAPI outage means no redirect, not a spurious one.
+- The redirect fires *after* two network round trips, so it can land on a page
+  that has already rendered. Assert on a stable URL, not on the first paint.
+
+The own-profile page (`app/user/page.tsx`) still redirects on its own as well.
+A redirect away from `/profile/create` proves a profile exists; staying on a
+page does **not** prove the gate ran — it may still be in flight.
 
 ### The DPNS gate fires on optional-auth pages too
 
