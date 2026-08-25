@@ -24,6 +24,14 @@ export interface StateTransitionResult {
   /** Whether the document is confirmed query-visible on Platform. */
   confirmed?: boolean;
   error?: string;
+  /** The pre-computed document ID for create operations (set even on failure once known). */
+  documentId?: string;
+  /**
+   * Whether a broadcast was attempted for this document before the failure.
+   * When true, a failed create is AMBIGUOUS: the state transition may still
+   * commit on Platform, so callers must not blindly rebroadcast a new document.
+   */
+  broadcastAttempted?: boolean;
 }
 
 /** Key for localStorage ST cache */
@@ -298,6 +306,11 @@ class StateTransitionService {
       entropy?: Uint8Array;
     }
   ): Promise<StateTransitionResult> {
+    // Track how far the create got so failures can be classified:
+    // a failure BEFORE any broadcast is definite (safe to retry), while a
+    // failure at/after broadcast is ambiguous (the ST may still commit).
+    let documentId: string | undefined;
+    let broadcastAttempted = false;
     try {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
@@ -330,12 +343,15 @@ class StateTransitionService {
           entropy: options?.entropy,
         }
       );
-      const documentId = documentBuilderService.getDocumentId(document);
+      documentId = documentBuilderService.getDocumentId(document);
       logger.info(`Built document, ID: ${documentId}`);
 
       // --- Check for a cached ST from a previous timed-out attempt ---
       const cachedBytes = loadPendingSTBytes(documentId);
       if (cachedBytes) {
+        // A cached ST means a previous attempt already reached the broadcast
+        // stage for this exact document ID — treat failures as ambiguous.
+        broadcastAttempted = true;
         logger.info(`Found cached ST bytes for ${documentId} — checking Platform...`);
 
         // First check if it already landed
@@ -443,6 +459,7 @@ class StateTransitionService {
 
       // Broadcast via StateTransitionsFacade (v3.1)
       try {
+        broadcastAttempted = true;
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.info('Broadcast succeeded, waiting for confirmation...');
       } catch (broadcastErr) {
@@ -543,7 +560,9 @@ class StateTransitionService {
       logger.error('Error creating document:', error);
       return {
         success: false,
-        error: extractErrorMessage(error)
+        error: extractErrorMessage(error),
+        documentId,
+        broadcastAttempted
       };
     }
   }

@@ -265,7 +265,9 @@ class PostService extends BaseDocumentService<Post> {
     if (options.primaryHashtag) data.primaryHashtag = options.primaryHashtag;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
-    return this.create(ownerId, data);
+    // Create with a pre-generated document ID so ambiguous broadcast failures
+    // can be recovered by exact-ID lookup instead of rebroadcasting.
+    return this.createWithAmbiguityRecovery(ownerId, data);
   }
 
   /**
