@@ -48,6 +48,29 @@ function amountCreditsToDocumentInteger(value: bigint): number {
   return amount
 }
 
+// Contract bounds for creditTransferReceipt (contracts/yappr-payment-receipt-contract.json).
+const RECEIPT_TRANSITION_BYTES_MAX_LENGTH = 4096
+const RECEIPT_REFERENCE_TYPE_MAX_LENGTH = 50
+const IDENTIFIER_BYTE_LENGTH = 32
+
+function identifierStringToReceiptBytes(value: string, fieldName: string): Uint8Array {
+  const bytes = identifierStringToDocumentBytes(value)
+  if (bytes.length !== IDENTIFIER_BYTE_LENGTH) {
+    throw new Error(`Invalid ${fieldName}: expected a 32-byte identifier`)
+  }
+  return bytes
+}
+
+export interface CreditTransferReceiptData {
+  receiptId: string
+  recipientId: string
+  amountCredits: bigint
+  transitionHash: string
+  transitionBytes: Uint8Array
+  referenceType?: CreditTransferReceiptReferenceType
+  referenceId?: string
+}
+
 class CreditTransferReceiptService extends BaseDocumentService<CreditTransferReceipt> {
   constructor() {
     super(PAYMENT_RECEIPT_DOCUMENT_TYPES.CREDIT_TRANSFER_RECEIPT, YAPPR_PAYMENT_RECEIPT_CONTRACT_ID)
@@ -97,17 +120,50 @@ class CreditTransferReceiptService extends BaseDocumentService<CreditTransferRec
     return documents[0] || null
   }
 
+  /**
+   * Build (and thereby fully validate) the receipt document payload.
+   * Throws when any field cannot be stored in the receipt contract, e.g.
+   * amounts above Number.MAX_SAFE_INTEGER, malformed identifiers, oversized
+   * transition bytes, or an over-long reference type.
+   */
+  buildReceiptDocumentData(data: CreditTransferReceiptData): Record<string, unknown> {
+    const documentData: Record<string, unknown> = {
+      recipientId: identifierStringToReceiptBytes(data.recipientId, 'recipientId'),
+      amountCredits: amountCreditsToDocumentInteger(data.amountCredits),
+      transitionHash: transitionHashStringToBytes(data.transitionHash),
+      transitionBytes: data.transitionBytes,
+    }
+
+    if (data.transitionBytes.length < 1 || data.transitionBytes.length > RECEIPT_TRANSITION_BYTES_MAX_LENGTH) {
+      throw new Error(`Invalid transitionBytes: expected between 1 and ${RECEIPT_TRANSITION_BYTES_MAX_LENGTH} bytes`)
+    }
+
+    if (data.referenceType) {
+      if (data.referenceType.length > RECEIPT_REFERENCE_TYPE_MAX_LENGTH) {
+        throw new Error(`Invalid referenceType: expected at most ${RECEIPT_REFERENCE_TYPE_MAX_LENGTH} characters`)
+      }
+      documentData.referenceType = data.referenceType
+    }
+    if (data.referenceId) {
+      documentData.referenceId = identifierStringToReceiptBytes(data.referenceId, 'referenceId')
+    }
+
+    return documentData
+  }
+
+  /**
+   * Validate the complete receipt payload without creating the document.
+   * Used before broadcasting a credit transfer so funds can never move for a
+   * transfer whose receipt would deterministically fail to store.
+   */
+  validateReceiptData(data: CreditTransferReceiptData): void {
+    this.ensureConfigured()
+    this.buildReceiptDocumentData(data)
+  }
+
   async createReceipt(
     ownerId: string,
-    data: {
-      receiptId: string
-      recipientId: string
-      amountCredits: bigint
-      transitionHash: string
-      transitionBytes: Uint8Array
-      referenceType?: CreditTransferReceiptReferenceType
-      referenceId?: string
-    }
+    data: CreditTransferReceiptData
   ): Promise<CreditTransferReceipt> {
     this.ensureConfigured()
 
@@ -121,19 +177,7 @@ class CreditTransferReceiptService extends BaseDocumentService<CreditTransferRec
       return existingByHash
     }
 
-    const documentData: Record<string, unknown> = {
-      recipientId: identifierStringToDocumentBytes(data.recipientId),
-      amountCredits: amountCreditsToDocumentInteger(data.amountCredits),
-      transitionHash: transitionHashStringToBytes(data.transitionHash),
-      transitionBytes: data.transitionBytes,
-    }
-
-    if (data.referenceType) {
-      documentData.referenceType = data.referenceType
-    }
-    if (data.referenceId) {
-      documentData.referenceId = identifierStringToDocumentBytes(data.referenceId)
-    }
+    const documentData = this.buildReceiptDocumentData(data)
 
     return this.createWithOptions(ownerId, documentData, {
       documentId: data.receiptId,

@@ -341,6 +341,14 @@ class CreditTransferService {
       return { success: false, error: 'Cannot transfer credits to the same identity' }
     }
 
+    if (options.amountCredits <= BigInt(0)) {
+      return { success: false, error: 'Transfer amount must be positive' }
+    }
+
+    if (options.amountCredits > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return { success: false, error: 'Transfer amount exceeds the maximum receipt-supported amount' }
+    }
+
     const amountCreditsString = options.amountCredits.toString()
 
     try {
@@ -356,6 +364,26 @@ class CreditTransferService {
         receiptId,
       } = await this.buildSignedTransfer(options)
 
+      // Validate the complete receipt payload BEFORE broadcasting so a
+      // transfer can never move funds and then deterministically fail
+      // receipt creation.
+      try {
+        creditTransferReceiptService.validateReceiptData({
+          receiptId,
+          recipientId: options.recipientId,
+          amountCredits: options.amountCredits,
+          transitionHash,
+          transitionBytes,
+          referenceType: options.referenceType,
+          referenceId: options.referenceId,
+        })
+      } catch (error) {
+        return {
+          success: false,
+          error: `Receipt validation failed: ${extractErrorMessage(error)}`,
+        }
+      }
+
       const pendingEntry: PendingCreditTransferEntry = {
         receiptId,
         transitionHash,
@@ -367,17 +395,40 @@ class CreditTransferService {
         referenceId: options.referenceId,
         cachedAt: Date.now(),
       }
-      savePendingTransfer(pendingEntry)
 
       const sdk = await getEvoSdk()
 
+      // Persist the pending transfer only once the broadcast is accepted (or
+      // its outcome is genuinely ambiguous). A definitively rejected broadcast
+      // must leave no recovery entry behind, otherwise login-time recovery
+      // could silently rebroadcast a payment the user saw fail.
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition)
       } catch (error) {
-        if (!isAlreadyExistsError(error)) {
+        if (isAlreadyExistsError(error)) {
+          // Broadcast already accepted previously; treat as accepted.
+        } else if (isTimeoutError(error)) {
+          // Ambiguous outcome: the transition may or may not have reached the
+          // network. Keep the signed transition for recovery (rebroadcasting
+          // the identical transition is idempotent thanks to the fixed nonce)
+          // and report the transfer as pending — never as a retryable
+          // failure, which could double-pay.
+          savePendingTransfer(pendingEntry)
+          return {
+            success: true,
+            transitionHash,
+            receiptId,
+            receiptConfirmed: false,
+            verificationStatus: 'pending',
+          }
+        } else {
+          // Definite rejection: nothing was persisted, so a manual retry is
+          // safe and recovery will never rebroadcast this transfer.
           throw error
         }
       }
+
+      savePendingTransfer(pendingEntry)
 
       let receiptConfirmed = false
       let receiptAvailable = false
@@ -392,12 +443,25 @@ class CreditTransferService {
           referenceId: options.referenceId,
         })
 
-        receiptAvailable = true
-        receiptConfirmed = true
-        updatePendingTransfer({
-          ...pendingEntry,
-          receiptId: receipt.id,
-        })
+        // createWithOptions reports optimistic (broadcast-but-unconfirmed)
+        // creations via __createConfirmed = false. Only a confirmed receipt
+        // may drive cleanup of the recovery entry; receipts fetched from the
+        // platform (dedupe path) carry no flag and are confirmed by
+        // definition.
+        const createConfirmed = (
+          receipt as typeof receipt & { __createConfirmed?: boolean }
+        ).__createConfirmed
+        receiptConfirmed = createConfirmed !== false
+        receiptAvailable = receiptConfirmed
+
+        if (receiptConfirmed) {
+          updatePendingTransfer({
+            ...pendingEntry,
+            receiptId: receipt.id,
+          })
+        } else {
+          logger.warn('Receipt document creation unconfirmed; pending transfer retained for recovery')
+        }
       } catch (error) {
         logger.warn('Receipt document creation failed; pending transfer retained for recovery', error)
       }
@@ -429,18 +493,22 @@ class CreditTransferService {
           recipientBalance: proofResult.recipient.balance ?? undefined,
         }
       } catch (error) {
-        if (isTimeoutError(error) || isAlreadyExistsError(error) || isNonFatalWaitError(error)) {
-          identityService.clearCache(options.senderId)
-          return {
-            success: true,
-            transitionHash,
-            receiptId,
-            receiptConfirmed,
-            verificationStatus: 'pending',
-          }
+        // The broadcast was already accepted at this point, so the transfer
+        // may debit the sender regardless of what the confirmation wait
+        // reports. Never surface this as a retryable failure — a retry would
+        // build a fresh transition and could double-pay. The pending entry is
+        // retained so recovery can settle the final state.
+        if (!isTimeoutError(error) && !isAlreadyExistsError(error) && !isNonFatalWaitError(error)) {
+          logger.warn('Credit transfer confirmation wait failed after accepted broadcast', error)
         }
-
-        throw error
+        identityService.clearCache(options.senderId)
+        return {
+          success: true,
+          transitionHash,
+          receiptId,
+          receiptConfirmed,
+          verificationStatus: 'pending',
+        }
       }
     } catch (error) {
       logger.error('Credit transfer send failed', error)
@@ -479,7 +547,7 @@ class CreditTransferService {
         }
 
         try {
-          await creditTransferReceiptService.createReceipt(entry.senderId, {
+          const receipt = await creditTransferReceiptService.createReceipt(entry.senderId, {
             receiptId: entry.receiptId,
             recipientId: entry.recipientId,
             amountCredits: BigInt(entry.amountCredits),
@@ -488,7 +556,12 @@ class CreditTransferService {
             referenceType: entry.referenceType,
             referenceId: entry.referenceId,
           })
-          receiptAvailable = true
+          // Only a confirmed receipt creation may release the recovery entry;
+          // optimistic creations report __createConfirmed = false.
+          const createConfirmed = (
+            receipt as typeof receipt & { __createConfirmed?: boolean }
+          ).__createConfirmed
+          receiptAvailable = createConfirmed !== false
         } catch (error) {
           logger.warn('Pending receipt publication still failing', error)
         }
