@@ -14,9 +14,10 @@ import { logger } from '@/lib/logger';
  */
 
 import type { NodeKey } from './private-feed-crypto-service';
+import { scopedKey } from '@/lib/storage-scope';
 
 // Storage key prefix as per PRD §3.4
-const STORAGE_PREFIX = 'yappr:pf:';
+const STORAGE_PREFIX = scopedKey('yappr:pf:');
 
 // Storage keys
 const KEY_FEED_SEED = 'feed_seed';

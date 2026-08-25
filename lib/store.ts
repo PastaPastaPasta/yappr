@@ -4,6 +4,7 @@ import { User, Post } from './types'
 import { mockCurrentUser } from './mock-data'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
+import { scopedKey } from '@/lib/storage-scope'
 
 export type PostVisibility = 'public' | 'private' | 'private-with-teaser'
 
@@ -230,7 +231,7 @@ export const useSettingsStore = create<SettingsState>()(
       setFeedLanguage: (language) => set({ feedLanguage: language }),
     }),
     {
-      name: 'yappr-settings',
+      name: scopedKey('yappr-settings'),
     }
   )
 )
@@ -253,6 +254,6 @@ export const useReaderPreferencesStore = create<ReaderPreferencesState>()(
       setFontSize: (size) => set({ fontSize: size }),
       resetPreferences: () => set({ readingMode: 'author', fontSize: 'medium' }),
     }),
-    { name: 'yappr-reader-prefs' }
+    { name: scopedKey('yappr-reader-prefs') }
   )
 )

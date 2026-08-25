@@ -10,8 +10,9 @@ import { logger } from '@/lib/logger';
  */
 
 import type { PinataCredentials } from './types'
+import { scopedKey } from '@/lib/storage-scope'
 
-const PREFIX = 'yappr_pinata_'
+const PREFIX = scopedKey('yappr_pinata_')
 
 /**
  * Check if storage is available

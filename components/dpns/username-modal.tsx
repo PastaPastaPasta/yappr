@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/contexts/auth-context'
+import { scopedKey } from '@/lib/storage-scope'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { useSettingsStore } from '@/lib/store'
 
@@ -33,7 +34,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
   }, [isOpen, reset])
 
   const handleSkip = () => {
-    sessionStorage.setItem('yappr_skip_dpns', 'true')
+    sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
     onClose()
     router.push('/profile/create')
   }

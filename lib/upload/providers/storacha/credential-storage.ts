@@ -10,8 +10,9 @@ import { logger } from '@/lib/logger';
  */
 
 import type { StorachaCredentials } from '../../types'
+import { scopedKey } from '@/lib/storage-scope'
 
-const PREFIX = 'yappr_storacha_'
+const PREFIX = scopedKey('yappr_storacha_')
 
 /**
  * Get storage for Storacha credentials.

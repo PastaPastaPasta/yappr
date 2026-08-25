@@ -1,6 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
+import { scopedKey } from '@/lib/storage-scope';
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -247,10 +248,10 @@ function CreateProfilePage() {
           </p>
 
           {/* Display username if available */}
-          {(user?.dpnsUsername || sessionStorage.getItem('yappr_dpns_username')) && (
+          {(user?.dpnsUsername || sessionStorage.getItem(scopedKey('yappr_dpns_username'))) && (
             <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 mb-6">
               <p className="text-sm text-purple-700 dark:text-purple-300">
-                <span className="font-semibold">Username:</span> @{user?.dpnsUsername || sessionStorage.getItem('yappr_dpns_username')}
+                <span className="font-semibold">Username:</span> @{user?.dpnsUsername || sessionStorage.getItem(scopedKey('yappr_dpns_username'))}
               </p>
             </div>
           )}
