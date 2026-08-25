@@ -129,6 +129,40 @@ export function isPostCreationAmbiguousError(error: unknown): boolean {
 }
 
 /**
+ * Check whether an error PROVES the state transition was rejected by
+ * Platform (validation/consensus rejection), meaning the document was
+ * definitely NOT created.
+ *
+ * This list is intentionally narrow. It gates the ambiguity handling after a
+ * broadcast was attempted: anything NOT in this list is treated as ambiguous
+ * (the transition may still commit), because wrongly calling an outcome
+ * "definite failure" invites the user to rebroadcast and create a duplicate,
+ * while wrongly calling it "ambiguous" only costs a "check your profile"
+ * prompt.
+ */
+export function isDefiniteRejectionError(error: unknown): boolean {
+  const errorText = getErrorText(error)
+
+  const rejectionErrors = [
+    'state transition is invalid',
+    'invalid state transition',
+    'validation error',
+    'validation failed',
+    'schema validation',
+    'invalid document',
+    'document type not found',
+    'missing required property',
+    'invalid signature',
+    'signature verification',
+    'insufficient balance',
+    'balance is not enough',
+    'not enough balance'
+  ]
+
+  return rejectionErrors.some(rejection => errorText.includes(rejection))
+}
+
+/**
  * Exponential backoff with jitter
  */
 function calculateDelay(attempt: number, initialDelayMs: number, maxDelayMs: number, backoffMultiplier: number): number {

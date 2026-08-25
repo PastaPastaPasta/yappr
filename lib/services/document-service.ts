@@ -2,8 +2,8 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentBuilderService } from './document-builder-service';
-import { YAPPR_CONTRACT_ID, POST_RECOVERY_POLL_ATTEMPTS, POST_RECOVERY_POLL_DELAY_MS } from '../constants';
-import { isPostCreationAmbiguousError, PostCreationIndeterminateError } from '../retry-utils';
+import { YAPPR_CONTRACT_ID, POST_RECOVERY_POLL_ATTEMPTS, POST_RECOVERY_POLL_ATTEMPTS_ENCRYPTED, POST_RECOVERY_POLL_DELAY_MS } from '../constants';
+import { isDefiniteRejectionError, PostCreationIndeterminateError } from '../retry-utils';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 /**
@@ -270,9 +270,22 @@ export abstract class BaseDocumentService<T> {
       return await this.createWithOptions(ownerId, data, { documentId, entropy });
     } catch (error) {
       const broadcastAttempted = error instanceof DocumentCreateError && error.broadcastAttempted;
-      if (broadcastAttempted && isPostCreationAmbiguousError(error)) {
+      // Once a broadcast has been attempted, DEFAULT to treating the failure
+      // as ambiguous: only errors that prove Platform rejected the transition
+      // (validation/consensus rejections) are definite. An unrecognized error
+      // message must not be allowed to invite a retry — a rebroadcast with
+      // fresh entropy would duplicate the document if the original commits.
+      if (broadcastAttempted && !isDefiniteRejectionError(error)) {
         logger.warn(`${this.documentType} create failed ambiguously — polling for document ${documentId}`);
-        const recovered = await this.pollForCreatedDocument(documentId);
+        // Encrypted documents get a longer recovery window: their ciphertext
+        // is not queryable, so the compose duplicate pre-check cannot protect
+        // against a manual re-post. If the user retries anyway, the content is
+        // re-encrypted with a fresh nonce and the duplicate cannot be detected
+        // at all — finding the original here is the only safety net.
+        const attempts = data.encryptedContent
+          ? POST_RECOVERY_POLL_ATTEMPTS_ENCRYPTED
+          : POST_RECOVERY_POLL_ATTEMPTS;
+        const recovered = await this.pollForCreatedDocument(documentId, attempts);
         if (recovered) {
           logger.info(`Recovered ${this.documentType} ${documentId} after ambiguous create error`);
           this.clearCache();
@@ -289,8 +302,8 @@ export abstract class BaseDocumentService<T> {
    * Poll Platform for a document by its exact ID after an ambiguous
    * create failure. Returns null if it never becomes visible.
    */
-  private async pollForCreatedDocument(documentId: string): Promise<T | null> {
-    for (let attempt = 1; attempt <= POST_RECOVERY_POLL_ATTEMPTS; attempt++) {
+  private async pollForCreatedDocument(documentId: string, maxAttempts: number): Promise<T | null> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, POST_RECOVERY_POLL_DELAY_MS));
       }

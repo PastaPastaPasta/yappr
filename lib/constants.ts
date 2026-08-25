@@ -39,8 +39,14 @@ export const INSIGHT_API_CONFIG = {
 
 // Post creation recovery (ambiguous errors): after an ambiguous broadcast
 // failure we poll for the exact document ID that was generated pre-broadcast.
-export const POST_RECOVERY_POLL_ATTEMPTS = 3
-export const POST_RECOVERY_POLL_DELAY_MS = 2000
+// The window is deliberately generous — the errors that trigger recovery
+// (gateway 5xx, "tenderdash not available", timeouts) are exactly the
+// conditions under which Platform is slow to make documents query-visible.
+export const POST_RECOVERY_POLL_ATTEMPTS = 5
+export const POST_RECOVERY_POLL_DELAY_MS = 3000
+// Encrypted documents get a longer window: their ciphertext is not queryable,
+// so exact-ID recovery is the only duplicate protection they have.
+export const POST_RECOVERY_POLL_ATTEMPTS_ENCRYPTED = 8
 
 // Pre-flight duplicate detection in the compose modal
 export const POST_DUPLICATE_LOOKBACK_MS = 2 * 60 * 1000
