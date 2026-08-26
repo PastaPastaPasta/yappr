@@ -42,6 +42,15 @@ import { isPrivatePost } from '@/components/post/private-post-content'
 import type { EncryptionSource } from '@/lib/services/post-service'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { ImageAttachment } from './image-attachment'
+import {
+  PollEditor,
+  createPollDraft,
+  isPollDraftValid,
+  pollDraftEndsAt,
+  pollDraftOptions,
+  type PollDraft,
+} from './poll-editor'
+import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
@@ -97,6 +106,16 @@ export function ComposeModal() {
     uploadResult?: UploadResult
   } | null>(null)
   const [showStorageProviderModal, setShowStorageProviderModal] = useState(false)
+
+  // Poll attachment state (native polls on the Pollr contract).
+  // `createdPollId` survives a failed post attempt so pressing Post again
+  // re-uses the poll that already landed instead of creating (and paying for)
+  // a second, orphaned one.
+  const [pollDraft, setPollDraft] = useState<PollDraft | null>(null)
+  const [createdPollId, setCreatedPollId] = useState<string | null>(null)
+  // The poll broadcast succeeded but DAPI never confirmed it was queryable, so
+  // the next attempt has to check before spending YAPP on a post that embeds it.
+  const [pollUnconfirmed, setPollUnconfirmed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const { upload, isUploading, progress, isProviderConnected, checkProvider } = useImageUpload()
@@ -300,9 +319,14 @@ export function ComposeModal() {
   // Block posting while checking inherited encryption for private post replies, or if check failed
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) ||
     (!inheritedEncryptionLoading && !inheritedEncryptionError)
-  const canPost = hasValidContent && !hasOverLimit && !isPosting && !isUploading && isValidEncryptedPost && isInheritedEncryptionReady
+  // A poll post is a single, public, top-level post: the poll question lives on the
+  // public Pollr contract, and replies/threads have nowhere to carry the embed.
+  const canAttachPoll = !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
+  const isValidPollPost = !pollDraft || isPollDraftValid(pollDraft)
+
+  const canPost = hasValidContent && !hasOverLimit && !isPosting && !isUploading && isValidEncryptedPost && isInheritedEncryptionReady && isValidPollPost
   // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
-  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted
+  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !pollDraft
   // Check if image attachment is allowed (not including provider connection status)
   const canAttachImage = !attachedImage
 
@@ -426,6 +450,43 @@ export function ComposeModal() {
     setAttachedImage(null)
   }, [attachedImage])
 
+  // Forget the poll without comment — for closing the modal after a successful
+  // post, where the poll is not orphaned.
+  const forgetPoll = useCallback(() => {
+    setPollDraft(null)
+    setCreatedPollId(null)
+    setPollUnconfirmed(false)
+  }, [])
+
+  // Detach the poll. A poll that already landed is now orphaned (the next
+  // attempt starts a fresh one), so say where the old one lives.
+  const clearPoll = useCallback(() => {
+    if (createdPollId) {
+      toast(`Your poll stays live on Pollr: ${pollrPollUrl(createdPollId)}`, {
+        duration: 8000,
+        icon: '📊',
+      })
+    }
+    forgetPoll()
+  }, [createdPollId, forgetPoll])
+
+  // Attach/detach a poll. The post text doubles as the poll question.
+  const handlePollToggle = useCallback(() => {
+    if (pollDraft) {
+      clearPoll()
+    } else {
+      setPollDraft(createPollDraft())
+    }
+  }, [pollDraft, clearPoll])
+
+  // Drop the poll if the compose state stops supporting one (e.g. the user
+  // switches to a private visibility or starts a reply).
+  useEffect(() => {
+    if (pollDraft && !canAttachPoll) {
+      clearPoll()
+    }
+  }, [pollDraft, canAttachPoll, clearPoll])
+
   // Handle image button click - check provider first
   const handleImageButtonClick = useCallback(() => {
     if (!isProviderConnected) {
@@ -503,6 +564,9 @@ export function ComposeModal() {
     const timeoutPosts: { index: number; threadPostId: string }[] = [] // Posts that timed out (may have succeeded)
     let failedAtIndex: number | null = null
     let failureError: Error | null = null
+    // Poll id for this attempt: an earlier attempt's poll if there is one, so a
+    // retry never creates a second poll.
+    let pollId: string | null = createdPollId
 
     // Upload image first if attached (and not already uploaded)
     let imageUrl: string | undefined
@@ -558,6 +622,58 @@ export function ComposeModal() {
         // Trim to first post only for encrypted posts
         postsToCreate.length = 1
       }
+
+      // Create the poll first: it costs credits only (no YAPP) and the post
+      // needs its document id for the embed triple. If this fails we abort
+      // before spending anything on the post.
+      if (pollDraft && !pollId) {
+        setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Creating poll...' })
+        try {
+          const { pollrPollService } = await import('@/lib/services')
+          const poll = await pollrPollService.createPoll(authedUser.identityId, {
+            // The post text is the question — without the appended image URL.
+            question: firstUnpostedPost?.content.trim() ?? '',
+            options: pollDraftOptions(pollDraft),
+            multiChoice: pollDraft.multiChoice,
+            endsAt: pollDraftEndsAt(pollDraft),
+          })
+          pollId = poll.id
+          setCreatedPollId(poll.id)
+
+          // The DAPI wait can time out without the document being found. Posting
+          // now would spend YAPP on a post pointing at a poll that may not
+          // exist, so stop here — the poll id is kept and a retry re-uses it.
+          if ((poll as unknown as { __createConfirmed?: boolean }).__createConfirmed === false) {
+            setPollUnconfirmed(true)
+            toast('Poll not confirmed yet — try again in a moment.', { duration: 6000, icon: '⏳' })
+            setIsPosting(false)
+            setPostingProgress(null)
+            return
+          }
+        } catch (error) {
+          logger.error('Failed to create poll:', error)
+          toast.error(`Poll creation failed: ${extractErrorMessage(error)}`)
+          setIsPosting(false)
+          setPostingProgress(null)
+          return
+        }
+      } else if (pollId && pollUnconfirmed) {
+        // The retry path for a poll whose confirmation timed out. It is not
+        // re-created (that would orphan the first one and pay twice), but it has
+        // to be visible to a query before the post embeds it — otherwise the
+        // post spends YAPP pointing at a poll that may never have landed.
+        setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Checking poll...' })
+        const { pollrPollService } = await import('@/lib/services')
+        const landed = await pollrPollService.getPoll(pollId)
+        if (!landed) {
+          toast('Poll still not confirmed — try again in a moment.', { duration: 6000, icon: '⏳' })
+          setIsPosting(false)
+          setPostingProgress(null)
+          return
+        }
+        setPollUnconfirmed(false)
+      }
+      const postEmbed = pollId ? buildPollEmbed(pollId) : undefined
 
       setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
 
@@ -626,6 +742,7 @@ export function ComposeModal() {
               const post = await postService.createPost(authedUser.identityId, postContent, {
                 quotedPostId: i === 0 ? quotingPost?.id : undefined,
                 quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
+                embed: i === 0 ? postEmbed : undefined,
                 encryption: encryptionOptions,
               })
               const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
@@ -851,6 +968,12 @@ export function ComposeModal() {
             `Press Post to retry, or check your profile.`,
             { duration: 5000, icon: '⚠️' }
           )
+          if (pollId) {
+            toast(`Your poll is live on Pollr: ${pollrPollUrl(pollId)}. Retrying re-uses it.`, {
+              duration: 8000,
+              icon: '📊',
+            })
+          }
           // Keep modal open for retry
         } else {
           // All confirmed, close
@@ -912,6 +1035,15 @@ export function ComposeModal() {
       if (!handleInsufficientYapp(error, 'You need YAPP to post. Buy some to continue.')) {
         toast.error(categorizeError(error))
       }
+      // The poll document landed even though the post didn't — tell the user
+      // where it lives so the spend isn't silently lost. Pressing Post again
+      // re-uses this same poll.
+      if (pollId) {
+        toast(`Your poll is already live on Pollr: ${pollrPollUrl(pollId)}. Press Post to retry the post.`, {
+          duration: 10000,
+          icon: '📊',
+        })
+      }
     } finally {
       setIsPosting(false)
       setPostingProgress(null)
@@ -924,6 +1056,9 @@ export function ComposeModal() {
       URL.revokeObjectURL(attachedImage.preview)
     }
     setAttachedImage(null)
+    // Silent: on the success path the poll is not orphaned, and every failure
+    // path inside handlePost has already toasted the poll's Pollr link.
+    forgetPoll()
     setComposeOpen(false)
     setReplyingTo(null)
     setQuotingPost(null)
@@ -1189,6 +1324,11 @@ export function ComposeModal() {
                                 onActivate={() => setActiveThreadPost(post.id)}
                                 onRemove={() => removeThreadPost(post.id)}
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
+                                // The first post's text is the poll's question,
+                                // and poll documents are immutable — editing it
+                                // after the poll lands would leave the two
+                                // disagreeing in the feed.
+                                locked={index === 0 && !!createdPollId}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
                                 extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
                                 {...(!post.postedPostId ? {
@@ -1196,10 +1336,27 @@ export function ComposeModal() {
                                   canAttachImage,
                                   imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
                                   ...(post.id === unpostedPosts[0]?.id ? { fileInputRef, onFileSelect: handleFileSelect } : {}),
+                                  ...(canAttachPoll && index === 0 ? {
+                                    onPollClick: handlePollToggle,
+                                    pollAttached: !!pollDraft,
+                                  } : {}),
                                 } : {})}
                               />
                             ))}
                           </AnimatePresence>
+
+                          {/* Poll editor */}
+                          {pollDraft && (
+                            <PollEditor
+                              draft={pollDraft}
+                              onChange={setPollDraft}
+                              onRemove={clearPoll}
+                              disabled={isPosting}
+                              // Polls are immutable, so once one lands the editor
+                              // locks and the retry re-uses it as-is.
+                              locked={!!createdPollId}
+                            />
+                          )}
 
                           {/* Image attachment preview */}
                           {attachedImage && (

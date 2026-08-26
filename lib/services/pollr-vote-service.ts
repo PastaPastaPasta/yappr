@@ -1,0 +1,458 @@
+import { logger } from '@/lib/logger';
+import { getEvoSdk } from './evo-sdk-service';
+import { stateTransitionService } from './state-transition-service';
+import {
+  POLLR_CONTRACT_ID,
+  POLL_MAX_OPTIONS,
+  pollrVoteDocType,
+} from '@/lib/constants';
+import { extractErrorMessage } from '@/lib/error-utils';
+import { identifierStringToDocumentBytes, normalizeSDKResponse } from './sdk-helpers';
+import { documentCount, paginateFetchAll } from './pagination-utils';
+// Type-only: the ballot doctype and the close time both come off the poll, and
+// taking it whole makes a call site physically unable to pair a poll with
+// another poll's mode. Erased at compile time, so no runtime import cycle.
+import type { Poll } from './pollr-poll-service';
+
+/** Result of casting a (possibly multi-choice) ballot. */
+export interface CastVoteResult {
+  /** True when every requested choice is recorded on Platform. */
+  success: boolean;
+  /** Choices this call wrote. */
+  created: number[];
+  /** Choices the voter had already cast (unique-index rejection). */
+  alreadyVoted: number[];
+  /** Choices that hit a real error and are still uncast — safe to retry. */
+  failed: number[];
+  /** Message from the first hard failure, if any. */
+  error?: string;
+}
+
+export interface PollTally {
+  /** Vote count per option index. */
+  counts: number[];
+  /** Total vote documents for the poll (a multi-choice ballot contributes one per selection). */
+  total: number;
+}
+
+/** Grouped count keys are hex of the platform-encoded integer byte: 0x80 + choice. */
+const CHOICE_KEY_OFFSET = 0x80;
+
+const TALLY_CACHE_TTL_MS = 30_000;
+
+type Sdk = Awaited<ReturnType<typeof getEvoSdk>>;
+
+/** `[0, 1, ... n-1]` — the choice indices to query, for a count's `in` clause. */
+function choiceRange(optionCount: number): number[] {
+  const size = Math.min(Math.max(Math.trunc(optionCount) || POLL_MAX_OPTIONS, 1), POLL_MAX_OPTIONS);
+  return Array.from({ length: size }, (_, index) => index);
+}
+
+function isValidChoice(choice: number): boolean {
+  return Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS;
+}
+
+/** Dedupe, drop out-of-range values, and order a ballot's choices. */
+function normalizeChoices(choices: number[]): number[] {
+  return Array.from(new Set(choices)).filter(isValidChoice).sort((a, b) => a - b);
+}
+
+/** Read the `choice` field off a raw vote document (nested `data` or flat). */
+function readChoice(doc: Record<string, unknown>): number {
+  return Number((doc.data as Record<string, unknown> | undefined)?.choice ?? doc.choice);
+}
+
+function zeroCounts(): number[] {
+  return new Array<number>(POLL_MAX_OPTIONS).fill(0);
+}
+
+/**
+ * Thrown when every tally read path failed, so the counts simply aren't known.
+ *
+ * Distinct from a real all-zero tally: zero-filling an unavailable answer makes
+ * a transient read failure look like "nobody has voted", which is a different
+ * claim entirely — and a wrong one to cache or to label "Final results".
+ */
+export class PollTallyUnavailableError extends Error {
+  constructor(public readonly pollId: string) {
+    super(`Vote tally unavailable for poll ${pollId}`);
+    this.name = 'PollTallyUnavailableError';
+  }
+}
+
+/**
+ * Platform rejects a colliding ballot with a unique index violation.
+ *
+ * What the collision *means* depends on the doctype, and the two differ:
+ * on `multiVote` it is "you already cast this choice", but on `vote` the index
+ * carries no choice, so it is "you already voted" — for a choice that may not be
+ * the one just attempted. `castVote` resolves the difference.
+ */
+export function isDuplicateVoteError(error: unknown): boolean {
+  return extractErrorMessage(error).toLowerCase().includes('duplicate unique properties');
+}
+
+/**
+ * Votes on the shared Pollr contract, one immutable document per selection —
+ * the shape the `choiceCounts` count tree needs for O(1) per-option tallies.
+ *
+ * The poll's `multiChoice` flag selects the ballot doctype, and each carries the
+ * uniqueness rule its mode needs: `vote` is unique per (poll, voter), so Platform
+ * itself rejects a second single-choice selection, and `multiVote` is unique per
+ * (poll, voter, choice). DPP has no cross-document validation, so no single
+ * doctype could have done this — a uniqueness rule can't be conditional on a
+ * field in another document. Splitting it moves the enforcement onto the wire:
+ * `poll` is immutable, so the flag can't be flipped after ballots land, and
+ * documents written to the doctype a poll doesn't use are never read.
+ */
+class PollrVoteService {
+  private tallyCache = new Map<string, { data: PollTally; timestamp: number }>();
+
+  /**
+   * Cast a ballot: one immutable document per selected choice, in the doctype
+   * the poll's mode calls for.
+   *
+   * Platform rejects state transitions carrying more than one document
+   * transition, so multi-choice ballots MUST be written sequentially — one
+   * createDocument call per choice, each awaited so nonces stay ordered.
+   */
+  async castVote(poll: Poll, choices: number[], ownerId: string): Promise<CastVoteResult> {
+    const selected = normalizeChoices(choices);
+
+    if (selected.length === 0) {
+      return { success: false, created: [], alreadyVoted: [], failed: [], error: 'No choice selected' };
+    }
+
+    // Not reachable through the UI (the ballot renders radios for this mode), so
+    // this is a caller bug rather than user input — refuse instead of silently
+    // dropping selections, which would report a ballot the voter didn't cast.
+    if (!poll.multiChoice && selected.length > 1) {
+      return {
+        success: false,
+        created: [],
+        alreadyVoted: [],
+        failed: selected,
+        error: 'This poll takes a single choice',
+      };
+    }
+
+    // The close time is advisory — the contract can't enforce it — so clients
+    // are the ones that have to refuse a late ballot.
+    const { endsAt } = poll;
+    if (typeof endsAt === 'number' && Number.isFinite(endsAt) && Date.now() > endsAt) {
+      return { success: false, created: [], alreadyVoted: [], failed: [], error: 'This poll has closed' };
+    }
+
+    const docType = pollrVoteDocType(poll.multiChoice);
+    const created: number[] = [];
+    const alreadyVoted: number[] = [];
+    const failed: number[] = [];
+    let firstError: string | undefined;
+
+    for (const choice of selected) {
+      try {
+        const result = await stateTransitionService.createDocument(
+          POLLR_CONTRACT_ID,
+          docType,
+          ownerId,
+          {
+            // Identifier-typed contract fields must reach the typed write path as raw bytes.
+            pollId: identifierStringToDocumentBytes(poll.id),
+            pollOwnerId: identifierStringToDocumentBytes(poll.ownerId),
+            choice,
+          }
+        );
+
+        if (result.success) {
+          created.push(choice);
+        } else if (isDuplicateVoteError(result.error)) {
+          alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+        } else {
+          // Keep going: the remaining choices are independent documents, and
+          // re-submitting a landed one is idempotent thanks to the unique index.
+          failed.push(choice);
+          firstError ??= result.error || 'Failed to cast vote';
+        }
+      } catch (error) {
+        if (isDuplicateVoteError(error)) {
+          alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+        } else {
+          failed.push(choice);
+          firstError ??= extractErrorMessage(error);
+        }
+      }
+    }
+
+    this.invalidateTally(poll.id);
+    return {
+      success: failed.length === 0,
+      created,
+      alreadyVoted: normalizeChoices(alreadyVoted),
+      failed,
+      error: firstError,
+    };
+  }
+
+  /**
+   * Which choice a rejected-as-duplicate write collided with.
+   *
+   * On `multiVote` the unique index includes `choice`, so the collision is with
+   * the choice just attempted. On `vote` it does not: the voter had already
+   * cast a ballot, but not necessarily this one, and reporting the attempted
+   * choice would tick "your vote" against an option they never picked. Re-read
+   * the ballot to find out which it really is, and fall back to the attempted
+   * choice only if that read fails too.
+   */
+  private async resolveDuplicate(poll: Poll, choice: number, ownerId: string): Promise<number[]> {
+    if (poll.multiChoice) return [choice];
+
+    try {
+      const recorded = await this.getMyVotes(poll, ownerId);
+      if (recorded.length > 0) return recorded;
+    } catch (error) {
+      logger.warn('PollrVoteService: could not resolve which choice a single-choice ballot collided with', {
+        pollId: poll.id,
+        error: extractErrorMessage(error),
+      });
+    }
+    return [choice];
+  }
+
+  /**
+   * Fold just-cast votes into the cached tally.
+   *
+   * Platform's count trees can lag a few seconds behind a confirmed write, so
+   * re-reading right after voting can return the pre-vote numbers — and that
+   * stale answer would then be cached for the full TTL. Incrementing the
+   * caller's current tally instead keeps the UI honest until the next remount
+   * refetches for real.
+   */
+  applyOptimisticVotes(pollId: string, baseline: PollTally, createdChoices: number[]): PollTally {
+    const counts = [...baseline.counts];
+    let added = 0;
+    for (const choice of createdChoices) {
+      if (choice < 0 || choice >= counts.length) continue;
+      counts[choice] += 1;
+      added += 1;
+    }
+
+    const tally: PollTally = { counts, total: baseline.total + added };
+    this.tallyCache.set(pollId, { data: tally, timestamp: Date.now() });
+    return tally;
+  }
+
+  /**
+   * Which choices `userId` has already cast on this poll. Both ballot doctypes
+   * lead their unique index with [pollId, $ownerId], so this is one ranged read.
+   *
+   * Throws on failure rather than reporting "no votes": an empty answer reopens
+   * the ballot, which on a single-choice poll walks the voter into a write
+   * Platform will reject outright.
+   */
+  async getMyVotes(poll: Poll, userId: string): Promise<number[]> {
+    try {
+      const sdk = await getEvoSdk();
+      const response = await sdk.documents.query({
+        dataContractId: POLLR_CONTRACT_ID,
+        documentTypeName: pollrVoteDocType(poll.multiChoice),
+        where: [
+          ['pollId', '==', poll.id],
+          ['$ownerId', '==', userId],
+        ],
+        // `vote`'s unique index stops at $ownerId; only `multiVote` orders by choice.
+        orderBy: poll.multiChoice
+          ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
+          : [['pollId', 'asc'], ['$ownerId', 'asc']],
+        limit: poll.multiChoice ? POLL_MAX_OPTIONS : 1,
+      });
+
+      return normalizeChoices(normalizeSDKResponse(response).map(readChoice));
+    } catch (error) {
+      logger.error('PollrVoteService: failed to load own votes', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Per-option counts plus the grand total, served from a short-TTL cache.
+   *
+   * Primary path is the ballot doctype's `choiceCounts` countable index (an
+   * O(1) count tree), grouped by choice. Only the doctype this poll's mode uses
+   * is read, so ballots written to the other one can never reach the numbers.
+   *
+   * Throws {@link PollTallyUnavailableError} when no path produced counts —
+   * see that class for why a zero-filled stand-in isn't an acceptable answer.
+   */
+  async getTally(poll: Poll): Promise<PollTally> {
+    const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
+
+    const cached = this.tallyCache.get(poll.id);
+    if (cached && Date.now() - cached.timestamp < TALLY_CACHE_TTL_MS) {
+      return { total: cached.data.total, counts: resize(cached.data.counts, size) };
+    }
+
+    const sdk = await getEvoSdk();
+    const docType = pollrVoteDocType(poll.multiChoice);
+
+    // Each step falls through to the next only when it couldn't produce counts.
+    const counts =
+      (await this.countByChoiceGrouped(sdk, poll.id, docType, size)) ??
+      (await this.countByChoiceIndividually(sdk, poll.id, docType, size)) ??
+      (await this.countByChoiceScan(sdk, poll.id, docType));
+
+    // Nothing worked. A grand-total count is deliberately NOT used as a last
+    // resort: it can't allocate votes among the options, so pairing it with
+    // zeroes would render every choice at 0% under a non-zero total. Fail
+    // loudly instead, and cache nothing, so the caller can offer a retry.
+    if (!counts) {
+      throw new PollTallyUnavailableError(poll.id);
+    }
+
+    // The total is the sum of the poll's REAL options. `choice` is schema-valid
+    // for 0-9 whatever the poll's actual option count is, so anyone can write
+    // ballots for options that don't exist; summing the real ones ignores those
+    // and keeps percentages summing to 100. On a single-choice poll the sum is
+    // also the voter count, since `vote` is unique per (poll, voter).
+    const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
+
+    const tally: PollTally = { counts, total };
+    this.tallyCache.set(poll.id, { data: tally, timestamp: Date.now() });
+
+    return { total: tally.total, counts: resize(tally.counts, size) };
+  }
+
+  /** Drop the cached tally so the next read reflects a just-cast vote. */
+  invalidateTally(pollId?: string): void {
+    if (pollId) {
+      this.tallyCache.delete(pollId);
+    } else {
+      this.tallyCache.clear();
+    }
+  }
+
+  /**
+   * One round-trip against the `choiceCounts` countable index.
+   * Returns null (so the caller can fall back) when the response can't be decoded.
+   */
+  private async countByChoiceGrouped(
+    sdk: Sdk,
+    pollId: string,
+    docType: string,
+    optionCount: number
+  ): Promise<number[] | null> {
+    try {
+      const raw: unknown = await sdk.documents.count({
+        dataContractId: POLLR_CONTRACT_ID,
+        documentTypeName: docType,
+        where: [
+          ['pollId', '==', pollId],
+          // Only the poll's real options: `choice` is schema-valid for 0-9
+          // regardless, so a wider `in` would pull groups for options that
+          // don't exist on this poll.
+          ['choice', 'in', choiceRange(optionCount)],
+        ],
+        groupBy: ['choice'],
+      });
+
+      // The SDK returns Map<string, bigint>; tolerate a plain-object shape the
+      // same way documentCount/groupedDocumentCount do.
+      const entries: [string, unknown][] = raw instanceof Map
+        ? Array.from(raw.entries())
+        : Object.entries((raw ?? {}) as Record<string, unknown>);
+      const counts = zeroCounts();
+      let matched = 0;
+
+      for (const [key, value] of entries) {
+        if (key === '') continue; // aggregate-mode key; shouldn't appear with groupBy set
+        const choice = parseInt(key, 16) - CHOICE_KEY_OFFSET;
+        if (!isValidChoice(choice)) continue;
+        counts[choice] = Number(value as bigint | number);
+        matched++;
+      }
+
+      // An empty map is a genuine "no votes yet" (count trees don't materialize
+      // zero branches). Entries that decode to nothing means the key encoding
+      // changed, so fall back rather than report every option as 0.
+      if (entries.length > 0 && matched === 0) return null;
+      return counts;
+    } catch (error) {
+      logger.warn('PollrVoteService: grouped choice count failed, falling back to per-choice counts', {
+        error: extractErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  /** Fallback 1: one equality count per choice against the same countable index. */
+  private async countByChoiceIndividually(
+    sdk: Sdk,
+    pollId: string,
+    docType: string,
+    optionCount: number
+  ): Promise<number[] | null> {
+    try {
+      const counts = zeroCounts();
+      // Only the poll's real options — the remaining slots stay 0.
+      for (const choice of choiceRange(optionCount)) {
+        counts[choice] = await documentCount(sdk, {
+          dataContractId: POLLR_CONTRACT_ID,
+          documentTypeName: docType,
+          where: [
+            ['pollId', '==', pollId],
+            ['choice', '==', choice],
+          ],
+        });
+      }
+      return counts;
+    } catch (error) {
+      logger.warn('PollrVoteService: per-choice counts failed, falling back to a vote scan', {
+        error: extractErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  /** Fallback 2: paginate the `pollVotesByTime` index and tally client-side. */
+  private async countByChoiceScan(sdk: Sdk, pollId: string, docType: string): Promise<number[] | null> {
+    try {
+      const { documents: choices, reachedLimit } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: POLLR_CONTRACT_ID,
+          documentTypeName: docType,
+          where: [
+            ['pollId', '==', pollId],
+            ['$createdAt', '>', 0],
+          ],
+          orderBy: [
+            ['pollId', 'asc'],
+            ['$createdAt', 'asc'],
+          ],
+        }),
+        readChoice
+      );
+
+      if (reachedLimit) {
+        logger.warn('PollrVoteService: vote scan hit the pagination cap; tally may undercount', { pollId });
+      }
+
+      const counts = zeroCounts();
+      for (const choice of choices) {
+        if (isValidChoice(choice)) {
+          counts[choice] += 1;
+        }
+      }
+      return counts;
+    } catch (error) {
+      logger.error('PollrVoteService: unable to tally votes', error);
+      return null;
+    }
+  }
+}
+
+/** Trim or pad a counts array to the poll's actual option count. */
+function resize(counts: number[], size: number): number[] {
+  return Array.from({ length: size }, (_, i) => counts[i] ?? 0);
+}
+
+export const pollrVoteService = new PollrVoteService();

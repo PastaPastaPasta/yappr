@@ -169,6 +169,9 @@ export interface PostDocumentData {
   quotedPostId?: string | Uint8Array;
   language?: string;
   sensitive?: boolean;
+  embedContractId?: string | Uint8Array;
+  embedDocType?: string;
+  embedId?: string | Uint8Array;
 }
 
 /**
