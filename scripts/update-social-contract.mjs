@@ -95,7 +95,15 @@ try {
   // New properties slot in after the highest existing position; property order/positions
   // of existing fields are untouched (contract updates must be purely additive).
   // `schemas` returns platform integers as BigInt on evo-sdk 4.2 — normalize.
-  const nextPosition = Math.max(...Object.values(post.properties).map((p) => Number(p.position))) + 1;
+  const positions = Object.values(post.properties).map((p) => Number(p.position));
+  const highestPosition = Math.max(...positions);
+  if (!Number.isFinite(highestPosition)) {
+    throw new Error(
+      `Could not read existing property positions on \`post\` (got ${JSON.stringify(positions)}) — ` +
+        'refusing to guess, since a wrong position would corrupt the contract update'
+    );
+  }
+  const nextPosition = highestPosition + 1;
   Object.entries(EMBED_PROPERTIES).forEach(([name, definition], i) => {
     post.properties[name] = { ...definition, position: nextPosition + i };
   });

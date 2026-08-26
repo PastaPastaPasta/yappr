@@ -447,18 +447,33 @@ export function ComposeModal() {
     setAttachedImage(null)
   }, [attachedImage])
 
-  // Detach the poll. Also forgets an already-created poll id, so the next
-  // attempt starts a fresh poll rather than re-using the abandoned one.
-  const clearPoll = useCallback(() => {
+  // Forget the poll without comment — for closing the modal after a successful
+  // post, where the poll is not orphaned.
+  const forgetPoll = useCallback(() => {
     setPollDraft(null)
     setCreatedPollId(null)
   }, [])
 
+  // Detach the poll. A poll that already landed is now orphaned (the next
+  // attempt starts a fresh one), so say where the old one lives.
+  const clearPoll = useCallback(() => {
+    if (createdPollId) {
+      toast(`Your poll stays live on Pollr: ${pollrPollUrl(createdPollId)}`, {
+        duration: 8000,
+        icon: '📊',
+      })
+    }
+    forgetPoll()
+  }, [createdPollId, forgetPoll])
+
   // Attach/detach a poll. The post text doubles as the poll question.
   const handlePollToggle = useCallback(() => {
-    setPollDraft((current) => (current ? null : createPollDraft()))
-    setCreatedPollId(null)
-  }, [])
+    if (pollDraft) {
+      clearPoll()
+    } else {
+      setPollDraft(createPollDraft())
+    }
+  }, [pollDraft, clearPoll])
 
   // Drop the poll if the compose state stops supporting one (e.g. the user
   // switches to a private visibility or starts a reply).
@@ -620,6 +635,16 @@ export function ComposeModal() {
           })
           pollId = poll.id
           setCreatedPollId(poll.id)
+
+          // The DAPI wait can time out without the document being found. Posting
+          // now would spend YAPP on a post pointing at a poll that may not
+          // exist, so stop here — the poll id is kept and a retry re-uses it.
+          if ((poll as unknown as { __createConfirmed?: boolean }).__createConfirmed === false) {
+            toast('Poll not confirmed yet — try again in a moment.', { duration: 6000, icon: '⏳' })
+            setIsPosting(false)
+            setPostingProgress(null)
+            return
+          }
         } catch (error) {
           logger.error('Failed to create poll:', error)
           toast.error(`Poll creation failed: ${extractErrorMessage(error)}`)
@@ -1011,7 +1036,9 @@ export function ComposeModal() {
       URL.revokeObjectURL(attachedImage.preview)
     }
     setAttachedImage(null)
-    clearPoll()
+    // Silent: on the success path the poll is not orphaned, and every failure
+    // path inside handlePost has already toasted the poll's Pollr link.
+    forgetPoll()
     setComposeOpen(false)
     setReplyingTo(null)
     setQuotingPost(null)
