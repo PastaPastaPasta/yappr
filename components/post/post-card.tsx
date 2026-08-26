@@ -36,6 +36,8 @@ import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
+import { PollCard } from '@/components/poll/poll-card'
+import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
@@ -336,6 +338,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const isTipPost = !!tipInfo
   const createdAtLabel = useRelativeTime(post.createdAt)
+
+  // Native poll embed, or a legacy post that only links to the Pollr web app.
+  const pollLink = useMemo(() => findPollrPollLink(post.content), [post.content])
+  const embeddedPollId = getEmbeddedPollId(post) ?? pollLink?.pollId ?? null
+  // Legacy poll links are rendered as the poll itself, so drop the raw URL.
+  const displayContent = useMemo(
+    () => (pollLink ? stripPollrPollLink(post.content, pollLink.url) : post.content),
+    [post.content, pollLink]
+  )
 
   const handleLike = async () => {
     if (hideAvatar) {
@@ -723,9 +734,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               mentionValidations={mentionValidations}
               onFailedMentionClick={handleFailedMentionClick}
             />
-          ) : post.content ? (
+          ) : displayContent ? (
             <PostContent
-              content={post.content}
+              content={displayContent}
               className="mt-1"
               hashtagValidations={hashtagValidations}
               onFailedHashtagClick={handleFailedHashtagClick}
@@ -733,6 +744,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               onFailedMentionClick={handleFailedMentionClick}
             />
           ) : null}
+
+          {/* Native poll (Pollr contract) */}
+          {embeddedPollId && !isPrivatePost(post) && (
+            <PollCard pollId={embeddedPollId} postContent={displayContent} />
+          )}
 
           {/* Quoted post - show skeleton while loading, then actual content */}
           {post.quotedPostId && !post.quotedPost && (
