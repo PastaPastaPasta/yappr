@@ -21,6 +21,12 @@ export { blogPostService } from './blog-post-service';
 export { blogCommentService } from './blog-comment-service';
 export { blogFollowService } from './blog-follow-service';
 
+// Pollr (native polls, shared contract with the standalone Pollr app)
+export { pollrPollService } from './pollr-poll-service';
+export { pollrVoteService, isDuplicateVoteError } from './pollr-vote-service';
+export type { Poll, CreatePollData } from './pollr-poll-service';
+export type { CastVoteResult, PollTally } from './pollr-vote-service';
+
 // New unified profile services
 export {
   unifiedProfileService,
