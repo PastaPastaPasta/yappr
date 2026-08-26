@@ -281,14 +281,16 @@ yappr/
 Yappr uses multiple data contracts deployed on Dash Platform (testnet):
 
 ### Main Social Contract
-Core social features with 12 document types:
+Core social features with 16 document types:
 - `profile` - Display name, bio, location, website
-- `avatar` - Avatar customization data
-- `post` - Text posts (500 char limit), with optional private encryption
-- `like`, `repost`, `follow` - Social interactions
-- `bookmark`, `list`, `listMember` - Collections
-- `block`, `mute` - User preferences
-- `notification` - User notifications
+- `post`, `reply` - Text posts (500 char limit), with optional private encryption
+- `like`, `repost`, `follow`, `followRequest` - Social interactions
+- `bookmark` - Collections
+- `block`, `blockFilter`, `blockFollow` - User preferences and moderation
+- `postHashtag`, `postMention` - Discovery indexes
+- `privateFeedGrant`, `privateFeedRekey`, `privateFeedState` - Private feed key management
+
+Notifications are derived client-side rather than stored; direct messages use the separate DM contract.
 
 ### Storefront Contract
 Full e-commerce functionality:

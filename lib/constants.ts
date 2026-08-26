@@ -95,11 +95,14 @@ export const INSIGHT_API_CONFIG = {
 } as const
 
 // Document types
-// Note: AVATAR, REPOST, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
+// Note: AVATAR, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
 // - avatar: now in unified profile contract
-// - repost: merged into post (post with quotedPostId + empty content = repost)
 // - directMessage: uses separate DM contract v3
 // - notification: derived from other document types
+// Also removed, as never-implemented, when the v2 contract was cut (80ae9780):
+// - list / listMember: no list feature ever shipped
+// - mute: `block` covers the use case, so mute was dropped by design
+// (`repost` is still a real v2 doctype — see lib/services/repost-service.ts.)
 export const DOCUMENT_TYPES = {
   PROFILE: 'profile',
   POST: 'post',
@@ -107,12 +110,9 @@ export const DOCUMENT_TYPES = {
   LIKE: 'like',
   FOLLOW: 'follow',
   BOOKMARK: 'bookmark',
-  LIST: 'list',
-  LIST_MEMBER: 'listMember',
   BLOCK: 'block',
   BLOCK_FILTER: 'blockFilter',
   BLOCK_FOLLOW: 'blockFollow',
-  MUTE: 'mute',
   ENCRYPTED_KEY_BACKUP: 'encryptedKeyBackup',
   POST_HASHTAG: 'postHashtag',
   POST_MENTION: 'postMention',

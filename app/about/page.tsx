@@ -91,9 +91,8 @@ export default function AboutPage() {
                   { title: 'Store', desc: 'Create a storefront, list items, and sell with Dash', href: '/store', icon: ShoppingBagIcon },
                   { title: 'Tips', desc: 'Send Dash tips directly to users you appreciate', icon: CurrencyDollarIcon },
                   { title: 'Notifications', desc: 'Tabbed alerts with unread indicators and preferences', icon: BellIcon },
-                  { title: 'Lists', desc: 'Organize accounts into custom lists' },
                   { title: 'Bookmarks', desc: 'Save posts to revisit later' },
-                  { title: 'Block & Mute', desc: 'Control what you see in your feed' },
+                  { title: 'Blocking', desc: 'Control what you see in your feed' },
                 ].map((feature, i) => {
                   const content = (
                     <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
@@ -181,7 +180,7 @@ export default function AboutPage() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Document Types</p>
-                  <p className="text-sm text-gray-700 dark:text-gray-300">22 types across 2 contracts (social + storefront)</p>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">23 types across 2 contracts (social + storefront)</p>
                 </div>
                 <div className="pt-2">
                   <Link
