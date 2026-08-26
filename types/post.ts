@@ -44,6 +44,10 @@ export interface Post {
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)
   quotedPost?: Post
+  // Cross-contract embed (e.g. a Pollr poll). All three are set together.
+  embedContractId?: string // base58 contract id the embedded document lives on
+  embedDocType?: string    // document type name on that contract (e.g. 'poll')
+  embedId?: string         // base58 id of the embedded document
   tipInfo?: TipInfo     // Populated if this post is a tip (parsed from content)
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it

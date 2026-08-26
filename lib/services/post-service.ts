@@ -7,6 +7,7 @@ import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
+import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 
 export interface PostDocument {
   $id: string;
@@ -19,6 +20,9 @@ export interface PostDocument {
   quotedPostOwnerId?: string;
   language?: string;
   sensitive?: boolean;
+  embedContractId?: string;
+  embedDocType?: string;
+  embedId?: string;
   // Private feed fields
   encryptedContent?: Uint8Array;
   epoch?: number;
@@ -90,6 +94,9 @@ class PostService extends BaseDocumentService<Post> {
     const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
     const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
 
+    // Cross-contract embed (native polls); identifiers normalized to base58.
+    const embed = extractPostEmbedFields(data, doc);
+
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
     const epoch = (data.epoch ?? doc.epoch) as number | undefined;
@@ -122,6 +129,7 @@ class PostService extends BaseDocumentService<Post> {
       // Expose IDs for lazy loading at component level
       quotedPostId: quotedPostId || undefined,
       quotedPostOwnerId: quotedPostOwnerId || undefined,
+      ...embed,
       // Private feed fields
       encryptedContent,
       epoch,
@@ -208,6 +216,11 @@ class PostService extends BaseDocumentService<Post> {
       quotedPostOwnerId?: string;
       language?: string;
       sensitive?: boolean;
+      /**
+       * Cross-contract embed (e.g. a Pollr poll). All three parts are written
+       * together; the two identifiers go out as raw bytes.
+       */
+      embed?: PostEmbed;
       /** Encryption options for private posts */
       encryption?: EncryptionOptions;
     } = {}
@@ -260,6 +273,11 @@ class PostService extends BaseDocumentService<Post> {
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
+    if (options.embed) {
+      data.embedContractId = identifierStringToDocumentBytes(options.embed.contractId);
+      data.embedDocType = options.embed.docType;
+      data.embedId = identifierStringToDocumentBytes(options.embed.id);
+    }
 
     return this.create(ownerId, data);
   }

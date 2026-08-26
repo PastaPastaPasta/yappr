@@ -1,5 +1,6 @@
 import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
+import { extractPostEmbedFields } from '@/lib/poll-embed';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -118,6 +119,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     reposted: (doc.reposted as boolean | undefined) || false,
     bookmarked: (doc.bookmarked as boolean | undefined) || false,
     quotedPostId,
+    ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     epoch,
     nonce: rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined,
