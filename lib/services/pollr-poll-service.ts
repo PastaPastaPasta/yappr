@@ -1,6 +1,4 @@
-import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
-import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -126,33 +124,6 @@ class PollrPollService extends BaseDocumentService<Poll> {
 
   async getPoll(pollId: string): Promise<Poll | null> {
     return this.get(pollId);
-  }
-
-  /**
-   * Fetch several polls at once — for batch feed hydration, where issuing one
-   * `getPoll` per visible post would be a round-trip each. Batched into
-   * `$id in [...]` queries because Platform caps `in` clauses at 100 values;
-   * falls back to per-id fetches if a batch query fails so one bad batch can't
-   * blank out a whole page of polls.
-   */
-  async getPolls(pollIds: string[]): Promise<Poll[]> {
-    const uniqueIds = Array.from(new Set(pollIds.filter(Boolean)));
-    if (uniqueIds.length === 0) return [];
-
-    const batches = await mapLimit(chunk(uniqueIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
-      try {
-        const result = await this.query({ where: [['$id', 'in', batch]], limit: batch.length });
-        return result.documents;
-      } catch (error) {
-        logger.warn('PollrPollService: batched poll query failed, falling back to per-id fetches', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        const polls = await mapLimit(batch, 4, (id) => this.get(id));
-        return polls.filter((poll): poll is Poll => poll !== null);
-      }
-    });
-
-    return batches.flat();
   }
 }
 

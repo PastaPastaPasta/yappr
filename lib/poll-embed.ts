@@ -67,8 +67,10 @@ function escapeRegExp(value: string): string {
 // Legacy poll posts (and posts made from the Pollr app) just carry a link.
 // The trailing slash before `?` is optional — GitHub Pages serves both.
 // Deliberately case-sensitive: the base58 class excludes 0/O/I/l.
+// The trailing boundary keeps a longer base58 run from being truncated to its
+// first 44 characters and mis-read as a valid id.
 const POLLR_POLL_LINK_PATTERN = new RegExp(
-  `${escapeRegExp(POLLR_APP_URL)}/poll/?\\?id=([1-9A-HJ-NP-Za-km-z]{32,44})`
+  `${escapeRegExp(POLLR_APP_URL)}/poll/?\\?id=([1-9A-HJ-NP-Za-km-z]{32,44})(?![1-9A-HJ-NP-Za-km-z])`
 );
 
 /** Find a Pollr poll link in post text. */

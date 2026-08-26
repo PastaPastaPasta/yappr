@@ -18,6 +18,8 @@ export interface CastVoteResult {
   created: number[];
   /** Choices the voter had already cast (unique-index rejection). */
   alreadyVoted: number[];
+  /** Choices that hit a real error and are still uncast — safe to retry. */
+  failed: number[];
   /** Message from the first hard failure, if any. */
   error?: string;
 }
@@ -36,8 +38,11 @@ const TALLY_CACHE_TTL_MS = 30_000;
 
 type Sdk = Awaited<ReturnType<typeof getEvoSdk>>;
 
-/** Every choice index the contract can hold, for the grouped count's `in` clause. */
-const ALL_CHOICES = Array.from({ length: POLL_MAX_OPTIONS }, (_, index) => index);
+/** `[0, 1, ... n-1]` — the choice indices to query, for a count's `in` clause. */
+function choiceRange(optionCount: number): number[] {
+  const size = Math.min(Math.max(Math.trunc(optionCount) || POLL_MAX_OPTIONS, 1), POLL_MAX_OPTIONS);
+  return Array.from({ length: size }, (_, index) => index);
+}
 
 function isValidChoice(choice: number): boolean {
   return Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS;
@@ -79,16 +84,25 @@ class PollrVoteService {
     pollId: string,
     pollOwnerId: string,
     choices: number[],
-    ownerId: string
+    ownerId: string,
+    endsAt?: number
   ): Promise<CastVoteResult> {
     const selected = normalizeChoices(choices);
 
     if (selected.length === 0) {
-      return { success: false, created: [], alreadyVoted: [], error: 'No choice selected' };
+      return { success: false, created: [], alreadyVoted: [], failed: [], error: 'No choice selected' };
+    }
+
+    // The close time is advisory — the contract can't enforce it — so clients
+    // are the ones that have to refuse a late ballot.
+    if (typeof endsAt === 'number' && Number.isFinite(endsAt) && Date.now() > endsAt) {
+      return { success: false, created: [], alreadyVoted: [], failed: [], error: 'This poll has closed' };
     }
 
     const created: number[] = [];
     const alreadyVoted: number[] = [];
+    const failed: number[] = [];
+    let firstError: string | undefined;
 
     for (const choice of selected) {
       try {
@@ -106,28 +120,49 @@ class PollrVoteService {
 
         if (result.success) {
           created.push(choice);
-          continue;
-        }
-
-        if (isDuplicateVoteError(result.error)) {
+        } else if (isDuplicateVoteError(result.error)) {
           alreadyVoted.push(choice);
-          continue;
+        } else {
+          // Keep going: the remaining choices are independent documents, and
+          // re-submitting a landed one is idempotent thanks to the unique index.
+          failed.push(choice);
+          firstError ??= result.error || 'Failed to cast vote';
         }
-
-        this.invalidateTally(pollId);
-        return { success: false, created, alreadyVoted, error: result.error || 'Failed to cast vote' };
       } catch (error) {
         if (isDuplicateVoteError(error)) {
           alreadyVoted.push(choice);
-          continue;
+        } else {
+          failed.push(choice);
+          firstError ??= extractErrorMessage(error);
         }
-        this.invalidateTally(pollId);
-        return { success: false, created, alreadyVoted, error: extractErrorMessage(error) };
       }
     }
 
     this.invalidateTally(pollId);
-    return { success: true, created, alreadyVoted };
+    return { success: failed.length === 0, created, alreadyVoted, failed, error: firstError };
+  }
+
+  /**
+   * Fold just-cast votes into the cached tally.
+   *
+   * Platform's count trees can lag a few seconds behind a confirmed write, so
+   * re-reading right after voting can return the pre-vote numbers — and that
+   * stale answer would then be cached for the full TTL. Incrementing the
+   * caller's current tally instead keeps the UI honest until the next remount
+   * refetches for real.
+   */
+  applyOptimisticVotes(pollId: string, baseline: PollTally, createdChoices: number[]): PollTally {
+    const counts = [...baseline.counts];
+    let added = 0;
+    for (const choice of createdChoices) {
+      if (choice < 0 || choice >= counts.length) continue;
+      counts[choice] += 1;
+      added += 1;
+    }
+
+    const tally: PollTally = { counts, total: baseline.total + added };
+    this.tallyCache.set(pollId, { data: tally, timestamp: Date.now() });
+    return tally;
   }
 
   /**
@@ -162,8 +197,9 @@ class PollrVoteService {
   /**
    * Per-option counts plus the grand total, served from a short-TTL cache.
    *
-   * Primary path uses the contract's countable indices (O(1) count trees):
-   * `pollTotal` for the total and `choiceCounts` (grouped) for the breakdown.
+   * Primary path is the contract's `choiceCounts` countable index (an O(1)
+   * count tree), grouped by choice; the total is summed from those per-option
+   * numbers rather than read from `pollTotal`.
    */
   async getTally(pollId: string, optionCount: number = POLL_MAX_OPTIONS): Promise<PollTally> {
     const size = Math.min(Math.max(optionCount, 1), POLL_MAX_OPTIONS);
@@ -177,29 +213,37 @@ class PollrVoteService {
 
     // Each step falls through to the next only when it couldn't produce counts.
     const resolvedCounts =
-      (await this.countByChoiceGrouped(sdk, pollId)) ??
-      (await this.countByChoiceIndividually(sdk, pollId)) ??
-      (await this.countByChoiceScan(sdk, pollId)) ??
-      zeroCounts();
+      (await this.countByChoiceGrouped(sdk, pollId, size)) ??
+      (await this.countByChoiceIndividually(sdk, pollId, size)) ??
+      (await this.countByChoiceScan(sdk, pollId));
 
-    // Grand total via the `pollTotal` countable index. Never pass a limit on
-    // count queries — Drive rejects them with InvalidLimit. On failure the
-    // per-choice numbers already sum to the same thing.
+    // The total is the sum of the poll's REAL options, not the `pollTotal`
+    // count tree. `choice` is schema-valid for 0-9 whatever the poll's actual
+    // option count is, so anyone can write votes for options that don't exist:
+    // those inflate pollTotal while the per-option tally rightly ignores them,
+    // and percentages stop summing to 100. Summing here also saves a round-trip.
+    // pollTotal is only consulted when no per-choice path produced counts.
+    let counts = resolvedCounts;
     let total: number;
-    try {
-      total = await documentCount(sdk, {
-        dataContractId: POLLR_CONTRACT_ID,
-        documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
-        where: [['pollId', '==', pollId]],
-      });
-    } catch (error) {
-      logger.warn('PollrVoteService: total count failed, summing per-choice counts', {
-        error: extractErrorMessage(error),
-      });
-      total = resolvedCounts.reduce((sum, count) => sum + count, 0);
+    if (counts) {
+      total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
+    } else {
+      counts = zeroCounts();
+      try {
+        total = await documentCount(sdk, {
+          dataContractId: POLLR_CONTRACT_ID,
+          documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
+          where: [['pollId', '==', pollId]],
+        });
+      } catch (error) {
+        logger.warn('PollrVoteService: total count failed and no per-choice counts available', {
+          error: extractErrorMessage(error),
+        });
+        total = 0;
+      }
     }
 
-    const tally: PollTally = { counts: resolvedCounts, total };
+    const tally: PollTally = { counts, total };
     this.tallyCache.set(pollId, { data: tally, timestamp: Date.now() });
 
     return { total: tally.total, counts: resize(tally.counts, size) };
@@ -218,19 +262,26 @@ class PollrVoteService {
    * One round-trip against the `choiceCounts` countable index.
    * Returns null (so the caller can fall back) when the response can't be decoded.
    */
-  private async countByChoiceGrouped(sdk: Sdk, pollId: string): Promise<number[] | null> {
+  private async countByChoiceGrouped(sdk: Sdk, pollId: string, optionCount: number): Promise<number[] | null> {
     try {
-      const raw = await sdk.documents.count({
+      const raw: unknown = await sdk.documents.count({
         dataContractId: POLLR_CONTRACT_ID,
         documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
         where: [
           ['pollId', '==', pollId],
-          ['choice', 'in', ALL_CHOICES],
+          // Only the poll's real options: `choice` is schema-valid for 0-9
+          // regardless, so a wider `in` would pull groups for options that
+          // don't exist on this poll.
+          ['choice', 'in', choiceRange(optionCount)],
         ],
         groupBy: ['choice'],
       });
 
-      const entries = Array.from(raw.entries());
+      // The SDK returns Map<string, bigint>; tolerate a plain-object shape the
+      // same way documentCount/groupedDocumentCount do.
+      const entries: [string, unknown][] = raw instanceof Map
+        ? Array.from(raw.entries())
+        : Object.entries((raw ?? {}) as Record<string, unknown>);
       const counts = zeroCounts();
       let matched = 0;
 
@@ -238,7 +289,7 @@ class PollrVoteService {
         if (key === '') continue; // aggregate-mode key; shouldn't appear with groupBy set
         const choice = parseInt(key, 16) - CHOICE_KEY_OFFSET;
         if (!isValidChoice(choice)) continue;
-        counts[choice] = Number(value);
+        counts[choice] = Number(value as bigint | number);
         matched++;
       }
 
@@ -256,10 +307,11 @@ class PollrVoteService {
   }
 
   /** Fallback 1: one equality count per choice against the same countable index. */
-  private async countByChoiceIndividually(sdk: Sdk, pollId: string): Promise<number[] | null> {
+  private async countByChoiceIndividually(sdk: Sdk, pollId: string, optionCount: number): Promise<number[] | null> {
     try {
       const counts = zeroCounts();
-      for (let choice = 0; choice < POLL_MAX_OPTIONS; choice++) {
+      // Only the poll's real options — the remaining slots stay 0.
+      for (const choice of choiceRange(optionCount)) {
         counts[choice] = await documentCount(sdk, {
           dataContractId: POLLR_CONTRACT_ID,
           documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
