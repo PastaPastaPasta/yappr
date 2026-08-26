@@ -58,6 +58,8 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // an empty list reopens the ballot, and the contract's uniqueness rule is per
   // (poll, voter, choice), so a single-choice voter could record a second one.
   const [votesUnavailable, setVotesUnavailable] = useState(false)
+  // Bumped to re-run the load effect without a page refresh.
+  const [reloadToken, setReloadToken] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   // Multi-choice voters can come back and add more selections; this reopens the
   // ballot over the already-recorded ones.
@@ -116,7 +118,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     return () => {
       cancelled = true
     }
-  }, [pollId, userId])
+  }, [pollId, userId, reloadToken])
 
   // Reset any pending selection when switching polls or signing in/out.
   useEffect(() => {
@@ -294,7 +296,13 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
           {votesUnavailable && user && !isClosed && (
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Couldn&apos;t check whether you&apos;ve already voted — reload to vote.
+              Couldn&apos;t check whether you&apos;ve already voted.{' '}
+              <button
+                onClick={() => setReloadToken((token) => token + 1)}
+                className="font-medium text-yappr-500 hover:underline"
+              >
+                Try again
+              </button>
             </p>
           )}
         </div>
