@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { TrashIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { TrashIcon, PhotoIcon, ChartBarIcon } from '@heroicons/react/24/outline'
 import type { ThreadPost } from '@/lib/store'
 import { MarkdownContent } from '@/components/ui/markdown-content'
 import { FormatButton, CharacterCounter } from './compose-sub-components'
@@ -28,6 +28,10 @@ interface ThreadPostEditorProps {
   imageTitle?: string
   fileInputRef?: React.RefObject<HTMLInputElement>
   onFileSelect?: (e: React.ChangeEvent<HTMLInputElement>) => void
+  /** Poll attachment toggle - only shown on a single, unposted, public post */
+  onPollClick?: () => void
+  pollAttached?: boolean
+  pollTitle?: string
 }
 
 export function ThreadPostEditor({
@@ -46,6 +50,9 @@ export function ThreadPostEditor({
   imageTitle,
   fileInputRef,
   onFileSelect,
+  onPollClick,
+  pollAttached = false,
+  pollTitle,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -280,6 +287,16 @@ export function ThreadPostEditor({
                     />
                   )}
                 </>
+              )}
+
+              {/* Poll attachment button */}
+              {onPollClick && (
+                <FormatButton
+                  onClick={onPollClick}
+                  title={pollTitle || (pollAttached ? 'Remove poll' : 'Add poll')}
+                >
+                  <ChartBarIcon className={`w-4 h-4 ${pollAttached ? 'text-yappr-500' : ''}`} />
+                </FormatButton>
               )}
 
               {/* Remove button for thread posts */}
