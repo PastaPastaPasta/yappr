@@ -747,7 +747,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Native poll (Pollr contract) */}
           {embeddedPollId && !isPrivatePost(post) && (
-            <PollCard pollId={embeddedPollId} postContent={displayContent} />
+            <PollCard
+              pollId={embeddedPollId}
+              postContent={displayContent}
+              postAuthorId={post.author.id}
+            />
           )}
 
           {/* Quoted post - show skeleton while loading, then actual content */}

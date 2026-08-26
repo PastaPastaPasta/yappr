@@ -21,6 +21,8 @@ interface PollCardProps {
    * skips its own heading instead of printing the question twice.
    */
   postContent?: string
+  /** Author of the embedding post, so a poll made by someone else can say so. */
+  postAuthorId?: string
   className?: string
 }
 
@@ -29,12 +31,20 @@ function percent(count: number, total: number): number {
   return Math.round((count / total) * 100)
 }
 
+// The composer appends attachment URLs to the post body, so the text that
+// reaches us is the question plus trailing links. Drop those before comparing.
+const TRAILING_URLS_PATTERN = /(?:\s+(?:https?|ipfs):\/\/\S+)+\s*$/
+
+function postTextWithoutTrailingUrls(content: string): string {
+  return content.replace(TRAILING_URLS_PATTERN, '').trim()
+}
+
 /** Stop clicks inside the poll from triggering the surrounding post-card navigation. */
 function stopPropagation(event: React.MouseEvent | React.KeyboardEvent) {
   event.stopPropagation()
 }
 
-export function PollCard({ pollId, postContent, className }: PollCardProps) {
+export function PollCard({ pollId, postContent, postAuthorId, className }: PollCardProps) {
   const { user } = useAuth()
   const { openLoginPrompt } = useRequireAuth()
 
@@ -45,6 +55,9 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // Multi-choice voters can come back and add more selections; this reopens the
+  // ballot over the already-recorded ones.
+  const [addingChoices, setAddingChoices] = useState(false)
 
   const userId = user?.identityId ?? null
 
@@ -94,13 +107,18 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
   // Reset any pending selection when switching polls or signing in/out.
   useEffect(() => {
     setSelected([])
+    setAddingChoices(false)
   }, [pollId, userId])
 
   const isClosed = Boolean(poll?.endsAt && poll.endsAt < Date.now())
   const hasVoted = myVotes.length > 0
   // Stay in vote mode while choices are still selected: a multi-choice ballot
   // that failed partway leaves its unrecorded choices selected for a retry.
-  const showResults = !user || isClosed || (hasVoted && selected.length === 0)
+  const showResults = !user || isClosed || (hasVoted && selected.length === 0 && !addingChoices)
+  // A multi-choice voter who hasn't picked everything can still add selections.
+  const canAddChoices = Boolean(
+    user && !isClosed && poll?.multiChoice && hasVoted && myVotes.length < (poll?.options.length ?? 0)
+  )
 
   const toggleChoice = useCallback((index: number, multiChoice: boolean) => {
     setSelected((current) => {
@@ -126,7 +144,8 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
         poll.id,
         poll.ownerId,
         selected,
-        authedUser.identityId
+        authedUser.identityId,
+        poll.endsAt
       )
 
       // Duplicates mean the ballot was already on Platform — record them rather
@@ -138,22 +157,32 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
       }
       // Anything that didn't make it stays selected so the user can retry it.
       setSelected((current) => current.filter((choice) => !recorded.has(choice)))
-
-      if (!result.success) {
-        toast.error(categorizeError(result.error))
-      } else if (result.created.length > 0) {
-        toast.success('Vote counted')
+      if (result.failed.length === 0) {
+        setAddingChoices(false)
       }
 
-      const refreshed = await pollrVoteService.getTally(poll.id, poll.options.length)
-      setTally(refreshed)
+      // Fold the new votes in rather than re-reading: the count trees can lag a
+      // few seconds behind the write, and that stale answer would be cached.
+      if (result.created.length > 0) {
+        const baseline = tally ?? { counts: new Array<number>(poll.options.length).fill(0), total: 0 }
+        setTally(pollrVoteService.applyOptimisticVotes(poll.id, baseline, result.created))
+      }
+
+      if (result.created.length > 0) {
+        toast.success('Vote counted')
+      } else if (result.alreadyVoted.length > 0 && result.failed.length === 0) {
+        toast('You had already voted', { icon: 'ℹ️' })
+      }
+      if (result.failed.length > 0) {
+        toast.error(categorizeError(result.error))
+      }
     } catch (error) {
       logger.error('PollCard: failed to cast vote', error)
       toast.error(categorizeError(error))
     } finally {
       setSubmitting(false)
     }
-  }, [poll, selected, user, openLoginPrompt])
+  }, [poll, selected, tally, user, openLoginPrompt])
 
   if (loading) {
     return (
@@ -182,7 +211,9 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
   const counts = tally?.counts ?? new Array<number>(poll.options.length).fill(0)
   const total = tally?.total ?? 0
   const leading = counts.length > 0 ? Math.max(...counts) : 0
-  const questionShownByPost = (postContent ?? '').trim() === poll.question.trim()
+  const questionShownByPost = postTextWithoutTrailingUrls(postContent ?? '') === poll.question.trim()
+  // The poll may have been made by someone other than whoever posted it.
+  const foreignPollOwner = postAuthorId && postAuthorId !== poll.ownerId ? poll.ownerId : null
 
   return (
     <div
@@ -227,6 +258,15 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
               </div>
             )
           })}
+
+          {canAddChoices && (
+            <button
+              onClick={() => setAddingChoices(true)}
+              className="text-xs font-medium text-yappr-500 hover:underline"
+            >
+              Add choices
+            </button>
+          )}
         </div>
       ) : (
         <div className="mt-3 space-y-2">
@@ -261,13 +301,28 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
             )
           })}
 
-          <Button
-            onClick={handleVote}
-            disabled={selected.length === 0 || submitting}
-            className="w-full h-9 text-sm font-semibold bg-yappr-500 hover:bg-yappr-600 disabled:bg-gray-300 dark:disabled:bg-gray-700"
-          >
-            {submitting ? <Spinner size="sm" className="h-4 w-4 border-white" /> : 'Vote'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleVote}
+              disabled={selected.length === 0 || submitting}
+              className="flex-1 h-9 text-sm font-semibold bg-yappr-500 hover:bg-yappr-600 disabled:bg-gray-300 dark:disabled:bg-gray-700"
+            >
+              {submitting ? <Spinner size="sm" className="h-4 w-4 border-white" /> : 'Vote'}
+            </Button>
+            {hasVoted && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSelected([])
+                  setAddingChoices(false)
+                }}
+                disabled={submitting}
+                className="h-9 text-sm"
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -287,22 +342,27 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
         )}
       </div>
 
-      <PollFooter pollId={poll.id} />
+      <PollFooter pollId={poll.id} ownerId={foreignPollOwner} />
     </div>
   )
 }
 
-function PollFooter({ pollId }: { pollId: string }) {
+function PollFooter({ pollId, ownerId }: { pollId: string; ownerId?: string | null }) {
   return (
-    <a
-      href={pollrPollUrl(pollId)}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={stopPropagation}
-      className="mt-2 inline-flex items-center gap-1 text-xs text-gray-400 hover:text-yappr-500 transition-colors"
-    >
-      <ChartBarIcon className="h-3.5 w-3.5" />
-      Powered by Pollr
-    </a>
+    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-400">
+      <a
+        href={pollrPollUrl(pollId)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={stopPropagation}
+        className="inline-flex items-center gap-1 hover:text-yappr-500 transition-colors"
+      >
+        <ChartBarIcon className="h-3.5 w-3.5" />
+        Powered by Pollr
+      </a>
+      {ownerId && (
+        <span title={ownerId}>· Poll by {ownerId.slice(0, 6)}…</span>
+      )}
+    </div>
   )
 }
