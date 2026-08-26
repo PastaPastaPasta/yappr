@@ -34,6 +34,29 @@ const CHOICE_KEY_OFFSET = 0x80;
 
 const TALLY_CACHE_TTL_MS = 30_000;
 
+type Sdk = Awaited<ReturnType<typeof getEvoSdk>>;
+
+/** Every choice index the contract can hold, for the grouped count's `in` clause. */
+const ALL_CHOICES = Array.from({ length: POLL_MAX_OPTIONS }, (_, index) => index);
+
+function isValidChoice(choice: number): boolean {
+  return Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS;
+}
+
+/** Dedupe, drop out-of-range values, and order a ballot's choices. */
+function normalizeChoices(choices: number[]): number[] {
+  return Array.from(new Set(choices)).filter(isValidChoice).sort((a, b) => a - b);
+}
+
+/** Read the `choice` field off a raw vote document (nested `data` or flat). */
+function readChoice(doc: Record<string, unknown>): number {
+  return Number((doc.data as Record<string, unknown> | undefined)?.choice ?? doc.choice);
+}
+
+function zeroCounts(): number[] {
+  return new Array<number>(POLL_MAX_OPTIONS).fill(0);
+}
+
 /**
  * Platform rejects a repeat vote with the `voterChoice` unique index violation.
  * Callers treat this as "already voted" rather than an error.
@@ -58,9 +81,7 @@ class PollrVoteService {
     choices: number[],
     ownerId: string
   ): Promise<CastVoteResult> {
-    const selected = Array.from(new Set(choices))
-      .filter((choice) => Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS)
-      .sort((a, b) => a - b);
+    const selected = normalizeChoices(choices);
 
     if (selected.length === 0) {
       return { success: false, created: [], alreadyVoted: [], error: 'No choice selected' };
@@ -131,11 +152,7 @@ class PollrVoteService {
         limit: POLL_MAX_OPTIONS,
       });
 
-      const choices = normalizeSDKResponse(response)
-        .map((doc) => Number((doc.data as Record<string, unknown> | undefined)?.choice ?? doc.choice))
-        .filter((choice) => Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS);
-
-      return Array.from(new Set(choices)).sort((a, b) => a - b);
+      return normalizeChoices(normalizeSDKResponse(response).map(readChoice));
     } catch (error) {
       logger.error('PollrVoteService: failed to load own votes', error);
       return [];
@@ -158,10 +175,12 @@ class PollrVoteService {
 
     const sdk = await getEvoSdk();
 
-    let counts = await this.countByChoiceGrouped(sdk, pollId);
-    if (!counts) counts = await this.countByChoiceIndividually(sdk, pollId);
-    if (!counts) counts = await this.countByChoiceScan(sdk, pollId);
-    const resolvedCounts = counts ?? new Array<number>(POLL_MAX_OPTIONS).fill(0);
+    // Each step falls through to the next only when it couldn't produce counts.
+    const resolvedCounts =
+      (await this.countByChoiceGrouped(sdk, pollId)) ??
+      (await this.countByChoiceIndividually(sdk, pollId)) ??
+      (await this.countByChoiceScan(sdk, pollId)) ??
+      zeroCounts();
 
     // Grand total via the `pollTotal` countable index. Never pass a limit on
     // count queries — Drive rejects them with InvalidLimit. On failure the
@@ -199,29 +218,26 @@ class PollrVoteService {
    * One round-trip against the `choiceCounts` countable index.
    * Returns null (so the caller can fall back) when the response can't be decoded.
    */
-  private async countByChoiceGrouped(
-    sdk: Awaited<ReturnType<typeof getEvoSdk>>,
-    pollId: string
-  ): Promise<number[] | null> {
+  private async countByChoiceGrouped(sdk: Sdk, pollId: string): Promise<number[] | null> {
     try {
       const raw = await sdk.documents.count({
         dataContractId: POLLR_CONTRACT_ID,
         documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
         where: [
           ['pollId', '==', pollId],
-          ['choice', 'in', Array.from({ length: POLL_MAX_OPTIONS }, (_, i) => i)],
+          ['choice', 'in', ALL_CHOICES],
         ],
         groupBy: ['choice'],
       });
 
       const entries = Array.from(raw.entries());
-      const counts = new Array<number>(POLL_MAX_OPTIONS).fill(0);
+      const counts = zeroCounts();
       let matched = 0;
 
       for (const [key, value] of entries) {
         if (key === '') continue; // aggregate-mode key; shouldn't appear with groupBy set
         const choice = parseInt(key, 16) - CHOICE_KEY_OFFSET;
-        if (!Number.isInteger(choice) || choice < 0 || choice >= POLL_MAX_OPTIONS) continue;
+        if (!isValidChoice(choice)) continue;
         counts[choice] = Number(value);
         matched++;
       }
@@ -240,12 +256,9 @@ class PollrVoteService {
   }
 
   /** Fallback 1: one equality count per choice against the same countable index. */
-  private async countByChoiceIndividually(
-    sdk: Awaited<ReturnType<typeof getEvoSdk>>,
-    pollId: string
-  ): Promise<number[] | null> {
+  private async countByChoiceIndividually(sdk: Sdk, pollId: string): Promise<number[] | null> {
     try {
-      const counts = new Array<number>(POLL_MAX_OPTIONS).fill(0);
+      const counts = zeroCounts();
       for (let choice = 0; choice < POLL_MAX_OPTIONS; choice++) {
         counts[choice] = await documentCount(sdk, {
           dataContractId: POLLR_CONTRACT_ID,
@@ -266,12 +279,9 @@ class PollrVoteService {
   }
 
   /** Fallback 2: paginate the `pollVotesByTime` index and tally client-side. */
-  private async countByChoiceScan(
-    sdk: Awaited<ReturnType<typeof getEvoSdk>>,
-    pollId: string
-  ): Promise<number[] | null> {
+  private async countByChoiceScan(sdk: Sdk, pollId: string): Promise<number[] | null> {
     try {
-      const { documents, reachedLimit } = await paginateFetchAll(
+      const { documents: choices, reachedLimit } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: POLLR_CONTRACT_ID,
@@ -285,16 +295,16 @@ class PollrVoteService {
             ['$createdAt', 'asc'],
           ],
         }),
-        (doc) => Number((doc.data as Record<string, unknown> | undefined)?.choice ?? doc.choice)
+        readChoice
       );
 
       if (reachedLimit) {
         logger.warn('PollrVoteService: vote scan hit the pagination cap; tally may undercount', { pollId });
       }
 
-      const counts = new Array<number>(POLL_MAX_OPTIONS).fill(0);
-      for (const choice of documents) {
-        if (Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS) {
+      const counts = zeroCounts();
+      for (const choice of choices) {
+        if (isValidChoice(choice)) {
           counts[choice] += 1;
         }
       }

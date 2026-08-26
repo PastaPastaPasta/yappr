@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
@@ -96,10 +96,7 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
     setSelected([])
   }, [pollId, userId])
 
-  const isClosed = useMemo(
-    () => Boolean(poll?.endsAt && poll.endsAt < Date.now()),
-    [poll?.endsAt]
-  )
+  const isClosed = Boolean(poll?.endsAt && poll.endsAt < Date.now())
   const hasVoted = myVotes.length > 0
   // Stay in vote mode while choices are still selected: a multi-choice ballot
   // that failed partway leaves its unrecorded choices selected for a retry.
@@ -182,7 +179,7 @@ export function PollCard({ pollId, postContent, className }: PollCardProps) {
     )
   }
 
-  const counts = tally?.counts ?? new Array(poll.options.length).fill(0)
+  const counts = tally?.counts ?? new Array<number>(poll.options.length).fill(0)
   const total = tally?.total ?? 0
   const leading = counts.length > 0 ? Math.max(...counts) : 0
   const questionShownByPost = (postContent ?? '').trim() === poll.question.trim()

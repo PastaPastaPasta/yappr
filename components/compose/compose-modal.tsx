@@ -50,7 +50,7 @@ import {
   pollDraftOptions,
   type PollDraft,
 } from './poll-editor'
-import { buildPollEmbed, pollrPollUrl, type PostEmbed } from '@/lib/poll-embed'
+import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
@@ -447,6 +447,13 @@ export function ComposeModal() {
     setAttachedImage(null)
   }, [attachedImage])
 
+  // Detach the poll. Also forgets an already-created poll id, so the next
+  // attempt starts a fresh poll rather than re-using the abandoned one.
+  const clearPoll = useCallback(() => {
+    setPollDraft(null)
+    setCreatedPollId(null)
+  }, [])
+
   // Attach/detach a poll. The post text doubles as the poll question.
   const handlePollToggle = useCallback(() => {
     setPollDraft((current) => (current ? null : createPollDraft()))
@@ -457,10 +464,9 @@ export function ComposeModal() {
   // switches to a private visibility or starts a reply).
   useEffect(() => {
     if (pollDraft && !canAttachPoll) {
-      setPollDraft(null)
-      setCreatedPollId(null)
+      clearPoll()
     }
-  }, [pollDraft, canAttachPoll])
+  }, [pollDraft, canAttachPoll, clearPoll])
 
   // Handle image button click - check provider first
   const handleImageButtonClick = useCallback(() => {
@@ -601,14 +607,13 @@ export function ComposeModal() {
       // Create the poll first: it costs credits only (no YAPP) and the post
       // needs its document id for the embed triple. If this fails we abort
       // before spending anything on the post.
-      let postEmbed: PostEmbed | undefined
       if (pollDraft && !pollId) {
         setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Creating poll...' })
         try {
           const { pollrPollService } = await import('@/lib/services')
           const poll = await pollrPollService.createPoll(authedUser.identityId, {
             // The post text is the question — without the appended image URL.
-            question: threadPosts.find((p) => !p.postedPostId && p.content.trim().length > 0)?.content.trim() ?? '',
+            question: firstUnpostedPost?.content.trim() ?? '',
             options: pollDraftOptions(pollDraft),
             multiChoice: pollDraft.multiChoice,
             endsAt: pollDraftEndsAt(pollDraft),
@@ -623,9 +628,7 @@ export function ComposeModal() {
           return
         }
       }
-      if (pollId) {
-        postEmbed = buildPollEmbed(pollId)
-      }
+      const postEmbed = pollId ? buildPollEmbed(pollId) : undefined
 
       setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
 
@@ -1008,8 +1011,7 @@ export function ComposeModal() {
       URL.revokeObjectURL(attachedImage.preview)
     }
     setAttachedImage(null)
-    setPollDraft(null)
-    setCreatedPollId(null)
+    clearPoll()
     setComposeOpen(false)
     setReplyingTo(null)
     setQuotingPost(null)
@@ -1296,10 +1298,7 @@ export function ComposeModal() {
                             <PollEditor
                               draft={pollDraft}
                               onChange={setPollDraft}
-                              onRemove={() => {
-                                setPollDraft(null)
-                                setCreatedPollId(null)
-                              }}
+                              onRemove={clearPoll}
                               disabled={isPosting}
                               // Polls are immutable, so once one lands the editor
                               // locks and the retry re-uses it as-is.

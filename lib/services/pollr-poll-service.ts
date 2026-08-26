@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
+import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -8,7 +9,6 @@ import {
   POLL_OPTION_MAX_LENGTH,
   POLL_QUESTION_MAX_LENGTH,
 } from '@/lib/constants';
-import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 
 /**
  * A poll on the shared Pollr contract.
@@ -42,6 +42,13 @@ function optionField(index: number): string {
   return `option${index}`;
 }
 
+/** Numeric contract field, or undefined when absent or unusable. */
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 class PollrPollService extends BaseDocumentService<Poll> {
   constructor() {
     super(POLLR_DOCUMENT_TYPES.POLL, POLLR_CONTRACT_ID);
@@ -59,11 +66,6 @@ class PollrPollService extends BaseDocumentService<Poll> {
       options.push(value);
     }
 
-    const rawEndsAt = data.endsAt ?? doc.endsAt;
-    const endsAt = typeof rawEndsAt === 'number' || typeof rawEndsAt === 'string'
-      ? Number(rawEndsAt)
-      : undefined;
-
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
@@ -71,7 +73,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
       question: ((data.question ?? doc.question) || '') as string,
       options,
       multiChoice: Boolean(data.multiChoice ?? doc.multiChoice ?? false),
-      endsAt: endsAt !== undefined && Number.isFinite(endsAt) ? endsAt : undefined,
+      endsAt: toFiniteNumber(data.endsAt ?? doc.endsAt),
     };
   }
 
@@ -127,9 +129,11 @@ class PollrPollService extends BaseDocumentService<Poll> {
   }
 
   /**
-   * Fetch several polls at once. Batched into `$id in [...]` queries because
-   * Platform caps `in` clauses at 100 values; falls back to per-id fetches if
-   * a batch query fails so a single bad batch can't blank out a whole feed.
+   * Fetch several polls at once — for batch feed hydration, where issuing one
+   * `getPoll` per visible post would be a round-trip each. Batched into
+   * `$id in [...]` queries because Platform caps `in` clauses at 100 values;
+   * falls back to per-id fetches if a batch query fails so one bad batch can't
+   * blank out a whole page of polls.
    */
   async getPolls(pollIds: string[]): Promise<Poll[]> {
     const uniqueIds = Array.from(new Set(pollIds.filter(Boolean)));
@@ -137,10 +141,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
 
     const batches = await mapLimit(chunk(uniqueIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
       try {
-        const result = await this.query({
-          where: [['$id', 'in', batch]],
-          limit: batch.length,
-        });
+        const result = await this.query({ where: [['$id', 'in', batch]], limit: batch.length });
         return result.documents;
       } catch (error) {
         logger.warn('PollrPollService: batched poll query failed, falling back to per-id fetches', {

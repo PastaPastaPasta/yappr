@@ -33,12 +33,10 @@ export function extractPostEmbedFields(
   data: Record<string, unknown>,
   doc: Record<string, unknown>
 ): PostEmbedFields {
-  const rawContractId = data.embedContractId ?? doc.embedContractId;
-  const rawId = data.embedId ?? doc.embedId;
+  // identifierToBase58 already returns null for missing/undecodable values.
+  const embedContractId = identifierToBase58(data.embedContractId ?? doc.embedContractId);
+  const embedId = identifierToBase58(data.embedId ?? doc.embedId);
   const rawDocType = data.embedDocType ?? doc.embedDocType;
-
-  const embedContractId = rawContractId ? identifierToBase58(rawContractId) ?? undefined : undefined;
-  const embedId = rawId ? identifierToBase58(rawId) ?? undefined : undefined;
   const embedDocType = typeof rawDocType === 'string' && rawDocType.length > 0 ? rawDocType : undefined;
 
   if (!embedContractId || !embedId || !embedDocType) return {};

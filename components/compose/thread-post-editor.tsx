@@ -31,7 +31,6 @@ interface ThreadPostEditorProps {
   /** Poll attachment toggle - only shown on a single, unposted, public post */
   onPollClick?: () => void
   pollAttached?: boolean
-  pollTitle?: string
 }
 
 export function ThreadPostEditor({
@@ -52,7 +51,6 @@ export function ThreadPostEditor({
   onFileSelect,
   onPollClick,
   pollAttached = false,
-  pollTitle,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -293,7 +291,7 @@ export function ThreadPostEditor({
               {onPollClick && (
                 <FormatButton
                   onClick={onPollClick}
-                  title={pollTitle || (pollAttached ? 'Remove poll' : 'Add poll')}
+                  title={pollAttached ? 'Remove poll' : 'Add poll'}
                 >
                   <ChartBarIcon className={`w-4 h-4 ${pollAttached ? 'text-yappr-500' : ''}`} />
                 </FormatButton>
