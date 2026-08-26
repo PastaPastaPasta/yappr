@@ -113,6 +113,9 @@ export function ComposeModal() {
   // a second, orphaned one.
   const [pollDraft, setPollDraft] = useState<PollDraft | null>(null)
   const [createdPollId, setCreatedPollId] = useState<string | null>(null)
+  // The poll broadcast succeeded but DAPI never confirmed it was queryable, so
+  // the next attempt has to check before spending YAPP on a post that embeds it.
+  const [pollUnconfirmed, setPollUnconfirmed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const { upload, isUploading, progress, isProviderConnected, checkProvider } = useImageUpload()
@@ -452,6 +455,7 @@ export function ComposeModal() {
   const forgetPoll = useCallback(() => {
     setPollDraft(null)
     setCreatedPollId(null)
+    setPollUnconfirmed(false)
   }, [])
 
   // Detach the poll. A poll that already landed is now orphaned (the next
@@ -640,6 +644,7 @@ export function ComposeModal() {
           // now would spend YAPP on a post pointing at a poll that may not
           // exist, so stop here — the poll id is kept and a retry re-uses it.
           if ((poll as unknown as { __createConfirmed?: boolean }).__createConfirmed === false) {
+            setPollUnconfirmed(true)
             toast('Poll not confirmed yet — try again in a moment.', { duration: 6000, icon: '⏳' })
             setIsPosting(false)
             setPostingProgress(null)
@@ -652,6 +657,21 @@ export function ComposeModal() {
           setPostingProgress(null)
           return
         }
+      } else if (pollId && pollUnconfirmed) {
+        // The retry path for a poll whose confirmation timed out. It is not
+        // re-created (that would orphan the first one and pay twice), but it has
+        // to be visible to a query before the post embeds it — otherwise the
+        // post spends YAPP pointing at a poll that may never have landed.
+        setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Checking poll...' })
+        const { pollrPollService } = await import('@/lib/services')
+        const landed = await pollrPollService.getPoll(pollId)
+        if (!landed) {
+          toast('Poll still not confirmed — try again in a moment.', { duration: 6000, icon: '⏳' })
+          setIsPosting(false)
+          setPostingProgress(null)
+          return
+        }
+        setPollUnconfirmed(false)
       }
       const postEmbed = pollId ? buildPollEmbed(pollId) : undefined
 
@@ -1304,6 +1324,11 @@ export function ComposeModal() {
                                 onActivate={() => setActiveThreadPost(post.id)}
                                 onRemove={() => removeThreadPost(post.id)}
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
+                                // The first post's text is the poll's question,
+                                // and poll documents are immutable — editing it
+                                // after the poll lands would leave the two
+                                // disagreeing in the feed.
+                                locked={index === 0 && !!createdPollId}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
                                 extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
                                 {...(!post.postedPostId ? {

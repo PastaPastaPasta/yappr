@@ -340,8 +340,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const createdAtLabel = useRelativeTime(post.createdAt)
 
   // Native poll embed, or a legacy post that only links to the Pollr web app.
-  const pollLink = useMemo(() => findPollrPollLink(post.content), [post.content])
-  const embeddedPollId = getEmbeddedPollId(post) ?? pollLink?.pollId ?? null
+  const nativePollId = getEmbeddedPollId(post)
+  // Only look for a legacy link when there is no native embed: on a native poll
+  // post a Pollr URL in the body points at some *other* poll, and stripping it
+  // would drop a link nothing else renders.
+  const pollLink = useMemo(
+    () => (nativePollId ? null : findPollrPollLink(post.content)),
+    [nativePollId, post.content]
+  )
+  const embeddedPollId = nativePollId ?? pollLink?.pollId ?? null
   // Legacy poll links are rendered as the poll itself, so drop the raw URL.
   const displayContent = useMemo(
     () => (pollLink ? stripPollrPollLink(post.content, pollLink.url) : post.content),

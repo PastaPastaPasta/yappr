@@ -54,6 +54,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   const [selected, setSelected] = useState<number[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
+  // Set when the user's own votes couldn't be read. Distinct from "no votes":
+  // an empty list reopens the ballot, and the contract's uniqueness rule is per
+  // (poll, voter, choice), so a single-choice voter could record a second one.
+  const [votesUnavailable, setVotesUnavailable] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   // Multi-choice voters can come back and add more selections; this reopens the
   // ballot over the already-recorded ones.
@@ -67,6 +71,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     const load = async () => {
       setLoading(true)
       setLoadError(false)
+      setVotesUnavailable(false)
       try {
         const { pollrPollService, pollrVoteService } = await import('@/lib/services')
         const loadedPoll = await pollrPollService.getPoll(pollId)
@@ -77,17 +82,26 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         }
         setPoll(loadedPoll)
 
+        const [tallyResult, votesResult] = await Promise.allSettled([
+          pollrVoteService.getTally(pollId, loadedPoll.options.length),
+          userId ? pollrVoteService.getMyVotes(pollId, userId) : Promise.resolve<number[]>([]),
+        ])
+        if (cancelled) return
+
         // A failed tally shouldn't hide the poll itself — fall back to zeroes.
-        try {
-          const [loadedTally, loadedVotes] = await Promise.all([
-            pollrVoteService.getTally(pollId, loadedPoll.options.length),
-            userId ? pollrVoteService.getMyVotes(pollId, userId) : Promise.resolve<number[]>([]),
-          ])
-          if (cancelled) return
-          setTally(loadedTally)
-          setMyVotes(loadedVotes)
-        } catch (error) {
-          logger.error('PollCard: failed to load poll results', error)
+        if (tallyResult.status === 'fulfilled') {
+          setTally(tallyResult.value)
+        } else {
+          logger.error('PollCard: failed to load poll tally', tallyResult.reason)
+        }
+
+        // Own votes are load-bearing for correctness, so a failure closes the
+        // ballot instead of guessing that the user hasn't voted.
+        if (votesResult.status === 'fulfilled') {
+          setMyVotes(votesResult.value)
+        } else {
+          logger.error('PollCard: failed to load own votes', votesResult.reason)
+          setVotesUnavailable(true)
         }
       } catch (error) {
         logger.error('PollCard: failed to load poll', error)
@@ -114,10 +128,16 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   const hasVoted = myVotes.length > 0
   // Stay in vote mode while choices are still selected: a multi-choice ballot
   // that failed partway leaves its unrecorded choices selected for a retry.
-  const showResults = !user || isClosed || (hasVoted && selected.length === 0 && !addingChoices)
+  const showResults =
+    !user || isClosed || votesUnavailable || (hasVoted && selected.length === 0 && !addingChoices)
   // A multi-choice voter who hasn't picked everything can still add selections.
   const canAddChoices = Boolean(
-    user && !isClosed && poll?.multiChoice && hasVoted && myVotes.length < (poll?.options.length ?? 0)
+    user &&
+      !isClosed &&
+      !votesUnavailable &&
+      poll?.multiChoice &&
+      hasVoted &&
+      myVotes.length < (poll?.options.length ?? 0)
   )
 
   const toggleChoice = useCallback((index: number, multiChoice: boolean) => {
@@ -270,6 +290,12 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             >
               Add choices
             </button>
+          )}
+
+          {votesUnavailable && user && !isClosed && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Couldn&apos;t check whether you&apos;ve already voted — reload to vote.
+            </p>
           )}
         </div>
       ) : (

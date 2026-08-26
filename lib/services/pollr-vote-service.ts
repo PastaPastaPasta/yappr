@@ -70,6 +70,19 @@ export function isDuplicateVoteError(error: unknown): boolean {
   return extractErrorMessage(error).toLowerCase().includes('duplicate unique properties');
 }
 
+/**
+ * Votes on the shared Pollr contract: one immutable document per selection,
+ * unique per (poll, voter, choice) — the shape the `choiceCounts` count tree
+ * needs for O(1) per-option tallies.
+ *
+ * That uniqueness rule is as far as the contract can go. DPP has no
+ * cross-document validation, so a vote cannot be checked against the poll's
+ * `multiChoice` flag on write, and no index can be conditional on it. A
+ * single-choice poll is single-choice by client convention — this app and Pollr
+ * both close the ballot once a vote is recorded — while a hand-rolled write can
+ * still add a second choice, which lands as an extra selection in the per-option
+ * counts rather than as a corrupted tally.
+ */
 class PollrVoteService {
   private tallyCache = new Map<string, { data: PollTally; timestamp: number }>();
 
@@ -168,6 +181,10 @@ class PollrVoteService {
   /**
    * Which choices `userId` has already cast on this poll.
    * Uses the `voterChoice` unique index prefix [pollId, $ownerId].
+   *
+   * Throws on failure rather than reporting "no votes": an empty answer reopens
+   * the ballot, and the contract's uniqueness rule is per (poll, voter, choice),
+   * so a single-choice voter could then record a second, different choice.
    */
   async getMyVotes(pollId: string, userId: string): Promise<number[]> {
     try {
@@ -190,7 +207,7 @@ class PollrVoteService {
       return normalizeChoices(normalizeSDKResponse(response).map(readChoice));
     } catch (error) {
       logger.error('PollrVoteService: failed to load own votes', error);
-      return [];
+      throw error;
     }
   }
 
