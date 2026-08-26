@@ -35,19 +35,39 @@ export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract
 export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
 
 // Pollr — native polls shared with the standalone Pollr app.
-// Testnet pollr v2: count trees on `vote`, maker-owned (Yappr only reads/writes documents).
-export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID || '8R4SgHyxrEZCb5yBb6p4gtT3g1CSRv5GAM4Rehc1vQJq'
-// Pollr v1 — abandoned in place. Recorded so the id stays documented and is never
-// reused; its documents use the old schema and are NOT readable by the v2 services.
-export const LEGACY_POLLR_CONTRACT_ID = '7Xye3k1MuVYTpLuTnein5GLwR1NUjmt5gtLLp4pGhhRf'
+// Testnet pollr v3: count trees plus a per-mode ballot doctype, maker-owned
+// (Yappr only reads/writes documents).
+export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID || 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
+// Superseded pollr contracts, abandoned in place. Recorded so the ids stay
+// documented and are never reused; their documents are NOT readable by the v3
+// services. v1 stored options as JSON in byte arrays; v2 had a single `vote`
+// doctype whose uniqueness rule could not enforce single-choice ballots.
+export const LEGACY_POLLR_CONTRACT_IDS = [
+  '7Xye3k1MuVYTpLuTnein5GLwR1NUjmt5gtLLp4pGhhRf', // v1
+  '8R4SgHyxrEZCb5yBb6p4gtT3g1CSRv5GAM4Rehc1vQJq', // v2
+] as const
 export const POLLR_APP_URL = 'https://pastapastapasta.github.io/pollr'
 
+/**
+ * `VOTE` and `MULTI_VOTE` are the two ballot doctypes. A poll's immutable
+ * `multiChoice` flag picks which one holds its ballots, and each carries the
+ * uniqueness rule that mode needs: `vote` is unique per (poll, voter), so
+ * Platform rejects a second single-choice selection; `multiVote` is unique per
+ * (poll, voter, choice). Documents written to the doctype a poll doesn't use
+ * are never read, so they can't reach a tally.
+ */
 export const POLLR_DOCUMENT_TYPES = {
   POLL: 'poll',
   VOTE: 'vote',
+  MULTI_VOTE: 'multiVote',
 } as const
 
-// Poll limits — mirror the pollr v2 contract schema (option0..option9, 1-100 chars each).
+/** The doctype holding a poll's ballots, chosen by its `multiChoice` flag. */
+export function pollrVoteDocType(multiChoice: boolean): string {
+  return multiChoice ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
+}
+
+// Poll limits — mirror the pollr v3 contract schema (option0..option9, 1-100 chars each).
 export const POLL_MIN_OPTIONS = 2
 export const POLL_MAX_OPTIONS = 10
 export const POLL_QUESTION_MAX_LENGTH = 512

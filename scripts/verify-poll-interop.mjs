@@ -1,18 +1,22 @@
 /**
- * Phase-0 verification battery for the pollr v2 contract design (and the Phase-3
- * cross-app acceptance check). Exercises, against a registered pollr v2 contract:
+ * Phase-0 verification battery for the pollr v3 contract design (and the Phase-3
+ * cross-app acceptance check). Exercises, against a registered pollr v3 contract:
  *
  *   1. poll create (string question + enumerated options, multiChoice, endsAt)
- *   2. a multi-choice ballot as ONE batch state transition (N vote creates, one signature)
- *   3. a single-choice vote from a second identity
- *   4. duplicate-vote rejection via the unique [pollId, $ownerId, choice] index
- *   5. count-tree tallies: grand-total prefix count, grouped per-choice count
- *      (equality prefix + groupBy), per-choice equality counts
- *   6. pollVotesByTime pagination cross-check of the count-tree numbers
+ *   2. a multi-choice ballot as ONE batch state transition (N multiVote creates)
+ *   3. multiVote uniqueness: a repeat of the same choice is rejected, a distinct
+ *      one is accepted
+ *   4. SINGLE-CHOICE ENFORCEMENT: on the `vote` doctype, a voter's second choice
+ *      is rejected by Platform, while a different voter's is accepted
+ *   5. doctype isolation: a multiVote document written against a single-choice
+ *      poll cannot move that poll's tally
+ *   6. count-tree tallies: grouped per-choice count (equality prefix + groupBy),
+ *      per-choice equality counts, and that the v2 `pollTotal` index is gone
+ *   7. pollVotesByTime pagination cross-check of the count-tree numbers
  *
- * Uses e2e bot identities 0 (poll author + single vote) and 1 (multi ballot).
+ * Uses e2e bot identities 0 (poll author) and 1 (second voter).
  *
- * Run:  node scripts/verify-poll-interop.mjs --contract <pollrV2ContractId>
+ * Run:  node scripts/verify-poll-interop.mjs --contract <pollrV3ContractId>
  */
 import {
   BatchTransition,
@@ -39,7 +43,7 @@ function parseArgs(argv) {
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
-  if (!args.contract) throw new Error('--contract <pollrV2ContractId> is required');
+  if (!args.contract) throw new Error('--contract <pollrV3ContractId> is required');
   return args;
 }
 
@@ -140,6 +144,54 @@ function countEntries(raw) {
 const args = parseArgs(process.argv.slice(2));
 const contractId = args.contract;
 
+const ALL_CHOICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+/** Grouped count keys are the hex of Platform's tagged integer byte: 0x80 + choice. */
+const CHOICE_KEY_OFFSET = 0x80;
+
+/** Assert Platform refuses a write. The rejection text is echoed for the log. */
+async function expectRejected(label, run) {
+  try {
+    await run();
+    check(label, false, 'accepted (BAD)');
+  } catch (e) {
+    check(label, true, describeErr(e).slice(0, 160));
+  }
+}
+
+/** Per-choice counts off a doctype's `choiceCounts` count tree, in one grouped count. */
+async function groupedCounts(sdk, docType, pollId) {
+  const raw = await sdk.documents.count({
+    dataContractId: contractId,
+    documentTypeName: docType,
+    where: [['pollId', '==', pollId], ['choice', 'in', ALL_CHOICES]],
+    groupBy: ['choice'],
+  });
+  const counts = new Array(10).fill(0);
+  for (const [key, value] of countEntries(raw)) {
+    if (key === '') continue;
+    counts[parseInt(key, 16) - CHOICE_KEY_OFFSET] = Number(value);
+  }
+  return counts;
+}
+
+/** The guaranteed fallback path: one equality count per choice. */
+async function equalityCounts(sdk, docType, pollId, upTo) {
+  const counts = [];
+  for (let choice = 0; choice < upTo; choice++) {
+    const raw = await sdk.documents.count({
+      dataContractId: contractId,
+      documentTypeName: docType,
+      where: [['pollId', '==', pollId], ['choice', '==', choice]],
+    });
+    const n = raw instanceof Map ? raw.get('') : raw?.[''];
+    counts.push(Number(n ?? 0));
+  }
+  return counts;
+}
+
+/** Count trees settle behind the read quorum; give them a beat after a write. */
+const settle = () => new Promise((r) => setTimeout(r, 3000));
+
 try {
   const sdk = EvoSDK.testnetTrusted({ settings: { timeoutMs: SDK_TIMEOUT_MS } });
   await sdk.connect();
@@ -147,8 +199,19 @@ try {
   const bot1 = await botSigner(sdk, 1);
   console.log(`connected; contract=${contractId} bot0=${bot0.ownerId} bot1=${bot1.ownerId}`);
 
-  // 1. Poll create (bot0)
-  const { ids: [pollId] } = await createDocuments(sdk, bot0, {
+  const endsAt = Date.now() + 7 * 24 * 3600 * 1000;
+  const ownerBytes = bs58.decode(bot0.ownerId);
+  const ballot = (pollId, choice) => ({
+    pollId: bs58.decode(pollId),
+    pollOwnerId: ownerBytes,
+    choice,
+  });
+
+  // ===================== multi-choice poll → `multiVote` =====================
+  console.log('');
+  console.log('--- multi-choice poll (multiVote) ---');
+
+  const { ids: [multiPollId] } = await createDocuments(sdk, bot0, {
     contractId,
     docType: 'poll',
     datas: [{
@@ -157,108 +220,121 @@ try {
       option1: 'Grouped counts',
       option2: 'Prefix totals',
       multiChoice: true,
-      endsAt: Date.now() + 7 * 24 * 3600 * 1000,
+      endsAt,
     }],
   });
-  console.log(`poll created: ${pollId}`);
+  console.log(`multi poll created: ${multiPollId}`);
 
-  const readBack = await sdk.documents.query({
-    dataContractId: contractId, documentTypeName: 'poll', where: [['$id', '==', pollId]],
+  const multiReadBack = await sdk.documents.query({
+    dataContractId: contractId, documentTypeName: 'poll', where: [['$id', '==', multiPollId]],
   });
-  const pollDoc = countEntries(readBack)[0]?.[1];
-  const pollObj = pollDoc?.toObject ? pollDoc.toObject() : pollDoc;
-  check('poll round-trip', pollObj?.question === 'Which count-tree feature matters most?'
-    && pollObj?.option2 === 'Prefix totals' && pollObj?.multiChoice === true,
-    `question=${JSON.stringify(pollObj?.question)} multiChoice=${JSON.stringify(pollObj?.multiChoice)}`);
+  const multiDoc = countEntries(multiReadBack)[0]?.[1];
+  const multiObj = multiDoc?.toObject ? multiDoc.toObject() : multiDoc;
+  check('multi poll round-trip', multiObj?.question === 'Which count-tree feature matters most?'
+    && multiObj?.option2 === 'Prefix totals' && multiObj?.multiChoice === true,
+    `question=${JSON.stringify(multiObj?.question)} multiChoice=${JSON.stringify(multiObj?.multiChoice)}`);
 
-  const pollIdBytes = bs58.decode(pollId);
-  const pollOwnerBytes = bs58.decode(bot0.ownerId);
-  const voteData = (choice) => ({ pollId: pollIdBytes, pollOwnerId: pollOwnerBytes, choice });
-
-  // 2. Multi-choice ballot from bot1 (choices 0 and 2) — batch if the protocol
-  // allows it, sequential single-create transitions otherwise
+  // bot1 casts a two-choice ballot; bot0 casts one.
   let multiMode = null;
   try {
     ({ mode: multiMode } = await createDocuments(sdk, bot1, {
-      contractId, docType: 'vote', datas: [voteData(0), voteData(2)],
+      contractId, docType: 'multiVote', datas: [ballot(multiPollId, 0), ballot(multiPollId, 2)],
     }));
   } catch (e) {
     console.log(`  multi-ballot error: ${describeErr(e)}`);
   }
-  check('multi-choice ballot lands (2 votes)', multiMode !== null, `mode=${multiMode}`);
+  check('multi-choice ballot lands (2 selections)', multiMode !== null, `mode=${multiMode}`);
 
-  // 3. Single vote from bot0 (choice 1)
-  await createDocuments(sdk, bot0, { contractId, docType: 'vote', datas: [voteData(1)] });
-  check('single vote create', true);
+  await createDocuments(sdk, bot0, { contractId, docType: 'multiVote', datas: [ballot(multiPollId, 1)] });
+  check('second voter records a selection', true);
 
-  // 4. Duplicate vote (bot1, choice 0 again) must be rejected by the unique index
-  let dupRejected = false;
-  let dupDetail = 'accepted (BAD)';
-  try {
-    await createDocuments(sdk, bot1, { contractId, docType: 'vote', datas: [voteData(0)] });
-  } catch (e) {
-    dupRejected = true;
-    dupDetail = describeErr(e).slice(0, 200);
-  }
-  check('duplicate vote rejected on-chain', dupRejected, dupDetail);
+  await expectRejected('multiVote: repeat of the same choice rejected', () =>
+    createDocuments(sdk, bot1, { contractId, docType: 'multiVote', datas: [ballot(multiPollId, 0)] }));
 
-  // Give count trees a beat to settle behind the read quorum.
-  await new Promise((r) => setTimeout(r, 3000));
+  // The point of multi-choice: a *different* choice from the same voter is fine.
+  await createDocuments(sdk, bot1, { contractId, docType: 'multiVote', datas: [ballot(multiPollId, 1)] });
+  check('multiVote: a distinct additional choice is accepted', true);
 
-  // 5a. Grand-total prefix count on the 2-property countable index
-  const totalRaw = await sdk.documents.count({
-    dataContractId: contractId, documentTypeName: 'vote', where: [['pollId', '==', pollId]],
-  });
-  console.log('  grand-total raw:', countEntries(totalRaw).map(([k, v]) => `${JSON.stringify(k)}=>${v}`).join(', '));
-  const total = totalRaw instanceof Map ? totalRaw.get('') : totalRaw?.[''];
-  check('prefix grand total == 3', Number(total) === 3, `got ${total}`);
+  await settle();
 
-  // 5b. Grouped per-choice count: equality prefix + choice-in + groupBy
-  let groupedEntries = [];
-  let groupedErr = null;
-  try {
-    const groupedRaw = await sdk.documents.count({
-      dataContractId: contractId,
-      documentTypeName: 'vote',
-      where: [['pollId', '==', pollId], ['choice', 'in', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]]],
-      groupBy: ['choice'],
-    });
-    groupedEntries = countEntries(groupedRaw);
-    console.log('  grouped raw entries:', groupedEntries.map(([k, v]) => `${JSON.stringify(k)}=>${v}`).join(', '));
-  } catch (e) {
-    groupedErr = describeErr(e);
-    console.log(`  grouped count error: ${groupedErr}`);
-  }
-  check('grouped per-choice count returns 3 buckets of 1',
-    groupedEntries.filter(([k]) => k !== '').length === 3
-      && groupedEntries.filter(([k]) => k !== '').every(([, v]) => Number(v) === 1),
-    groupedErr ?? `entries=${groupedEntries.length}`);
+  const multiGrouped = await groupedCounts(sdk, 'multiVote', multiPollId);
+  check('multiVote grouped counts == [1,2,1]',
+    JSON.stringify(multiGrouped.slice(0, 3)) === '[1,2,1]', JSON.stringify(multiGrouped.slice(0, 3)));
 
-  // 5c. Per-choice equality counts (the guaranteed fallback path)
-  const perChoice = [];
-  for (const choice of [0, 1, 2, 3]) {
-    const raw = await sdk.documents.count({
-      dataContractId: contractId, documentTypeName: 'vote',
-      where: [['pollId', '==', pollId], ['choice', '==', choice]],
-    });
-    const n = raw instanceof Map ? raw.get('') : raw?.[''];
-    perChoice.push(Number(n ?? 0));
-  }
-  check('per-choice equality counts == [1,1,1,0]', JSON.stringify(perChoice) === '[1,1,1,0]', JSON.stringify(perChoice));
+  const multiEquality = await equalityCounts(sdk, 'multiVote', multiPollId, 4);
+  check('multiVote per-choice equality counts == [1,2,1,0]',
+    JSON.stringify(multiEquality) === '[1,2,1,0]', JSON.stringify(multiEquality));
 
-  // 6. pollVotesByTime pagination cross-check
-  const votesRaw = await sdk.documents.query({
+  // v3 drops v2's `pollTotal` index: it only ever fed a misleading
+  // "zero counts + grand total" fallback, and the sum of choiceCounts is the
+  // same number. A bare pollId count must therefore no longer resolve.
+  await expectRejected('pollTotal index is gone (bare pollId count unavailable)', () =>
+    sdk.documents.count({
+      dataContractId: contractId, documentTypeName: 'multiVote', where: [['pollId', '==', multiPollId]],
+    }));
+
+  const multiScanRaw = await sdk.documents.query({
     dataContractId: contractId,
-    documentTypeName: 'vote',
-    where: [['pollId', '==', pollId]],
+    documentTypeName: 'multiVote',
+    where: [['pollId', '==', multiPollId]],
     orderBy: [['$createdAt', 'asc']],
     limit: 100,
   });
-  const votes = countEntries(votesRaw).map(([, d]) => (d?.toObject ? d.toObject() : d));
-  const scanned = [0, 0, 0, 0];
-  for (const vote of votes) scanned[Number(vote.choice)] += 1;
-  check('pagination scan matches count trees', votes.length === 3 && JSON.stringify(scanned) === '[1,1,1,0]',
-    `votes=${votes.length} scanned=${JSON.stringify(scanned)}`);
+  const multiVotes = countEntries(multiScanRaw).map(([, d]) => (d?.toObject ? d.toObject() : d));
+  const multiScanned = [0, 0, 0, 0];
+  for (const vote of multiVotes) multiScanned[Number(vote.choice)] += 1;
+  check('multiVote pagination scan matches count trees',
+    multiVotes.length === 4 && JSON.stringify(multiScanned) === '[1,2,1,0]',
+    `votes=${multiVotes.length} scanned=${JSON.stringify(multiScanned)}`);
+
+  // ================== single-choice poll → `vote` (enforced) ==================
+  console.log('');
+  console.log('--- single-choice poll (vote) ---');
+
+  const { ids: [singlePollId] } = await createDocuments(sdk, bot0, {
+    contractId,
+    docType: 'poll',
+    // multiChoice omitted entirely — absent means single choice.
+    datas: [{ question: 'Ship it?', option0: 'Yes', option1: 'No', endsAt }],
+  });
+  console.log(`single poll created: ${singlePollId}`);
+
+  const singleReadBack = await sdk.documents.query({
+    dataContractId: contractId, documentTypeName: 'poll', where: [['$id', '==', singlePollId]],
+  });
+  const singleDoc = countEntries(singleReadBack)[0]?.[1];
+  const singleObj = singleDoc?.toObject ? singleDoc.toObject() : singleDoc;
+  check('single poll round-trip (multiChoice absent)',
+    singleObj?.question === 'Ship it?' && !singleObj?.multiChoice,
+    `multiChoice=${JSON.stringify(singleObj?.multiChoice)}`);
+
+  await createDocuments(sdk, bot0, { contractId, docType: 'vote', datas: [ballot(singlePollId, 0)] });
+  check('single-choice ballot lands', true);
+
+  // THE FINDING: under v2 this second, different choice was accepted and counted.
+  // The voterBallot index is (pollId, $ownerId) with no choice, so Platform now
+  // refuses it — single-choice is enforced on the wire, not by client convention.
+  await expectRejected("vote: same voter's SECOND, DIFFERENT choice is rejected", () =>
+    createDocuments(sdk, bot0, { contractId, docType: 'vote', datas: [ballot(singlePollId, 1)] }));
+
+  // A different identity is of course unaffected.
+  await createDocuments(sdk, bot1, { contractId, docType: 'vote', datas: [ballot(singlePollId, 1)] });
+  check('vote: a different voter is unaffected', true);
+
+  await settle();
+
+  const singleGrouped = await groupedCounts(sdk, 'vote', singlePollId);
+  check('vote grouped counts == [1,1]',
+    JSON.stringify(singleGrouped.slice(0, 2)) === '[1,1]', JSON.stringify(singleGrouped.slice(0, 2)));
+
+  // Doctype isolation. Nothing stops a hand-rolled client writing multiVote
+  // documents against a single-choice poll — but the tally only ever reads the
+  // doctype the poll's mode selects, so they cannot reach the numbers.
+  await createDocuments(sdk, bot0, { contractId, docType: 'multiVote', datas: [ballot(singlePollId, 1)] });
+  await settle();
+  const afterNoise = await groupedCounts(sdk, 'vote', singlePollId);
+  check('off-doctype ballots cannot move a single-choice tally',
+    JSON.stringify(afterNoise.slice(0, 2)) === '[1,1]', JSON.stringify(afterNoise.slice(0, 2)));
 
   console.log('');
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);

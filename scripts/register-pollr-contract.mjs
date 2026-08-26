@@ -1,7 +1,7 @@
 /**
- * One-time, manual registration of the pollr v2 contract (count-tree tallies).
+ * One-time, manual registration of the pollr v3 contract (count-tree tallies + per-mode ballot doctypes).
  *
- * Publishes `contracts/pollr-contract-v2.json` as a brand-new contract. Run with
+ * Publishes `contracts/pollr-contract-v3.json` as a brand-new contract. Run with
  * `--bot <index>` for a scratch/rehearsal registration owned by an e2e bot
  * identity, or `--maker` for the real registration owned by the contract-maker
  * identity. Prints the new contract id for both repos' constants.
@@ -15,7 +15,7 @@ import { DataContract, EvoSDK } from '@dashevo/evo-sdk';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CONTRACT_FILE = join(REPO_ROOT, 'contracts', 'pollr-contract-v2.json');
+const CONTRACT_FILE = join(REPO_ROOT, 'contracts', 'pollr-contract-v3.json');
 const SDK_TIMEOUT_MS = 30000;
 
 function parseArgs(argv) {
@@ -54,10 +54,10 @@ try {
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
 
   const dataContract = new DataContract({ ownerId: owner.ownerId, identityNonce, schemas });
-  console.log(`publishing pollr v2 contract (${Object.keys(schemas).length} document types) …`);
+  console.log(`publishing pollr v3 contract (${Object.keys(schemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey, signer });
   const contractId = published.id.toBase58();
-  console.log(`pollr v2 contract published: ${contractId}`);
+  console.log(`pollr v3 contract published: ${contractId}`);
   console.log('');
   console.log(`yappr lib/constants.ts  → POLLR_CONTRACT_ID = '${contractId}'`);
   console.log(`pollr lib/constants.ts  → POLLR_CONTRACT_ID = '${contractId}'`);

@@ -55,8 +55,8 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   // Set when the user's own votes couldn't be read. Distinct from "no votes":
-  // an empty list reopens the ballot, and the contract's uniqueness rule is per
-  // (poll, voter, choice), so a single-choice voter could record a second one.
+  // an empty list reopens the ballot, which on a single-choice poll walks the
+  // voter into a write Platform rejects outright.
   const [votesUnavailable, setVotesUnavailable] = useState(false)
   // Bumped to re-run the load effect without a page refresh.
   const [reloadToken, setReloadToken] = useState(0)
@@ -90,8 +90,8 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         setPoll(loadedPoll)
 
         const [tallyResult, votesResult] = await Promise.allSettled([
-          pollrVoteService.getTally(pollId, loadedPoll.options.length),
-          userId ? pollrVoteService.getMyVotes(pollId, userId) : Promise.resolve<number[]>([]),
+          pollrVoteService.getTally(loadedPoll),
+          userId ? pollrVoteService.getMyVotes(loadedPoll, userId) : Promise.resolve<number[]>([]),
         ])
         if (cancelled) return
 
@@ -169,13 +169,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     setSubmitting(true)
     try {
       const { pollrVoteService } = await import('@/lib/services')
-      const result = await pollrVoteService.castVote(
-        poll.id,
-        poll.ownerId,
-        selected,
-        authedUser.identityId,
-        poll.endsAt
-      )
+      const result = await pollrVoteService.castVote(poll, selected, authedUser.identityId)
 
       // Duplicates mean the ballot was already on Platform — record them rather
       // than surfacing an error.
@@ -184,8 +178,13 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       if (recordedList.length > 0) {
         setMyVotes((current) => Array.from(new Set([...current, ...recordedList])).sort((a, b) => a - b))
       }
-      // Anything that didn't make it stays selected so the user can retry it.
-      setSelected((current) => current.filter((choice) => !recorded.has(choice)))
+      // Anything that didn't make it stays selected so the user can retry it —
+      // except on a single-choice poll, where the ballot is settled the moment
+      // anything is recorded. A duplicate there reports the choice already on
+      // Platform, not the one just attempted, so filtering by index alone would
+      // leave the rejected pick selected and the ballot stuck open.
+      const settled = !poll.multiChoice && recordedList.length > 0
+      setSelected((current) => (settled ? [] : current.filter((choice) => !recorded.has(choice))))
       if (result.failed.length === 0) {
         setAddingChoices(false)
       }
