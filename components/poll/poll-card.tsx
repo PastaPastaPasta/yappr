@@ -211,7 +211,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   const counts = tally?.counts ?? new Array<number>(poll.options.length).fill(0)
   const total = tally?.total ?? 0
   const leading = counts.length > 0 ? Math.max(...counts) : 0
-  const questionShownByPost = postTextWithoutTrailingUrls(postContent ?? '') === poll.question.trim()
+  // Compare both raw and URL-stripped: the composer appends attachment URLs to
+  // the body, but a question may legitimately end in a URL of its own.
+  const postText = (postContent ?? '').trim()
+  const question = poll.question.trim()
+  const questionShownByPost = postText === question || postTextWithoutTrailingUrls(postText) === question
   // The poll may have been made by someone other than whoever posted it.
   const foreignPollOwner = postAuthorId && postAuthorId !== poll.ownerId ? poll.ownerId : null
 
@@ -309,7 +313,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             >
               {submitting ? <Spinner size="sm" className="h-4 w-4 border-white" /> : 'Vote'}
             </Button>
-            {hasVoted && (
+            {/* Only for the "add choices" detour. NOT when choices are still
+                selected after a partial failure — cancelling there would
+                silently discard the retry the user still needs. */}
+            {addingChoices && (
               <Button
                 variant="ghost"
                 onClick={() => {
