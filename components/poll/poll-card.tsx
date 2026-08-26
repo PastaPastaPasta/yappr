@@ -74,6 +74,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       setLoading(true)
       setLoadError(false)
       setVotesUnavailable(false)
+      // Both are identity-scoped or poll-scoped: drop them before querying so a
+      // failed lookup can't leave the previous account's (or poll's) answer on
+      // screen as if it belonged to the one now being loaded.
+      setMyVotes([])
+      setTally(null)
       try {
         const { pollrPollService, pollrVoteService } = await import('@/lib/services')
         const loadedPoll = await pollrPollService.getPoll(pollId)
@@ -90,7 +95,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         ])
         if (cancelled) return
 
-        // A failed tally shouldn't hide the poll itself — fall back to zeroes.
+        // A failed tally shouldn't hide the poll itself, but it mustn't be
+        // drawn as 0% across the board either: `tally === null` renders an
+        // explicit "results unavailable" state with a retry.
         if (tallyResult.status === 'fulfilled') {
           setTally(tallyResult.value)
         } else {
@@ -185,9 +192,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
       // Fold the new votes in rather than re-reading: the count trees can lag a
       // few seconds behind the write, and that stale answer would be cached.
-      if (result.created.length > 0) {
-        const baseline = tally ?? { counts: new Array<number>(poll.options.length).fill(0), total: 0 }
-        setTally(pollrVoteService.applyOptimisticVotes(poll.id, baseline, result.created))
+      // Only when a real tally is in hand — incrementing an invented zero
+      // baseline would turn "results unavailable" into a confident wrong number.
+      if (result.created.length > 0 && tally) {
+        setTally(pollrVoteService.applyOptimisticVotes(poll.id, tally, result.created))
       }
 
       if (result.created.length > 0) {
@@ -230,7 +238,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     )
   }
 
-  const counts = tally?.counts ?? new Array<number>(poll.options.length).fill(0)
+  // No tally means the counts are unknown, not zero — see PollTallyUnavailableError.
+  const tallyUnavailable = tally === null
+  const counts = tally?.counts ?? []
   const total = tally?.total ?? 0
   const leading = counts.length > 0 ? Math.max(...counts) : 0
   // Compare both raw and URL-stripped: the composer appends attachment URLs to
@@ -257,7 +267,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         <div className="mt-3 space-y-2">
           {poll.options.map((option, index) => {
             const count = counts[index] ?? 0
-            const share = percent(count, total)
+            const share = tallyUnavailable ? 0 : percent(count, total)
             const isMine = myVotes.includes(index)
             return (
               <div key={index} className="relative overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
@@ -278,7 +288,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
                     {isMine && <span className="ml-1.5 text-xs text-yappr-500">✓ your vote</span>}
                   </span>
                   <span className="shrink-0 text-xs tabular-nums text-gray-500">
-                    {share}% · {formatNumber(count)}
+                    {tallyUnavailable ? '—' : `${share}% · ${formatNumber(count)}`}
                   </span>
                 </div>
               </div>
@@ -294,9 +304,13 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             </button>
           )}
 
-          {votesUnavailable && user && !isClosed && (
+          {/* One retry covers both reads — the reload refetches the tally and
+              the user's own votes together. */}
+          {(tallyUnavailable || (votesUnavailable && user && !isClosed)) && (
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Couldn&apos;t check whether you&apos;ve already voted.{' '}
+              {tallyUnavailable
+                ? "Couldn't load the results."
+                : "Couldn't check whether you've already voted."}{' '}
               <button
                 onClick={() => setReloadToken((token) => token + 1)}
                 className="font-medium text-yappr-500 hover:underline"
@@ -369,9 +383,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
       <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-500">
         <span>
-          {formatNumber(total)} vote{total === 1 ? '' : 's'}
+          {/* "Final results" would vouch for numbers we don't have. */}
+          {tallyUnavailable ? 'Vote count unavailable' : `${formatNumber(total)} vote${total === 1 ? '' : 's'}`}
           {poll.multiChoice && ' · multiple choice'}
-          {isClosed && ' · Final results'}
+          {isClosed && !tallyUnavailable && ' · Final results'}
+          {isClosed && tallyUnavailable && ' · Closed'}
         </span>
         {!user && !isClosed && (
           <button

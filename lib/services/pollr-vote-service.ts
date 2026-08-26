@@ -63,6 +63,20 @@ function zeroCounts(): number[] {
 }
 
 /**
+ * Thrown when every tally read path failed, so the counts simply aren't known.
+ *
+ * Distinct from a real all-zero tally: zero-filling an unavailable answer makes
+ * a transient read failure look like "nobody has voted", which is a different
+ * claim entirely — and a wrong one to cache or to label "Final results".
+ */
+export class PollTallyUnavailableError extends Error {
+  constructor(public readonly pollId: string) {
+    super(`Vote tally unavailable for poll ${pollId}`);
+    this.name = 'PollTallyUnavailableError';
+  }
+}
+
+/**
  * Platform rejects a repeat vote with the `voterChoice` unique index violation.
  * Callers treat this as "already voted" rather than an error.
  */
@@ -217,6 +231,9 @@ class PollrVoteService {
    * Primary path is the contract's `choiceCounts` countable index (an O(1)
    * count tree), grouped by choice; the total is summed from those per-option
    * numbers rather than read from `pollTotal`.
+   *
+   * Throws {@link PollTallyUnavailableError} when no path produced counts —
+   * see that class for why a zero-filled stand-in isn't an acceptable answer.
    */
   async getTally(pollId: string, optionCount: number = POLL_MAX_OPTIONS): Promise<PollTally> {
     const size = Math.min(Math.max(optionCount, 1), POLL_MAX_OPTIONS);
@@ -229,36 +246,25 @@ class PollrVoteService {
     const sdk = await getEvoSdk();
 
     // Each step falls through to the next only when it couldn't produce counts.
-    const resolvedCounts =
+    const counts =
       (await this.countByChoiceGrouped(sdk, pollId, size)) ??
       (await this.countByChoiceIndividually(sdk, pollId, size)) ??
       (await this.countByChoiceScan(sdk, pollId));
+
+    // Nothing worked. The `pollTotal` count tree is deliberately NOT used as a
+    // last resort: it can't allocate votes among the options, so pairing it
+    // with zeroes would render every choice at 0% under a non-zero total. Fail
+    // loudly instead, and cache nothing, so the caller can offer a retry.
+    if (!counts) {
+      throw new PollTallyUnavailableError(pollId);
+    }
 
     // The total is the sum of the poll's REAL options, not the `pollTotal`
     // count tree. `choice` is schema-valid for 0-9 whatever the poll's actual
     // option count is, so anyone can write votes for options that don't exist:
     // those inflate pollTotal while the per-option tally rightly ignores them,
     // and percentages stop summing to 100. Summing here also saves a round-trip.
-    // pollTotal is only consulted when no per-choice path produced counts.
-    let counts = resolvedCounts;
-    let total: number;
-    if (counts) {
-      total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
-    } else {
-      counts = zeroCounts();
-      try {
-        total = await documentCount(sdk, {
-          dataContractId: POLLR_CONTRACT_ID,
-          documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
-          where: [['pollId', '==', pollId]],
-        });
-      } catch (error) {
-        logger.warn('PollrVoteService: total count failed and no per-choice counts available', {
-          error: extractErrorMessage(error),
-        });
-        total = 0;
-      }
-    }
+    const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
 
     const tally: PollTally = { counts, total };
     this.tallyCache.set(pollId, { data: tally, timestamp: Date.now() });

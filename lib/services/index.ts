@@ -23,7 +23,7 @@ export { blogFollowService } from './blog-follow-service';
 
 // Pollr (native polls, shared contract with the standalone Pollr app)
 export { pollrPollService } from './pollr-poll-service';
-export { pollrVoteService, isDuplicateVoteError } from './pollr-vote-service';
+export { pollrVoteService, isDuplicateVoteError, PollTallyUnavailableError } from './pollr-vote-service';
 export type { Poll, CreatePollData } from './pollr-poll-service';
 export type { CastVoteResult, PollTally } from './pollr-vote-service';
 
