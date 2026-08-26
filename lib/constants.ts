@@ -34,6 +34,25 @@ export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_valu
 export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
 export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
 
+// Pollr — native polls shared with the standalone Pollr app.
+// Testnet pollr v2: count trees on `vote`, maker-owned (Yappr only reads/writes documents).
+export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID || '8R4SgHyxrEZCb5yBb6p4gtT3g1CSRv5GAM4Rehc1vQJq'
+// Pollr v1 — abandoned in place. Recorded so the id stays documented and is never
+// reused; its documents use the old schema and are NOT readable by the v2 services.
+export const LEGACY_POLLR_CONTRACT_ID = '7Xye3k1MuVYTpLuTnein5GLwR1NUjmt5gtLLp4pGhhRf'
+export const POLLR_APP_URL = 'https://pastapastapasta.github.io/pollr'
+
+export const POLLR_DOCUMENT_TYPES = {
+  POLL: 'poll',
+  VOTE: 'vote',
+} as const
+
+// Poll limits — mirror the pollr v2 contract schema (option0..option9, 1-100 chars each).
+export const POLL_MIN_OPTIONS = 2
+export const POLL_MAX_OPTIONS = 10
+export const POLL_QUESTION_MAX_LENGTH = 512
+export const POLL_OPTION_MAX_LENGTH = 100
+
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'
 
