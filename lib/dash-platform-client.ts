@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 // Import the centralized SDK service
 import { evoSdkService } from './services/evo-sdk-service'
-import { YAPPR_CONTRACT_ID } from './constants'
+import { YAPPR_CONTRACT_ID, getConfiguredNetwork } from './constants'
 import { SESSION_STORAGE_KEY } from './storage-scope'
 import { documentToPlainObject } from './services/sdk-helpers'
 
@@ -36,7 +36,7 @@ export class DashPlatformClient {
     
     try {
       // Use the centralized WASM service
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+      const network = getConfiguredNetwork()
       const contractId = YAPPR_CONTRACT_ID
       
       logger.info('DashPlatformClient: Initializing via WasmSdkService for network:', network)

@@ -17,6 +17,7 @@ import { CheckingStep } from './steps/checking-step'
 import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
+import { keyNetwork } from '@/lib/constants'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -144,7 +145,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       }
 
       // Determine network from environment
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+      const network = keyNetwork()
 
       // Convert identity public keys to the format expected by findMatchingKeyIndex
       const keyInfos = convertToKeyInfo(identity.publicKeys)

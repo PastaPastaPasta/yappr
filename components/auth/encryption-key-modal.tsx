@@ -14,6 +14,7 @@ import { AddEncryptionKeyModal } from './add-encryption-key-modal'
 import { LostEncryptionKeyModal } from './lost-encryption-key-modal'
 import { identityService } from '@/lib/services/identity-service'
 import toast from 'react-hot-toast'
+import { keyNetwork } from '@/lib/constants'
 
 type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
 
@@ -106,7 +107,7 @@ export function EncryptionKeyModal() {
 
         // Convert to hex for storage
         const { privateKeyToWif } = await import('@/lib/crypto/wif')
-        const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+        const network = keyNetwork()
         const derivedKeyWif = privateKeyToWif(derivedKey, network, true)
 
         storeEncryptionKey(user.identityId, derivedKeyWif)

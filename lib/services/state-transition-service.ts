@@ -6,7 +6,7 @@ import { documentBuilderService } from './document-builder-service';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION } from '../constants';
+import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
 import {
@@ -197,7 +197,7 @@ class StateTransitionService {
     wasmPublicKeys: WasmIdentityPublicKey[],
     requiredSecurityLevel: number = SecurityLevel.HIGH
   ): WasmIdentityPublicKey | null {
-    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+    const network = keyNetwork();
 
     const keyInfos: IdentityPublicKeyInfo[] = wasmPublicKeys.map(key => {
       const dataHex = key.data;

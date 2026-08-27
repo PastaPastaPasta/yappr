@@ -4,7 +4,7 @@ import { signerService, KeyPurpose, SecurityLevel } from './signer-service';
 import { Identifier } from '@dashevo/evo-sdk';
 import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
+import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { extractErrorMessage } from '../error-utils';
 
 export interface TokenResult {
@@ -218,7 +218,7 @@ class TokenService {
     wasmPublicKeys: WasmIdentityPublicKey[],
     allowedLevels: number[]
   ): WasmIdentityPublicKey | null {
-    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+    const network = keyNetwork();
     // Filter to the allowed levels BEFORE matching so a lower-security key
     // derived from the same WIF (e.g. a MEDIUM key at a lower id after a
     // rotation) can't win the match and mask a valid key.

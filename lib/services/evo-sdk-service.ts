@@ -1,10 +1,28 @@
 import { logger } from '@/lib/logger';
 import { EvoSDK } from '@dashevo/evo-sdk';
-import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID } from '../constants';
+import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
+import type { AppNetwork } from '../constants';
 
 export interface EvoSdkConfig {
-  network: 'testnet' | 'mainnet';
+  network: AppNetwork;
   contractId: string;
+  /** Devnet only; defaults to the NEXT_PUBLIC_* values in lib/constants. */
+  devnetName?: string;
+  addresses?: readonly string[];
+  quorumUrl?: string;
+}
+
+/**
+ * Whether two configs would build the same SDK. Compares every field, not just
+ * network and contract: on devnet the address pool and quorum URL also decide
+ * what the instance talks to, and a change in either has to force a rebuild.
+ */
+function sameConfig(a: EvoSdkConfig, b: EvoSdkConfig): boolean {
+  return a.network === b.network &&
+    a.contractId === b.contractId &&
+    a.devnetName === b.devnetName &&
+    a.quorumUrl === b.quorumUrl &&
+    (a.addresses ?? []).join(',') === (b.addresses ?? []).join(',');
 }
 
 class EvoSdkService {
@@ -18,10 +36,11 @@ class EvoSdkService {
    * Initialize the SDK with configuration
    */
   async initialize(config: EvoSdkConfig): Promise<void> {
+    const unchanged = this._isInitialized && this.config !== null &&
+      sameConfig(this.config, config);
+
     // If already initialized with same config, return immediately
-    if (this._isInitialized && this.config &&
-        this.config.network === config.network &&
-        this.config.contractId === config.contractId) {
+    if (unchanged) {
       return;
     }
 
@@ -32,8 +51,7 @@ class EvoSdkService {
     }
 
     // If config changed, cleanup first
-    if (this._isInitialized && this.config &&
-        (this.config.network !== config.network || this.config.contractId !== config.contractId)) {
+    if (this._isInitialized && this.config) {
       await this.cleanup();
     }
 
@@ -58,7 +76,36 @@ class EvoSdkService {
       logger.info('EvoSdkService: Creating EvoSDK instance...');
 
       // Create SDK with trusted mode based on network
-      if (this.config.network === 'testnet') {
+      if (this.config.network === 'devnet') {
+        // Devnets have no public masternode discovery, so the address pool is
+        // configured explicitly. The typed constructor is used rather than
+        // EvoSDK.devnetTrusted() because that factory takes no `addresses`.
+        //
+        // Proof verification is not optional here: wasm-sdk 4.2.0-dev.2 panics on
+        // `proofs: false` ("queries without proofs are not supported yet") and
+        // rejects non-trusted proofs outright ("Non-trusted mode is not supported
+        // in WASM"), so every devnet read needs a trusted context prefetched from
+        // a quorum service. Configure it with NEXT_PUBLIC_QUORUM_URL.
+        const devnetName = this.config.devnetName ?? DEVNET_NAME;
+        const addresses = [...(this.config.addresses ?? DAPI_ADDRESSES)];
+        const quorumUrl = this.config.quorumUrl ?? DEVNET_QUORUM_URL;
+        if (addresses.length === 0) {
+          throw new Error(
+            'Devnet requires an explicit DAPI address pool — set NEXT_PUBLIC_DAPI_ADDRESSES'
+          );
+        }
+        logger.info(`EvoSdkService: Building devnet (${devnetName}) SDK with ${addresses.length} addresses...`);
+        this.sdk = new EvoSDK({
+          network: 'devnet',
+          devnetName,
+          addresses,
+          trusted: true,
+          ...(quorumUrl ? { quorumUrl } : {}),
+          settings: {
+            timeoutMs: 8000,
+          }
+        });
+      } else if (this.config.network === 'testnet') {
         logger.info('EvoSdkService: Building testnet SDK in trusted mode...');
         this.sdk = EvoSDK.testnetTrusted({
           settings: {

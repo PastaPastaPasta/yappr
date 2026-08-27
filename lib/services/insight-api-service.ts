@@ -4,7 +4,8 @@ import { logger } from '@/lib/logger';
  * Polls Insight API for UTXOs at a specified address
  */
 
-import { DEFAULT_NETWORK, INSIGHT_API_URLS, INSIGHT_API_CONFIG } from '@/lib/constants'
+import { INSIGHT_API_URLS, INSIGHT_API_CONFIG, getConfiguredNetwork } from '@/lib/constants'
+import type { AppNetwork } from '@/lib/constants'
 
 export interface Utxo {
   txid: string
@@ -20,7 +21,7 @@ export interface WaitForUtxoOptions {
   timeoutMs?: number
   onProgress?: (elapsed: number, remaining: number) => void
   signal?: AbortSignal
-  network?: 'testnet' | 'mainnet'
+  network?: AppNetwork
 }
 
 export interface WaitForUtxoResult {
@@ -33,7 +34,7 @@ export interface WaitForUtxoResult {
 /**
  * Fetch UTXOs for a given address from the Insight API
  */
-async function fetchUtxos(address: string, network: 'testnet' | 'mainnet'): Promise<Utxo[]> {
+async function fetchUtxos(address: string, network: AppNetwork): Promise<Utxo[]> {
   const baseUrl = INSIGHT_API_URLS[network]
   const response = await fetch(`${baseUrl}/addr/${address}/utxo`)
 
@@ -58,7 +59,7 @@ export async function waitForUtxo(
     timeoutMs = INSIGHT_API_CONFIG.timeoutMs,
     onProgress,
     signal,
-    network = DEFAULT_NETWORK as 'testnet' | 'mainnet'
+    network = getConfiguredNetwork()
   } = options
 
   const startTime = Date.now()
@@ -131,8 +132,15 @@ export function isDashScheme(scheme: string): boolean {
 /**
  * Get the network for a Dash payment scheme
  */
-export function getNetworkFromScheme(scheme: string): 'testnet' | 'mainnet' {
-  return scheme.toLowerCase() === 'tdash:' ? 'testnet' : 'mainnet'
+export function getNetworkFromScheme(scheme: string): AppNetwork {
+  // `tdash:` covers both testnet and devnet (devnets reuse testnet address
+  // prefixes), so it resolves to the deployment's configured network — a
+  // /devnet build must poll its own Insight host, not testnet's.
+  if (scheme.toLowerCase() === 'tdash:') {
+    const configured = getConfiguredNetwork()
+    return configured === 'mainnet' ? 'testnet' : configured
+  }
+  return 'mainnet'
 }
 
 /**

@@ -7,6 +7,7 @@
     "build": "next build",
     "build:subpath": "BASE_PATH=/yappr next build",
     "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build",
+    "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build",
     "start": "next start",
     "lint": "next lint",
     "test:e2e": "playwright test",
@@ -16,7 +17,7 @@
     "@blocknote/core": "^0.47.0",
     "@blocknote/mantine": "^0.47.0",
     "@blocknote/react": "^0.47.0",
-    "@dashevo/evo-sdk": "4.2.0-dev.1",
+    "@dashevo/evo-sdk": "4.2.0-dev.2",
     "@dicebear/collection": "^9.2.4",
     "@dicebear/core": "^9.2.4",
     "@emoji-mart/data": "^1.2.1",
@@ -61,6 +62,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@dashevo/dashcore-lib": "^0.25.0",
     "@playwright/test": "^1.62.1",
     "@scure/bip32": "^2.3.0",
     "@scure/bip39": "^2.3.0",

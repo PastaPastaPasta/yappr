@@ -10,15 +10,17 @@
  *   key), priced at P credits PER TOKEN (total = N * P). Buying < 100 fails with
  *   TokenAmountUnderMinimumSaleAmount.
  *
- * Run:  node scripts/set-yapp-price.mjs
- * Signs with the contract-owner ("contract maker") identity's HIGH auth key,
- * read at runtime from the identity JSON in ~/Downloads.
+ * Run:  node scripts/set-yapp-price.mjs [--contract <id>] [--owner-index <n>]
+ *
+ * The signing identity is the contract owner ("contract maker"). On testnet that
+ * is the identity JSON in ~/Downloads; pass `--owner-index <n>` to sign with a
+ * seed-derived identity instead (how the devnet maker at seed index 9 is used,
+ * see .env.devnet), in which case `--owner` supplies its identity id.
  */
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
-  EvoSDK,
   TokenBaseTransition,
   TokenSetPriceForDirectPurchaseTransition,
   TokenPricingSchedule,
@@ -27,15 +29,19 @@ import {
   BatchTransition,
   PrivateKey,
 } from '@dashevo/evo-sdk';
+import { CRITICAL_AUTH_KEY_ID, deriveIdentityKeys } from './derive-identities.mjs';
+import { connectSdk } from './sdk-env.mjs';
 
 // ---- Config -----------------------------------------------------------------
-const CONTRACT_ID = '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9';
+const DEFAULT_CONTRACT_ID = '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9';
 const TOKEN_POS = 0;
 const MIN_PURCHASE = 100n;          // lowest tier key => minimum tokens per buy
 const CREDITS_PER_TOKEN = 1000000n; // P: credits per YAPP at/above the min tier
-const SIGNING_KEY_ID = 2;           // CRITICAL auth key (token config transitions require CRITICAL)
 const IDENTITY_FILE = join(homedir(), 'Downloads', 'dash-identity-testnet-contract-maker.json');
 // -----------------------------------------------------------------------------
+
+/** Compressed testnet WIFs, so a key echoed back inside an error never reaches the console. */
+const WIF_PATTERN = /\b[c9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g;
 
 function describeErr(e) {
   if (!e) return String(e);
@@ -44,19 +50,63 @@ function describeErr(e) {
   try { parts.push(`toString=${e.toString()}`); } catch {}
   try { parts.push(`json=${JSON.stringify(e)}`); } catch {}
   try { parts.push(`keys=${Object.keys(e).join(',')}`); } catch {}
-  return parts.join(' | ');
+  return parts.join(' | ').replace(WIF_PATTERN, '<redacted-key>');
 }
 
-const identityJson = JSON.parse(readFileSync(IDENTITY_FILE, 'utf8'));
-const OWNER_ID = identityJson.identityId;
-const signingKey = (identityJson.identityKeys || []).find((k) => k.id === SIGNING_KEY_ID);
-if (!signingKey?.privateKeyWif) throw new Error(`No privateKeyWif for key id ${SIGNING_KEY_ID}`);
-console.log(`owner=${OWNER_ID} signingKeyId=${SIGNING_KEY_ID} (${signingKey.securityLevel})`);
+function parseArgs(argv) {
+  const args = { contract: DEFAULT_CONTRACT_ID, ownerIndex: null, owner: null };
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--contract': args.contract = argv[++i]; break;
+      case '--owner': args.owner = argv[++i]; break;
+      case '--owner-index': args.ownerIndex = Number(argv[++i]); break;
+      default: throw new Error(`Unknown argument: ${argv[i]}`);
+    }
+  }
+  if (args.ownerIndex !== null) {
+    if (!Number.isInteger(args.ownerIndex) || args.ownerIndex < 0) {
+      throw new Error('--owner-index takes a non-negative integer');
+    }
+    if (!args.owner) throw new Error('--owner-index also needs --owner <identityId>');
+  }
+  return args;
+}
 
-const sdk = EvoSDK.testnetTrusted({ settings: { timeoutMs: 30000 } });
-await sdk.connect();
+let args;
+try {
+  args = parseArgs(process.argv.slice(2));
+} catch (e) {
+  console.error(e.message);
+  console.error('Usage: node scripts/set-yapp-price.mjs [--contract <id>] [--owner <identityId> --owner-index <n>]');
+  process.exit(1);
+}
+
+const CONTRACT_ID = args.contract;
+// Token config transitions require a CRITICAL authentication key. On the
+// ~/Downloads maker that is key id 2; on a seed-derived identity it is key id 1
+// (see KEY_ROLES in derive-identities.mjs).
+let OWNER_ID;
+let SIGNING_KEY_ID;
+let signingWif;
+if (args.ownerIndex !== null) {
+  const key = deriveIdentityKeys(args.ownerIndex).find((k) => k.keyIndex === CRITICAL_AUTH_KEY_ID);
+  if (!key) throw new Error(`No key ${CRITICAL_AUTH_KEY_ID} derived at index ${args.ownerIndex}`);
+  OWNER_ID = args.owner;
+  SIGNING_KEY_ID = CRITICAL_AUTH_KEY_ID;
+  signingWif = key.wif;
+  console.log(`owner=${OWNER_ID} signingKeyId=${SIGNING_KEY_ID} (seed index ${args.ownerIndex})`);
+} else {
+  const identityJson = JSON.parse(readFileSync(IDENTITY_FILE, 'utf8'));
+  OWNER_ID = args.owner ?? identityJson.identityId;
+  SIGNING_KEY_ID = 2;
+  const signingKey = (identityJson.identityKeys || []).find((k) => k.id === SIGNING_KEY_ID);
+  if (!signingKey?.privateKeyWif) throw new Error(`No privateKeyWif for key id ${SIGNING_KEY_ID}`);
+  signingWif = signingKey.privateKeyWif;
+  console.log(`owner=${OWNER_ID} signingKeyId=${SIGNING_KEY_ID} (${signingKey.securityLevel})`);
+}
+
+const sdk = await connectSdk({ timeoutMs: 30000 });
 const wasm = sdk.wasm;
-console.log('connected');
 
 // Cache the contract so the trusted SDK can verify the result proof at
 // waitForResponse (otherwise: "unknown contract ... in token verification").
@@ -106,7 +156,7 @@ try {
   const identityKey = identity.getPublicKeyById(SIGNING_KEY_ID);
   if (!identityKey) throw new Error(`public key ${SIGNING_KEY_ID} not found on identity`);
 
-  st.sign(PrivateKey.fromWIF(signingKey.privateKeyWif), identityKey);
+  st.sign(PrivateKey.fromWIF(signingWif), identityKey);
   console.log('signed; broadcasting...');
 } catch (e) {
   console.error('BUILD/SIGN ERROR:', describeErr(e));

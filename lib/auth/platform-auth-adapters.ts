@@ -17,7 +17,7 @@ import {
   deriveYapprEncryptionKeyFromLogin,
 } from 'platform-auth'
 import { logger } from '@/lib/logger'
-import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import {
   clearAuthVaultDek,
@@ -79,10 +79,6 @@ type LegacyAuthVaultBundle = {
   transferKeyWif?: string
   source: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
   updatedAt: number
-}
-
-function getConfiguredNetwork(): 'testnet' | 'mainnet' {
-  return (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
 }
 
 async function ensureSdk(): Promise<void> {
@@ -248,7 +244,8 @@ async function runLogoutCleanup(identityId: string): Promise<void> {
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {
   return {
-    network: getConfiguredNetwork(),
+    // platform-auth uses this only for address/WIF encoding, so devnet maps to testnet.
+    network: keyNetwork(),
     sessionStore: {
       getSession() {
         if (typeof window === 'undefined') return null
@@ -366,7 +363,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     yapprKeyExchangeConfig: {
       appContractId: YAPPR_CONTRACT_ID,
       keyExchangeContractId: KEY_EXCHANGE_CONTRACT_ID,
-      network: getConfiguredNetwork(),
+      network: keyNetwork(),
       label: 'Login to Yappr',
     },
     yapprKeyExchange: {

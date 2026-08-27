@@ -11,7 +11,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataContract, EvoSDK } from '@dashevo/evo-sdk';
+import { DataContract } from '@dashevo/evo-sdk';
+import { connectSdk } from './sdk-env.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,9 +47,8 @@ try {
   const schemas = JSON.parse(readFileSync(CONTRACT_FILE, 'utf8')).documentSchemas;
   const owner = resolveOwner(args);
 
-  const sdk = EvoSDK.testnetTrusted({ settings: { timeoutMs: SDK_TIMEOUT_MS } });
-  await sdk.connect();
-  console.log(`connected to testnet; owner=${owner.label}`);
+  const sdk = await connectSdk({ timeoutMs: SDK_TIMEOUT_MS });
+  console.log(`owner=${owner.label}`);
 
   const { identityKey, signer } = await signerFor(sdk, owner);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;

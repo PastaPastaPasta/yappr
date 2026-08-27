@@ -1,24 +1,38 @@
 /**
- * One-time, manual registration of the dedicated /testing data contracts.
+ * One-time, manual registration of the dedicated /testing (or /devnet) data contracts.
  *
  * Publishes a fresh copy of the yappr social contract and of the unified profile
  * contract, owned by the e2e bot identity at derivation index 0 and signed with
  * its AUTHENTICATION/CRITICAL key. Re-running this is also the "reset test state"
  * mechanism: new contracts start empty, and the old ones are simply abandoned.
  *
- * Both schemas are read back from the deployed production contracts and
- * re-published verbatim under the new owner. (The checked-in
+ * Both schemas are read back from an already-deployed contract and re-published
+ * verbatim under the new owner. (The checked-in
  * contracts/yappr-social-contract-actual.json predates current DPP validation —
  * its per-type `mutable` keys are rejected on registration — while the chain\'s
  * `schemas` getter returns the canonical registrable form.)
  *
+ * The clone goes through the contract's full JSON, so the social contract's
+ * `tokens` block (plus `groups`, `config`, `keywords`, `description`) is carried
+ * over too. `tokenCost` lives inside the document schemas and always followed
+ * them; the token configuration did not, so dropping it used to leave the copy
+ * with `tokenCost` entries naming a token that did not exist. After publishing,
+ * set the direct-purchase price with scripts/set-yapp-price.mjs.
+ *
  * Run:
  *   node scripts/register-test-contracts.mjs [--owner <identityId>] [--only social|profile]
  *
+ *   # publish onto a devnet from the testnet staging contract's on-chain schemas
+ *   NETWORK=devnet node scripts/register-test-contracts.mjs \
+ *     --source-network testnet \
+ *     --from-social 9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9 \
+ *     --owner <devnetMakerId> --owner-index 9
+ *
  * The owner defaults to the first entry of E2E_IDENTITY_IDS in .env.testing.
- * Prints the `.env.testing` lines to paste when it finishes.
+ * Prints the `.env.testing` / `.env.devnet` lines to paste when it finishes.
  */
-import { DataContract, EvoSDK, IdentitySigner } from '@dashevo/evo-sdk';
+import { DataContract, IdentitySigner, PlatformVersion } from '@dashevo/evo-sdk';
+import { connectSdk, network } from './sdk-env.mjs';
 import {
   CRITICAL_AUTH_KEY_ID,
   criticalAuthKey,
@@ -27,7 +41,7 @@ import {
 } from './derive-identities.mjs';
 
 // ---- Config -----------------------------------------------------------------
-const OWNER_IDENTITY_INDEX = 0;
+const DEFAULT_OWNER_IDENTITY_INDEX = 0;
 const PROD_SOCIAL_CONTRACT_ID = 'EWR695MsqPUuW8EnTbYzD4KybNQD5n7CUDWydJYNg63F';
 const PROD_PROFILE_CONTRACT_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe';
 const SDK_TIMEOUT_MS = 30000;
@@ -46,44 +60,80 @@ function describeErr(e) {
 }
 
 function parseArgs(argv) {
-  const args = { owner: null, only: null };
+  const args = {
+    owner: null, only: null, ownerIndex: DEFAULT_OWNER_IDENTITY_INDEX, sourceNetwork: null,
+    fromSocial: PROD_SOCIAL_CONTRACT_ID, fromProfile: PROD_PROFILE_CONTRACT_ID,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     switch (arg) {
       case '--owner': args.owner = argv[++i]; break;
       case '--only': args.only = argv[++i]; break;
+      case '--owner-index': args.ownerIndex = Number(argv[++i]); break;
+      case '--source-network': args.sourceNetwork = argv[++i]; break;
+      case '--from-social': args.fromSocial = argv[++i]; break;
+      case '--from-profile': args.fromProfile = argv[++i]; break;
       default: throw new Error(`Unknown argument: ${arg}`);
     }
   }
   if (args.only && !['social', 'profile'].includes(args.only)) {
     throw new Error(`--only takes "social" or "profile", got "${args.only}"`);
   }
+  if (!Number.isInteger(args.ownerIndex) || args.ownerIndex < 0) {
+    throw new Error('--owner-index takes a non-negative integer');
+  }
   return args;
 }
 
-/** Reads the document schemas off a fetched DataContract. */
-function schemasOf(dataContract) {
-  const schemas = dataContract.schemas;
-  if (!schemas || Object.keys(schemas).length === 0) {
-    throw new Error('Fetched contract exposes no document schemas');
-  }
-  return schemas;
-}
+/** Chain metadata that belongs to the source contract, never to a fresh copy. */
+const CHAIN_METADATA_KEYS = [
+  'createdAt', 'updatedAt',
+  'createdAtBlockHeight', 'updatedAtBlockHeight',
+  'createdAtEpoch', 'updatedAtEpoch',
+];
 
 /**
- * Publishes `schemas` as a brand-new contract owned by `ownerId`.
+ * Re-owns a fetched contract's full JSON so it can be published as a new one.
  *
- * The identity nonce passed to the DataContract constructor only seeds a
- * provisional id — `contracts.publish` re-derives the real one from the nonce at
- * broadcast time, so the id is read back off the returned contract. The nonce is
- * tracked locally between publishes rather than re-read, because a read straight
- * after a broadcast can still return the pre-publish value.
+ * `DataContract.fromJSON` is used rather than `new DataContract({ schemas })`
+ * because the JSON form is the only one that round-trips *everything* the source
+ * contract carries — `tokens`, `groups`, `config`, `keywords`, `description` —
+ * and the constructor's `tokens` option only accepts live `TokenConfiguration`
+ * handles, so a plain object read from JSON is rejected with "JS object
+ * constructor name mismatch". Dropping the token block used to leave the copy
+ * with `tokenCost` entries naming a token that did not exist.
+ *
+ * The id is seeded from the nonce; `contracts.publish` re-derives the real one at
+ * broadcast time, so it is read back off the returned contract.
  */
-async function publishContract(sdk, { label, ownerId, schemas, identityNonce, identityKey, signer }) {
-  const dataContract = new DataContract({ ownerId, identityNonce, schemas });
-  console.log(`publishing ${label} contract (${Object.keys(schemas).length} document types) …`);
+function reownedContractJson(source, ownerId, identityNonce, platformVersion) {
+  const json = source.toJSON(platformVersion);
+  if (!json.documentSchemas || Object.keys(json.documentSchemas).length === 0) {
+    throw new Error('Fetched contract exposes no document schemas');
+  }
+  json.ownerId = ownerId;
+  json.id = DataContract.generateId(ownerId, identityNonce).toBase58();
+  json.version = 1;
+  for (const key of CHAIN_METADATA_KEYS) delete json[key];
+  return json;
+}
+
+/** Publishes a re-owned clone of `source` as a brand-new contract owned by `ownerId`. */
+async function publishContract(sdk, { label, source, ownerId, identityNonce, identityKey, signer }) {
+  const platformVersion = PlatformVersion.current();
+  const json = reownedContractJson(source, ownerId, identityNonce, platformVersion);
+  const dataContract = DataContract.fromJSON(json, false, platformVersion);
+
+  const tokenCount = Object.keys(json.tokens ?? {}).length;
+  const tokenNote = tokenCount > 0 ? `, ${tokenCount} token(s)` : '';
+  console.log(`publishing ${label} contract (${Object.keys(json.documentSchemas).length} document types${tokenNote}) …`);
+
   const published = await sdk.contracts.publish({ dataContract, identityKey, signer });
   const contractId = published.id.toBase58();
+  const publishedTokens = Object.keys(published.tokens ?? {}).length;
+  if (publishedTokens !== tokenCount) {
+    throw new Error(`${label} contract published with ${publishedTokens} token(s), expected ${tokenCount}`);
+  }
   console.log(`${label} contract published: ${contractId}`);
   return contractId;
 }
@@ -95,7 +145,8 @@ try {
   args = parseArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error('Usage: node scripts/register-test-contracts.mjs [--owner <identityId>] [--only social|profile]');
+  console.error('Usage: node scripts/register-test-contracts.mjs [--owner <identityId>] [--owner-index <n>] [--only social|profile]');
+  console.error('       [--source-network testnet|mainnet|devnet] [--from-social <id>] [--from-profile <id>]');
   process.exit(1);
 }
 
@@ -108,36 +159,42 @@ if (!ownerId) {
 const published = {};
 let sdk;
 try {
-  sdk = EvoSDK.testnetTrusted({ settings: { timeoutMs: SDK_TIMEOUT_MS } });
-  await sdk.connect();
-  console.log(`connected to testnet; owner=${ownerId}`);
+  sdk = await connectSdk({ timeoutMs: SDK_TIMEOUT_MS });
+  console.log(`owner=${ownerId} (seed index ${args.ownerIndex})`);
 
-  const signingKey = criticalAuthKey(deriveIdentityKeys(OWNER_IDENTITY_INDEX));
+  // The source contracts can live on a different chain than the target: a devnet
+  // starts empty, so its contracts are cloned from the testnet ones.
+  const sourceNetwork = args.sourceNetwork ?? network();
+  const sourceSdk = sourceNetwork === network()
+    ? sdk
+    : await connectSdk({ timeoutMs: SDK_TIMEOUT_MS, net: sourceNetwork });
+
+  const signingKey = criticalAuthKey(deriveIdentityKeys(args.ownerIndex));
   const signer = new IdentitySigner();
   signer.addKeyFromWif(signingKey.wif);
 
   const identity = await sdk.identities.fetch(ownerId);
-  if (!identity) throw new Error(`Identity ${ownerId} not found on testnet`);
+  if (!identity) throw new Error(`Identity ${ownerId} not found on ${network()}`);
   const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
   if (!identityKey) throw new Error(`Identity ${ownerId} has no key ${CRITICAL_AUTH_KEY_ID}`);
   const onChainPublicKeyHex = Buffer.from(identityKey.toObject().data).toString('hex');
   if (onChainPublicKeyHex !== signingKey.publicKeyHex) {
     throw new Error(
       `Identity ${ownerId} key ${CRITICAL_AUTH_KEY_ID} does not match the key derived at index ` +
-      `${OWNER_IDENTITY_INDEX} — wrong --owner or wrong E2E_SEED_PHRASE`
+      `${args.ownerIndex} — wrong --owner, wrong --owner-index, or wrong E2E_SEED_PHRASE`
     );
   }
 
   let identityNonce = ((await sdk.identities.nonce(ownerId)) ?? 0n) + 1n;
 
   if (args.only !== 'profile') {
-    console.log(`fetching production social contract ${PROD_SOCIAL_CONTRACT_ID} …`);
-    const prodSocial = await sdk.contracts.fetch(PROD_SOCIAL_CONTRACT_ID);
-    if (!prodSocial) throw new Error(`Social contract ${PROD_SOCIAL_CONTRACT_ID} not found`);
+    console.log(`fetching source social contract ${args.fromSocial} from ${sourceNetwork} …`);
+    const sourceSocial = await sourceSdk.contracts.fetch(args.fromSocial);
+    if (!sourceSocial) throw new Error(`Social contract ${args.fromSocial} not found on ${sourceNetwork}`);
     published.NEXT_PUBLIC_YAPPR_CONTRACT_ID = await publishContract(sdk, {
       label: 'social',
+      source: sourceSocial,
       ownerId,
-      schemas: schemasOf(prodSocial),
       identityNonce,
       identityKey,
       signer,
@@ -146,13 +203,13 @@ try {
   }
 
   if (args.only !== 'social') {
-    console.log(`fetching production profile contract ${PROD_PROFILE_CONTRACT_ID} …`);
-    const prodProfile = await sdk.contracts.fetch(PROD_PROFILE_CONTRACT_ID);
-    if (!prodProfile) throw new Error(`Profile contract ${PROD_PROFILE_CONTRACT_ID} not found`);
+    console.log(`fetching source profile contract ${args.fromProfile} from ${sourceNetwork} …`);
+    const sourceProfile = await sourceSdk.contracts.fetch(args.fromProfile);
+    if (!sourceProfile) throw new Error(`Profile contract ${args.fromProfile} not found on ${sourceNetwork}`);
     published.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID = await publishContract(sdk, {
       label: 'profile',
+      source: sourceProfile,
       ownerId,
-      schemas: schemasOf(prodProfile),
       identityNonce,
       identityKey,
       signer,
@@ -164,7 +221,17 @@ try {
 }
 
 console.log('');
-console.log('Paste into .env.testing:');
+console.log(`Paste into ${network() === 'devnet' ? '.env.devnet' : '.env.testing'}:`);
 for (const [key, value] of Object.entries(published)) console.log(`${key}=${value}`);
+if (published.NEXT_PUBLIC_YAPPR_CONTRACT_ID) {
+  console.log('');
+  console.log('Then set the YAPP direct-purchase price on the new social contract:');
+  // NETWORK only applied to this process — repeat it or the price script
+  // defaults to testnet and cannot see the freshly published contract.
+  console.log(
+    `  NETWORK=${network()} node scripts/set-yapp-price.mjs --contract ${published.NEXT_PUBLIC_YAPPR_CONTRACT_ID}` +
+    ` --owner ${ownerId} --owner-index ${args.ownerIndex}`
+  );
+}
 
 process.exit(0);

@@ -2,6 +2,7 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
+import { keyNetwork } from '@/lib/constants'
 
 export interface IdentityPublicKey {
   id: number;
@@ -354,7 +355,7 @@ class IdentityService {
           : key.data as Uint8Array
       }));
 
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const network = keyNetwork();
       const match = findMatchingKeyIndex(privateKeyWif, publicKeys, network);
 
       if (!match) {
@@ -478,7 +479,7 @@ class IdentityService {
       if (encryptionPrivateKey.length !== 32) {
         return { success: false, error: `Invalid encryption private key: expected 32 bytes, got ${encryptionPrivateKey.length}` };
       }
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const network = keyNetwork();
       const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
       const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
       signer.addKey(encryptionPrivateKeyObj);
@@ -627,7 +628,7 @@ class IdentityService {
       if (transferPrivateKey.length !== 32) {
         return { success: false, error: `Invalid transfer private key: expected 32 bytes, got ${transferPrivateKey.length}` };
       }
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+      const network = keyNetwork();
       const transferKeyHex = Array.from(transferPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
       const transferPrivateKeyObj = PrivateKey.fromHex(transferKeyHex, network);
       signer.addKey(transferPrivateKeyObj);

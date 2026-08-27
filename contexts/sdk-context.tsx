@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
 
 interface SdkContextType {
   isReady: boolean
@@ -19,11 +19,16 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeSdk = async () => {
       try {
-        logger.info('SdkProvider: Starting EvoSDK initialization for testnet...')
+        // This provider is the app-wide SDK bootstrap and usually wins the race
+        // against the on-demand callers (DashPlatformClient, platform-auth), so
+        // it has to agree with them on the network. Hardcoding it would leave a
+        // /devnet build reading testnet through every `useSdk()` consumer until
+        // some later caller forced a reinit.
+        const network = getConfiguredNetwork()
+        logger.info(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
 
-        // Initialize with testnet configuration
         await evoSdkService.initialize({
-          network: 'testnet',
+          network,
           contractId: YAPPR_CONTRACT_ID
         })
 

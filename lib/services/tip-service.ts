@@ -7,6 +7,7 @@ import { TipInfo } from '../../types';
 import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import { isInsufficientTokenError } from '@/lib/error-utils';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { keyNetwork } from '@/lib/constants'
 
 export interface TipResult {
   success: boolean;
@@ -60,7 +61,7 @@ class TipService {
     wasmPublicKeys: WasmIdentityPublicKey[],
     specificKeyId?: number
   ): WasmIdentityPublicKey | null {
-    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+    const network = keyNetwork();
     const activeKeys = wasmPublicKeys.filter(k => !k.disabledAt);
     const transferKeys = activeKeys.filter(k => k.purposeNumber === KeyPurpose.TRANSFER);
 
