@@ -153,7 +153,7 @@ Not in this contract:
 - Notifications are derived client-side from other document types, not stored
 - `list` / `listMember` / `mute` were dropped when the v2 contract was cut (never implemented; `block` covers muting)
 
-Additional contracts back specific features: storefront (7 types), blog, vault/auth-vault, hashtag/mention, key exchange, encrypted key backup, and the externally-owned Pollr contract.
+Additional contracts back specific features: storefront (7 types), DM, blog, vault/auth-vault, key exchange, encrypted key backup, and the externally-owned Pollr contract. The standalone hashtag, mention, and block contracts are gone — those doctypes moved into the social contract, and `lib/constants.ts` no longer carries their contract IDs.
 
 **IMPORTANT**: Documents use `$ownerId` (platform system field), NOT custom `authorId`/`userId` fields. When creating documents, only include content fields - ownership is automatic.
 
