@@ -3,7 +3,7 @@
 import { ArrowLeftIcon, InformationCircleIcon, GlobeAltIcon, CodeBracketIcon, UserGroupIcon, ServerStackIcon, CpuChipIcon, LockClosedIcon, ShoppingBagIcon, BellIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { YAPPR_CONTRACT_ID, getContractTopology } from '@/lib/constants'
 
 export default function AboutPage() {
   return (
@@ -177,6 +177,15 @@ export default function AboutPage() {
                 <div>
                   <p className="text-sm text-gray-500">Network</p>
                   <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 capitalize">{process.env.NEXT_PUBLIC_NETWORK || 'testnet'}</p>
+                </div>
+                <div>
+                  {/* The contract id above does not say which SHAPE of contract it
+                      is, and the two are not interchangeable — a v2 client pointed
+                      at a v3 contract queries fields that do not exist. Printing
+                      the topology the bundle was compiled with makes that
+                      verifiable from the served artifact (the e2e suite gates on it). */}
+                  <p className="text-sm text-gray-500">Interaction Topology</p>
+                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300" data-testid="about-topology">{getContractTopology()}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Document Types</p>
