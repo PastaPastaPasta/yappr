@@ -14,6 +14,21 @@ export interface PostMentionDocument {
   mentionedUserId: string;
 }
 
+/**
+ * On the v3 contract `postMention.mentionedUserId` declares `refersTo: identity`.
+ * Mentions are written fire-and-forget after a post lands, so there is no UI to
+ * fail — but the reason must be legible in the log, because it means DPNS
+ * resolved a name to an identity that is not (or is no longer) on chain, not
+ * that the write flaked.
+ */
+function logMentionReferenceRejected(mentionedUserId: string, cause: unknown): void {
+  logger.warn(
+    'MentionService: Platform rejected the mention — the mentioned identity does not exist on chain:',
+    mentionedUserId,
+    cause
+  );
+}
+
 class MentionService extends BaseDocumentService<PostMentionDocument> {
   constructor() {
     super('postMention');
@@ -99,28 +114,15 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         }
       );
 
-      // On the v3 contract `postMention.mentionedUserId` declares
-      // `refersTo: identity`. Mentions are written fire-and-forget after a post
-      // lands, so there is no UI to fail — but the reason must be legible in the
-      // log, because it means DPNS resolved a name to an identity that is not
-      // (or is no longer) on chain, not that the write flaked.
       if (!result.success && isReferenceNotFoundError(result.error)) {
-        logger.warn(
-          'MentionService: Platform rejected the mention — the mentioned identity does not exist on chain:',
-          mentionedUserId,
-          result.error
-        );
+        logMentionReferenceRejected(mentionedUserId, result.error);
         return false;
       }
 
       return result.success;
     } catch (error) {
       if (isReferenceNotFoundError(error)) {
-        logger.warn(
-          'MentionService: Platform rejected the mention — the mentioned identity does not exist on chain:',
-          mentionedUserId,
-          error
-        );
+        logMentionReferenceRejected(mentionedUserId, error);
         return false;
       }
       logger.error('Error creating mention:', error);
@@ -154,19 +156,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
           continue;
         }
 
+        // createPostMention never throws: a reference rejection (DPNS resolved
+        // the name, but the identity behind it is not on chain) is logged there
+        // and comes back as false. Anything reaching this catch came from the
+        // DPNS lookup above.
         const result = await this.createPostMention(postId, ownerId, identityId);
         results.push(result);
       } catch (error) {
-        if (isReferenceNotFoundError(error)) {
-          // DPNS resolved the name, but the identity behind it is not on chain —
-          // a race with a very fresh identity, or a stale DPNS record.
-          logger.warn(
-            'MentionService: mention rejected — @' + username + ' resolves to an identity Platform does not know:',
-            error
-          );
-        } else {
-          logger.error('Error creating mention for username:', username, error);
-        }
+        logger.error('Error creating mention for username:', username, error);
         results.push(false);
       }
     }

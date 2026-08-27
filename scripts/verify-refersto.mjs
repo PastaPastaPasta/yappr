@@ -126,6 +126,31 @@ const identifierProperty = (position, description, refersTo) => ({
 const TARGET_REFERENCE = { type: 'permanentDocument', documentType: 'target' };
 
 /**
+ * Experiment 7's doctype (see `SCRATCH_DOCUMENT_SCHEMAS` below). `nullSearchable`
+ * is the only difference between the two variants registered, so it is the only
+ * knob here; omitted leaves it at the protocol default.
+ */
+function dualRefSchema({ nullSearchable, description }) {
+  const uniqueIndex = (name, field) => ({
+    name,
+    unique: true,
+    ...(nullSearchable === undefined ? {} : { nullSearchable }),
+    properties: [{ [field]: 'asc' }, { $ownerId: 'asc' }],
+  });
+  return {
+    type: 'object',
+    properties: {
+      a: identifierProperty(0, 'Optional identifier A'),
+      b: identifierProperty(1, 'Optional identifier B'),
+    },
+    indices: [uniqueIndex('uniqueA', 'a'), uniqueIndex('uniqueB', 'b')],
+    required: ['$createdAt'],
+    additionalProperties: false,
+    description,
+  };
+}
+
+/**
  * Throwaway doctypes that exist only to probe protocol behaviour:
  *
  *   target        the `permanentDocument` anchor. `canBeDeleted: false` is a hard
@@ -163,34 +188,13 @@ const SCRATCH_DOCUMENT_SCHEMAS = {
     additionalProperties: false,
     description: 'Carries a required and an optional permanentDocument reference',
   },
-  dualRef: {
-    type: 'object',
-    properties: {
-      a: identifierProperty(0, 'Optional identifier A'),
-      b: identifierProperty(1, 'Optional identifier B'),
-    },
-    indices: [
-      { name: 'uniqueA', unique: true, properties: [{ a: 'asc' }, { $ownerId: 'asc' }] },
-      { name: 'uniqueB', unique: true, properties: [{ b: 'asc' }, { $ownerId: 'asc' }] },
-    ],
-    required: ['$createdAt'],
-    additionalProperties: false,
+  dualRef: dualRefSchema({
     description: 'Experiment 7: do two docs with a null `b` collide on uniqueB?',
-  },
-  dualRefStrict: {
-    type: 'object',
-    properties: {
-      a: identifierProperty(0, 'Optional identifier A'),
-      b: identifierProperty(1, 'Optional identifier B'),
-    },
-    indices: [
-      { name: 'uniqueA', unique: true, nullSearchable: false, properties: [{ a: 'asc' }, { $ownerId: 'asc' }] },
-      { name: 'uniqueB', unique: true, nullSearchable: false, properties: [{ b: 'asc' }, { $ownerId: 'asc' }] },
-    ],
-    required: ['$createdAt'],
-    additionalProperties: false,
+  }),
+  dualRefStrict: dualRefSchema({
+    nullSearchable: false,
     description: 'Experiment 7 variant: the same, with nullSearchable: false',
-  },
+  }),
 };
 
 /**
@@ -288,22 +292,30 @@ async function fetchDocument(sdk, contractId, docType, id) {
   }
 }
 
-/**
- * Polls the chain until `predicate` holds for the document, or the attempts run
- * out. The chain — not the SDK's throw/no-throw — is what decides whether a
- * write was accepted here: the DAPI gateway routinely 504s the wait for a
- * transition that did land, and a facade call that does not wait would report
- * success for a transition consensus later refuses. Reading back covers both.
- */
-async function pollUntil(sdk, contractId, docType, id, predicate) {
-  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
-    await settle();
-    if (predicate(await fetchDocument(sdk, contractId, docType, id))) return true;
-  }
-  return false;
-}
-
 const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not on chain';
+
+/**
+ * Runs one write and decides its outcome by polling the chain until `accepted`
+ * holds for the document, or the attempts run out. The chain — not the SDK's
+ * throw/no-throw — is what decides whether a write was accepted here: the DAPI
+ * gateway routinely 504s the wait for a transition that did land, and a facade
+ * call that does not wait would report success for a transition consensus later
+ * refuses. Reading back covers both; the SDK's error, when there was one, is
+ * only reported as the reason for a write that never showed up.
+ */
+async function attemptWrite(sdk, { contractId, docType, id, accepted }, write) {
+  let error = null;
+  try {
+    await write();
+  } catch (e) {
+    error = describeErr(e);
+  }
+  for (let poll = 0; poll < POLL_ATTEMPTS; poll++) {
+    await settle();
+    if (accepted(await fetchDocument(sdk, contractId, docType, id))) return { ok: true, id, error: null };
+  }
+  return { ok: false, id, error: error ?? NOT_THROWN_BUT_ABSENT };
+}
 
 /** Creates a document; acceptance is decided by reading it back. */
 async function attemptCreate(sdk, who, { contractId, docType, data }) {
@@ -314,14 +326,9 @@ async function attemptCreate(sdk, who, { contractId, docType, data }) {
     data,
     entropy: randomIdBytes(),
   });
-  let error = null;
-  try {
-    await sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer });
-  } catch (e) {
-    error = describeErr(e);
-  }
-  const landed = await pollUntil(sdk, contractId, docType, id, (d) => d !== null);
-  return { ok: landed, id, error: landed ? null : (error ?? NOT_THROWN_BUT_ABSENT) };
+  return attemptWrite(sdk, { contractId, docType, id, accepted: (d) => d !== null }, () =>
+    sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer })
+  );
 }
 
 /** Replaces a document with a full data set at `revision + 1`. */
@@ -335,41 +342,23 @@ async function attemptReplace(sdk, who, { contractId, docType, id, data, revisio
     revision: nextRevision,
     id: bs58.decode(id),
   });
-  let error = null;
-  try {
-    await sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer });
-  } catch (e) {
-    error = describeErr(e);
-  }
-  const applied = await pollUntil(
+  const outcome = await attemptWrite(
     sdk,
-    contractId,
-    docType,
-    id,
-    (d) => d?.revision !== undefined && d.revision >= nextRevision
+    { contractId, docType, id, accepted: (d) => d?.revision !== undefined && d.revision >= nextRevision },
+    () => sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer })
   );
-  return {
-    ok: applied,
-    id,
-    revision: applied ? nextRevision : revision,
-    error: applied ? null : (error ?? NOT_THROWN_BUT_ABSENT),
-  };
+  return { ...outcome, revision: outcome.ok ? nextRevision : revision };
 }
 
 /** Deletes a document; absence after the call is what counts as success. */
 async function attemptDelete(sdk, who, { contractId, docType, id }) {
-  let error = null;
-  try {
-    await sdk.documents.delete({
+  return attemptWrite(sdk, { contractId, docType, id, accepted: (d) => d === null }, () =>
+    sdk.documents.delete({
       document: { id, ownerId: who.ownerId, dataContractId: contractId, documentTypeName: docType },
       identityKey: who.identityKey,
       signer: who.signer,
-    });
-  } catch (e) {
-    error = describeErr(e);
-  }
-  const gone = await pollUntil(sdk, contractId, docType, id, (d) => d === null);
-  return { ok: gone, id, error: gone ? null : (error ?? NOT_THROWN_BUT_ABSENT) };
+    })
+  );
 }
 
 function expectAccepted(label, outcome) {
@@ -377,23 +366,55 @@ function expectAccepted(label, outcome) {
   return outcome;
 }
 
-function expectRejected(label, outcome) {
-  check(label, !outcome.ok, outcome.ok ? 'ACCEPTED (BAD)' : (outcome.error ?? '').slice(0, 220));
-  if (!outcome.ok) capture(label, outcome.error);
+/**
+ * The shapes a reference rejection can take, per the `#[error(...)]` formats in
+ * rs-dpp's `errors/consensus/state/document/referenced_*_error.rs`. A rejection
+ * whose text matches none of these is still a rejection — but not necessarily
+ * the one the case is testing for, so it is called out rather than passed over.
+ */
+const REFERENCE_REJECTION = /referenced .*(not found|is disabled)|canBeDeleted|4012\d/i;
+
+/**
+ * Asserts Platform refused the write, and flags — without failing — a refusal
+ * whose reason does not look like a reference rejection. A broken key, an
+ * unfunded identity or a network fault would also produce "did not land", so a
+ * bare PASS here is not by itself proof that refersTo enforcement fired; the
+ * verbatim text printed at the end of the run is.
+ */
+function expectRejected(label, outcome, { expectReferenceReason = true } = {}) {
+  const reason = outcome.error ?? '';
+  check(label, !outcome.ok, outcome.ok ? 'ACCEPTED (BAD)' : reason.slice(0, 220));
+  if (!outcome.ok) {
+    capture(label, outcome.error);
+    if (expectReferenceReason && !REFERENCE_REJECTION.test(reason)) {
+      console.log(`NOTE  ${label} — rejected, but the reason does not read like a reference error; check the text below`);
+    }
+  }
   return outcome;
 }
 
 // ---- Identities -------------------------------------------------------------
 
-/** Devnet identity ids, which are not derivable and so must be configured. */
+/**
+ * Devnet identity ids, which are not derivable and so must be configured. The
+ * fallback reads `E2E_IDENTITY_IDS`, which holds **testnet** ids — those will
+ * not resolve here, so the source is reported to make a forgotten
+ * `DEVNET_IDENTITY_IDS` obvious rather than mysterious.
+ */
 function poolIdentityIds() {
   const raw = process.env.DEVNET_IDENTITY_IDS ?? '';
   const ids = raw.split(',').map((id) => id.trim()).filter(Boolean);
-  return ids.length > 0 ? ids : loadIdentityIds();
+  if (ids.length > 0) return { ids, source: 'DEVNET_IDENTITY_IDS' };
+  return { ids: loadIdentityIds(), source: 'E2E_IDENTITY_IDS (testnet ids — set DEVNET_IDENTITY_IDS)' };
 }
 
 async function botSigner(sdk, index, explicitOwnerId) {
-  const ownerId = explicitOwnerId ?? poolIdentityIds()[index];
+  let ownerId = explicitOwnerId;
+  if (!ownerId) {
+    const { ids, source } = poolIdentityIds();
+    ownerId = ids[index];
+    if (ownerId) console.log(`     (bot ${index} identity from ${source})`);
+  }
   if (!ownerId) {
     throw new Error(
       `No identity id for bot index ${index}: pass --owner/--owner2 or set DEVNET_IDENTITY_IDS`
@@ -429,9 +450,12 @@ function assembleContract({ ownerId, identityNonce, documentSchemas }) {
 /**
  * Publishes a contract and reports the outcome without throwing.
  *
- * `provisionalId` is the id derived from the nonce we read; `publish` re-derives
- * the real one at broadcast time, so on error it is only a best-effort probe for
- * "the gateway timed out but the contract actually landed".
+ * On error the contract is polled for, on the same terms as a document write: a
+ * gateway timeout on a registration that actually landed must not be reported as
+ * a consensus rejection, because the whole point of the negative cases is to
+ * tell those two apart. `id` is derived locally from the nonce we read, so the
+ * probe is best-effort — the authoritative id is the one `publish` returns, which
+ * is why the success path reads it back off the published contract.
  */
 async function publishContract(sdk, who, documentSchemas) {
   const identityNonce = ((await sdk.identities.nonce(who.ownerId)) ?? 0n) + 1n;
@@ -446,14 +470,15 @@ async function publishContract(sdk, who, documentSchemas) {
     return { ok: true, contractId: published.id.toBase58(), provisionalId, error: null };
   } catch (e) {
     const error = describeErr(e);
-    await settle();
-    let landed = null;
-    try {
-      landed = (await sdk.contracts.fetch(provisionalId)) ?? null;
-    } catch { /* the contract is genuinely not there */ }
-    return landed
-      ? { ok: true, contractId: provisionalId, provisionalId, error: null }
-      : { ok: false, contractId: null, provisionalId, error };
+    for (let poll = 0; poll < POLL_ATTEMPTS; poll++) {
+      await settle();
+      let landed = null;
+      try {
+        landed = (await sdk.contracts.fetch(provisionalId)) ?? null;
+      } catch { /* not there yet, or genuinely never will be */ }
+      if (landed) return { ok: true, contractId: provisionalId, provisionalId, error: null };
+    }
+    return { ok: false, contractId: null, provisionalId, error };
   }
 }
 
@@ -581,7 +606,9 @@ async function case4PermanentDocument(ctx) {
       contractId: ctx.scratchId,
       docType: 'target',
       id: target.id,
-    })
+    }),
+    // A delete-immutability refusal, not a reference refusal.
+    { expectReferenceReason: false }
   );
 
   if (ref.ok) {
@@ -598,7 +625,7 @@ async function case4PermanentDocument(ctx) {
 
 async function case5ReplacePath(ctx) {
   console.log('\n--- 5. replace revalidates changed reference fields ---');
-  const targetId = ctx.targetId ?? (await ensureTarget(ctx));
+  const targetId = await ensureTarget(ctx);
   if (!targetId) {
     check('5  replace path', false, 'no target document available');
     return;
@@ -672,14 +699,16 @@ async function case7NullUnique(ctx) {
     // Control: the unique index really is enforced for non-null values.
     expectRejected(
       `7  [${label}] control — a duplicate \`a\` for the same owner is rejected`,
-      await attemptCreate(ctx.sdk, ctx.botA, { contractId: ctx.scratchId, docType, data: { a: first } })
+      await attemptCreate(ctx.sdk, ctx.botA, { contractId: ctx.scratchId, docType, data: { a: first } }),
+      // A unique-index violation, not a reference refusal.
+      { expectReferenceReason: false }
     );
   }
 }
 
 async function case8OptionalReference(ctx) {
   console.log('\n--- 8. refersTo on an optional field ---');
-  const targetId = ctx.targetId ?? (await ensureTarget(ctx));
+  const targetId = await ensureTarget(ctx);
   if (!targetId) {
     check('8  optional reference', false, 'no target document available');
     return;
@@ -753,7 +782,9 @@ async function case9Tombstone(ctx) {
       contractId: ctx.scratchId,
       docType: 'target',
       id: target.id,
-    })
+    }),
+    // A delete-immutability refusal, not a reference refusal.
+    { expectReferenceReason: false }
   );
 
   const createCost = before - afterCreate;
@@ -765,8 +796,9 @@ async function case9Tombstone(ctx) {
   }
 }
 
-/** Cases 5, 8 and 9 need a `target`; case 4 normally supplies it. */
+/** Cases 5 and 8 need a `target`; case 4 normally supplies it. */
 async function ensureTarget(ctx) {
+  if (ctx.targetId) return ctx.targetId;
   const created = await attemptCreate(ctx.sdk, ctx.botA, {
     contractId: ctx.scratchId,
     docType: 'target',
@@ -853,6 +885,11 @@ function parseArgs(argv) {
     if (args.only.length === 0) throw new Error('--only takes a comma-separated list of case numbers');
     const unknown = args.only.filter((n) => !known.includes(n));
     if (unknown.length > 0) throw new Error(`--only: unknown case number(s) ${unknown.join(', ')}`);
+  }
+  // Otherwise `--only 6 --skip-negative-contracts` would run nothing and then
+  // congratulate itself with "ALL CHECKS PASSED".
+  if (selectedCases(args).length === 0) {
+    throw new Error('--only and --skip-negative-contracts together select no cases');
   }
   return args;
 }

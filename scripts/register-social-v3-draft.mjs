@@ -100,8 +100,8 @@ function devnetSdk() {
 
 /**
  * Reads the v3-draft JSON and turns it into a publishable `DataContract` owned
- * by `ownerId`. `identityNonce` only seeds a provisional id — `contracts.publish`
- * re-derives the real one at broadcast time.
+ * by `ownerId`. `identityNonce` seeds a locally-derived id; the authoritative id
+ * is whatever `contracts.publish` returns, which is what gets printed.
  */
 function buildDraftContract({ ownerId, identityNonce, platformVersion }) {
   const file = JSON.parse(readFileSync(CONTRACT_FILE, 'utf8'));
