@@ -89,8 +89,12 @@ function devnetSdk() {
     network: 'devnet',
     devnetName,
     addresses,
-    trusted: false,
-    proofs: false,
+    // trusted mode is mandatory: wasm-sdk panics on `proofs: false` ("queries
+    // without proofs are not supported yet") and refuses non-trusted proofs.
+    // The trusted context prefetches quorum keys from
+    // https://quorums.<devnetName>.networks.dash.org (or QUORUM_URL).
+    trusted: true,
+    ...(process.env.QUORUM_URL ? { quorumUrl: process.env.QUORUM_URL } : {}),
     settings: { timeoutMs: SDK_TIMEOUT_MS },
   });
   return { sdk, devnetName, addresses };
