@@ -62,6 +62,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@dashevo/dashcore-lib": "^0.25.0",
     "@playwright/test": "^1.62.1",
     "@scure/bip32": "^2.3.0",
     "@scure/bip39": "^2.3.0",
