@@ -202,7 +202,12 @@ async function waitForChainLock(sdk, txid) {
 
     if (txHeight !== null) {
       const status = await sdk.system.status();
-      const lockedHeight = Number(status?.chain?.coreChainLockedHeight ?? 0);
+      // wasm-sdk's live StatusChain class exposes the snake_case getter
+      // (core_chain_locked_height); only the plain toObject()/JSON shape uses
+      // camelCase. Reading camelCase off the class silently yields undefined,
+      // which is how the 600s wait used to time out forever. Accept both.
+      const chain = status?.chain;
+      const lockedHeight = Number(chain?.core_chain_locked_height ?? chain?.coreChainLockedHeight ?? 0);
       if (lockedHeight >= txHeight) {
         console.log(`chain-locked: coreChainLockedHeight=${lockedHeight} >= ${txHeight}`);
         return txHeight;

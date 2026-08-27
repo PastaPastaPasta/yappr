@@ -226,8 +226,10 @@ for (const [key, value] of Object.entries(published)) console.log(`${key}=${valu
 if (published.NEXT_PUBLIC_YAPPR_CONTRACT_ID) {
   console.log('');
   console.log('Then set the YAPP direct-purchase price on the new social contract:');
+  // NETWORK only applied to this process — repeat it or the price script
+  // defaults to testnet and cannot see the freshly published contract.
   console.log(
-    `  node scripts/set-yapp-price.mjs --contract ${published.NEXT_PUBLIC_YAPPR_CONTRACT_ID}` +
+    `  NETWORK=${network()} node scripts/set-yapp-price.mjs --contract ${published.NEXT_PUBLIC_YAPPR_CONTRACT_ID}` +
     ` --owner ${ownerId} --owner-index ${args.ownerIndex}`
   );
 }

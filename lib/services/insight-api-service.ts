@@ -132,8 +132,15 @@ export function isDashScheme(scheme: string): boolean {
 /**
  * Get the network for a Dash payment scheme
  */
-export function getNetworkFromScheme(scheme: string): 'testnet' | 'mainnet' {
-  return scheme.toLowerCase() === 'tdash:' ? 'testnet' : 'mainnet'
+export function getNetworkFromScheme(scheme: string): AppNetwork {
+  // `tdash:` covers both testnet and devnet (devnets reuse testnet address
+  // prefixes), so it resolves to the deployment's configured network — a
+  // /devnet build must poll its own Insight host, not testnet's.
+  if (scheme.toLowerCase() === 'tdash:') {
+    const configured = getConfiguredNetwork()
+    return configured === 'mainnet' ? 'testnet' : configured
+  }
+  return 'mainnet'
 }
 
 /**

@@ -7,9 +7,11 @@ export const YAPPR_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID || '9
 
 // YAPP token (defined at position 0 of the v2 social contract)
 export const YAPP_TOKEN_POSITION = 0
-// Contract-owner / token authority identity (signs freeze/unfreeze/slash on testnet).
+// Contract-owner / token authority identity (signs freeze/unfreeze/slash).
+// Per-deployment: the devnet contract is owned by a different maker identity,
+// so the settings moderation gate must compare against that owner there.
 // Mainnet TODO: move moderation to a Group and drop this single-identity gate.
-export const YAPP_TOKEN_AUTHORITY_ID = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A'
+export const YAPP_TOKEN_AUTHORITY_ID = process.env.NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID || 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A'
 // Per-action token cost baked into the v2 contract's tokenCost.create (immutable ratio).
 // Used as the `maximumTokenCost` guard when creating token-paid documents.
 export const YAPP_TOKEN_COSTS = {
