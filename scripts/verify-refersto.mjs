@@ -210,6 +210,7 @@ const INVALID_CONTRACTS = {
   deletableTarget: {
     label: 'permanentDocument target whose documents can be deleted',
     expect: 'ReferencedDocumentTypeDeletableError (40122)',
+    pattern: /40122|requires a document type with canBeDeleted/i,
     documentSchemas: {
       // No canBeDeleted:false — a reference target is not allowed to be deletable.
       target: {
@@ -229,6 +230,7 @@ const INVALID_CONTRACTS = {
   unknownTarget: {
     label: 'permanentDocument target naming a document type that does not exist',
     expect: 'ReferencedDocumentTypeNotFoundError (40121)',
+    pattern: /40121|referenced document type .* not found/i,
     documentSchemas: {
       ref: {
         type: 'object',
@@ -288,12 +290,27 @@ function buildDocument({ contractId, docType, ownerId, data, entropy, revision =
   return { document, id: bs58.encode(idBytes) };
 }
 
+const READ_ATTEMPTS = 4;
+
 async function fetchDocument(sdk, contractId, docType, id) {
-  try {
-    return (await sdk.documents.get(contractId, docType, id)) ?? null;
-  } catch {
-    return null;
+  // A read failure is NOT absence: a gateway timeout while verifying a delete
+  // must not count as "deleted", and an unreadable accepted write must not be
+  // scored as rejected. Transient faults are retried with backoff; if no
+  // authoritative answer is obtained the battery aborts loudly rather than
+  // letting a case pass or fail on unavailability. Only a successful read
+  // returning no document satisfies the absence predicate.
+  let lastError;
+  for (let attempt = 0; attempt < READ_ATTEMPTS; attempt++) {
+    try {
+      return (await sdk.documents.get(contractId, docType, id)) ?? null;
+    } catch (e) {
+      lastError = e;
+      await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
   }
+  throw new Error(
+    `document read failed after ${READ_ATTEMPTS} attempts — cannot distinguish absence from unavailability: ${describeErr(lastError)}`
+  );
 }
 
 const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not on chain';
@@ -378,22 +395,34 @@ function expectAccepted(label, outcome) {
  */
 const REFERENCE_REJECTION = /referenced .*(not found|is disabled)|canBeDeleted|4012\d/i;
 
+/** The delete-immutability refusal ("documents of type X can not be deleted"). */
+const DELETE_FORBIDDEN = /can ?not be deleted/i;
+
+/** The unique-index violation (DuplicateUniqueIndexError, 40105). */
+const DUPLICATE_UNIQUE = /duplicate unique properties|40105/i;
+
 /**
- * Asserts Platform refused the write, and flags — without failing — a refusal
- * whose reason does not look like a reference rejection. A broken key, an
- * unfunded identity or a network fault would also produce "did not land", so a
- * bare PASS here is not by itself proof that refersTo enforcement fired; the
- * verbatim text printed at the end of the run is.
+ * Asserts Platform refused the write FOR THE EXPECTED REASON. A rejection whose
+ * text matches no expected pattern FAILS the check: a broken key, an unfunded
+ * identity, a transport fault, or a write that silently never landed would all
+ * produce "did not land", and passing those would let a run advertise
+ * refersTo enforcement that never actually fired.
  */
-function expectRejected(label, outcome, { expectReferenceReason = true } = {}) {
+function expectRejected(label, outcome, { pattern = REFERENCE_REJECTION } = {}) {
   const reason = outcome.error ?? '';
-  check(label, !outcome.ok, outcome.ok ? 'ACCEPTED (BAD)' : reason.slice(0, 220));
-  if (!outcome.ok) {
-    capture(label, outcome.error);
-    if (expectReferenceReason && !REFERENCE_REJECTION.test(reason)) {
-      console.log(`NOTE  ${label} — rejected, but the reason does not read like a reference error; check the text below`);
-    }
+  if (outcome.ok) {
+    check(label, false, 'ACCEPTED (BAD)');
+    return outcome;
   }
+  capture(label, outcome.error);
+  const matched = pattern.test(reason);
+  check(
+    label,
+    matched,
+    matched
+      ? reason.slice(0, 220)
+      : `rejected, but NOT for the expected reason ${pattern}: ${reason.slice(0, 180)}`
+  );
   return outcome;
 }
 
@@ -612,7 +641,7 @@ async function case4PermanentDocument(ctx) {
       id: target.id,
     }),
     // A delete-immutability refusal, not a reference refusal.
-    { expectReferenceReason: false }
+    { pattern: DELETE_FORBIDDEN }
   );
 
   if (ref.ok) {
@@ -705,7 +734,7 @@ async function case7NullUnique(ctx) {
       `7  [${label}] control — a duplicate \`a\` for the same owner is rejected`,
       await attemptCreate(ctx.sdk, ctx.botA, { contractId: ctx.scratchId, docType, data: { a: first } }),
       // A unique-index violation, not a reference refusal.
-      { expectReferenceReason: false }
+      { pattern: DUPLICATE_UNIQUE }
     );
   }
 }
@@ -788,7 +817,7 @@ async function case9Tombstone(ctx) {
       id: target.id,
     }),
     // A delete-immutability refusal, not a reference refusal.
-    { expectReferenceReason: false }
+    { pattern: DELETE_FORBIDDEN }
   );
 
   const createCost = before - afterCreate;
@@ -821,12 +850,16 @@ async function case6InvalidContracts(ctx) {
   console.log('\n--- 6. contract-time reference errors ---');
   for (const [key, spec] of Object.entries(INVALID_CONTRACTS)) {
     const published = await publishContract(ctx.sdk, ctx.botA, spec.documentSchemas);
+    const reason = published.error ?? '';
+    const matched = !published.ok && spec.pattern.test(reason);
     check(
       `6  registering a contract with a ${spec.label} is rejected`,
-      !published.ok,
+      matched,
       published.ok
         ? `ACCEPTED (BAD) as ${published.contractId}`
-        : `${spec.expect}: ${(published.error ?? '').slice(0, 220)}`
+        : matched
+          ? `${spec.expect}: ${reason.slice(0, 220)}`
+          : `rejected, but NOT with ${spec.expect}: ${reason.slice(0, 180)}`
     );
     capture(`6 ${key} (${spec.expect})`, published.error);
     await settle();
