@@ -12,12 +12,12 @@
  * its per-type `mutable` keys are rejected on registration — while the chain\'s
  * `schemas` getter returns the canonical registrable form.)
  *
- * The social contract's `tokens` block is carried over as well, so the copy
- * exercises the same YAPP-token-paid write path as the original. `tokenCost`
- * lives inside the document schemas and follows them; the token configuration
- * itself does not, and dropping it used to leave the copy with `tokenCost`
- * entries pointing at a token that did not exist. After publishing, set the
- * direct-purchase price with scripts/set-yapp-price.mjs.
+ * The clone goes through the contract's full JSON, so the social contract's
+ * `tokens` block (plus `groups`, `config`, `keywords`, `description`) is carried
+ * over too. `tokenCost` lives inside the document schemas and always followed
+ * them; the token configuration did not, so dropping it used to leave the copy
+ * with `tokenCost` entries naming a token that did not exist. After publishing,
+ * set the direct-purchase price with scripts/set-yapp-price.mjs.
  *
  * Run:
  *   node scripts/register-test-contracts.mjs [--owner <identityId>] [--only social|profile]
@@ -31,7 +31,7 @@
  * The owner defaults to the first entry of E2E_IDENTITY_IDS in .env.testing.
  * Prints the `.env.testing` / `.env.devnet` lines to paste when it finishes.
  */
-import { DataContract, IdentitySigner } from '@dashevo/evo-sdk';
+import { DataContract, IdentitySigner, PlatformVersion } from '@dashevo/evo-sdk';
 import { connectSdk, network } from './sdk-env.mjs';
 import {
   CRITICAL_AUTH_KEY_ID,
@@ -85,42 +85,55 @@ function parseArgs(argv) {
   return args;
 }
 
-/** Reads the document schemas off a fetched DataContract. */
-function schemasOf(dataContract) {
-  const schemas = dataContract.schemas;
-  if (!schemas || Object.keys(schemas).length === 0) {
+/** Chain metadata that belongs to the source contract, never to a fresh copy. */
+const CHAIN_METADATA_KEYS = [
+  'createdAt', 'updatedAt',
+  'createdAtBlockHeight', 'updatedAtBlockHeight',
+  'createdAtEpoch', 'updatedAtEpoch',
+];
+
+/**
+ * Re-owns a fetched contract's full JSON so it can be published as a new one.
+ *
+ * `DataContract.fromJSON` is used rather than `new DataContract({ schemas })`
+ * because the JSON form is the only one that round-trips *everything* the source
+ * contract carries — `tokens`, `groups`, `config`, `keywords`, `description` —
+ * and the constructor's `tokens` option only accepts live `TokenConfiguration`
+ * handles, so a plain object read from JSON is rejected with "JS object
+ * constructor name mismatch". Dropping the token block used to leave the copy
+ * with `tokenCost` entries naming a token that did not exist.
+ *
+ * The id is seeded from the nonce; `contracts.publish` re-derives the real one at
+ * broadcast time, so it is read back off the returned contract.
+ */
+function reownedContractJson(source, ownerId, identityNonce, platformVersion) {
+  const json = source.toJSON(platformVersion);
+  if (!json.documentSchemas || Object.keys(json.documentSchemas).length === 0) {
     throw new Error('Fetched contract exposes no document schemas');
   }
-  return schemas;
+  json.ownerId = ownerId;
+  json.id = DataContract.generateId(ownerId, identityNonce).toBase58();
+  json.version = 1;
+  for (const key of CHAIN_METADATA_KEYS) delete json[key];
+  return json;
 }
 
-/**
- * Reads the token configurations off a fetched DataContract, keyed by contract
- * position. Returned verbatim: a `TokenConfiguration` is an opaque wasm handle,
- * and its change rules are expressed relative to the contract owner, so it
- * transfers to a new owner unchanged.
- */
-function tokensOf(dataContract) {
-  const tokens = dataContract.tokens;
-  if (!tokens || Object.keys(tokens).length === 0) return null;
-  return Object.fromEntries(Object.entries(tokens).map(([position, config]) => [Number(position), config]));
-}
+/** Publishes a re-owned clone of `source` as a brand-new contract owned by `ownerId`. */
+async function publishContract(sdk, { label, source, ownerId, identityNonce, identityKey, signer }) {
+  const platformVersion = PlatformVersion.current();
+  const json = reownedContractJson(source, ownerId, identityNonce, platformVersion);
+  const dataContract = DataContract.fromJSON(json, false, platformVersion);
 
-/**
- * Publishes `schemas` as a brand-new contract owned by `ownerId`.
- *
- * The identity nonce passed to the DataContract constructor only seeds a
- * provisional id — `contracts.publish` re-derives the real one from the nonce at
- * broadcast time, so the id is read back off the returned contract. The nonce is
- * tracked locally between publishes rather than re-read, because a read straight
- * after a broadcast can still return the pre-publish value.
- */
-async function publishContract(sdk, { label, ownerId, schemas, tokens, identityNonce, identityKey, signer }) {
-  const dataContract = new DataContract({ ownerId, identityNonce, schemas, ...(tokens ? { tokens } : {}) });
-  const tokenNote = tokens ? `, ${Object.keys(tokens).length} token(s)` : '';
-  console.log(`publishing ${label} contract (${Object.keys(schemas).length} document types${tokenNote}) …`);
+  const tokenCount = Object.keys(json.tokens ?? {}).length;
+  const tokenNote = tokenCount > 0 ? `, ${tokenCount} token(s)` : '';
+  console.log(`publishing ${label} contract (${Object.keys(json.documentSchemas).length} document types${tokenNote}) …`);
+
   const published = await sdk.contracts.publish({ dataContract, identityKey, signer });
   const contractId = published.id.toBase58();
+  const publishedTokens = Object.keys(published.tokens ?? {}).length;
+  if (publishedTokens !== tokenCount) {
+    throw new Error(`${label} contract published with ${publishedTokens} token(s), expected ${tokenCount}`);
+  }
   console.log(`${label} contract published: ${contractId}`);
   return contractId;
 }
@@ -180,9 +193,8 @@ try {
     if (!sourceSocial) throw new Error(`Social contract ${args.fromSocial} not found on ${sourceNetwork}`);
     published.NEXT_PUBLIC_YAPPR_CONTRACT_ID = await publishContract(sdk, {
       label: 'social',
+      source: sourceSocial,
       ownerId,
-      schemas: schemasOf(sourceSocial),
-      tokens: tokensOf(sourceSocial),
       identityNonce,
       identityKey,
       signer,
@@ -196,9 +208,8 @@ try {
     if (!sourceProfile) throw new Error(`Profile contract ${args.fromProfile} not found on ${sourceNetwork}`);
     published.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID = await publishContract(sdk, {
       label: 'profile',
+      source: sourceProfile,
       ownerId,
-      schemas: schemasOf(sourceProfile),
-      tokens: tokensOf(sourceProfile),
       identityNonce,
       identityKey,
       signer,

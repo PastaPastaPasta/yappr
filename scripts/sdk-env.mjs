@@ -72,10 +72,11 @@ export function keyNetwork() {
 
 /** Base URL of the Insight API for the selected network. */
 export function insightUrl() {
-  const override = envValue('INSIGHT_URL') ?? envValue('NEXT_PUBLIC_INSIGHT_API_URL');
-  if (override) return override.replace(/\/$/, '');
   const net = network();
-  return (net === 'devnet' ? MOUTAI.insightUrl : INSIGHT_URLS[net]).replace(/\/$/, '');
+  const url = envValue('INSIGHT_URL')
+    ?? envValue('NEXT_PUBLIC_INSIGHT_API_URL')
+    ?? (net === 'devnet' ? MOUTAI.insightUrl : INSIGHT_URLS[net]);
+  return url.replace(/\/$/, '');
 }
 
 /** The devnet's name, e.g. `moutai`. Only meaningful when NETWORK=devnet. */
@@ -115,9 +116,9 @@ export function buildSdk({ timeoutMs = DEFAULT_SDK_TIMEOUT_MS, net: override } =
 
 /** Builds and connects the SDK, logging which network was reached. */
 export async function connectSdk(options) {
-  const sdk = buildSdk(options);
-  await sdk.connect();
   const net = network(options?.net);
+  const sdk = buildSdk({ ...options, net });
+  await sdk.connect();
   console.log(net === 'devnet' ? `connected to devnet ${devnetName()}` : `connected to ${net}`);
   return sdk;
 }

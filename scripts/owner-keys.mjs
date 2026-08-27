@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { IdentitySigner } from '@dashevo/evo-sdk';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
+import { network } from './sdk-env.mjs';
 
 const MAKER_IDENTITY_FILE = join(homedir(), 'Downloads', 'dash-identity-testnet-contract-maker.json');
 /** Contract create/update transitions must be signed with a CRITICAL AUTHENTICATION key. */
@@ -72,7 +73,7 @@ export function resolveOwner({ maker, botIndex, ownerId }) {
  */
 export async function signerFor(sdk, owner) {
   const identity = await sdk.identities.fetch(owner.ownerId);
-  if (!identity) throw new Error(`Identity ${owner.ownerId} not found on testnet`);
+  if (!identity) throw new Error(`Identity ${owner.ownerId} not found on ${network()}`);
   const identityKey = identity.getPublicKeyById(owner.keyId);
   if (!identityKey) throw new Error(`Identity ${owner.ownerId} has no key ${owner.keyId}`);
   if (owner.publicKeyHex) {
