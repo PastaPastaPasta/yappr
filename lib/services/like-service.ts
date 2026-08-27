@@ -1,9 +1,10 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
+import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
+import { likeIndexFor, type TargetKind } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -13,23 +14,40 @@ export interface LikeDocument {
   postOwnerId?: string;
 }
 
+/**
+ * Likes of posts and likes of replies share this service, but not necessarily a
+ * document type: the v3 topology routes reply likes to `likeReply` with
+ * `replyId`/`replyOwnerId` in place of `postId`/`postOwnerId`. Every method that
+ * touches the chain therefore takes the target's kind and resolves the doctype
+ * and field names through the topology descriptor. `kind` defaults to `post`,
+ * which on v2 is the same surface a reply resolves to — so v2 queries are
+ * unchanged whichever kind is passed.
+ */
 class LikeService extends BaseDocumentService<LikeDocument> {
   constructor() {
     super('like');
   }
 
   protected transformDocument(doc: Record<string, unknown>): LikeDocument {
-    const data = (doc.data || doc) as Record<string, unknown>;
+    return this.transformDocumentFor(doc, 'post');
+  }
 
-    // Convert postId
-    const rawPostId = data.postId || doc.postId;
+  /**
+   * Reads a like document into the canonical `{postId, postOwnerId}` shape,
+   * regardless of what the topology calls those fields on this kind's doctype.
+   */
+  private transformDocumentFor(doc: Record<string, unknown>, kind: TargetKind): LikeDocument {
+    const data = (doc.data || doc) as Record<string, unknown>;
+    const { field, ownerField } = likeIndexFor(kind);
+
+    const rawPostId = data[field] || doc[field];
     const postId = rawPostId ? identifierToBase58(rawPostId) : '';
     if (rawPostId && !postId) {
-      logger.error('LikeService: Invalid postId format:', rawPostId);
+      logger.error('LikeService: Invalid target id format:', rawPostId);
     }
 
-    // Convert postOwnerId (optional field)
-    const rawPostOwnerId = data.postOwnerId || doc.postOwnerId;
+    // Owner denormalization is optional in the schema (and absent on some doctypes).
+    const rawPostOwnerId = ownerField ? (data[ownerField] || doc[ownerField]) : undefined;
     const postOwnerId = rawPostOwnerId ? identifierToBase58(rawPostOwnerId) : undefined;
 
     return {
@@ -42,34 +60,37 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Like a post
-   * @param postId - ID of the post being liked
-   * @param ownerId - Identity ID of the user liking the post
-   * @param postOwnerId - Identity ID of the post author (for efficient notification queries)
+   * Like a post or a reply
+   * @param postId - ID of the post/reply being liked
+   * @param ownerId - Identity ID of the user liking it
+   * @param postOwnerId - Identity ID of the target's author (for efficient notification queries)
+   * @param kind - Whether the target is a post or a reply
    */
-  async likePost(postId: string, ownerId: string, postOwnerId?: string): Promise<boolean> {
+  async likePost(postId: string, ownerId: string, postOwnerId?: string, kind: TargetKind = 'post'): Promise<boolean> {
     try {
       // Check if already liked
-      const existing = await this.getLike(postId, ownerId);
+      const existing = await this.getLike(postId, ownerId, kind);
       if (existing) {
         logger.info('Post already liked');
         return true;
       }
 
+      const { docType, field, ownerField } = likeIndexFor(kind);
+
       // Build document data
       const documentData: Record<string, unknown> = {
-        postId: identifierStringToDocumentBytes(postId)
+        [field]: identifierStringToDocumentBytes(postId)
       };
 
-      // Add postOwnerId if provided (for notification queries)
-      if (postOwnerId) {
-        documentData.postOwnerId = identifierStringToDocumentBytes(postOwnerId);
+      // Add the target-owner denormalization if provided (for notification queries)
+      if (postOwnerId && ownerField) {
+        documentData[ownerField] = identifierStringToDocumentBytes(postOwnerId);
       }
 
       // Use state transition service for creation
       const result = await stateTransitionService.createDocument(
         this.contractId,
-        this.documentType,
+        docType,
         ownerId,
         documentData
       );
@@ -88,11 +109,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Unlike a post
+   * Unlike a post or reply
    */
-  async unlikePost(postId: string, ownerId: string): Promise<boolean> {
+  async unlikePost(postId: string, ownerId: string, kind: TargetKind = 'post'): Promise<boolean> {
     try {
-      const like = await this.getLike(postId, ownerId);
+      const like = await this.getLike(postId, ownerId, kind);
       if (!like) {
         logger.info('Post not liked');
         return true;
@@ -101,7 +122,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       // Use state transition service for deletion
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
-        this.documentType,
+        likeIndexFor(kind).docType,
         like.$id,
         ownerId
       );
@@ -114,34 +135,38 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Check if post is liked by user
+   * Check if a post/reply is liked by user
    */
-  async isLiked(postId: string, ownerId: string): Promise<boolean> {
-    const like = await this.getLike(postId, ownerId);
+  async isLiked(postId: string, ownerId: string, kind: TargetKind = 'post'): Promise<boolean> {
+    const like = await this.getLike(postId, ownerId, kind);
     return like !== null;
   }
 
   /**
-   * Get like by post and owner
+   * Get a like by target and owner, via the doctype's unique (target, owner) index.
    */
-  async getLike(postId: string, ownerId: string): Promise<LikeDocument | null> {
+  async getLike(postId: string, ownerId: string, kind: TargetKind = 'post'): Promise<LikeDocument | null> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      const { docType, field, ownerFirst } = likeIndexFor(kind);
 
-      // Use 'in' pattern that works on feed page
+      // Use 'in' pattern that works on feed page.
+      // Both where and orderBy must list the index's properties in the order the
+      // contract declares them, so orderBy is derived from where and the two
+      // cannot drift apart.
+      const targetClause: DocumentWhereClause = [field, 'in', [postId]];
+      const ownerClause: DocumentWhereClause = ['$ownerId', '==', ownerId];
+      const where = ownerFirst ? [ownerClause, targetClause] : [targetClause, ownerClause];
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
-        documentTypeName: 'like',
-        where: [
-          ['postId', 'in', [postId]],
-          ['$ownerId', '==', ownerId]
-        ],
-        orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
+        documentTypeName: docType,
+        where,
+        orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause),
         limit: 1
       });
 
       const documents = normalizeSDKResponse(response);
-      return documents.length > 0 ? this.transformDocument(documents[0]) : null;
+      return documents.length > 0 ? this.transformDocumentFor(documents[0], kind) : null;
     } catch (error) {
       logger.error('Error getting like:', error);
       return null;
@@ -179,32 +204,35 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Count likes for a post
    */
   /**
-   * Which of the given posts the user has liked — queries only the user's OWN
-   * likes via the unique `postAndOwner` [postId, $ownerId] index, so the result
-   * is bounded by the number of posts (not total likes) and never undercounts.
+   * Which of the given targets the user has liked — queries only the user's OWN
+   * likes via the doctype's unique (target, owner) index, so the result is
+   * bounded by the number of targets (not total likes) and never undercounts.
    */
-  async getUserLikedPostIds(userId: string, postIds: string[]): Promise<Set<string>> {
-    // like's `postAndOwner` index is [postId, $ownerId] → ownerFirst: false.
+  async getUserLikedPostIds(userId: string, postIds: string[], kind: TargetKind = 'post'): Promise<Set<string>> {
+    // v2 `like.postAndOwner` is [postId, $ownerId] → ownerFirst: false.
+    const { docType, field, ownerFirst } = likeIndexFor(kind);
     return queryOwnedPostIds({
       getSdk: () => import('../services/evo-sdk-service').then(m => m.getEvoSdk()),
       dataContractId: this.contractId,
-      documentTypeName: 'like',
+      documentTypeName: docType,
       userId,
       postIds,
-      ownerFirst: false,
-      getPostId: (doc) => this.transformDocument(doc)?.postId,
+      ownerFirst,
+      field,
+      getPostId: (doc) => this.transformDocumentFor(doc, kind)?.postId,
       errorLabel: 'Error fetching user liked post ids:',
     });
   }
 
-  async countLikes(postId: string): Promise<number> {
+  async countLikes(postId: string, kind: TargetKind = 'post'): Promise<number> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      // O(1) count tree on the `byPost` index [postId].
+      const { docType, field } = likeIndexFor(kind);
+      // O(1) count tree on the doctype's countable [target] index.
       return await documentCount(sdk, {
         dataContractId: this.contractId,
-        documentTypeName: 'like',
-        where: [['postId', '==', postId]],
+        documentTypeName: docType,
+        where: [[field, '==', postId]],
       });
     } catch (error) {
       logger.error('Error counting likes:', error);
@@ -212,14 +240,15 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     }
   }
 
-  /** Like counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
-  async countLikesForPosts(postIds: string[]): Promise<Map<string, number>> {
+  /** Like counts for multiple targets via one grouped count-tree query (falls back to per-target reads). */
+  async countLikesForPosts(postIds: string[], kind: TargetKind = 'post'): Promise<Map<string, number>> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const { docType, field } = likeIndexFor(kind);
     return groupedDocumentCount(
       sdk,
-      { dataContractId: this.contractId, documentTypeName: 'like', groupField: 'postId' },
+      { dataContractId: this.contractId, documentTypeName: docType, groupField: field },
       postIds,
-      (id) => this.countLikes(id)
+      (id) => this.countLikes(id, kind)
     );
   }
 

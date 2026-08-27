@@ -5,6 +5,7 @@ import type { Post } from '../types';
 import type { PostStats } from './post-service';
 import { type DocumentWhereClause } from './sdk-helpers';
 import { retryAsync } from '../retry-utils';
+import { targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -207,7 +208,7 @@ export async function fetchUniqueAuthorCount(contractId: string): Promise<number
 export async function fetchTopPostsByLikes(
   limit: number,
   getTimeline: (options: QueryOptions & { language?: string }) => Promise<DocumentResult<Post>>,
-  getBatchPostStats: (postIds: string[]) => Promise<Map<string, PostStats>>,
+  getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
   enrichPostsBatch: (posts: Post[]) => Promise<Post[]>
 ): Promise<Post[]> {
   try {
@@ -216,8 +217,7 @@ export async function fetchTopPostsByLikes(
 
     if (posts.length === 0) return [];
 
-    const postIds = posts.map((post) => post.id);
-    const statsMap = await getBatchPostStats(postIds);
+    const statsMap = await getBatchPostStats(posts.map(targetOf));
 
     const postsWithLikes = posts.map((post) => ({
       post,

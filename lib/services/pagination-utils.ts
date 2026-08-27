@@ -188,16 +188,20 @@ export async function groupedDocumentCount(
 
 /**
  * Which of `postIds` appear in the caller's OWN documents of a type indexed
- * uniquely on `$ownerId` + `postId` — the "did I like/repost this?" lookup.
+ * uniquely on `$ownerId` + a target field — the "did I like/repost this?" lookup.
  *
  * Queries only the user's own docs, batched to respect the 100-value `in` cap.
- * A unique (owner, postId) index yields at most one doc per postId, so
+ * A unique (owner, target) index yields at most one doc per target id, so
  * `limit: batch.length` can never truncate a batch. `ownerFirst` selects the
  * where/orderBy ordering to match how the contract declares that index
- * (`true` = [$ownerId, postId], `false` = [postId, $ownerId]).
+ * (`true` = [$ownerId, field], `false` = [field, $ownerId]).
  *
- * Returns the set of matching postIds; on error logs `errorLabel` and returns
- * whatever was collected so far.
+ * `field` names the identifier property holding the target id. It defaults to
+ * `postId`, which is what every v2 doctype uses; the v3 topology's `likeReply`
+ * names it `replyId` instead.
+ *
+ * Returns the set of matching target ids; on error logs `errorLabel` and returns
+ * an empty set (fail closed).
  */
 export async function queryOwnedPostIds(
   params: {
@@ -207,19 +211,22 @@ export async function queryOwnedPostIds(
     userId: string;
     postIds: string[];
     ownerFirst: boolean;
+    /** Identifier property naming the target. Default: `postId`. */
+    field?: string;
     getPostId: (doc: Record<string, unknown>) => string | undefined;
     errorLabel: string;
   }
 ): Promise<Set<string>> {
   if (params.postIds.length === 0) return new Set();
+  const field = params.field ?? 'postId';
   const found = new Set<string>();
   try {
     const sdk = await params.getSdk();
     const ownerClause = ['$ownerId', '==', params.userId];
     const ownerOrder = ['$ownerId', 'asc'];
     await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
-      const postClause = ['postId', 'in', batch];
-      const postOrder = ['postId', 'asc'];
+      const postClause = [field, 'in', batch];
+      const postOrder = [field, 'asc'];
       const response = await sdk.documents.query({
         dataContractId: params.dataContractId,
         documentTypeName: params.documentTypeName,

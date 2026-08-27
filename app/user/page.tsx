@@ -799,6 +799,7 @@ function UserProfileContent() {
       // Convert Reply objects to Post-compatible objects for PostCard display
       const replyPosts: Post[] = result.documents.map(reply => ({
         id: reply.id,
+        targetKind: 'reply',
         author: reply.author,
         content: reply.content,
         createdAt: reply.createdAt,

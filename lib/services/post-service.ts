@@ -5,6 +5,7 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
+import { groupByInteractionSurface, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
@@ -50,6 +51,19 @@ export interface PostStats {
   replies: number;
   quotes: number;
   views: number;
+}
+
+/**
+ * Dedupe key for a batch of targets, namespaced per doctype set: the same id
+ * list answers differently depending on which interaction surface it is asked
+ * about, so two batches may only share an in-flight request when they resolve
+ * to the same doctypes.
+ */
+function batchDedupeKey(targets: readonly KindedTarget[]): string {
+  return groupByInteractionSurface(targets)
+    .map(({ key, ids }) => `${key}#${RequestDeduplicator.createBatchKey(ids)}`)
+    .sort()
+    .join('||');
 }
 
 class PostService extends BaseDocumentService<Post> {
@@ -110,6 +124,8 @@ class PostService extends BaseDocumentService<Post> {
     // Return a basic Post object - additional data will be loaded separately
     const post: Post = {
       id,
+      // This transform only ever reads `post` documents.
+      targetKind: 'post',
       author: createDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
@@ -146,8 +162,8 @@ class PostService extends BaseDocumentService<Post> {
   async enrichPostFull(post: Post): Promise<Post> {
     return enrichPostFullHelper(
       post,
-      (postId) => this.getPostStats(postId),
-      (postId) => this.getUserInteractions(postId)
+      (target) => this.getPostStats(target),
+      (target) => this.getUserInteractions(target)
     );
   }
 
@@ -159,8 +175,8 @@ class PostService extends BaseDocumentService<Post> {
   async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
     return enrichPostsBatchHelper(
       posts,
-      (postIds) => this.getBatchPostStats(postIds),
-      (postIds) => this.getBatchUserInteractions(postIds),
+      (targets) => this.getBatchPostStats(targets),
+      (targets) => this.getBatchUserInteractions(targets),
       this.getCurrentUserId()
     );
   }
@@ -429,21 +445,21 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get post statistics (likes, reposts, replies)
+   * Get statistics (likes, reposts, replies) for a post or reply
    */
-  private async getPostStats(postId: string): Promise<PostStats> {
-    return fetchPostStats(postId, this.statsCache);
+  private async getPostStats(target: KindedTarget): Promise<PostStats> {
+    return fetchPostStats(target, this.statsCache);
   }
 
   /**
-   * Get user interactions with a post
+   * Get user interactions with a post or reply
    */
-  private async getUserInteractions(postId: string): Promise<{
+  private async getUserInteractions(target: KindedTarget): Promise<{
     liked: boolean;
     reposted: boolean;
     bookmarked: boolean;
   }> {
-    return fetchUserInteractions(postId, this.getCurrentUserId());
+    return fetchUserInteractions(target, this.getCurrentUserId());
   }
 
   /**
@@ -454,47 +470,38 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Batch get user interactions for multiple posts.
+   * Batch get user interactions for multiple posts/replies.
    * Deduplicates in-flight requests.
    */
-  async getBatchUserInteractions(postIds: string[]): Promise<Map<string, {
+  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, {
     liked: boolean;
     reposted: boolean;
     bookmarked: boolean;
   }>> {
     const currentUserId = this.getCurrentUserId();
-    if (!currentUserId || postIds.length === 0) {
+    if (!currentUserId || targets.length === 0) {
       const result = new Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>();
-      postIds.forEach(id => result.set(id, { liked: false, reposted: false, bookmarked: false }));
+      targets.forEach(({ id }) => result.set(id, { liked: false, reposted: false, bookmarked: false }));
       return result;
     }
 
-    // Include userId in cache key since interactions are user-specific
-    const cacheKey = `${currentUserId}:${RequestDeduplicator.createBatchKey(postIds)}`;
-    return this.interactionsDeduplicator.dedupe(cacheKey, () => this.fetchBatchUserInteractions(postIds, currentUserId));
-  }
-
-  /** Internal: Actually fetch user interactions */
-  private async fetchBatchUserInteractions(postIds: string[], currentUserId: string): Promise<Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>> {
-    return fetchBatchUserInteractions(postIds, currentUserId);
+    // Include userId in the key since interactions are user-specific, and the
+    // doctype set because the same id list answers differently per surface.
+    const cacheKey = `${currentUserId}:${batchDedupeKey(targets)}`;
+    return this.interactionsDeduplicator.dedupe(cacheKey, () => fetchBatchUserInteractions(targets, currentUserId));
   }
 
   /**
-   * Batch get stats for multiple posts using efficient batch queries.
-   * Deduplicates in-flight requests: multiple callers with same postIds share one request.
+   * Batch get stats for multiple posts/replies using efficient batch queries.
+   * Deduplicates in-flight requests: multiple callers with the same targets
+   * share one request.
    */
-  async getBatchPostStats(postIds: string[]): Promise<Map<string, PostStats>> {
-    if (postIds.length === 0) {
+  async getBatchPostStats(targets: readonly KindedTarget[]): Promise<Map<string, PostStats>> {
+    if (targets.length === 0) {
       return new Map<string, PostStats>();
     }
 
-    const cacheKey = RequestDeduplicator.createBatchKey(postIds);
-    return this.statsDeduplicator.dedupe(cacheKey, () => this.fetchBatchPostStats(postIds));
-  }
-
-  /** Internal: Actually fetch batch post stats */
-  private async fetchBatchPostStats(postIds: string[]): Promise<Map<string, PostStats>> {
-    return fetchBatchPostStats(postIds);
+    return this.statsDeduplicator.dedupe(batchDedupeKey(targets), () => fetchBatchPostStats(targets));
   }
 
   /**
@@ -518,7 +525,7 @@ class PostService extends BaseDocumentService<Post> {
     return fetchTopPostsByLikes(
       limit,
       (options) => this.getTimeline(options),
-      (postIds) => this.getBatchPostStats(postIds),
+      (targets) => this.getBatchPostStats(targets),
       (posts) => this.enrichPostsBatch(posts)
     );
   }
@@ -546,15 +553,20 @@ class PostService extends BaseDocumentService<Post> {
     );
   }
 
-  /** Count quotes of a post — O(1) `quoteCount` count tree. */
-  async countQuotes(quotedPostId: string): Promise<number> {
+  /**
+   * Count quotes of a post or reply — O(1) count tree on the quote field for
+   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v3).
+   */
+  async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
+    const quoteField = quoteFieldFor(kind);
+    if (!quoteField) return 0;
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
       return await documentCount(sdk, {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
-        where: [['quotedPostId', '==', quotedPostId]],
+        where: [[quoteField, '==', quotedPostId]],
       });
     } catch (error) {
       logger.error('Error counting quotes:', error);
@@ -562,15 +574,17 @@ class PostService extends BaseDocumentService<Post> {
     }
   }
 
-  /** Quote counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
-  async countQuotesForPosts(quotedPostIds: string[]): Promise<Map<string, number>> {
+  /** Quote counts for multiple targets via one grouped count-tree query (falls back to per-target reads). */
+  async countQuotesForPosts(quotedPostIds: string[], kind: TargetKind = 'post'): Promise<Map<string, number>> {
+    const quoteField = quoteFieldFor(kind);
+    if (!quoteField) return new Map(quotedPostIds.map((id) => [id, 0]));
     const { getEvoSdk } = await import('./evo-sdk-service');
     const sdk = await getEvoSdk();
     return groupedDocumentCount(
       sdk,
-      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'quotedPostId' },
+      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: quoteField },
       quotedPostIds,
-      (id) => this.countQuotes(id)
+      (id) => this.countQuotes(id, kind)
     );
   }
 
@@ -617,6 +631,7 @@ class PostService extends BaseDocumentService<Post> {
     const remainingIds = missingIds.filter((id) => !foundReplyIds.has(id));
     const convertedReplies: Post[] = replies.map((reply) => ({
       id: reply.id,
+      targetKind: 'reply',
       author: reply.author,
       content: reply.content,
       createdAt: reply.createdAt,

@@ -1,3 +1,4 @@
+import type { TargetKind } from '@/lib/contract-topology'
 import type { User } from './user'
 
 // Tip metadata parsed from post content (format: tip:CREDITS\nmessage)
@@ -29,6 +30,14 @@ export interface PostEnrichment {
 
 export interface Post {
   id: string
+  /**
+   * Which document type this object is really backed by. PostCard renders posts
+   * and replies through the same shape, and on the v3 topology the two address
+   * different interaction doctypes — so anything that reads or writes
+   * engagements has to know which it is holding. Unset means `post`; see
+   * `targetKindOf()`.
+   */
+  targetKind?: TargetKind
   author: User
   content: string
   createdAt: Date

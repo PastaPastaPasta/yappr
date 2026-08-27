@@ -7,11 +7,14 @@ import { PostCard, ProgressiveEnrichment } from './post-card'
 /**
  * Convert a Reply to a Post-like object for PostCard rendering.
  * This is a temporary adapter until PostCard is updated to handle both types.
- * Preserves parentId/parentOwnerId so PostCard can detect replies for deletion.
+ * `targetKind: 'reply'` is what tells PostCard (and everything downstream of it)
+ * that this object is a `reply` document, so deletes and engagements address the
+ * right doctypes.
  */
 function replyToPostLike(reply: Reply): Post {
   return {
     id: reply.id,
+    targetKind: 'reply',
     author: reply.author,
     content: reply.content,
     createdAt: reply.createdAt,

@@ -212,8 +212,9 @@ export function usePostDetail({
         // Try as a reply
         const reply = await replyService.getReplyById(currentParentId, { skipEnrichment: true })
         if (reply) {
-          // Convert reply to Post-like structure
-          parent = reply as Post
+          // Convert reply to Post-like structure; the kind marks which doctype
+          // it came from so engagements and deletes resolve correctly.
+          parent = { ...reply, targetKind: 'reply' } as Post
         }
       }
 
@@ -284,8 +285,9 @@ export function usePostDetail({
         // Not a post - check if it's a reply
         const reply = await replyService.getReplyById(postId, { skipEnrichment: true })
         if (reply) {
-          // Treat the reply as the main "post" for this detail view
-          loadedPost = reply as Post
+          // Treat the reply as the main "post" for this detail view, tagged with
+          // the doctype it actually came from.
+          loadedPost = { ...reply, targetKind: 'reply' } as Post
         }
       }
 

@@ -368,6 +368,7 @@ class NotificationService {
         // Use pre-fetched reply data directly - more reliable than re-querying
         post = {
           id: raw.postId || '',
+          targetKind: 'reply',
           author: user, // The reply author is the notification sender
           content: raw.replyContent,
           createdAt: new Date(raw.createdAt),
@@ -523,6 +524,7 @@ class NotificationService {
           // Create a Post object from the reply, including parentId for navigation
           const post: Post = {
             id,
+            targetKind: 'reply',
             author: {
               id: ownerId,
               username: '',

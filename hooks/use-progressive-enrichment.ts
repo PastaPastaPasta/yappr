@@ -7,6 +7,7 @@ import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { blockService } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
 import { seedBlockStatusCache, seedFollowStatusCache } from '@/lib/caches/user-status-cache'
+import { targetOf, type KindedTarget } from '@/lib/contract-topology'
 
 export interface PostStats {
   likes: number
@@ -126,8 +127,16 @@ export function useProgressiveEnrichment(
     // Check if this request is still valid
     const isValid = () => enrichmentIdRef.current === requestId
 
-    // Extract IDs (deduplicate to prevent "duplicate values for In query" errors)
-    const postIds = Array.from(new Set(posts.map(p => p.id).filter(Boolean)))
+    // Extract IDs (deduplicate to prevent "duplicate values for In query" errors).
+    // Each target carries its kind, so the stats/interaction queries are
+    // partitioned by interaction surface — one partition (i.e. unchanged) on v2.
+    const seenPostIds = new Set<string>()
+    const targets: KindedTarget[] = []
+    for (const post of posts) {
+      if (!post.id || seenPostIds.has(post.id)) continue
+      seenPostIds.add(post.id)
+      targets.push(targetOf(post))
+    }
     const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
 
     // Set loading phase
@@ -187,7 +196,7 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: avatars failed', err))
 
     // Priority 3: Stats
-    const statsPromise = postService.getBatchPostStats(postIds)
+    const statsPromise = postService.getBatchPostStats(targets)
     statsPromise.then(stats => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -198,7 +207,7 @@ export function useProgressiveEnrichment(
 
     // Priority 4: User interactions (only if logged in)
     const interactionsPromise = currentUserId
-      ? postService.getBatchUserInteractions(postIds)
+      ? postService.getBatchUserInteractions(targets)
       : Promise.resolve(new Map<string, UserInteractions>())
 
     if (currentUserId) {

@@ -51,6 +51,7 @@ import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { tipService } from '@/lib/services/tip-service'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { canBookmark, canRepost, targetKindOf } from '@/lib/contract-topology'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
 type UsernameState = string | null | undefined
@@ -148,6 +149,15 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   // Compute isOwnPost from auth context if not explicitly provided
   const isOwnPost = isOwnPostProp ?? (user?.identityId === post.author.id)
+
+  // Which document type this card is actually showing. Everything that reads or
+  // writes an engagement has to dispatch on it, because the v3 topology gives
+  // posts and replies different interaction doctypes (and forbids reposting or
+  // bookmarking a reply at all).
+  const targetKind = targetKindOf(post)
+  const isReply = targetKind === 'reply'
+  const repostable = canRepost(targetKind)
+  const bookmarkable = canBookmark(targetKind)
 
   // Use progressive enrichment data when available, fall back to post._enrichment (old path)
   const legacyEnrichment = post._enrichment
@@ -378,8 +388,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     try {
       const { likeService } = await import('@/lib/services/like-service')
       const success = wasLiked
-        ? await likeService.unlikePost(post.id, authedUser.identityId)
-        : await likeService.likePost(post.id, authedUser.identityId, post.author.id)
+        ? await likeService.unlikePost(post.id, authedUser.identityId, targetKind)
+        : await likeService.likePost(post.id, authedUser.identityId, post.author.id, targetKind)
 
       if (!success) throw new Error('Like operation failed')
     } catch (error) {
@@ -402,6 +412,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const handleRepost = async () => {
     const authedUser = requireAuth('repost')
     if (!authedUser) return
+
+    // The topology may forbid reposting this kind entirely (v3 replies), in which
+    // case there is no doctype to write. The control is still rendered today, so
+    // this guard — not the action row — is what enforces the rule.
+    if (!repostable) return
 
     if (repostLoading) return
 
@@ -447,6 +462,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const handleBookmark = async () => {
     const authedUser = requireAuth('bookmark')
     if (!authedUser) return
+
+    // Same guard as handleRepost: on v3 replies have no bookmark doctype.
+    if (!bookmarkable) return
 
     if (bookmarkLoading) return
 
@@ -507,9 +525,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const handleDelete = () => {
     const authedUser = requireAuth('delete')
     if (!authedUser) return
-
-    // Check if this is a reply (has parentId) or a post
-    const isReply = Boolean(post.parentId)
 
     openDeleteModal(post, async () => {
       let success: boolean

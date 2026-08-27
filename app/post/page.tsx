@@ -16,7 +16,7 @@ import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
-import type { Post } from '@/lib/types'
+import type { Post, Reply } from '@/lib/types'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -59,11 +59,14 @@ function PostDetailContent() {
   useEffect(() => {
     if (replyThreads.length === 0) return
 
+    // Replies rendered as Post shapes: tagged as `reply` so their enrichment
+    // queries resolve against the reply interaction doctypes.
+    const asPost = (reply: Reply): Post => ({ ...reply, targetKind: 'reply' } as unknown as Post)
     const replyMap = new Map<string, Post>()
     replyThreads.forEach((thread) => {
-      replyMap.set(thread.content.id, thread.content as unknown as Post)
+      replyMap.set(thread.content.id, asPost(thread.content))
       thread.nestedReplies.forEach((nested) => {
-        replyMap.set(nested.content.id, nested.content as unknown as Post)
+        replyMap.set(nested.content.id, asPost(nested.content))
       })
     })
 

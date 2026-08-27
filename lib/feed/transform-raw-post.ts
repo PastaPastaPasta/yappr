@@ -97,6 +97,8 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
 
   return {
     id: resolvedId || createPlaceholderPostId(doc, data),
+    // Feed documents come off the `post` doctype.
+    targetKind: 'post',
     content: (data.content || '') as string,
     author: {
       id: authorId,

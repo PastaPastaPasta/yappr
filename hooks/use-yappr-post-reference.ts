@@ -22,6 +22,7 @@ const pendingReferences = new Map<string, Promise<Post | null>>()
 function convertReplyToPost(reply: Reply): Post {
   return {
     id: reply.id,
+    targetKind: 'reply',
     author: reply.author,
     content: reply.content,
     createdAt: reply.createdAt,
