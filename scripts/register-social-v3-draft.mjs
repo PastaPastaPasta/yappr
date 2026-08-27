@@ -1,16 +1,31 @@
 /**
- * One-time, manual registration of the yappr social **v3-draft** contract on a
- * devnet (moutai by default).
+ * One-time, manual registration of a yappr social **v3** contract on a devnet
+ * (moutai by default).
  *
- * Publishes `contracts/yappr-social-contract-v3-draft.json` as a brand-new
- * contract. That file is the staging chain's canonical schemas plus exactly two
- * additions — `follow.followingId` and `postMention.mentionedUserId` both gain
- * `"refersTo": { "type": "identity" }` — so consensus refuses a follow or a
- * mention that points at an identity which does not exist.
+ * Publishes a contract JSON from `contracts/` as a brand-new contract. Two files
+ * are in play, selected with `--contract-file`:
  *
- * NOT the final v3 index set: the like/count index overhaul is still pending and
- * the post-target references stay polymorphic for now (see
- * PLAN_CONTRACT_V3_TOPOLOGY.md). Devnet is disposable; iterate freely.
+ *   `yappr-social-contract-v3-draft.json`    (default)
+ *      The staging chain's canonical schemas plus exactly two additions —
+ *      `follow.followingId` and `postMention.mentionedUserId` both gain
+ *      `"refersTo": { "type": "identity" }` — so consensus refuses a follow or
+ *      a mention that points at an identity which does not exist.
+ *
+ *   `yappr-social-contract-v3-topology.json`
+ *      The full interaction topology from PLAN_CONTRACT_V3_TOPOLOGY.md: flat
+ *      threads (`reply.rootPostId` + `replyToReplyId`), the new `likeReply`
+ *      doctype, posts-only repost/bookmark, dual quote fields with the
+ *      uniqueness dropped, `canBeDeleted:false` on post+reply, and
+ *      `permanentDocument` refersTo on every same-contract reference.
+ *
+ * ## Registered devnet contracts
+ *
+ *   v3-draft    3414JJ3xGXK3Cgpy7NAdDXwAjvyoeD4bcBTX6nSh7ysg  (moutai, 2026-08-27)
+ *   v3-topology GwGV4Gkb5Vb6VE2m45DnSpKQEha41amSxiopK9eo9WnG  (moutai, 2026-08-27)
+ *               owner = devnet maker DuqE3zgXprS5zU51YaB4GuGxTRzzukW59XAYKeM6gKGA (seed index 9);
+ *               `verify-topology.mjs` passed all 31 checks against it.
+ *
+ * Devnet is disposable; iterate freely.
  *
  * ## Network
  *
@@ -47,19 +62,36 @@
  *
  *   node scripts/register-social-v3-draft.mjs --bot 0 --owner <devnetIdentityId>
  *
+ * ## Funding the bot pool
+ *
+ * A fresh contract mints its whole YAPP `baseSupply` to the contract owner, so
+ * every other identity starts at zero and its first token-priced write (a post
+ * costs 10 YAPP) is refused. `--fund <id>[,<id>…]` transfers `--fund-amount`
+ * YAPP from the freshly-registered contract's owner to each id, which is what
+ * makes the verification battery able to write posts/replies/likes at all.
+ * `--fund-only <contractId>` performs just that step against a contract that
+ * already exists, for topping a bot up without republishing anything.
+ *
  * `--dry-run` assembles and validates the contract locally and prints a summary
  * without touching the network.
  *
- * Run:  node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>] [--dry-run]
+ * Run:  node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>]
+ *       [--contract-file <name|path>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]
+ *       node scripts/register-social-v3-draft.mjs --bot <index> --owner <id> --fund-only <contractId> --fund <id,id>
  */
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DataContract, EvoSDK, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CONTRACT_FILE = join(REPO_ROOT, 'contracts', 'yappr-social-contract-v3-draft.json');
+const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
+const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v3-draft.json';
+/** YAPP is defined at token position 0 of every yappr social contract. */
+const YAPP_TOKEN_POSITION = 0;
+/** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */
+const DEFAULT_FUND_AMOUNT = 1000n;
 const SDK_TIMEOUT_MS = 30000;
 const DEFAULT_DEVNET_NAME = 'moutai';
 const DEFAULT_SEED_COUNT = 5;
@@ -102,15 +134,21 @@ function devnetSdk() {
 
 // ---- Contract assembly ------------------------------------------------------
 
+/** Resolves `--contract-file` (bare name, relative or absolute path) to a path. */
+function contractPath(name) {
+  if (name.includes('/') || isAbsolute(name)) return name;
+  return join(CONTRACTS_DIR, name);
+}
+
 /**
- * Reads the v3-draft JSON and turns it into a publishable `DataContract` owned
- * by `ownerId`. `identityNonce` seeds a locally-derived id; the authoritative id
- * is whatever `contracts.publish` returns, which is what gets printed.
+ * Reads a contract JSON and turns it into a publishable `DataContract` owned by
+ * `ownerId`. `identityNonce` seeds a locally-derived id; the authoritative id is
+ * whatever `contracts.publish` returns, which is what gets printed.
  */
-function buildDraftContract({ ownerId, identityNonce, platformVersion }) {
-  const file = JSON.parse(readFileSync(CONTRACT_FILE, 'utf8'));
+function buildDraftContract({ contractFile, ownerId, identityNonce, platformVersion }) {
+  const file = JSON.parse(readFileSync(contractFile, 'utf8'));
   if (!file.documentSchemas || Object.keys(file.documentSchemas).length === 0) {
-    throw new Error(`${CONTRACT_FILE} has no documentSchemas`);
+    throw new Error(`${contractFile} has no documentSchemas`);
   }
   const json = {
     $formatVersion: file.$formatVersion ?? '1',
@@ -124,28 +162,125 @@ function buildDraftContract({ ownerId, identityNonce, platformVersion }) {
   return { dataContract: DataContract.fromJSON(json, true, platformVersion), file };
 }
 
-/** The `refersTo` declarations the draft is supposed to carry, for the log. */
-function referenceSummary(documentSchemas) {
-  const found = [];
-  for (const [typeName, schema] of Object.entries(documentSchemas)) {
-    for (const [propertyName, property] of Object.entries(schema.properties ?? {})) {
-      if (property.refersTo) {
-        found.push(`${typeName}.${propertyName} → ${JSON.stringify(property.refersTo)}`);
-      }
+/** Width of the doctype-name column in the audit, so wrapped lines line up. */
+const AUDIT_NAME_WIDTH = 18;
+
+/** `name[a,b]` with `(u)` for unique and `(c)` for countable indexes. */
+function describeIndex(index) {
+  const properties = (index.properties ?? []).map((entry) => Object.keys(entry)[0]).join(',');
+  return `${index.name}${index.unique ? '(u)' : ''}${index.countable ? '(c)' : ''}[${properties}]`;
+}
+
+/**
+ * Per-doctype audit: permanence flags, index set, token price and outgoing
+ * references. Printed before publishing so a wrong file, a dropped index or a
+ * missing `canBeDeleted: false` on a reference target is caught by eye rather
+ * than by a consensus rejection ten seconds later — or worse, by a contract
+ * that registers fine and then cannot be pointed at.
+ */
+function printSchemaAudit(documentSchemas) {
+  const continuation = ' '.repeat(AUDIT_NAME_WIDTH);
+  for (const name of Object.keys(documentSchemas).sort()) {
+    const schema = documentSchemas[name];
+    const flags = [
+      `mutable=${schema.documentsMutable ?? 'default'}`,
+      `canBeDeleted=${schema.canBeDeleted ?? 'default'}`,
+      ...(schema.documentsCountable ? ['countable'] : []),
+    ];
+    const cost = schema.tokenCost?.create;
+    if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}`);
+    const indices = (schema.indices ?? []).map(describeIndex);
+    console.log(`  ${name.padEnd(AUDIT_NAME_WIDTH)} ${flags.join(' ')}  (${indices.length} indexes)`);
+    if (indices.length > 0) console.log(`  ${continuation} ${indices.join(' ')}`);
+    // Covers both `refersTo` shapes the contracts use: `{type: 'identity'}` and
+    // `{type: 'permanentDocument', documentType}`.
+    const refs = Object.entries(schema.properties ?? {})
+      .filter(([, property]) => property.refersTo)
+      .map(([property, { refersTo }]) =>
+        `${property}→${refersTo.type}${refersTo.documentType ? `(${refersTo.documentType})` : ''}`);
+    if (refs.length > 0) console.log(`  ${continuation} refersTo: ${refs.join(' ')}`);
+  }
+
+  // A reference target that stays deletable is refused at registration (40122),
+  // so surface the mismatch here where the fix is obvious.
+  const targets = new Set();
+  for (const schema of Object.values(documentSchemas)) {
+    for (const property of Object.values(schema.properties ?? {})) {
+      if (property.refersTo?.type === 'permanentDocument') targets.add(property.refersTo.documentType);
     }
   }
-  return found;
+  for (const target of targets) {
+    const schema = documentSchemas[target];
+    if (!schema) throw new Error(`refersTo names document type "${target}", which this contract does not define`);
+    if (schema.canBeDeleted !== false) {
+      throw new Error(`document type "${target}" is a permanentDocument target but is not canBeDeleted: false`);
+    }
+  }
+  console.log(`  permanentDocument targets: ${targets.size > 0 ? [...targets].join(', ') : 'none'} (all canBeDeleted:false)`);
+}
+
+/**
+ * Transfers YAPP from the contract owner (who holds the whole freshly-minted
+ * `baseSupply`) to each recipient, so their first token-priced document write is
+ * not refused for an empty balance.
+ */
+async function fundRecipients(sdk, { contractId, owner, identityKey, signer, recipients, amount }) {
+  // The trusted SDK needs the contract cached before it can verify a token
+  // result proof, otherwise waitForResponse fails with "unknown contract".
+  await sdk.contracts.fetch(contractId);
+  const tokenId = await sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION);
+  console.log(`funding ${recipients.length} identity(ies) with ${amount} YAPP each (token ${tokenId}) …`);
+
+  for (const recipientId of recipients) {
+    try {
+      await sdk.tokens.transfer({
+        dataContractId: contractId,
+        tokenPosition: YAPP_TOKEN_POSITION,
+        senderId: owner.ownerId,
+        recipientId,
+        amount,
+        identityKey,
+        signer,
+      });
+    } catch (e) {
+      // A gateway timeout on a transfer that landed must not look like a
+      // failure, so the balance read below is what decides.
+      console.log(`  transfer to ${recipientId} reported: ${describeErr(e).slice(0, 160)}`);
+    }
+  }
+
+  const balances = await sdk.tokens.balances(recipients, tokenId);
+  for (const recipientId of recipients) {
+    const balance = balances instanceof Map ? balances.get(recipientId) : undefined;
+    console.log(`  ${recipientId}: ${balance ?? 0} YAPP`);
+    if (!balance || balance < amount) {
+      console.log('  WARNING: funding did not land — token-priced writes will be refused for this identity.');
+    }
+  }
 }
 
 // ---- CLI --------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { maker: false, botIndex: null, ownerId: null, dryRun: false };
+  const args = {
+    maker: false,
+    botIndex: null,
+    ownerId: null,
+    contractFile: DEFAULT_CONTRACT_FILE,
+    fund: [],
+    fundAmount: DEFAULT_FUND_AMOUNT,
+    fundOnly: null,
+    dryRun: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--maker': args.maker = true; break;
       case '--bot': args.botIndex = Number(argv[++i]); break;
       case '--owner': args.ownerId = argv[++i]; break;
+      case '--contract-file': args.contractFile = argv[++i]; break;
+      case '--fund': args.fund = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
+      case '--fund-amount': args.fundAmount = BigInt(argv[++i]); break;
+      case '--fund-only': args.fundOnly = argv[++i]; break;
       case '--dry-run': args.dryRun = true; break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
@@ -156,6 +291,11 @@ function parseArgs(argv) {
   if (args.botIndex !== null && !Number.isInteger(args.botIndex)) {
     throw new Error('--bot takes an integer index');
   }
+  if (!args.contractFile) throw new Error('--contract-file takes a file name under contracts/ or a path');
+  if (args.fundAmount <= 0n) throw new Error('--fund-amount takes a positive integer');
+  if (args.fundOnly && args.fund.length === 0) {
+    throw new Error('--fund-only also needs --fund <id,id> naming the recipients');
+  }
   return args;
 }
 
@@ -165,10 +305,13 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error(
-    'Usage: node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>] [--dry-run]'
+    'Usage: node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>]\n' +
+    '       [--contract-file <name|path>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]'
   );
   process.exit(1);
 }
+
+const contractFile = contractPath(args.contractFile);
 
 try {
   await ensureInitialized();
@@ -177,9 +320,9 @@ try {
   if (args.dryRun) {
     // No identity, no network: prove the JSON assembles into a valid contract.
     const ownerId = args.ownerId ?? DRY_RUN_OWNER;
-    const { dataContract, file } = buildDraftContract({ ownerId, identityNonce: 1n, platformVersion });
+    const { dataContract, file } = buildDraftContract({ contractFile, ownerId, identityNonce: 1n, platformVersion });
     const roundTrip = dataContract.toJSON(platformVersion);
-    console.log(`dry run: ${CONTRACT_FILE}`);
+    console.log(`dry run: ${contractFile}`);
     console.log(`  document types : ${Object.keys(roundTrip.documentSchemas).length}`);
     const tokenPositions = Object.keys(roundTrip.tokens ?? {});
     console.log(
@@ -188,7 +331,10 @@ try {
         : '  tokens         : NONE — the token block was lost in assembly'
     );
     console.log(`  provisional id : ${roundTrip.id}`);
-    for (const line of referenceSummary(file.documentSchemas)) console.log(`  refersTo       : ${line}`);
+    printSchemaAudit(file.documentSchemas);
+    if (args.fund.length > 0) {
+      console.log(`  would fund     : ${args.fund.join(', ')} with ${args.fundAmount} YAPP each`);
+    }
     const { devnetName, addresses } = devnetSdk();
     console.log(`  would publish to devnet "${devnetName}" via ${addresses.join(', ')}`);
     process.exit(0);
@@ -200,16 +346,32 @@ try {
   console.log(`connected to devnet "${devnetName}" (${addresses.length} addresses); owner=${owner.label}`);
 
   const { identityKey, signer } = await signerFor(sdk, owner);
+
+  if (args.fundOnly) {
+    // Top up an existing contract's bot pool; nothing is published.
+    await fundRecipients(sdk, {
+      contractId: args.fundOnly,
+      owner,
+      identityKey,
+      signer,
+      recipients: args.fund,
+      amount: args.fundAmount,
+    });
+    process.exit(0);
+  }
+
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
 
   const { dataContract, file } = buildDraftContract({
+    contractFile,
     ownerId: owner.ownerId,
     identityNonce,
     platformVersion,
   });
-  for (const line of referenceSummary(file.documentSchemas)) console.log(`refersTo: ${line}`);
+  console.log(`contract file: ${contractFile}`);
+  printSchemaAudit(file.documentSchemas);
 
-  console.log(`publishing yappr social v3-draft (${Object.keys(file.documentSchemas).length} document types) …`);
+  console.log(`publishing yappr social contract (${Object.keys(file.documentSchemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey, signer });
   const contractId = published.id.toBase58();
 
@@ -217,14 +379,27 @@ try {
   // balance" on the first post, so check it here while the contract is fresh.
   const publishedTokens = published.toJSON(platformVersion).tokens;
   const tokenCount = publishedTokens ? Object.keys(publishedTokens).length : 0;
-  console.log(`yappr social v3-draft published: ${contractId}`);
+  console.log(`yappr social contract published: ${contractId}`);
   console.log(`token configurations on the published contract: ${tokenCount}`);
   if (tokenCount === 0) {
     console.log('WARNING: the token block did not survive publication — posts will not be payable.');
   }
+
+  if (args.fund.length > 0) {
+    console.log('');
+    await fundRecipients(sdk, {
+      contractId,
+      owner,
+      identityKey,
+      signer,
+      recipients: args.fund,
+      amount: args.fundAmount,
+    });
+  }
+
   console.log('');
   console.log(`.env.devnet → NEXT_PUBLIC_YAPPR_CONTRACT_ID=${contractId}`);
-  console.log(`battery     → node scripts/verify-refersto.mjs --contract ${contractId} …`);
+  console.log(`battery     → node scripts/verify-topology.mjs --contract ${contractId} …`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);
