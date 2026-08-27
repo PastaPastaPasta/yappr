@@ -5,12 +5,12 @@ import { ArrowLeftIcon, DocumentDuplicateIcon, CheckIcon, CodeBracketIcon } from
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
-import contractDocuments from '@/contracts/yappr-social-contract-actual.json'
+import socialContract from '@/contracts/yappr-social-contract-v2.json'
 
-// Wrap the actual contract documents in the expected format
+// The deployed social contract, reshaped for display
 const dataContract = {
-  version: 7,
-  documents: contractDocuments
+  version: socialContract.version,
+  documents: socialContract.documentSchemas
 }
 
 export default function ContractPage() {
@@ -125,7 +125,7 @@ export default function ContractPage() {
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="h-2 w-2 bg-green-500 rounded-full" />
-                    <span>Encrypted DMs</span>
+                    <span>Private feeds</span>
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="h-2 w-2 bg-green-500 rounded-full" />
@@ -133,7 +133,7 @@ export default function ContractPage() {
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="h-2 w-2 bg-green-500 rounded-full" />
-                    <span>Lists & bookmarks</span>
+                    <span>Bookmarks</span>
                   </li>
                 </ul>
               </div>

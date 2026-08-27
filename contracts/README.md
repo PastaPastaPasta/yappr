@@ -1,5 +1,15 @@
 # Yappr Social Platform - Dash Data Contract
 
+> **Legacy document — kept for history.** This file describes the original (v1)
+> contract design and no longer matches what is deployed. The live social
+> contract is [`yappr-social-contract-v2.json`](./yappr-social-contract-v2.json):
+> 16 document types, the YAPP token, and count-tree indexes. In particular
+> `list`, `listMember`, `mute`, `directMessage`, and `notification` were never
+> part of the deployed v2 contract — lists and mute were dropped as
+> never-implemented (`block` covers muting), DMs live in
+> `yappr-dm-contract.json`, and notifications are derived client-side.
+> See the root `CLAUDE.md` for the current contract structure.
+
 This directory contains the Dash Platform data contract for the Yappr social media dapp.
 
 ## Overview

@@ -250,13 +250,13 @@ yappr/
 │   └── sdk.ts             # Dash SDK type definitions
 │
 ├── contracts/             # Dash Platform data contracts
-│   ├── yappr-social-contract-actual.json  # Main social contract (deployed)
-│   ├── yappr-social-contract.json         # Reference contract
+│   ├── yappr-social-contract-v2.json      # Main social contract (deployed)
+│   ├── yappr-social-contract-actual.json  # Legacy v1 social contract (history)
 │   ├── yappr-storefront-contract.json     # Stores, items, orders, reviews
 │   ├── yappr-dm-contract.json             # Direct messages
-│   ├── yappr-hashtag-contract.json        # Hashtag tracking
-│   ├── yappr-mention-contract.json        # Mention tracking
-│   ├── yappr-block-contract.json          # Enhanced blocking with bloom filters
+│   ├── yappr-hashtag-contract.json        # Legacy - merged into the social contract
+│   ├── yappr-mention-contract.json        # Legacy - merged into the social contract
+│   ├── yappr-block-contract.json          # Legacy - merged into the social contract
 │   ├── yappr-profile-contract.json        # Unified profile contract
 │   ├── encrypted-key-backup-contract.json # Key backup
 │   └── README.md                          # Contract documentation
@@ -281,14 +281,16 @@ yappr/
 Yappr uses multiple data contracts deployed on Dash Platform (testnet):
 
 ### Main Social Contract
-Core social features with 12 document types:
+Core social features with 16 document types:
 - `profile` - Display name, bio, location, website
-- `avatar` - Avatar customization data
-- `post` - Text posts (500 char limit), with optional private encryption
-- `like`, `repost`, `follow` - Social interactions
-- `bookmark`, `list`, `listMember` - Collections
-- `block`, `mute` - User preferences
-- `notification` - User notifications
+- `post`, `reply` - Text posts (500 char limit), with optional private encryption
+- `like`, `repost`, `follow`, `followRequest` - Social interactions
+- `bookmark` - Collections
+- `block`, `blockFilter`, `blockFollow` - User preferences and moderation
+- `postHashtag`, `postMention` - Discovery indexes
+- `privateFeedGrant`, `privateFeedRekey`, `privateFeedState` - Private feed key management
+
+Notifications are derived client-side rather than stored; direct messages use the separate DM contract.
 
 ### Storefront Contract
 Full e-commerce functionality:
@@ -303,15 +305,11 @@ Full e-commerce functionality:
 ### Direct Message Contract
 - `directMessage` - Encrypted messages with conversation threading
 
-### Hashtag Contract
-- `postHashtag` - Links hashtags to posts with trending support
-
-### Mention Contract
-- `postMention` - Tracks user mentions in posts for notification queries
-
-### Block Contract
-- Enhanced blocking with bloom filters for efficient client-side filtering
-- `block`, `blockFilter`, `blockFollow` document types
+### Retired standalone contracts
+The hashtag, mention, and block contracts no longer exist as separate deployments —
+`postHashtag`, `postMention`, `block`, `blockFilter`, and `blockFollow` are now doctypes in
+the main social contract, and their contract IDs have been removed from `lib/constants.ts`.
+The JSON files remain in `contracts/` for history only.
 
 ### Unified Profile Contract
 - Combined profile data with additional fields

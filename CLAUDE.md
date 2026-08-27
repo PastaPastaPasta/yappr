@@ -140,12 +140,20 @@ Singleton service classes handle all Dash Platform operations:
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
-The registered contract (`contracts/yappr-social-contract-actual.json`) defines 12 document types:
-- `profile`, `avatar` - User data (separate for flexibility)
-- `post` - 500 char limit, optional media
-- `like`, `repost`, `follow` - Social interactions
-- `bookmark`, `list`, `listMember`, `block`, `mute` - User preferences
-- `directMessage`, `notification` - Communication
+The deployed social contract (`contracts/yappr-social-contract-v2.json`) defines 16 document types:
+- `profile` - User data (name, bio, avatar/banner references)
+- `post`, `reply` - Content; `post` is 500 chars, optional media
+- `like`, `repost`, `follow`, `followRequest` - Social interactions
+- `bookmark`, `block`, `blockFilter`, `blockFollow` - User preferences and moderation
+- `postHashtag`, `postMention` - Discovery indexes written alongside posts
+- `privateFeedGrant`, `privateFeedRekey`, `privateFeedState` - Private (encrypted) feed key management
+
+Not in this contract:
+- Direct messages live in the separate DM contract (`contracts/yappr-dm-contract.json`)
+- Notifications are derived client-side from other document types, not stored
+- `list` / `listMember` / `mute` were dropped when the v2 contract was cut (never implemented; `block` covers muting)
+
+Additional contracts back specific features: storefront (7 types), DM, blog, vault/auth-vault, key exchange, encrypted key backup, and the externally-owned Pollr contract. The standalone hashtag, mention, and block contracts are gone — those doctypes moved into the social contract, and `lib/constants.ts` no longer carries their contract IDs.
 
 **IMPORTANT**: Documents use `$ownerId` (platform system field), NOT custom `authorId`/`userId` fields. When creating documents, only include content fields - ownership is automatic.
 
