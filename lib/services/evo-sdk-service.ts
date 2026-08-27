@@ -12,6 +12,19 @@ export interface EvoSdkConfig {
   quorumUrl?: string;
 }
 
+/**
+ * Whether two configs would build the same SDK. Compares every field, not just
+ * network and contract: on devnet the address pool and quorum URL also decide
+ * what the instance talks to, and a change in either has to force a rebuild.
+ */
+function sameConfig(a: EvoSdkConfig, b: EvoSdkConfig): boolean {
+  return a.network === b.network &&
+    a.contractId === b.contractId &&
+    a.devnetName === b.devnetName &&
+    a.quorumUrl === b.quorumUrl &&
+    (a.addresses ?? []).join(',') === (b.addresses ?? []).join(',');
+}
+
 class EvoSdkService {
   private sdk: EvoSDK | null = null;
   private initPromise: Promise<void> | null = null;
@@ -23,10 +36,11 @@ class EvoSdkService {
    * Initialize the SDK with configuration
    */
   async initialize(config: EvoSdkConfig): Promise<void> {
+    const unchanged = this._isInitialized && this.config !== null &&
+      sameConfig(this.config, config);
+
     // If already initialized with same config, return immediately
-    if (this._isInitialized && this.config &&
-        this.config.network === config.network &&
-        this.config.contractId === config.contractId) {
+    if (unchanged) {
       return;
     }
 
@@ -37,8 +51,7 @@ class EvoSdkService {
     }
 
     // If config changed, cleanup first
-    if (this._isInitialized && this.config &&
-        (this.config.network !== config.network || this.config.contractId !== config.contractId)) {
+    if (this._isInitialized && this.config) {
       await this.cleanup();
     }
 

@@ -105,8 +105,8 @@ export function getConfiguredNetwork(): AppNetwork {
 }
 
 /** The network whose address/WIF prefixes apply. Devnets use testnet's. */
-export function keyNetwork(network: AppNetwork = getConfiguredNetwork()): KeyNetwork {
-  return network === 'mainnet' ? 'mainnet' : 'testnet'
+export function keyNetwork(): KeyNetwork {
+  return getConfiguredNetwork() === 'mainnet' ? 'mainnet' : 'testnet'
 }
 
 // Devnet wiring. A devnet has no public masternode discovery, so the DAPI
