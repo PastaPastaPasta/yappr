@@ -135,9 +135,10 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * contract-authoring mistakes rather than user situations, but are matched too
  * so they never fall through to a retry.
  *
- * These strings are dormant on testnet (protocol v13 has no `refersTo`) and are
- * deliberately broad; they will be tightened to whatever `scripts/verify-refersto.mjs`
- * actually observes on devnet.
+ * These strings are dormant on testnet (protocol v13 has no `refersTo`) and will
+ * be tightened to whatever `scripts/verify-refersto.mjs` actually observes on
+ * devnet. Until then they are pinned to the `#[error(...)]` formats in
+ * rs-dpp's `errors/consensus/state/document/referenced_*_error.rs`.
  */
 export function isReferenceNotFoundError(error: unknown): boolean {
   const msg = extractErrorMessage(error).toLowerCase()
@@ -148,11 +149,17 @@ export function isReferenceNotFoundError(error: unknown): boolean {
     msg.includes('referencedidentitykeynotfound') ||
     msg.includes('referencedidentitykeydisabled') ||
     msg.includes('referencedkeyidpropertyinvalid') ||
-    // "referenced identity <id> not found for path <p>", "referenced document
-    // type <t> not found in contract <c>", "referenced public key <k> of
-    // identity <i> not found for path <p>".
-    (msg.includes('referenced ') && msg.includes('not found')) ||
-    // ReferencedDocumentTypeDeletableError's phrasing has no "not found".
+    // Every Drive phrasing in this family names the schema path the reference
+    // was declared on: "referenced identity <id> not found for path <p>",
+    // "referenced document type <t> not found in contract <c> for path <p>",
+    // "referenced public key <k> of identity <i> not found/is disabled for path
+    // <p>". Requiring "for path " as well as "referenced " keeps this from
+    // swallowing the many unrelated "... not found" errors Platform can raise
+    // for a missing document, contract or identity.
+    (msg.includes('referenced ') && msg.includes(' for path ')) ||
+    // ReferencedDocumentTypeDeletableError phrases it differently: "... a
+    // permanentDocument reference at path <p> requires a document type with
+    // canBeDeleted: false".
     msg.includes('requires a document type with canbedeleted')
   )
 }

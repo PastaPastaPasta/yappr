@@ -40,6 +40,25 @@ export interface UsePrivateFeedRequestReturn {
 }
 
 /**
+ * Best-effort auto-follow that never aborts the access request around it.
+ *
+ * `followService.followUser` returns a failed result for ordinary failures but
+ * *throws* for a refersTo reference rejection, so the follow UI can toast the
+ * specific reason. Here the follow is incidental to the access request, and the
+ * long-standing behaviour is "continue anyway — the request might still work",
+ * so both shapes collapse to a warning.
+ */
+async function autoFollow(ownerId: string, currentUserId: string): Promise<void> {
+  const { followService } = await import('@/lib/services/follow-service')
+  try {
+    const result = await followService.followUser(currentUserId, ownerId)
+    if (!result.success) logger.warn('Auto-follow failed:', result.error)
+  } catch (error) {
+    logger.warn('Auto-follow failed:', error)
+  }
+}
+
+/**
  * Hook for requesting access to a user's private feed.
  * Extracts core logic from PrivateFeedAccessButton for reuse in feed posts.
  *
@@ -207,11 +226,10 @@ export function usePrivateFeedRequest({
       // Auto-follow the owner if not already following (per plan)
       const isFollowing = await followService.isFollowing(ownerId, currentUserId)
       if (!isFollowing) {
-        const followResult = await followService.followUser(currentUserId, ownerId)
-        if (!followResult.success) {
-          logger.warn('Auto-follow failed:', followResult.error)
-          // Continue anyway - the request might still work
-        }
+        // Continue anyway - the request might still work. followUser throws for
+        // a refersTo rejection so the follow UI can toast it; here the auto-follow
+        // is incidental, and letting it escape would skip the access request.
+        await autoFollow(ownerId, currentUserId)
       }
 
       // Make the access request
@@ -281,10 +299,7 @@ export function usePrivateFeedRequest({
       // Auto-follow the owner if not already following
       const isFollowing = await followService.isFollowing(ownerId, currentUserId)
       if (!isFollowing) {
-        const followResult = await followService.followUser(currentUserId, ownerId)
-        if (!followResult.success) {
-          logger.warn('Auto-follow failed:', followResult.error)
-        }
+        await autoFollow(ownerId, currentUserId)
       }
 
       // Now make the access request
