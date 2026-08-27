@@ -1,5 +1,6 @@
 'use client'
 
+import { categorizeError, isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
@@ -123,7 +124,11 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
         setFollowStatus(cacheKey, wasFollowing)
       }
       logger.error('useFollow: Error toggling follow:', error)
-      toast.error('Failed to update follow status')
+      // A refersTo rejection means the target identity is not on chain — say so
+      // rather than implying a transient failure the user should retry.
+      toast.error(
+        isReferenceNotFoundError(error) ? categorizeError(error) : 'Failed to update follow status'
+      )
     } finally {
       setIsLoading(false)
     }

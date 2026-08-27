@@ -1,3 +1,4 @@
+import { isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
@@ -44,9 +45,20 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         { followingId: identifierStringToDocumentBytes(targetUserId) }
       );
 
+      // On the v3 contract `follow.followingId` declares `refersTo: identity`,
+      // so consensus refuses a follow of an identity that is not on chain.
+      // createDocument reports that as a failed result rather than throwing, so
+      // promote it into the throw path the UI already treats as toast-worthy.
+      if (!result.success && isReferenceNotFoundError(result.error)) {
+        throw new Error(result.error ?? 'Referenced identity not found');
+      }
+
       return result;
     } catch (error) {
       logger.error('Error following user:', error);
+      // Mirror like-service: let the UI say what actually went wrong instead of
+      // collapsing this into a generic "failed to follow".
+      if (isReferenceNotFoundError(error)) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to follow user'
