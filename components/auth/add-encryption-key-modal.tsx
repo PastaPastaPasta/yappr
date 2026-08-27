@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
-import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants'
 
 type EncryptionKeyContext = 'private-feed' | 'store' | 'generic'
 
@@ -166,7 +166,7 @@ export function AddEncryptionKeyModal({
           if (!isOpenRef.current) return
 
           if (matches) {
-            const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+            const network = keyNetwork()
             const derivedKeyWif = privateKeyToWif(derivedKey, network, true)
             const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
             storeEncryptionKey(user.identityId, derivedKeyWif)
@@ -248,7 +248,7 @@ export function AddEncryptionKeyModal({
       // Derive encryption key using HKDF
       const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
       const encryptionKeyBytes = deriveEncryptionKey(authPrivateKey, user.identityId)
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+      const network = keyNetwork()
       const encryptionKeyWif = privateKeyToWif(encryptionKeyBytes, network, true)
 
       setPrivateKeyBytes(encryptionKeyBytes)

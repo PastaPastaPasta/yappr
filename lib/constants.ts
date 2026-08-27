@@ -21,7 +21,10 @@ export const YAPP_TOKEN_COSTS = {
 export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID || 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID || 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
 // YAPPR_BLOCK_CONTRACT_ID removed - block, blockFilter, blockFollow document types now in YAPPR_CONTRACT_ID
-export const DPNS_CONTRACT_ID = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec' // Testnet
+// DPNS is a system contract, so its id is normally identical on every chain.
+// Overridable all the same: a freshly genesised devnet can be brought up with a
+// different DPNS registration, and `/devnet` must not preload a missing id.
+export const DPNS_CONTRACT_ID = process.env.NEXT_PUBLIC_DPNS_CONTRACT_ID || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
 export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID || '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - Storefront contract v2 (with savedAddress)
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID || '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 // HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
@@ -81,12 +84,49 @@ export const APP_URL = 'https://yap.pr'
 export const LEGACY_APP_URL = 'https://yappr-v2.thepasta.org'
 
 // Network configuration
-export const DEFAULT_NETWORK = 'testnet'
+//
+// `AppNetwork` is what the SDK connects to; `KeyNetwork` is what address and WIF
+// encoding follow. They differ on devnet: Dash devnets reuse the testnet address
+// and WIF version bytes (moutai's Insight even reports `"network":"testnet"`), so
+// every key-derivation and secure-storage call site must stay on 'testnet' there.
+// Use `getConfiguredNetwork()` for connections and `keyNetwork()` for key material.
+export type AppNetwork = 'testnet' | 'mainnet' | 'devnet'
+export type KeyNetwork = 'testnet' | 'mainnet'
+
+export const DEFAULT_NETWORK: AppNetwork = 'testnet'
+
+/** The network the SDK talks to, from `NEXT_PUBLIC_NETWORK`. */
+export function getConfiguredNetwork(): AppNetwork {
+  const configured = process.env.NEXT_PUBLIC_NETWORK
+  if (configured === 'mainnet' || configured === 'devnet' || configured === 'testnet') {
+    return configured
+  }
+  return DEFAULT_NETWORK
+}
+
+/** The network whose address/WIF prefixes apply. Devnets use testnet's. */
+export function keyNetwork(network: AppNetwork = getConfiguredNetwork()): KeyNetwork {
+  return network === 'mainnet' ? 'mainnet' : 'testnet'
+}
+
+// Devnet wiring. A devnet has no public masternode discovery, so the DAPI
+// addresses are supplied explicitly and the trusted context (quorum public keys)
+// is prefetched from a quorum service. `EvoSDK.devnetTrusted` defaults that to
+// `https://quorums.<devnetName>.networks.dash.org`, which does not exist for
+// moutai — point NEXT_PUBLIC_QUORUM_URL at a service exposing /quorums,
+// /previous and /masternodes instead.
+export const DEVNET_NAME = process.env.NEXT_PUBLIC_DEVNET_NAME || 'moutai'
+export const DEVNET_QUORUM_URL = process.env.NEXT_PUBLIC_QUORUM_URL || ''
+export const DAPI_ADDRESSES: readonly string[] = (process.env.NEXT_PUBLIC_DAPI_ADDRESSES || '')
+  .split(',')
+  .map((address) => address.trim())
+  .filter(Boolean)
 
 // Insight API configuration for transaction detection
 export const INSIGHT_API_URLS = {
   testnet: 'https://insight.testnet.networks.dash.org/insight-api',
-  mainnet: 'https://insight.dash.org/insight-api'
+  mainnet: 'https://insight.dash.org/insight-api',
+  devnet: process.env.NEXT_PUBLIC_INSIGHT_API_URL || 'https://insight.moutai.networks.dash.org/insight-api',
 } as const
 
 export const INSIGHT_API_CONFIG = {

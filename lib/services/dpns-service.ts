@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
-import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
+import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
@@ -402,7 +402,7 @@ class DpnsService {
     wasmPublicKeys: WasmIdentityPublicKey[],
     requiredSecurityLevel: number = SecurityLevel.CRITICAL
   ): WasmIdentityPublicKey | null {
-    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+    const network = keyNetwork();
 
     // Filter out disabled keys before processing
     const activeWasmKeys = wasmPublicKeys.filter(k => !k.disabledAt);

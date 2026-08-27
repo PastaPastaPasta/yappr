@@ -4,7 +4,8 @@ import { logger } from '@/lib/logger';
  * Polls Insight API for UTXOs at a specified address
  */
 
-import { DEFAULT_NETWORK, INSIGHT_API_URLS, INSIGHT_API_CONFIG } from '@/lib/constants'
+import { INSIGHT_API_URLS, INSIGHT_API_CONFIG, getConfiguredNetwork } from '@/lib/constants'
+import type { AppNetwork } from '@/lib/constants'
 
 export interface Utxo {
   txid: string
@@ -20,7 +21,7 @@ export interface WaitForUtxoOptions {
   timeoutMs?: number
   onProgress?: (elapsed: number, remaining: number) => void
   signal?: AbortSignal
-  network?: 'testnet' | 'mainnet'
+  network?: AppNetwork
 }
 
 export interface WaitForUtxoResult {
@@ -33,7 +34,7 @@ export interface WaitForUtxoResult {
 /**
  * Fetch UTXOs for a given address from the Insight API
  */
-async function fetchUtxos(address: string, network: 'testnet' | 'mainnet'): Promise<Utxo[]> {
+async function fetchUtxos(address: string, network: AppNetwork): Promise<Utxo[]> {
   const baseUrl = INSIGHT_API_URLS[network]
   const response = await fetch(`${baseUrl}/addr/${address}/utxo`)
 
@@ -58,7 +59,7 @@ export async function waitForUtxo(
     timeoutMs = INSIGHT_API_CONFIG.timeoutMs,
     onProgress,
     signal,
-    network = DEFAULT_NETWORK as 'testnet' | 'mainnet'
+    network = getConfiguredNetwork()
   } = options
 
   const startTime = Date.now()
