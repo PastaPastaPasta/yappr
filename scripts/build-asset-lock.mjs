@@ -18,8 +18,8 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>
- * then:
- *   node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
+ * then (NETWORK is process-local — repeat it, or provisioning targets testnet):
+ *   NETWORK=devnet node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
  *     --funding-outpoint <printedTxid>:0 [--chain-lock <height>]
  */
 import { readFileSync } from 'node:fs';

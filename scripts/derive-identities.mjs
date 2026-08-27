@@ -134,9 +134,15 @@ export function criticalAuthKey(keys) {
   return key;
 }
 
-/** Reads `E2E_IDENTITY_IDS` from `.env.testing` (falling back to the environment). */
+/**
+ * Reads `E2E_IDENTITY_IDS` for the target network (the environment variable
+ * always wins): `.env.devnet` under `NETWORK=devnet`, `.env.testing` otherwise.
+ * Identity ids are per-chain (they come from the asset-lock outpoint), so a
+ * devnet run must never fall back to the testnet pool.
+ */
 export function loadIdentityIds() {
-  const raw = process.env.E2E_IDENTITY_IDS ?? readEnvFile(join(REPO_ROOT, '.env.testing')).E2E_IDENTITY_IDS ?? '';
+  const envFile = (process.env.NETWORK ?? '').trim() === 'devnet' ? '.env.devnet' : '.env.testing';
+  const raw = process.env.E2E_IDENTITY_IDS ?? readEnvFile(join(REPO_ROOT, envFile)).E2E_IDENTITY_IDS ?? '';
   return raw.split(',').map((id) => id.trim()).filter(Boolean);
 }
 
