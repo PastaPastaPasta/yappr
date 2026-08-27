@@ -1,3 +1,4 @@
+import { isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 /**
  * Retry utility functions for handling network errors and transient failures
@@ -132,6 +133,12 @@ export async function retryPostCreation<T>(
     maxDelayMs: 8000,
     backoffMultiplier: 2,
     retryCondition: (error) => {
+      // A `refersTo` rejection is permanent: the referenced identity or document
+      // does not exist and will not appear because we asked again. Bail before
+      // the allowlists below, whose 'consensus error' entry would otherwise
+      // burn three attempts on a write that can never succeed.
+      if (isReferenceNotFoundError(error)) return false
+
       // defaultRetryCondition covers network/timeout errors — these are safe to retry
       // because state-transition-service.createDocument() performs idempotency checks
       // before each attempt (verifies on Platform + checks pending store).

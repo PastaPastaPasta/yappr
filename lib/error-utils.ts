@@ -117,9 +117,56 @@ export function isFrozenBalanceError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error indicates Platform refused a write because something the
+ * document points at does not exist (or is not usable as a reference target).
+ *
+ * This is the `refersTo` family introduced with protocol v14. On the yappr v3
+ * contract `follow.followingId` and `postMention.mentionedUserId` declare
+ * `refersTo: { type: 'identity' }`, so following or mentioning an identity that
+ * is not on chain is rejected by consensus instead of creating a dangling
+ * document. The rejection is permanent: retrying cannot make the target appear.
+ *
+ * Matches both the camel-cased consensus error names and the human phrasings
+ * Drive renders, e.g. "referenced identity <id> not found for path followingId"
+ * (ReferencedEntityNotFoundError, code 40120). The remaining members of the
+ * family — 40121 ReferencedDocumentTypeNotFound, 40122
+ * ReferencedDocumentTypeDeletable, 40123 ReferencedIdentityKeyNotFound, 40124
+ * ReferencedIdentityKeyDisabled, 40125 ReferencedKeyIdPropertyInvalid — are
+ * contract-authoring mistakes rather than user situations, but are matched too
+ * so they never fall through to a retry.
+ *
+ * These strings are dormant on testnet (protocol v13 has no `refersTo`) and are
+ * deliberately broad; they will be tightened to whatever `scripts/verify-refersto.mjs`
+ * actually observes on devnet.
+ */
+export function isReferenceNotFoundError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('referencedentitynotfound') ||
+    msg.includes('referenceddocumenttypenotfound') ||
+    msg.includes('referenceddocumenttypedeletable') ||
+    msg.includes('referencedidentitykeynotfound') ||
+    msg.includes('referencedidentitykeydisabled') ||
+    msg.includes('referencedkeyidpropertyinvalid') ||
+    // "referenced identity <id> not found for path <p>", "referenced document
+    // type <t> not found in contract <c>", "referenced public key <k> of
+    // identity <i> not found for path <p>".
+    (msg.includes('referenced ') && msg.includes('not found')) ||
+    // ReferencedDocumentTypeDeletableError's phrasing has no "not found".
+    msg.includes('requires a document type with canbedeleted')
+  )
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
+  // A reference rejection is permanent and specific: say what is actually wrong
+  // rather than offering YAPP or a retry.
+  if (isReferenceNotFoundError(error)) {
+    return 'That account no longer exists on Dash Platform, so this action can\'t be completed.'
+  }
+
   // Check frozen before insufficient-balance: a frozen account can't spend even
   // with a positive balance, and buying more YAPP won't unfreeze it.
   if (isFrozenBalanceError(error)) {
