@@ -71,6 +71,9 @@ tmp/
 # Test identity files (contain private keys)
 testing-identity-*.json
 
+# One-shot asset-lock private keys recorded by scripts/provision-test-identity.mjs
+.devnet-locks.local
+
 # Rust build artifacts
 target/
 Cargo.lock

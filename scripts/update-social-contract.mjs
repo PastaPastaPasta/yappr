@@ -15,7 +15,8 @@
  *
  * `--dry-run` fetches and patches but does not broadcast.
  */
-import { EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
+import { PlatformVersion } from '@dashevo/evo-sdk';
+import { connectSdk, network } from './sdk-env.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 
 const SDK_TIMEOUT_MS = 30000;
@@ -73,11 +74,10 @@ try {
 }
 
 try {
-  const sdk = EvoSDK.testnetTrusted({ settings: { timeoutMs: SDK_TIMEOUT_MS } });
-  await sdk.connect();
+  const sdk = await connectSdk({ timeoutMs: SDK_TIMEOUT_MS });
 
   const contract = await sdk.contracts.fetch(args.contract);
-  if (!contract) throw new Error(`Contract ${args.contract} not found on testnet`);
+  if (!contract) throw new Error(`Contract ${args.contract} not found on ${network()}`);
   const currentVersion = contract.version;
   console.log(`fetched ${args.contract} (version ${currentVersion}, owner ${contract.ownerId.toBase58()})`);
 

@@ -23,13 +23,13 @@ import {
   BatchedTransition,
   Document,
   DocumentCreateTransition,
-  EvoSDK,
   PlatformVersion,
   PrivateKey,
 } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
+import { connectSdk } from './sdk-env.mjs';
 
 const SDK_TIMEOUT_MS = 30000;
 /** DIP-30: lower 40 bits of the identity contract nonce are the sequence number. */
@@ -193,8 +193,7 @@ async function equalityCounts(sdk, docType, pollId, upTo) {
 const settle = () => new Promise((r) => setTimeout(r, 3000));
 
 try {
-  const sdk = EvoSDK.testnetTrusted({ settings: { timeoutMs: SDK_TIMEOUT_MS } });
-  await sdk.connect();
+  const sdk = await connectSdk({ timeoutMs: SDK_TIMEOUT_MS });
   const bot0 = await botSigner(sdk, 0);
   const bot1 = await botSigner(sdk, 1);
   console.log(`connected; contract=${contractId} bot0=${bot0.ownerId} bot1=${bot1.ownerId}`);
