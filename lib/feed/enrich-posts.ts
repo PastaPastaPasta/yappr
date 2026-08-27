@@ -1,10 +1,16 @@
 import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
-import { postService, unifiedProfileService } from '@/lib/services';
+import { unifiedProfileService } from '@/lib/services';
 import { repostService } from '@/lib/services/repost-service';
+import { attachQuotedPosts } from './resolve-quoted-posts';
 
 export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Promise<Post[]> {
-  const enrichedPosts = postsToEnrich.map((post) => ({ ...post }));
+  // Tombstones (v3 "deleted" posts) still exist on chain and still come back from
+  // timeline queries — the document is permanent, only its content is gone. They
+  // are dropped from feeds here, cheaply, while remaining visible at their
+  // permalink so anything linking to one still resolves. `deleted` is never set
+  // on v2, so this is a no-op there.
+  const enrichedPosts = postsToEnrich.filter((post) => !post.deleted).map((post) => ({ ...post }));
 
   try {
     const postIds = enrichedPosts.map((post) => post.id);
@@ -58,24 +64,7 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
     logger.error('Feed: Error fetching reposts:', error);
   }
 
-  try {
-    const quotedPostIds = enrichedPosts
-      .filter((post) => post.quotedPostId)
-      .map((post) => post.quotedPostId as string);
-
-    if (quotedPostIds.length > 0) {
-      const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds);
-      const quotedPostMap = new Map(quotedPosts.map((post) => [post.id, post]));
-
-      for (const post of enrichedPosts) {
-        if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
-          post.quotedPost = quotedPostMap.get(post.quotedPostId);
-        }
-      }
-    }
-  } catch (error) {
-    logger.error('Feed: Error fetching quoted posts:', error);
-  }
+  await attachQuotedPosts(enrichedPosts);
 
   return enrichedPosts;
 }

@@ -7,6 +7,14 @@ import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentByt
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
+import { tombstoneDocument } from './tombstone-helpers';
+import {
+  hasFlatThreads,
+  replyCountFieldFor,
+  replyLinkage,
+  threadRootIdOf,
+  type TargetKind,
+} from '../contract-topology';
 
 export interface ReplyDocument {
   $id: string;
@@ -15,13 +23,37 @@ export interface ReplyDocument {
   $updatedAt?: number;
   content: string;
   mediaUrl?: string;
-  parentId: string;
+  /** v2 only — the polymorphic direct parent. */
+  parentId?: string;
+  /** v3 only — the post the whole thread hangs off. */
+  rootPostId?: string;
+  /** v3 only — the reply this one is nested under. */
+  replyToReplyId?: string;
   parentOwnerId: string;
   sensitive?: boolean;
+  deleted?: boolean;
   // Private feed fields
   encryptedContent?: Uint8Array;
   epoch?: number;
   nonce?: Uint8Array;
+}
+
+/**
+ * Replies per page in a thread view. v2 keeps its historical 20 (one level of a
+ * tree); on v3 one query covers the whole thread, so the page is larger.
+ */
+function replyPageSize(): number {
+  return hasFlatThreads() ? 50 : 20;
+}
+
+/** Where a new reply hangs, in the terms the configured topology uses. */
+export interface ReplyTarget {
+  /** The post at the root of the thread. On v2 this is the direct parent. */
+  rootPostId: string;
+  /** Set when replying to a reply rather than to the root post (v3 only). */
+  replyToReplyId?: string;
+  /** Owner of the DIRECT target — what notification queries key on. */
+  parentOwnerId: string;
 }
 
 /**
@@ -57,9 +89,22 @@ class ReplyService extends BaseDocumentService<Reply> {
     const content = (data.content || doc.content || '') as string;
     const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
-    // Convert parentId from base64 to base58 for consistent storage
-    const rawParentId = data.parentId || doc.parentId;
-    const parentId = rawParentId ? identifierToBase58(rawParentId) || '' : '';
+    // Parent linkage, in whichever fields this topology declares. On v3 the
+    // thread root and the presentational parent are separate properties, and
+    // `parentId` is derived as "the thing this reply is a direct answer to" so
+    // every pre-topology consumer of it keeps working.
+    const { root: rootField, replyToReply: replyToReplyField } = replyLinkage();
+    const toBase58 = (value: unknown): string | undefined => {
+      if (!value) return undefined;
+      return identifierToBase58(value) || undefined;
+    };
+    const rootPostId = replyToReplyField ? toBase58(data[rootField] ?? doc[rootField]) : undefined;
+    const replyToReplyId = replyToReplyField
+      ? toBase58(data[replyToReplyField] ?? doc[replyToReplyField])
+      : undefined;
+    const parentId = replyToReplyField
+      ? (replyToReplyId ?? rootPostId ?? '')
+      : toBase58(data.parentId ?? doc.parentId) ?? '';
 
     // Convert parentOwnerId from base64 to base58 for consistent storage
     const rawParentOwnerId = data.parentOwnerId || doc.parentOwnerId;
@@ -93,6 +138,9 @@ class ReplyService extends BaseDocumentService<Reply> {
       }] : undefined,
       parentId,
       parentOwnerId,
+      rootPostId,
+      replyToReplyId,
+      deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       // Private feed fields
       encryptedContent,
       epoch,
@@ -126,19 +174,36 @@ class ReplyService extends BaseDocumentService<Reply> {
   }
 
   /**
+   * Blank a reply in place, leaving a tombstone.
+   *
+   * The v3 `reply` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. Content, media and every encrypted field are dropped; the parent
+   * linkage survives, INCLUDING the optional `replyToReplyId` — a tombstone is
+   * still rendered in the thread, so losing its nesting would move it (and every
+   * live reply under it) to the top of the thread.
+   */
+  async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
+    return tombstoneDocument({
+      contractId: this.contractId,
+      documentType: this.documentType,
+      documentId: replyId,
+      ownerId,
+      preserveIdentifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
+    });
+  }
+
+  /**
    * Create a reply to a post or another reply
    *
    * @param ownerId - Identity ID of the reply author
    * @param content - Reply content
-   * @param parentId - ID of post or reply being replied to
-   * @param parentOwnerId - Identity ID of the parent owner
+   * @param target - Where the reply hangs (thread root, optional nested parent, direct target's owner)
    * @param options - Optional fields including encryption for private replies
    */
   async createReply(
     ownerId: string,
     content: string,
-    parentId: string,
-    parentOwnerId: string,
+    target: ReplyTarget,
     options: {
       mediaUrl?: string;
       sensitive?: boolean;
@@ -146,10 +211,19 @@ class ReplyService extends BaseDocumentService<Reply> {
     } = {}
   ): Promise<Reply> {
     const PRIVATE_REPLY_PLACEHOLDER = '🔒';
+    const { root: rootField, replyToReply: replyToReplyField } = replyLinkage();
     const data: Record<string, unknown> = {
-      parentId: identifierStringToDocumentBytes(parentId),
-      parentOwnerId: identifierStringToDocumentBytes(parentOwnerId),
+      // On v2 the single `parentId` names the DIRECT parent, which is
+      // `replyToReplyId` when there is one and the root post otherwise — so both
+      // topologies get the reference they can actually resolve.
+      [rootField]: identifierStringToDocumentBytes(
+        replyToReplyField ? target.rootPostId : target.replyToReplyId ?? target.rootPostId
+      ),
+      parentOwnerId: identifierStringToDocumentBytes(target.parentOwnerId),
     };
+    if (replyToReplyField && target.replyToReplyId) {
+      data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
+    }
 
     // Handle encryption if provided
     if (options.encryption) {
@@ -191,22 +265,32 @@ class ReplyService extends BaseDocumentService<Reply> {
   }
 
   /**
-   * Get replies to a post or reply.
-   * Uses the parentAndTime index: [parentId, $createdAt]
+   * Get a thread's replies.
    *
-   * @param parentId - The parent post/reply ID
+   * On v2 this is one level of the tree: the direct replies to `rootPostId`, via
+   * `parentAndTime [parentId, $createdAt]`. On v3 it is the WHOLE thread in one
+   * query, via `rootAndTime [rootPostId, $createdAt]` — nesting is reconstructed
+   * client-side from `replyToReplyId`.
+   *
+   * The page size is a real page, not a cap: `nextCursor` is returned whenever a
+   * full page came back, and callers page on with `startAfter` (see
+   * `usePostDetail`'s Load More) instead of silently truncating a busy thread the
+   * way the old hardcoded `limit: 20` did.
+   *
+   * @param rootPostId - The thread root (v3) or the direct parent (v2)
    * @param options - Query options
    */
-  async getReplies(parentId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Reply>> {
+  async getReplies(rootPostId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Reply>> {
     const { skipEnrichment, ...queryOpts } = options;
+    const rootField = replyLinkage().root;
 
     const queryOptions: QueryOptions = {
       where: [
-        ['parentId', '==', parentId],
+        [rootField, '==', rootPostId],
         ['$createdAt', '>', 0]
       ],
-      orderBy: [['parentId', 'asc'], ['$createdAt', 'asc']],
-      limit: 20,
+      orderBy: [[rootField, 'asc'], ['$createdAt', 'asc']],
+      limit: replyPageSize(),
       ...queryOpts
     };
 
@@ -217,7 +301,14 @@ class ReplyService extends BaseDocumentService<Reply> {
       await this.resolveAuthors(result.documents);
     }
 
-    return result;
+    // A full page means there may be more. Document ids double as the SDK's
+    // startAfter cursor, and a reply's id IS its document id.
+    const limit = queryOptions.limit ?? replyPageSize();
+    const nextCursor = result.documents.length >= limit
+      ? result.documents[result.documents.length - 1]?.id
+      : undefined;
+
+    return { ...result, nextCursor };
   }
 
   /**
@@ -287,6 +378,9 @@ class ReplyService extends BaseDocumentService<Reply> {
    * Get nested replies for multiple parent posts/replies.
    * Returns a Map of parentId -> replies array.
    * Used for building 2-level threaded reply trees.
+   *
+   * Only the v2 path needs this: on v3 `getReplies` already returns the whole
+   * thread in one query and nesting is a client-side grouping.
    */
   async getNestedReplies(
     parentIds: string[],
@@ -296,6 +390,11 @@ class ReplyService extends BaseDocumentService<Reply> {
       return new Map();
     }
 
+    // The nesting link is `replyToReplyId` where the topology has one, and the
+    // double-duty `parentId` otherwise.
+    const { root, replyToReply } = replyLinkage();
+    const nestingField = replyToReply ?? root;
+
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
@@ -303,8 +402,8 @@ class ReplyService extends BaseDocumentService<Reply> {
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'reply',
-        where: [['parentId', 'in', parentIds]],
-        orderBy: [['parentId', 'asc']],
+        where: [[nestingField, 'in', parentIds]],
+        orderBy: [[nestingField, 'asc']],
         limit: 100
       });
 
@@ -347,30 +446,34 @@ class ReplyService extends BaseDocumentService<Reply> {
   }
 
   /**
-   * Count replies to a post/reply
+   * Count replies to a post/reply.
+   *
+   * The count tree used depends on the target kind, because on v3 "replies to a
+   * post" means the whole thread (`byRoot`) while "replies to a reply" means its
+   * direct children (`byReplyToReply`). On v2 both resolve to `byParent`, so this
+   * stays the single polymorphic query it has always been.
    */
-  async countReplies(parentId: string): Promise<number> {
+  async countReplies(parentId: string, kind: TargetKind = 'post'): Promise<number> {
     try {
       const sdk = await getEvoSdk();
-      // O(1) count tree on the `byParent` index [parentId] (also removes the old 100-cap undercount).
       return await documentCount(sdk, {
         dataContractId: this.contractId,
         documentTypeName: 'reply',
-        where: [['parentId', '==', parentId]],
+        where: [[replyCountFieldFor(kind), '==', parentId]],
       });
     } catch {
       return 0;
     }
   }
 
-  /** Reply counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
-  async countRepliesForPosts(parentIds: string[]): Promise<Map<string, number>> {
+  /** Reply counts for multiple targets via one grouped count-tree query (falls back to per-target reads). */
+  async countRepliesForPosts(parentIds: string[], kind: TargetKind = 'post'): Promise<Map<string, number>> {
     const sdk = await getEvoSdk();
     return groupedDocumentCount(
       sdk,
-      { dataContractId: this.contractId, documentTypeName: 'reply', groupField: 'parentId' },
+      { dataContractId: this.contractId, documentTypeName: 'reply', groupField: replyCountFieldFor(kind) },
       parentIds,
-      (id) => this.countReplies(id)
+      (id) => this.countReplies(id, kind)
     );
   }
 
@@ -461,23 +564,41 @@ class ReplyService extends BaseDocumentService<Reply> {
 }
 
 /**
- * Get the encryption source for a reply (PRD §5.5).
+ * Get the encryption source a reply to `target` must inherit (PRD §5.5).
  *
- * Walks up the reply chain to find the root private post:
- * - If the parent is a private post, use that post author's CEK
- * - If the parent is public or if the parent's parent is private, recurse
- * - Returns null if this is a reply to a public thread
- *
- * This enables replies to private posts to inherit the same encryption,
- * so anyone who can see the parent can also see replies.
+ * A thread's encryption belongs to the ROOT post's author: anyone who can read
+ * the root can read every reply under it. Where a reply names its root directly
+ * (v3) that is one lookup. On v2 the only link is the polymorphic direct parent,
+ * so the chain has to be walked — which is what `walkEncryptionSource` below does.
  */
 export async function getEncryptionSource(
+  target: { id: string; targetKind?: TargetKind; parentId?: string; rootPostId?: string }
+): Promise<EncryptionSource | null> {
+  if (!hasFlatThreads()) {
+    return walkEncryptionSource(target.id);
+  }
+
+  try {
+    const { postService } = await import('./post-service');
+    const rootPost = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true });
+    if (!rootPost?.encryptedContent || rootPost.epoch === undefined || !rootPost.nonce) {
+      return null;
+    }
+    return { ownerId: rootPost.author.id, epoch: rootPost.epoch, inherited: true };
+  } catch (error) {
+    logger.error('Error getting encryption source:', error);
+    return null;
+  }
+}
+
+/** v2 only: walk the polymorphic parent chain looking for the root private post. */
+async function walkEncryptionSource(
   parentId: string,
   depth: number = 0
 ): Promise<EncryptionSource | null> {
   const MAX_DEPTH = 100;
   if (depth >= MAX_DEPTH) {
-    logger.warn('getEncryptionSource: Max recursion depth reached, possible circular reference');
+    logger.warn('walkEncryptionSource: Max recursion depth reached, possible circular reference');
     return null;
   }
 
@@ -511,7 +632,7 @@ export async function getEncryptionSource(
     // Check if parent reply is encrypted
     if (parentReply.encryptedContent && parentReply.epoch !== undefined && parentReply.nonce) {
       // This reply is encrypted - recurse to find the root
-      const rootSource = await getEncryptionSource(parentReply.parentId, depth + 1);
+      const rootSource = await walkEncryptionSource(parentReply.parentId, depth + 1);
       if (rootSource) {
         return rootSource;
       }

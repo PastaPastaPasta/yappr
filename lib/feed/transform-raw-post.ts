@@ -81,6 +81,10 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
   const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) || undefined : undefined;
 
+  // v3 only: quotes of replies live in their own field. Absent on v2 documents.
+  const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
+  const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
+
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
   const epoch = (data.epoch ?? doc.epoch) as number | undefined;
@@ -121,6 +125,8 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     reposted: (doc.reposted as boolean | undefined) || false,
     bookmarked: (doc.bookmarked as boolean | undefined) || false,
     quotedPostId,
+    quotedReplyId,
+    deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
     ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     epoch,

@@ -12,6 +12,12 @@ export interface LikeDocument {
   $createdAt: number;
   postId: string;
   postOwnerId?: string;
+  /**
+   * Which doctype this like came out of — `post` for `like`, `reply` for v3's
+   * `likeReply`. Callers that render or navigate off a like (notifications) need
+   * it, because `postId` alone no longer says what it points at.
+   */
+  targetKind: TargetKind;
 }
 
 /**
@@ -56,6 +62,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       $createdAt: (doc.$createdAt || doc.createdAt) as number,
       postId: postId || '',
       postOwnerId: postOwnerId || undefined,
+      targetKind: kind,
     };
   }
 
@@ -150,11 +157,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const { docType, field, ownerFirst } = likeIndexFor(kind);
 
-      // Use 'in' pattern that works on feed page.
-      // Both where and orderBy must list the index's properties in the order the
-      // contract declares them, so orderBy is derived from where and the two
-      // cannot drift apart.
-      const targetClause: DocumentWhereClause = [field, 'in', [postId]];
+      // Equality on both index properties. `in` is a RANGE to Drive, and a query
+      // may only range over the last property it constrains — so on a
+      // target-first index like `like.postAndOwner` / `likeReply.replyAndOwner`,
+      // `[field in [...], $ownerId ==]` comes back EMPTY rather than erroring
+      // (see queryOwnedPostIds). Both where and orderBy list the index's
+      // properties in the order the contract declares them, so orderBy is derived
+      // from where and the two cannot drift apart.
+      const targetClause: DocumentWhereClause = [field, '==', postId];
       const ownerClause: DocumentWhereClause = ['$ownerId', '==', ownerId];
       const where = ownerFirst ? [ownerClause, targetClause] : [targetClause, ownerClause];
       const response = await sdk.documents.query({
@@ -174,23 +184,24 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Get likes for a post.
+   * Get likes for a post or reply.
    * Paginates through all results to return complete list.
    */
-  async getPostLikes(postId: string): Promise<LikeDocument[]> {
+  async getPostLikes(postId: string, kind: TargetKind = 'post'): Promise<LikeDocument[]> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      const { docType, field } = likeIndexFor(kind);
 
       // Use 'in' with single-element array - matches working feed pattern
       const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
-          documentTypeName: 'like',
-          where: [['postId', 'in', [postId]]],
-          orderBy: [['postId', 'asc']]
+          documentTypeName: docType,
+          where: [[field, 'in', [postId]]],
+          orderBy: [[field, 'asc']]
         }),
-        (doc) => this.transformDocument(doc)
+        (doc) => this.transformDocumentFor(doc, kind)
       );
 
       return documents;
@@ -253,12 +264,22 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Get likes on posts owned by a specific user (for notification queries).
-   * Uses the postOwnerLikes index: [postOwnerId, $createdAt]
-   * @param userId - Identity ID of the post owner
+   * Get likes on content owned by a specific user (for notification queries).
+   *
+   * Uses the doctype's target-owner index — `like.postOwnerLikes [postOwnerId,
+   * $createdAt]` for posts, and on v3 `likeReply.replyOwnerLikes [replyOwnerId,
+   * $createdAt]` for replies. The two are separate doctypes there, so a caller
+   * wanting both has to ask twice (see `notification-service`); on v2 they are
+   * the same query and asking twice would double-count.
+   *
+   * @param userId - Identity ID of the content owner
    * @param since - Only return likes created after this timestamp (optional)
+   * @param kind - Whether to read likes of posts or likes of replies
    */
-  async getLikesOnMyPosts(userId: string, since?: Date): Promise<LikeDocument[]> {
+  async getLikesOnMyPosts(userId: string, since?: Date, kind: TargetKind = 'post'): Promise<LikeDocument[]> {
+    const { docType, ownerField } = likeIndexFor(kind);
+    if (!ownerField) return [];
+
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -266,18 +287,17 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
-        documentTypeName: 'like',
+        documentTypeName: docType,
         where: [
-          ['postOwnerId', '==', userId],
+          [ownerField, '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        // Match postOwnerLikes index: [postOwnerId: asc, $createdAt: asc]
-        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [[ownerField, 'asc'], ['$createdAt', 'asc']],
         limit: 100
       });
 
       const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+      return documents.map((doc) => this.transformDocumentFor(doc, kind));
     } catch (error) {
       logger.error('Error getting likes on my posts:', error);
       return [];

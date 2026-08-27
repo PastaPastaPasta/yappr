@@ -6,6 +6,7 @@ import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocument
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
+import { likeSurfacesAreSplit, replyLinkage, type TargetKind } from '../contract-topology';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -35,12 +36,32 @@ interface RawNotification {
   type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogPostNotificationType;
   fromUserId: string;
   postId?: string;
+  /**
+   * The kind of the recipient's OWN content that was engaged with — a post or a
+   * reply. Drives the notification wording, so it describes the *target*, not the
+   * engagement: for a reply notification it is the kind of the thing replied to.
+   * Left undefined on v2, where the doctypes are polymorphic and the two are
+   * indistinguishable.
+   */
+  targetKind?: TargetKind;
   parentId?: string; // For reply notifications: the ID of the post/reply being replied to
+  rootPostId?: string; // v3 reply notifications: the thread root, which is where the link goes
   replyContent?: string; // For reply notifications: pre-fetched content to avoid re-querying
   blogId?: string;
   blogPostTitle?: string;
   blogPostSlug?: string;
   createdAt: number;
+}
+
+/**
+ * What a reply was a reply TO — which is what the notification's wording is
+ * about, not the reply itself. A nested reply names the reply it answers; a
+ * top-level one answers the thread's root post. Unknowable on v2, where a reply
+ * has one polymorphic parent id and no root link.
+ */
+function repliedToKind(reply: { rootPostId?: string; replyToReplyId?: string }): TargetKind | undefined {
+  if (!reply.rootPostId) return undefined;
+  return reply.replyToReplyId ? 'reply' : 'post';
 }
 
 /**
@@ -135,21 +156,32 @@ class NotificationService {
   }
 
   /**
-   * Get likes on user's posts since timestamp (for notification queries).
-   * Uses the postOwnerLikes index via likeService.getLikesOnMyPosts()
+   * Get likes on the user's content since timestamp (for notification queries).
+   *
+   * On v2 one `like` doctype holds likes of posts AND of replies, so one query is
+   * the complete answer. The v3 topology splits reply likes off into `likeReply`,
+   * which is a second owner-index to read and merge — and the merge must NOT run
+   * on v2, where it would return the same documents twice.
    */
   async getLikeNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     try {
       const { likeService } = await import('./like-service');
-      const likes = await likeService.getLikesOnMyPosts(userId, new Date(sinceTimestamp));
+      const since = new Date(sinceTimestamp);
+      const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
 
-      return likes
+      const perKind = await Promise.all(
+        kinds.map((kind) => likeService.getLikesOnMyPosts(userId, since, kind))
+      );
+
+      return perKind
+        .flat()
         .filter(like => like.$ownerId !== userId) // Exclude self-likes
         .map(like => ({
           id: `like-${like.$id}`,
           type: 'like' as const,
           fromUserId: like.$ownerId,
           postId: like.postId,
+          targetKind: like.targetKind,
           createdAt: like.$createdAt
         }));
     } catch (error) {
@@ -198,7 +230,11 @@ class NotificationService {
           type: 'reply' as const,
           fromUserId: reply.author.id,
           postId: reply.id, // The reply itself
+          targetKind: repliedToKind(reply),
           parentId: reply.parentId, // The post/reply that was replied to (for navigation)
+          // v3: the reply names its thread root, so the link can go straight to
+          // the thread instead of to whatever intermediate reply it answers.
+          rootPostId: reply.rootPostId,
           replyContent: reply.content, // Pre-fetched content to avoid re-querying
           createdAt: reply.createdAt.getTime()
         }));
@@ -380,7 +416,8 @@ class NotificationService {
           liked: false,
           reposted: false,
           bookmarked: false,
-          parentId: raw.parentId // Critical for UI navigation to the parent post
+          parentId: raw.parentId, // Critical for UI navigation to the parent post
+          rootPostId: raw.rootPostId
         };
       } else {
         // For other notification types, use fetched post data
@@ -414,6 +451,7 @@ class NotificationService {
         read: readIds.has(raw.id),
         blogId: raw.blogId,
         blogPostSlug: raw.blogPostSlug,
+        targetKind: raw.targetKind,
       };
     });
   }
@@ -517,9 +555,17 @@ class NotificationService {
           // Check both top-level and nested locations for content
           const content = (docData.content as string) || (nestedData?.content as string) || '';
 
-          // Extract parentId from reply - check both top-level and nested locations
-          const rawParentId = docData.parentId || nestedData?.parentId;
-          const parentId = rawParentId ? identifierToBase58(rawParentId) || undefined : undefined;
+          // Extract the reply's parent linkage in whichever fields this topology
+          // declares, so the notification can link into the thread.
+          const { root: rootField, replyToReply: replyToReplyField } = replyLinkage();
+          const linkageId = (field: string): string | undefined => {
+            const raw = docData[field] || nestedData?.[field];
+            return raw ? identifierToBase58(raw) || undefined : undefined;
+          };
+          const rootPostId = replyToReplyField ? linkageId(rootField) : undefined;
+          const parentId = replyToReplyField
+            ? (linkageId(replyToReplyField) ?? rootPostId)
+            : linkageId('parentId');
 
           // Create a Post object from the reply, including parentId for navigation
           const post: Post = {
@@ -544,7 +590,8 @@ class NotificationService {
             liked: false,
             reposted: false,
             bookmarked: false,
-            parentId // Include parentId so UI can navigate to the parent post
+            parentId, // Include parentId so UI can navigate to the parent post
+            rootPostId
           };
           result.set(id, post);
         }

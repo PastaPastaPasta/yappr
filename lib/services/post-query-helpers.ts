@@ -5,7 +5,7 @@ import type { Post } from '../types';
 import type { PostStats } from './post-service';
 import { type DocumentWhereClause } from './sdk-helpers';
 import { retryAsync } from '../retry-utils';
-import { targetOf, type KindedTarget } from '../contract-topology';
+import { quoteFieldFor, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -279,27 +279,43 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
   }
 }
 
+/**
+ * Posts quoting one target, newest first.
+ *
+ * `quoteField` names the property the topology stores the reference in, and the
+ * orderBy tail follows the index that field belongs to: v2's unique
+ * `quotedPostAndOwner [quotedPostId, $ownerId]`, or v3's chronological
+ * `quotesOfPost`/`quotesOfReply [<field>, $createdAt]` (v3 dropped the
+ * uniqueness — quotes are content, so the same author may quote a target twice).
+ */
 export async function fetchQuotePosts(
   quotedPostId: string,
+  quoteField: string,
   contractId: string,
   transformDocument: (doc: Record<string, unknown>) => Post,
   options: { limit?: number } = {}
 ): Promise<Post[]> {
   const limit = options.limit || 50;
+  const orderProperty = quoteListingOrderProperty();
 
   try {
     const documents = await queryRawDocuments({
       dataContractId: contractId,
       documentTypeName: 'post',
       // Use `in` for identifier byte-array fields; `==` can fail to match.
-      where: [['quotedPostId', 'in', [quotedPostId]]],
-      orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
+      where: [[quoteField, 'in', [quotedPostId]]],
+      orderBy: [
+        [quoteField, 'asc'],
+        [orderProperty, orderProperty === '$createdAt' ? 'desc' : 'asc'],
+      ],
       limit,
     });
 
     return documents
       .map((doc) => transformDocument(doc))
-      .filter((post) => post.quotedPostId === quotedPostId)
+      // Read back through the SAME field the query keyed on, resolved from the
+      // descriptor rather than compared against a literal.
+      .filter((post) => (quoteField === quoteFieldFor('reply') ? post.quotedReplyId : post.quotedPostId) === quotedPostId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit);
   } catch (error) {

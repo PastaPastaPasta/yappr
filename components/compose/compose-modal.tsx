@@ -54,6 +54,9 @@ import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
+import { replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
+import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
+import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 
 export function ComposeModal() {
   const {
@@ -190,7 +193,7 @@ export function ComposeModal() {
       if (isPrivatePost(postToCheck)) {
         // Import getEncryptionSource dynamically
         const { getEncryptionSource } = await import('@/lib/services/post-service')
-        const encryptionSource = await getEncryptionSource(postToCheck.id)
+        const encryptionSource = await getEncryptionSource(postToCheck)
         if (encryptionSource) {
           setInheritedEncryption(encryptionSource)
         } else {
@@ -224,7 +227,7 @@ export function ComposeModal() {
         try {
           if (isPrivatePost(replyingTo)) {
             const { getEncryptionSource } = await import('@/lib/services/post-service')
-            const encryptionSource = await getEncryptionSource(replyingTo.id)
+            const encryptionSource = await getEncryptionSource(replyingTo)
             // Check if replyingTo changed while we were fetching
             if (cancelled) return
             if (encryptionSource) {
@@ -675,10 +678,25 @@ export function ComposeModal() {
       }
       const postEmbed = pollId ? buildPollEmbed(pollId) : undefined
 
+      // Which field carries the quote reference. A quote of a reply goes in
+      // `quotedReplyId` where the topology has one; a quote of a blog post is a
+      // cross-contract reference, so on v3 — where `quotedPostId` is
+      // refersTo-checked against `post` and would be rejected — it moves to the
+      // embed triple, which is the only reference kind that may leave the contract.
+      const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
+
       setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
 
       // Use lastPostedId for retry chaining, or replyingTo for initial post
       let previousPostId: string | null = lastPostedId || replyingTo?.id || null
+
+      // The post at the root of whatever thread this compose is extending.
+      // Replying: the target's thread root (the target itself when it IS a post).
+      // Multi-post thread: post #0, known up front only on a retry.
+      let threadRootId: string | null = replyingTo
+        ? threadRootIdOf(replyingTo)
+        : threadPosts[0]?.postedPostId ?? null
+
 
       for (let i = 0; i < postsToCreate.length; i++) {
         const { threadPostId, content: postContent, teaser, visibility: postVisibility } = postsToCreate[i]
@@ -720,29 +738,62 @@ export function ComposeModal() {
         // - If replyingTo is set: all posts in thread are replies
         // - If replyingTo is not set: first post is a top-level post, subsequent are replies
         const isReply = (i === 0 && replyingTo) || (i > 0 && previousPostId)
-        const parentId = i === 0 && replyingTo ? replyingTo.id : previousPostId
+        // The DIRECT target: what was clicked (i === 0) or the previous item in
+        // this thread. Its owner is what notification queries key on.
+        const directTargetId = i === 0 && replyingTo ? replyingTo.id : previousPostId
         const parentOwnerId = i === 0 && replyingTo
           ? replyingTo.author.id
           : previousPostId ? authedUser.identityId : undefined
+        // Both linkage fields come out of one derivation, because they are not
+        // independent — see `replyLinkageTo`.
+        const linkage = threadRootId && directTargetId
+          ? replyLinkageTo({ id: directTargetId, targetKind: 'reply', rootPostId: threadRootId })
+          : null
+
+        // This write is about to name another document — the card the user clicked
+        // Reply/Quote on, or the previous item in this thread. If THIS session
+        // created that document and never saw it confirmed, naming it now would be
+        // rejected by consensus and charged for. `isUnconfirmed` is only ever true
+        // on the DAPI-timeout path, and only on a topology that enforces
+        // references, so the happy path never reaches the probe.
+        const referenced = i === 0 ? replyingTo?.id ?? quotingPost?.id : directTargetId ?? undefined
+        if (isUnconfirmed(referenced)) {
+          setPostingProgress({
+            current: i + 1,
+            total: postsToCreate.length,
+            status: i === 0
+              ? 'Waiting for the post you are referencing to confirm...'
+              : 'Waiting for the previous post to confirm...',
+          })
+          if (!(await settleUnconfirmed(referenced))) {
+            failedAtIndex = i
+            failureError = new Error(
+              'The post this one references has not confirmed yet. Try again in a moment — nothing was lost.'
+            )
+            break
+          }
+        }
 
         const result = await retryPostCreation(async () => {
           // Check for sync required errors before they get wrapped by retry
           try {
-            if (isReply && parentId && parentOwnerId) {
+            if (isReply && linkage && parentOwnerId) {
               // Create a reply
               const { replyService } = await import('@/lib/services/reply-service')
-              const reply = await replyService.createReply(authedUser.identityId, postContent, parentId, parentOwnerId, {
-                encryption: encryptionOptions,
-              })
+              const reply = await replyService.createReply(
+                authedUser.identityId,
+                postContent,
+                { ...linkage, parentOwnerId },
+                { encryption: encryptionOptions }
+              )
               const confirmed = (reply as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
               return { postId: reply.id, document: reply, isReply: true, confirmed }
             } else {
               // Create a top-level post
               const { postService } = await import('@/lib/services')
               const post = await postService.createPost(authedUser.identityId, postContent, {
-                quotedPostId: i === 0 ? quotingPost?.id : undefined,
-                quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
-                embed: i === 0 ? postEmbed : undefined,
+                ...(i === 0 ? quoteFields : {}),
+                embed: i === 0 ? quoteEmbed ?? postEmbed : undefined,
                 encryption: encryptionOptions,
               })
               const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
@@ -793,6 +844,21 @@ export function ComposeModal() {
             // Update previousPostId for thread chaining (only for public posts)
             if (!isThisPostPrivate) {
               previousPostId = postId
+            }
+            // Post #0 of a standalone thread is that thread's root — unless it was
+            // private, in which case it is deliberately not chained to (see
+            // `previousPostId` above), so the following posts stay top-level posts
+            // rather than becoming replies to something not everyone can read.
+            if (threadRootId === null && !isThisPostPrivate) {
+              threadRootId = postId
+            }
+            // Arm the gate only when this write went out unconfirmed. On the happy
+            // path `createDocument` already waited for execution in a block, so a
+            // confirmed parent satisfies refersTo and nothing is recorded. The
+            // record is session-wide, not loop-local: the optimistic card is
+            // already on screen and may be liked or replied to right away.
+            if ((result.data as { confirmed?: boolean } | undefined)?.confirmed === false) {
+              markUnconfirmed(isReply ? 'reply' : 'post', postId)
             }
 
             setPostingProgress({

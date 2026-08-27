@@ -73,6 +73,13 @@ export interface InteractionSurface {
    * quote count.
    */
   quoteField: string | null
+  /**
+   * The `reply` property whose count tree answers "how many replies does this
+   * have?" for this kind. On v2 both kinds group on the polymorphic `parentId`.
+   * On v3 a post's reply count is its whole thread (`rootPostId`) while a
+   * reply's is its direct children (`replyToReplyId`).
+   */
+  replyCountField: string
 }
 
 /** How a reply document names the thing(s) it hangs off. */
@@ -92,16 +99,11 @@ export interface ReplyLinkage {
 
 export interface ContractTopologyDescriptor {
   readonly topology: ContractTopology
-  /** Document type name per target kind. */
-  readonly docTypes: Readonly<Record<TargetKind, string>>
   /** Reply parent linkage field names. */
   readonly replyLinkage: Readonly<ReplyLinkage>
   /** Engagement surfaces per target kind. */
   readonly interactions: Readonly<Record<TargetKind, InteractionSurface>>
 }
-
-/** Both topologies name the two doctypes the same way. */
-const DOC_TYPES: Record<TargetKind, string> = { post: 'post', reply: 'reply' }
 
 /**
  * The engagement surface of a `post`, encoded exactly as the chain declares it.
@@ -120,12 +122,18 @@ const POST_INTERACTIONS: InteractionSurface = {
   repost: { docType: 'repost', field: 'postId', ownerFirst: true, ownerField: 'postOwnerId' },
   bookmark: { docType: 'bookmark', field: 'postId', ownerFirst: true, ownerField: null },
   quoteField: 'quotedPostId',
+  replyCountField: 'parentId',
+}
+
+/** v3's post surface: same engagement doctypes, thread-wide reply count. */
+const V3_POST_INTERACTIONS: InteractionSurface = {
+  ...POST_INTERACTIONS,
+  replyCountField: 'rootPostId',
 }
 
 /** v2 — today's deployed contract. Both kinds share every surface. */
 const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v2',
-  docTypes: DOC_TYPES,
   replyLinkage: { root: 'parentId', replyToReply: null },
   interactions: { post: POST_INTERACTIONS, reply: POST_INTERACTIONS },
 }
@@ -140,15 +148,15 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
  */
 const V3_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v3',
-  docTypes: DOC_TYPES,
   replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
   interactions: {
-    post: POST_INTERACTIONS,
+    post: V3_POST_INTERACTIONS,
     reply: {
       like: { docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: 'replyOwnerId' },
       repost: null,
       bookmark: null,
       quoteField: 'quotedReplyId',
+      replyCountField: 'replyToReplyId',
     },
   },
 }
@@ -172,18 +180,13 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
   return resolved
 }
 
-/** The document type a target kind lives in (`post` / `reply`). */
-export function docTypeFor(kind: TargetKind): string {
-  return topologyDescriptor().docTypes[kind]
-}
-
 /** How reply documents name their parents on this topology. */
 export function replyLinkage(): Readonly<ReplyLinkage> {
   return topologyDescriptor().replyLinkage
 }
 
 /** The engagement doctypes and fields for a target kind. */
-export function interactionsFor(kind: TargetKind): InteractionSurface {
+function interactionsFor(kind: TargetKind): InteractionSurface {
   return topologyDescriptor().interactions[kind]
 }
 
@@ -207,6 +210,72 @@ export function quoteFieldFor(kind: TargetKind): string | null {
   return interactionsFor(kind).quoteField
 }
 
+/**
+ * The second property of the index a quote LISTING query must order by.
+ *
+ * v2's only quote index is the unique `quotedPostAndOwner [quotedPostId,
+ * $ownerId]`. v3 replaces it with chronological `quotesOfPost`/`quotesOfReply
+ * [<field>, $createdAt]` indexes, because uniqueness was dropped (quotes are
+ * content, not toggles) and a newest-first listing is what the UI wants.
+ */
+export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
+  return topologyDescriptor().topology === 'v3' ? '$createdAt' : '$ownerId'
+}
+
+/** The `reply` property whose count tree holds this kind's reply count. */
+export function replyCountFieldFor(kind: TargetKind): string {
+  return interactionsFor(kind).replyCountField
+}
+
+/**
+ * True when replies name their thread root directly (v3's `rootPostId`) rather
+ * than chaining through a polymorphic direct parent — i.e. when a whole thread
+ * is one query and nesting is a client-side grouping.
+ */
+export function hasFlatThreads(): boolean {
+  return replyLinkage().replyToReply !== null
+}
+
+/**
+ * True when each quote field names exactly one document type, so a quote target
+ * can be resolved from the field it is stored in instead of being probed against
+ * one doctype after another. Also implies cross-contract quotes (blog posts) must
+ * use the embed triple, since the in-contract fields are `refersTo`-checked.
+ */
+export function quoteFieldsAreSplit(): boolean {
+  return quoteFieldFor('post') !== quoteFieldFor('reply')
+}
+
+/**
+ * True when likes of posts and likes of replies live in DIFFERENT doctypes, so a
+ * caller wanting both has to read two owner indexes and merge. Deliberately
+ * narrower than {@link interactionSurfacesAreIdentical}: that folds in repost,
+ * bookmark and quote too, and a topology that split only one of those would make
+ * a like reader double-count.
+ */
+export function likeSurfacesAreSplit(): boolean {
+  return likeIndexFor('post').docType !== likeIndexFor('reply').docType
+}
+
+/**
+ * True when consensus checks that every identifier field points at a document
+ * that actually exists (`refersTo`). Where it does, a write naming a parent that
+ * has not landed yet is rejected — and charged for — so dependent writes have to
+ * wait for an unconfirmed parent instead of racing it.
+ */
+export function referencesAreEnforced(): boolean {
+  return topologyDescriptor().topology === 'v3'
+}
+
+/**
+ * True when post and reply documents are permanent (`canBeDeleted: false`) and a
+ * "delete" is therefore an edit that blanks the content and sets `deleted: true`
+ * rather than a document removal.
+ */
+export function deletesAreTombstones(): boolean {
+  return topologyDescriptor().topology === 'v3'
+}
+
 export function canRepost(kind: TargetKind): boolean {
   return repostIndexFor(kind) !== null
 }
@@ -215,15 +284,49 @@ export function canBookmark(kind: TargetKind): boolean {
   return bookmarkIndexFor(kind) !== null
 }
 
-export function canQuote(kind: TargetKind): boolean {
-  return quoteFieldFor(kind) !== null
-}
-
 /** The fields `targetKindOf` needs off a Post-shaped object. */
 interface KindBearing {
   targetKind?: TargetKind
   /** Only reply-backed Post shapes carry a parent id. */
   parentId?: string
+}
+
+/** A Post/Reply-shaped object reduced to what thread-root resolution needs. */
+export interface ThreadBearing extends KindBearing {
+  id: string
+  /** Set on v3 reply shapes: the post every reply in the thread hangs off. */
+  rootPostId?: string
+}
+
+/**
+ * The id of the post at the root of this object's thread.
+ *
+ * A top-level post is its own root. A reply names its root directly on v3; on v2
+ * the best available answer is its direct parent, which is what the pre-topology
+ * code used everywhere a "root" was wanted, so v2 behaviour is unchanged.
+ */
+export function threadRootIdOf(target: ThreadBearing): string {
+  if (targetKindOf(target) !== 'reply') return target.id
+  return target.rootPostId ?? target.parentId ?? target.id
+}
+
+/**
+ * Where a reply to `target` hangs: its thread root, and the reply it nests under
+ * (absent when the target IS the root).
+ *
+ * This pairing is not optional. On v2 `threadRootIdOf` can only answer with the
+ * target's OWN parent — there is no root link — which is the wrong document to
+ * name; what saves it is that `replyToReplyId` is then set to the target and wins
+ * when `createReply` collapses the two back into v2's single `parentId`. Deriving
+ * the two together, here, is what keeps that invariant from living as a
+ * convention repeated at every call site.
+ */
+export function replyLinkageTo(target: ThreadBearing): { rootPostId: string; replyToReplyId?: string } {
+  const rootPostId = threadRootIdOf(target)
+  return {
+    rootPostId,
+    replyToReplyId: target.id === rootPostId ? undefined : target.id,
+  }
 }
 
 /**
@@ -249,15 +352,15 @@ export function targetOf(post: KindBearing & { id: string }): KindedTarget {
 
 /** Stable identity of a kind's engagement surface, for cache/dedupe keys. */
 function surfaceKey(kind: TargetKind): string {
-  const { like, repost, bookmark, quoteField } = interactionsFor(kind)
-  return [like.docType, repost?.docType ?? '-', bookmark?.docType ?? '-', quoteField ?? '-'].join('|')
+  const { like, repost, bookmark, quoteField, replyCountField } = interactionsFor(kind)
+  return [like.docType, repost?.docType ?? '-', bookmark?.docType ?? '-', quoteField ?? '-', replyCountField].join('|')
 }
 
 /**
  * True when both target kinds read and write exactly the same doctypes — the v2
  * case, where the split does not exist yet.
  */
-export function interactionSurfacesAreIdentical(): boolean {
+function interactionSurfacesAreIdentical(): boolean {
   return surfaceKey('post') === surfaceKey('reply')
 }
 

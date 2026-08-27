@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
+import { canRepost, type TargetKind } from '@/lib/contract-topology'
 
 type TabType = 'quotes' | 'reposts' | 'likes'
 
@@ -78,6 +79,12 @@ function EngagementsPageContent() {
   const { requireAuth } = useRequireAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const postId = searchParams.get('id')
+  // Which doctype the id belongs to. Every query on this page reads a different
+  // doctype for a reply than for a post on the v3 topology, and an id alone does
+  // not say which — so PostCard puts the kind in the link.
+  const targetKind: TargetKind = searchParams.get('kind') === 'reply' ? 'reply' : 'post'
+  const repostable = canRepost(targetKind)
+  const tabs: TabType[] = repostable ? ['quotes', 'reposts', 'likes'] : ['quotes', 'likes']
 
   const [activeTab, setActiveTab] = useState<TabType>('likes')
 
@@ -101,7 +108,7 @@ function EngagementsPageContent() {
     setError(null)
 
     try {
-      const likes = await likeService.getPostLikes(postId)
+      const likes = await likeService.getPostLikes(postId, targetKind)
       const ownerIds = likes.map(l => l.$ownerId).filter(Boolean)
 
       if (ownerIds.length === 0) {
@@ -117,7 +124,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId, likesState])
+  }, [postId, targetKind, user?.identityId, likesState])
 
   // Load reposts
   const loadReposts = useCallback(async () => {
@@ -155,7 +162,7 @@ function EngagementsPageContent() {
     setError(null)
 
     try {
-      const quotePosts = await postService.getQuotePosts(postId)
+      const quotePosts = await postService.getQuotePosts(postId, targetKind)
 
       if (quotePosts.length === 0) {
         setData([])
@@ -189,7 +196,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId, quotesState])
+  }, [postId, targetKind, user?.identityId, quotesState])
 
   // Load data for active tab (only if not yet loaded)
   useEffect(() => {
@@ -222,9 +229,10 @@ function EngagementsPageContent() {
     let cancelled = false
 
     Promise.all([
-      postService.countQuotes(postId),
-      repostService.countReposts(postId),
-      likeService.countLikes(postId),
+      postService.countQuotes(postId, targetKind),
+      // A kind the topology forbids reposting has no repost doctype to count.
+      repostable ? repostService.countReposts(postId) : Promise.resolve(0),
+      likeService.countLikes(postId, targetKind),
     ]).then(([quotes, reposts, likes]) => {
       if (cancelled) return
       setTabCounts({ quotes, reposts, likes })
@@ -233,7 +241,7 @@ function EngagementsPageContent() {
     return () => {
       cancelled = true
     }
-  }, [postId])
+  }, [postId, targetKind, repostable])
 
   const handleFollow = async (userId: string) => {
     const authedUser = requireAuth('follow')
@@ -363,7 +371,7 @@ function EngagementsPageContent() {
 
             {/* Tabs */}
             <div className="flex border-b border-gray-200 dark:border-gray-800">
-              {(['quotes', 'reposts', 'likes'] as const).map((tab) => (
+              {tabs.map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}

@@ -270,6 +270,39 @@ class StateTransitionService {
   }
 
   /**
+   * Wait (briefly) for a document to become queryable.
+   *
+   * Only needed after a create that came back UNCONFIRMED: `createDocument`
+   * normally waits for the transition to execute in a block, so its success means
+   * the document is already there. When DAPI's confirmation wait times out the
+   * broadcast usually still landed, but nothing has proven it — and on a topology
+   * where every reference is `refersTo`-checked, writing a child against an
+   * unproven parent is rejected by consensus and the fee is spent anyway.
+   *
+   * Returns false rather than throwing when the document is still not visible
+   * after `attempts` polls, so callers can tell the user to retry.
+   */
+  async waitForDocument(
+    contractId: string,
+    documentType: string,
+    documentId: string,
+    { attempts = 6, intervalMs = 3_000 }: { attempts?: number; intervalMs?: number } = {}
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        if (await this.checkDocumentExists(contractId, documentType, documentId)) return true;
+      } catch (error) {
+        // A transport failure says nothing about whether the document landed.
+        logger.warn(`waitForDocument: probe failed for ${documentType} ${documentId}:`, extractErrorMessage(error));
+      }
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+    return false;
+  }
+
+  /**
    * Create a document with idempotent retry via ST byte caching.
    *
    * This is the typed write path: `documentData` should already use `Uint8Array` for binary

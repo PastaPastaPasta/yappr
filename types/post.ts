@@ -52,6 +52,12 @@ export interface Post {
   media?: Media[]
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)
+  /**
+   * ID of a quoted REPLY. The v3 topology splits quoting in two so each field can
+   * be `refersTo`-checked against exactly one document type; only one of
+   * `quotedPostId`/`quotedReplyId` is ever written.
+   */
+  quotedReplyId?: string
   quotedPost?: Post
   // Cross-contract embed (e.g. a Pollr poll). All three are set together.
   embedContractId?: string // base58 contract id the embedded document lives on
@@ -64,6 +70,14 @@ export interface Post {
   // Reply fields (present when this Post object represents a Reply for display)
   parentId?: string        // ID of post or reply being replied to (only on replies)
   parentOwnerId?: string   // Owner of parent (only on replies)
+  rootPostId?: string      // v3 replies: the post the whole thread hangs off
+  replyToReplyId?: string  // v3 replies: the reply this one is nested under
+  /**
+   * True on a tombstone — a v3 post/reply whose author "deleted" it. The document
+   * is permanent (`canBeDeleted: false`), so deleting blanks the content and sets
+   * this flag instead of removing anything.
+   */
+  deleted?: boolean
   // Blog quote fields (present when this Post represents a quoted blog post)
   __isBlogPostQuote?: boolean
   title?: string
@@ -94,8 +108,11 @@ export interface Reply {
   reposted?: boolean
   bookmarked?: boolean
   media?: Media[]
-  parentId: string        // ID of post or reply being replied to
+  parentId: string        // ID of post or reply being replied to (v3: the direct one, derived)
   parentOwnerId: string   // Owner of parent (for notifications)
+  rootPostId?: string     // v3: the post the whole thread hangs off (required on chain)
+  replyToReplyId?: string // v3: the reply this one is nested under, if any
+  deleted?: boolean       // v3 tombstone marker (see Post.deleted)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   // Private feed fields (present when reply is encrypted)

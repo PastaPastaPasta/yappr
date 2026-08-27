@@ -47,9 +47,9 @@ export async function fetchPostStats(
       likeService.countLikes(postId, kind),
       // A kind the topology forbids reposting has no repost doctype to count.
       repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
-      // Deliberately polymorphic: the reply doctype's parent field groups
-      // replies-to-posts and replies-to-replies alike.
-      replyService.countReplies(postId),
+      // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v3 a
+      // post counts its whole thread and a reply its direct children.
+      replyService.countReplies(postId, kind),
       postService.countQuotes(postId, kind),
     ]);
 
@@ -197,8 +197,8 @@ export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Pro
           repostIndexFor(kind)
             ? repostService.countRepostsForPosts(ids)
             : Promise.resolve(new Map<string, number>()),
-          // Polymorphic on purpose — see fetchPostStats.
-          replyService.countRepliesForPosts(ids),
+          // Per-kind count tree — see fetchPostStats.
+          replyService.countRepliesForPosts(ids, kind),
           postService.countQuotesForPosts(ids, kind),
         ]);
 
