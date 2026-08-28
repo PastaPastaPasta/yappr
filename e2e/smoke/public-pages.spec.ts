@@ -4,14 +4,18 @@
  * PRs. Nothing here writes to Dash Platform.
  */
 import { expect, test } from '@playwright/test'
-import { appUrl } from '../fixtures/app'
+import { appUrl, appUrlPattern } from '../fixtures/app'
+import { expectedNetwork } from '../fixtures/contracts'
 
 test('home renders the app shell', async ({ page }) => {
+  const network = await expectedNetwork()
   await page.goto(appUrl('/'))
 
-  // The testnet banner lives in the always-mounted AppShell — the cheapest
-  // "the app booted at all" probe there is.
-  await expect(page.getByText('TESTNET').first()).toBeVisible()
+  // The network banner lives in the always-mounted AppShell — the cheapest
+  // "the app booted at all" probe there is. Its label follows
+  // NEXT_PUBLIC_NETWORK, so this doubles as a build-targets-the-right-chain
+  // check.
+  await expect(page.getByText(network.toUpperCase()).first()).toBeVisible()
 
   // Home gates its body behind a hydration flag, so this only appears once the
   // client bundle has run.
@@ -20,11 +24,12 @@ test('home renders the app shell', async ({ page }) => {
 })
 
 test('about page renders and reports the network', async ({ page }) => {
+  const network = await expectedNetwork()
   await page.goto(appUrl('/about/'))
 
   await expect(page.getByRole('heading', { name: 'About Yappr' })).toBeVisible()
   await expect(page.getByText('Network', { exact: true })).toBeVisible()
-  await expect(page.getByText('testnet', { exact: true })).toBeVisible()
+  await expect(page.getByText(network, { exact: true })).toBeVisible()
 })
 
 test('explore page loads', async ({ page }) => {
@@ -50,9 +55,9 @@ test('primary navigation moves between sections', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Welcome to Yappr/ })).toBeVisible()
 
   await page.getByRole('link', { name: 'Explore', exact: true }).click()
-  await expect(page).toHaveURL(/\/testing\/explore/)
+  await expect(page).toHaveURL(appUrlPattern('/explore'))
   await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
 
   await page.getByRole('link', { name: 'Blog', exact: true }).click()
-  await expect(page).toHaveURL(/\/testing\/blog/)
+  await expect(page).toHaveURL(appUrlPattern('/blog'))
 })

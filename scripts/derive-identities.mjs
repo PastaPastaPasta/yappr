@@ -136,12 +136,18 @@ export function criticalAuthKey(keys) {
 
 /**
  * Reads `E2E_IDENTITY_IDS` for the target network (the environment variable
- * always wins): `.env.devnet` under `NETWORK=devnet`, `.env.testing` otherwise.
+ * always wins). `E2E_ENV_FILE` pins the pool to the deployment under test;
+ * without it, `.env.devnet` under `NETWORK=devnet`, `.env.testing` otherwise.
  * Identity ids are per-chain (they come from the asset-lock outpoint), so a
- * devnet run must never fall back to the testnet pool.
+ * devnet run must never fall back to the testnet pool — an e2e run whose
+ * `E2E_ENV_FILE` and identity pool disagree signs with identities that do not
+ * exist on the target chain, and every write fails in ways that look like
+ * deployed-site bugs.
  */
 export function loadIdentityIds() {
-  const envFile = (process.env.NETWORK ?? '').trim() === 'devnet' ? '.env.devnet' : '.env.testing';
+  const envFile =
+    process.env.E2E_ENV_FILE?.trim() ||
+    ((process.env.NETWORK ?? '').trim() === 'devnet' ? '.env.devnet' : '.env.testing');
   const raw = process.env.E2E_IDENTITY_IDS ?? readEnvFile(join(REPO_ROOT, envFile)).E2E_IDENTITY_IDS ?? '';
   return raw.split(',').map((id) => id.trim()).filter(Boolean);
 }

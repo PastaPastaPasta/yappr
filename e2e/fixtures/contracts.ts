@@ -44,3 +44,13 @@ export async function expectedTopology(): Promise<string> {
   const values = await envValues()
   return process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY ?? values.NEXT_PUBLIC_CONTRACT_TOPOLOGY ?? 'v2'
 }
+
+/**
+ * The network the build under test was compiled for. Drives the smoke
+ * assertions on the banner and the /about network row, which would otherwise
+ * hardcode `testnet` and fail against every `/devnet` deployment.
+ */
+export async function expectedNetwork(): Promise<string> {
+  const values = await envValues()
+  return process.env.NEXT_PUBLIC_NETWORK ?? values.NEXT_PUBLIC_NETWORK ?? 'testnet'
+}
