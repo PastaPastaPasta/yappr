@@ -183,13 +183,16 @@ class ReplyService extends BaseDocumentService<Reply> {
    * live reply under it) to the top of the thread.
    */
   async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
-    return tombstoneDocument({
+    const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
       documentId: replyId,
       ownerId,
       preserveIdentifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
     });
+    // Mirror tombstonePost: drop the cached pre-tombstone document.
+    if (ok) this.cache.delete(replyId);
+    return ok;
   }
 
   /**

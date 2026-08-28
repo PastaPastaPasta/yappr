@@ -333,13 +333,17 @@ class PostService extends BaseDocumentService<Post> {
    * body, media, quote, embed and every encrypted field are dropped.
    */
   async tombstonePost(postId: string, ownerId: string): Promise<boolean> {
-    return tombstoneDocument({
+    const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
       documentId: postId,
       ownerId,
       preserveScalars: ['language'],
     });
+    // The inherited 2-minute content cache would otherwise re-serve the
+    // pre-tombstone plaintext to a detail view reached via SPA navigation.
+    if (ok) this.cache.delete(postId);
+    return ok;
   }
 
   /**

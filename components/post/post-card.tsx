@@ -162,6 +162,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // On v3 posts and replies are permanent, so "delete" blanks the document and
   // flags it instead of removing it.
   const tombstones = deletesAreTombstones()
+  // Set after this card's own document was tombstoned this session, so the
+  // deleted state renders in place even when no parent list removes the card.
+  const [locallyTombstoned, setLocallyTombstoned] = useState(false)
 
   // Use progressive enrichment data when available, fall back to post._enrichment (old path)
   const legacyEnrichment = post._enrichment
@@ -443,6 +446,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     setRepostLoading(true)
 
     try {
+      // Same consensus-reference rule as likes: on v3 a repost names its target
+      // through a checked permanentDocument reference, so creating one against a
+      // not-yet-confirmed post would be rejected with the YAPP already spent.
+      // Removal needs no gate — the repost document itself already exists.
+      if (!wasReposted && isUnconfirmed(post.id) && !(await settleUnconfirmed(post.id))) {
+        throw new Error('This post has not confirmed yet. Try again in a moment.')
+      }
+
       const { repostService } = await import('@/lib/services/repost-service')
       const success = wasReposted
         ? await repostService.removeRepost(post.id, authedUser.identityId)
@@ -489,6 +500,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     setBookmarkLoading(true)
 
     try {
+      // Same unconfirmed-target gate as likes/reposts (bookmark.postId is a
+      // checked reference on v3); removal is ungated.
+      if (!wasBookmarked && isUnconfirmed(post.id) && !(await settleUnconfirmed(post.id))) {
+        throw new Error('This post has not confirmed yet. Try again in a moment.')
+      }
+
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
       const success = wasBookmarked
         ? await bookmarkService.removeBookmark(post.id, authedUser.identityId)
@@ -560,6 +577,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       if (!success) throw new Error('Delete operation failed')
 
       toast.success(isReply ? 'Reply deleted' : 'Post deleted')
+      // On v3 the document still exists as a tombstone. Flip the card into its
+      // tombstone rendering immediately — detail and thread callers pass no
+      // onDelete, so without this the pre-delete content would stay on screen
+      // (and the service cache could re-serve it) until a full reload.
+      if (tombstones) {
+        setLocallyTombstoned(true)
+      }
       // Notify parent to remove post from list if callback provided
       if (onDelete) {
         onDelete(post.id)
@@ -767,7 +791,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <PostContent content={tipInfo.message} className="mt-1" />
               )}
             </div>
-          ) : post.deleted ? (
+          ) : (post.deleted || locallyTombstoned) ? (
             <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">
               {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
             </p>
