@@ -450,9 +450,9 @@ function SettingsPage() {
 
       {/* Sensitive Content Section */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-        <h3 className="font-semibold mb-1">Sensitive Content</h3>
+        <h3 className="font-semibold mb-1">NSFW Content</h3>
         <p className="text-sm text-gray-500 mb-4">
-          How to handle posts their author flagged as sensitive
+          How to handle posts their author flagged as NSFW
         </p>
         <RadioGroup.Root
           value={sensitiveContentMode}
@@ -460,9 +460,9 @@ function SettingsPage() {
           className="space-y-2"
         >
           {([
-            { value: 'blur', label: 'Warn first', description: 'Cover sensitive posts until you choose to show them' },
-            { value: 'show', label: 'Always show', description: 'Show sensitive posts without a warning' },
-            { value: 'hide', label: 'Hide', description: 'Remove sensitive posts from your feeds' },
+            { value: 'blur', label: 'Warn first', description: 'Cover NSFW posts until you choose to show them' },
+            { value: 'show', label: 'Always show', description: 'Show NSFW posts without a warning' },
+            { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
           ] as const).map((option) => (
             <div key={option.value} className="relative">
               <RadioGroup.Item

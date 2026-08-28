@@ -421,7 +421,7 @@ function NotificationsPage() {
                               className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
                             >
                               {post && isSensitivePost(post) && post.author.id !== user?.identityId && sensitiveContentMode !== 'show' ? (
-                                <span className="italic text-gray-500">Sensitive content</span>
+                                <span className="italic text-gray-500">NSFW content</span>
                               ) : (
                                 post?.content || 'View post'
                               )}

@@ -1026,7 +1026,7 @@ function UserProfileContent() {
             <div>
               <h2 className="text-xl font-semibold mb-1">This profile may contain adult content</h2>
               <p className="text-sm text-gray-500">
-                {profile?.displayName || 'This user'} marked their profile as containing sensitive content.
+                {profile?.displayName || 'This user'} marked their profile as NSFW.
               </p>
             </div>
             <div className="flex items-center gap-3">

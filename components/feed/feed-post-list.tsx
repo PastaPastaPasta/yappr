@@ -67,7 +67,7 @@ export function FeedPostList({
       <LoadingState
         loading={isLoading || posts === null}
         error={error}
-        isEmpty={!isLoading && posts !== null && posts.length === 0}
+        isEmpty={!isLoading && visiblePosts !== null && visiblePosts.length === 0}
         onRetry={onRetry}
         loadingText="Connecting to Dash Platform..."
         emptyText={activeTab === 'following' ? 'Your following feed is empty' : 'No posts yet'}

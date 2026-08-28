@@ -9,6 +9,7 @@ import { PostCard } from '@/components/post/post-card'
 import { Button } from '@/components/ui/button'
 import { Post } from '@/lib/types'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 
@@ -50,6 +51,7 @@ export function FeaturedPosts({
 }: FeaturedPostsProps) {
   const openLoginModal = useLoginModal((s) => s.open)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const { user } = useAuth()
 
   return (
     <section className="py-12">
@@ -85,7 +87,7 @@ export function FeaturedPosts({
         </div>
       ) : (
         <div className="max-w-2xl mx-auto space-y-4">
-          {filterHiddenSensitive(posts, sensitiveContentMode).map((post, index) => (
+          {filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId).map((post, index) => (
             <motion.div
               key={post.id}
               initial={{ opacity: 0, y: 20 }}

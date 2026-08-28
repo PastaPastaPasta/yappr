@@ -49,10 +49,10 @@ export function SensitiveContentGate({ postId, active, variant = 'card', childre
     >
       <EyeSlashIcon className={cn('text-gray-400', variant === 'card' ? 'h-6 w-6' : 'h-5 w-5')} />
       <p className={cn('font-medium text-gray-100', variant === 'card' ? 'text-sm' : 'text-xs')}>
-        Sensitive content
+        NSFW
       </p>
       <p className="text-xs text-gray-400">
-        The author flagged this post as sensitive
+        The author flagged this post as NSFW
       </p>
       <button
         type="button"

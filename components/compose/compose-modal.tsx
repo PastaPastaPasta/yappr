@@ -88,6 +88,9 @@ export function ComposeModal() {
   // Replies are never individually flagged, and in a thread only the first
   // item is a post — so one toggle covers the whole composer.
   const [markSensitive, setMarkSensitive] = useState(false)
+  // Once the user clicks the toggle, the async profile seed below must not
+  // overwrite their choice — the fetch can resolve after the click.
+  const sensitiveTouchedRef = useRef(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
   const teaserTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -193,6 +196,7 @@ export function ComposeModal() {
   // is never fought mid-compose.
   useEffect(() => {
     if (!isComposeOpen) return
+    sensitiveTouchedRef.current = false
     if (!user) {
       setMarkSensitive(false)
       return
@@ -202,7 +206,7 @@ export function ComposeModal() {
       try {
         const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
         const profile = await unifiedProfileService.getProfile(user.identityId)
-        if (!cancelled) {
+        if (!cancelled && !sensitiveTouchedRef.current) {
           setMarkSensitive(profile?.nsfw === true)
         }
       } catch {
@@ -1239,9 +1243,12 @@ export function ComposeModal() {
                           <button
                             type="button"
                             data-testid="sensitive-toggle"
-                            onClick={() => setMarkSensitive(!markSensitive)}
+                            onClick={() => {
+                              sensitiveTouchedRef.current = true
+                              setMarkSensitive(!markSensitive)
+                            }}
                             disabled={isPosting}
-                            title="Mark this post as sensitive content"
+                            title="Mark this post as NSFW"
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                               markSensitive
                                 ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
@@ -1249,7 +1256,7 @@ export function ComposeModal() {
                             }`}
                           >
                             <ExclamationTriangleIcon className="w-3.5 h-3.5" />
-                            Sensitive
+                            NSFW
                           </button>
                         )}
                       </div>
