@@ -20,6 +20,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
 import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
+import { base58ToBytes } from '@/lib/services/sdk-helpers'
 import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -183,7 +184,7 @@ function MessagesPage() {
     if (updated && updated !== selectedConversation) {
       setSelectedConversation(updated)
     }
-  }, [conversations, selectedConversation?.id])
+  }, [conversations, selectedConversation])
 
   // Handle auto-starting a conversation from URL parameter
   useEffect(() => {
@@ -194,6 +195,14 @@ function MessagesPage() {
       setPendingStartConversation(null)
 
       const participantId = pendingStartConversation
+
+      // The id comes from the URL, so validate it before it reaches Platform
+      // calls that require a 32-byte identifier.
+      const participantIdBytes = base58ToBytes(participantId)
+      if (!participantIdBytes || participantIdBytes.length !== 32) {
+        toast.error('Invalid user ID')
+        return
+      }
 
       // Don't start conversation with yourself
       if (participantId === user.identityId) {
@@ -237,11 +246,15 @@ function MessagesPage() {
     handleStartConversation().catch(err => logger.error('Failed to handle start conversation:', err))
   }, [pendingStartConversation, user, isLoading, conversations])
 
-  // Load messages when conversation is selected
+  // Load messages when conversation is selected.
+  // Keyed on the conversation id, not the object: participant hydration swaps in
+  // new conversation objects with the same id, which must not refetch messages.
   useEffect(() => {
+    const conversationId = selectedConversation?.id
     const loadMessages = async () => {
       const currentConversation = selectedConversationRef.current
-      if (!currentConversation || !user) return
+      if (!conversationId || !user) return
+      if (!currentConversation || currentConversation.id !== conversationId) return
       setIsLoadingMessages(true)
       setParticipantLastRead(null) // Reset while loading
       try {
@@ -264,12 +277,18 @@ function MessagesPage() {
           await directMessageService.markAsRead(currentConversation.id, user.identityId)
         }
 
-        // Update conversation unread count in UI
-        setConversations(prev => prev.map(conv =>
-          conv.id === currentConversation.id
-            ? { ...conv, unreadCount: 0 }
-            : conv
-        ))
+        // Update conversation unread count in UI. Only touch state when a count
+        // actually changes - replacing conversation objects here re-triggers the
+        // selected-conversation sync effect and would loop message loading forever.
+        setConversations(prev => {
+          const needsUpdate = prev.some(conv => conv.id === currentConversation.id && conv.unreadCount !== 0)
+          if (!needsUpdate) return prev
+          return prev.map(conv =>
+            conv.id === currentConversation.id
+              ? { ...conv, unreadCount: 0 }
+              : conv
+          )
+        })
       } catch (error) {
         logger.error('Failed to load messages:', error)
         toast.error('Failed to load messages')
@@ -278,7 +297,7 @@ function MessagesPage() {
       }
     }
     loadMessages().catch(err => logger.error('Failed to load messages:', err))
-  }, [selectedConversation, user, sendReadReceipts])
+  }, [selectedConversation?.id, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
   useEffect(() => {
@@ -871,7 +890,7 @@ function MessagesPage() {
                 Have private 1-on-1 conversations with other users.
               </p>
               <p className="text-gray-400 text-sm mb-6">
-                Messages are stored securely on Dash Platform.
+                Messages are stored encrypted on Dash Platform.
               </p>
               <Button
                 onClick={() => setShowNewConversation(true)}
