@@ -12,6 +12,7 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
 import { followService, dpnsService, unifiedProfileService } from '@/lib/services'
+import { sortUsernames } from '@/lib/utils/username'
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
@@ -132,25 +133,19 @@ function FollowingPage() {
         return
       }
       
-      // Batch fetch all usernames, best usernames, profiles, and follower/following counts
-      const [allUsernamesData, bestUsernamesMap, profiles, followerCounts, followingCounts] = await Promise.all([
-        // Fetch all usernames for each identity (for "Also known as" feature), sorted consistently
+      // Batch fetch all usernames, profiles, and follower/following counts
+      const [allUsernamesData, profiles, followerCounts, followingCounts] = await Promise.all([
+        // Fetch all usernames for each identity (canonically sorted, so the
+        // first entry is the primary username and the rest feed "Also known as")
         Promise.all(identityIds.map(async (id) => {
           try {
-            const usernames = await dpnsService.getAllUsernames(id)
-            if (usernames.length > 1) {
-              // Sort usernames: contested first, then shortest, then alphabetically
-              const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
-              return { id, usernames: sortedUsernames }
-            }
+            const usernames = await dpnsService.getAllUsernamesSorted(id)
             return { id, usernames }
           } catch (error) {
             logger.error(`Failed to get all usernames for ${id}:`, error)
             return { id, usernames: [] }
           }
         })),
-        // Batch resolve best usernames efficiently (returns contested names first)
-        dpnsService.resolveUsernamesBatch(identityIds),
         // Fetch Yappr profiles
         unifiedProfileService.getProfilesByIdentityIds(identityIds),
         // Fetch follower counts for all users
@@ -175,14 +170,8 @@ function FollowingPage() {
         }))
       ])
 
-      // Convert best usernames map to the expected format
-      const dpnsNames = identityIds.map(id => ({
-        id,
-        username: bestUsernamesMap.get(id) || null
-      }))
-
-      // Create maps for easy lookup
-      const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
+      // Create maps for easy lookup (primary username = first of the sorted list)
+      const dpnsMap = new Map(allUsernamesData.map(item => [item.id, item.usernames[0] || null]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
       const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
       const followerCountMap = new Map(followerCounts.map(item => [item.id, item.count]))
@@ -395,29 +384,27 @@ function FollowingPage() {
         })
         
         // Create user objects - one per unique owner
-        const searchUsers: FollowingUser[] = await Promise.all(
-          Array.from(ownerToNames.entries()).map(async ([ownerId, names]) => {
-            const profile = profileMap.get(ownerId)
-            // Handle both formats: direct properties or nested in data
-            const profileData = (profile as any)?.data || profile
-            // Sort names with contested ones first
-            const sortedNames = await dpnsService.sortUsernamesByContested(names)
-            const primaryUsername = sortedNames[0]
+        const searchUsers: FollowingUser[] = Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
+          const profile = profileMap.get(ownerId)
+          // Handle both formats: direct properties or nested in data
+          const profileData = (profile as any)?.data || profile
+          // Canonical ordering: the first sorted name is the primary username
+          const sortedNames = sortUsernames(names)
+          const primaryUsername = sortedNames[0]
 
-            return {
-              id: ownerId,
-              username: primaryUsername,
-              displayName: profileData?.displayName || primaryUsername,
-              bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
-              hasProfile: !!profile,
-              hasDpnsName: true, // Search results are always from DPNS
-              followersCount: followerCountMap.get(ownerId) || 0,
-              followingCount: followingCountMap.get(ownerId) || 0,
-              isFollowing: followingState.data?.some(u => u.id === ownerId) || false,
-              allUsernames: sortedNames
-            }
-          })
-        )
+          return {
+            id: ownerId,
+            username: primaryUsername,
+            displayName: profileData?.displayName || primaryUsername,
+            bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
+            hasProfile: !!profile,
+            hasDpnsName: true, // Search results are always from DPNS
+            followersCount: followerCountMap.get(ownerId) || 0,
+            followingCount: followingCountMap.get(ownerId) || 0,
+            isFollowing: followingState.data?.some(u => u.id === ownerId) || false,
+            allUsernames: sortedNames
+          }
+        })
         
         setSearchResults(searchUsers)
       } else {

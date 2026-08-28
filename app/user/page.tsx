@@ -455,14 +455,11 @@ function UserProfileContent() {
         // If we got fewer posts than requested, there are no more to load
         setHasMore(originalPosts.length >= 50)
 
-        // Try to resolve DPNS usernames (fetch all, sort, use best as primary)
+        // Try to resolve DPNS usernames (canonically sorted, first entry is the primary)
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
-          const usernames = await dpnsService.getAllUsernames(userId)
-          if (usernames.length > 0) {
-            // Sort usernames: contested first, then shortest, then alphabetically
-            // This matches the selection logic used in other pages (resolveUsername, resolveUsernamesBatch)
-            const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+          const sortedUsernames = await dpnsService.getAllUsernamesSorted(userId)
+          if (sortedUsernames.length > 0) {
             setAllUsernames(sortedUsernames)
             setUsername(sortedUsernames[0])
             setHasDpns(true)
@@ -878,11 +875,9 @@ function UserProfileContent() {
       const { dpnsService } = await import('@/lib/services/dpns-service')
       // Clear cache to get fresh data (pass undefined for username, userId for identityId)
       dpnsService.clearCache(undefined, userId)
-      const usernames = await dpnsService.getAllUsernames(userId)
-      if (usernames.length > 0) {
-        // Sort usernames: contested first, then shortest, then alphabetically
-        // This matches the selection logic used in loadProfileData and resolveUsernamesBatch
-        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
+      // Canonically sorted: the first entry is the primary username
+      const sortedUsernames = await dpnsService.getAllUsernamesSorted(userId)
+      if (sortedUsernames.length > 0) {
         setAllUsernames(sortedUsernames)
         setUsername(sortedUsernames[0])
         setHasDpns(true)

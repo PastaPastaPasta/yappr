@@ -6,6 +6,7 @@ import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -86,32 +87,12 @@ class DpnsService {
   }
 
   /**
-   * Sort usernames by: contested first, then shortest, then alphabetically
+   * Get all usernames for an identity ID, sorted by the canonical ordering
+   * (contested first, then shortest, then alphabetically). The first entry
+   * is the identity's primary username.
    */
-  async sortUsernamesByContested(usernames: string[]): Promise<string[]> {
-    const sdk = await getEvoSdk();
-
-    // Check contested status for all usernames
-    const contestedStatuses = await Promise.all(
-      usernames.map(async (u) => ({
-        username: u,
-        contested: await sdk.dpns.isContestedUsername(u.split('.')[0])
-      }))
-    );
-
-    return contestedStatuses
-      .sort((a, b) => {
-        // 1. Contested usernames first
-        if (a.contested && !b.contested) return -1;
-        if (!a.contested && b.contested) return 1;
-        // 2. Shorter usernames first
-        if (a.username.length !== b.username.length) {
-          return a.username.length - b.username.length;
-        }
-        // 3. Alphabetically
-        return a.username.localeCompare(b.username);
-      })
-      .map(item => item.username);
+  async getAllUsernamesSorted(identityId: string): Promise<string[]> {
+    return sortUsernames(await this.getAllUsernames(identityId));
   }
 
   /**
@@ -180,28 +161,10 @@ class DpnsService {
         }
       }
 
-      // For identities with multiple usernames, sort and pick the best one
-      // For identities with one username, use it directly
+      // Pick the primary username for each identity using the canonical ordering
       for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
-        let bestUsername: string;
-        if (usernames.length === 1) {
-          bestUsername = usernames[0];
-        } else {
-          // Sort: contested first, then shortest, then alphabetically
-          // Wrap in try-catch so one failed contested lookup doesn't break the batch
-          try {
-            const sortedUsernames = await this.sortUsernamesByContested(usernames);
-            bestUsername = sortedUsernames[0];
-          } catch (err) {
-            logger.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
-            // Fallback: sort by length then alphabetically (skip contested check)
-            const sorted = [...usernames].sort((a, b) => {
-              if (a.length !== b.length) return a.length - b.length;
-              return a.localeCompare(b);
-            });
-            bestUsername = sorted[0];
-          }
-        }
+        const bestUsername = getPrimaryUsername(usernames);
+        if (!bestUsername) continue;
         results.set(identityId, bestUsername);
         this._cacheEntry(bestUsername, identityId);
       }
@@ -224,16 +187,13 @@ class DpnsService {
         return cached.value;
       }
 
-      // Get all usernames for this identity
+      // Get all usernames for this identity and pick the primary one
       const allUsernames = await this.getAllUsernames(identityId);
+      const bestUsername = getPrimaryUsername(allUsernames);
 
-      if (allUsernames.length === 0) {
+      if (!bestUsername) {
         return null;
       }
-
-      // Sort usernames with contested ones first
-      const sortedUsernames = await this.sortUsernamesByContested(allUsernames);
-      const bestUsername = sortedUsernames[0];
 
       this._cacheEntry(bestUsername, identityId);
       return bestUsername;

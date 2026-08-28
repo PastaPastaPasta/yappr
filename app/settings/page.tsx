@@ -165,15 +165,9 @@ function SettingsPage() {
     const fetchUsernames = async () => {
       try {
         const { dpnsService } = await import('@/lib/services/dpns-service')
-        const usernames = await dpnsService.getAllUsernames(user.identityId)
-        if (usernames.length > 0) {
-          // Sort usernames: contested first, then shortest, then alphabetically
-          // This matches the selection logic used across the app
-          const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
-          setDpnsUsernames(sortedUsernames)
-        } else {
-          setDpnsUsernames([])
-        }
+        // Canonically sorted: the first entry is the primary username
+        const usernames = await dpnsService.getAllUsernamesSorted(user.identityId)
+        setDpnsUsernames(usernames)
       } catch (error) {
         logger.error('Failed to fetch DPNS usernames:', error)
       }
@@ -189,14 +183,9 @@ function SettingsPage() {
       const { dpnsService } = await import('@/lib/services/dpns-service')
       // Clear cache to get fresh data (pass undefined for username, identityId second)
       dpnsService.clearCache(undefined, user.identityId)
-      const usernames = await dpnsService.getAllUsernames(user.identityId)
-      if (usernames.length > 0) {
-        // Sort usernames: contested first, then shortest, then alphabetically
-        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
-        setDpnsUsernames(sortedUsernames)
-      } else {
-        setDpnsUsernames([])
-      }
+      // Canonically sorted: the first entry is the primary username
+      const usernames = await dpnsService.getAllUsernamesSorted(user.identityId)
+      setDpnsUsernames(usernames)
     } catch (error) {
       logger.error('Failed to refresh usernames:', error)
     }

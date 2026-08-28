@@ -109,27 +109,13 @@ function FollowersPage() {
         return
       }
       
-      // Batch fetch DPNS names, all usernames, and profiles
-      const [dpnsNames, allUsernamesData, profiles, followerCounts, followingCounts] = await Promise.all([
-        // Fetch best DPNS names for all identities
+      // Batch fetch all usernames and profiles
+      const [allUsernamesData, profiles, followerCounts, followingCounts] = await Promise.all([
+        // Fetch all usernames for each identity (canonically sorted, so the
+        // first entry is the primary username and the rest feed "Also known as")
         Promise.all(identityIds.map(async (id) => {
           try {
-            const username = await dpnsService.resolveUsername(id)
-            return { id, username }
-          } catch (error) {
-            logger.error(`Failed to resolve DPNS for ${id}:`, error)
-            return { id, username: null }
-          }
-        })),
-        // Fetch all usernames for each identity (sorted consistently)
-        Promise.all(identityIds.map(async (id) => {
-          try {
-            const usernames = await dpnsService.getAllUsernames(id)
-            if (usernames.length > 1) {
-              // Sort usernames: contested first, then shortest, then alphabetically
-              const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
-              return { id, usernames: sortedUsernames }
-            }
+            const usernames = await dpnsService.getAllUsernamesSorted(id)
             return { id, usernames }
           } catch (error) {
             logger.error(`Failed to get all usernames for ${id}:`, error)
@@ -169,8 +155,8 @@ function FollowersPage() {
         followingBackMap = new Map(identityIds.map((id, index) => [id, followingBack[index]]))
       }
       
-      // Create maps for easy lookup
-      const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
+      // Create maps for easy lookup (primary username = first of the sorted list)
+      const dpnsMap = new Map(allUsernamesData.map(item => [item.id, item.usernames[0] || null]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
       const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
       const followerCountMap = new Map(followerCounts.map(item => [item.id, item.count]))
