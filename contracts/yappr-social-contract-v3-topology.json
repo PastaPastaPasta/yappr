@@ -327,14 +327,14 @@
       "type": "object",
       "indices": [
         {
-          "name": "postAndOwner",
+          "name": "ownerAndPost",
           "unique": true,
           "properties": [
             {
-              "postId": "asc"
+              "$ownerId": "asc"
             },
             {
-              "$ownerId": "asc"
+              "postId": "asc"
             }
           ]
         },
@@ -401,14 +401,14 @@
       "type": "object",
       "indices": [
         {
-          "name": "replyAndOwner",
+          "name": "ownerAndReply",
           "unique": true,
           "properties": [
             {
-              "replyId": "asc"
+              "$ownerId": "asc"
             },
             {
-              "$ownerId": "asc"
+              "replyId": "asc"
             }
           ]
         },

@@ -570,7 +570,7 @@ async function case2Likes(ctx) {
     );
 
     // A different owner liking the same reply is the control: uniqueness is per
-    // (replyId, $ownerId), not per reply.
+    // (owner, reply) pair, not per reply.
     const other = expectAccepted(
       '2e a DIFFERENT owner liking the same reply is accepted',
       await attemptCreate(ctx.sdk, ctx.botA, {
