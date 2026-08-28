@@ -485,17 +485,26 @@ export function usePostDetail({
         // the thread query pages oldest-first from the root, so on threads
         // longer than one page that slice can sit entirely past the loaded
         // page. Landing here from a "Continue thread" row would then show
-        // "No replies yet" despite the row promising more. A targeted children
-        // query guarantees the focused reply's direct replies are on hand;
-        // deeper descendants surface through their own Continue rows.
+        // "No replies yet" despite the row promising more. Fetch the focused
+        // subtree level by level (targeted replyToReplyId queries) down to the
+        // full depth the page renders: every rendered reply then either shows
+        // its children or is a nested item whose own Continue row (backed by
+        // enrichment counts) leads onward.
         if (targetKindOf(loadedPost) === 'reply' && result.nextCursor) {
-          const childrenMap = await replyService.getNestedReplies([loadedPost.id])
-          if (!isCurrent()) return
-          const known = new Set(replies.map((reply) => reply.id))
-          replies = [
-            ...replies,
-            ...(childrenMap.get(loadedPost.id) ?? []).filter((reply) => !known.has(reply.id))
-          ]
+          const renderedDepth = MAX_NESTED_DEPTH + 1
+          let frontier = [loadedPost.id]
+          for (let depth = 0; depth < renderedDepth && frontier.length > 0; depth++) {
+            const childrenMap = await replyService.getNestedReplies(frontier)
+            if (!isCurrent()) return
+            const known = new Set(replies.map((reply) => reply.id))
+            const fresh = Array.from(childrenMap.values()).flat()
+              .filter((reply) => !known.has(reply.id))
+            replies = [...replies, ...fresh]
+            const frontierSet = new Set(frontier)
+            frontier = replies
+              .filter((reply) => reply.replyToReplyId && frontierSet.has(reply.replyToReplyId))
+              .map((reply) => reply.id)
+          }
         }
 
         replyThreads = assembleFlatThread(loadedPost, replies)
