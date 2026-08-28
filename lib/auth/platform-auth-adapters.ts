@@ -363,7 +363,10 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     yapprKeyExchangeConfig: {
       appContractId: YAPPR_CONTRACT_ID,
       keyExchangeContractId: KEY_EXCHANGE_CONTRACT_ID,
-      network: keyNetwork(),
+      // Protocol routing in the dash-key:/dash-st: URIs, which distinguish
+      // devnet ('d') — unlike address/WIF encoding, which keyNetwork() maps
+      // to testnet on devnets.
+      network: getConfiguredNetwork(),
       label: 'Login to Yappr',
     },
     yapprKeyExchange: {

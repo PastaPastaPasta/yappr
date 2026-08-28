@@ -7,7 +7,7 @@
  * Pollr web app in their text, so those are hydrated by pattern-matching the URL.
  */
 
-import { POLLR_APP_URL, POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES } from '@/lib/constants';
+import { POLLR_APP_CONTRACT_ID, POLLR_APP_URL, POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES } from '@/lib/constants';
 import { identifierToBase58 } from '@/lib/services/sdk-helpers';
 import type { Post } from '@/lib/types';
 
@@ -55,8 +55,13 @@ export function getEmbeddedPollId(post: Post): string | null {
   return post.embedId || null;
 }
 
-/** Public permalink for a poll on the Pollr web app. */
-export function pollrPollUrl(pollId: string): string {
+/**
+ * Public permalink for a poll on the Pollr web app, or null when that app
+ * cannot resolve it — the configured contract (e.g. the devnet clone) is not
+ * the one the standalone app reads.
+ */
+export function pollrPollUrl(pollId: string): string | null {
+  if (POLLR_CONTRACT_ID !== POLLR_APP_CONTRACT_ID) return null;
   return `${POLLR_APP_URL}/poll?id=${pollId}`;
 }
 
