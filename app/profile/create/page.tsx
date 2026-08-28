@@ -72,7 +72,7 @@ function CreateProfilePage() {
 
         if (existingProfile) {
           toast.success('You already have a profile!')
-          router.push(`/user?id=${user.identityId}`)
+          router.push('/feed')
           return
         }
 
@@ -173,7 +173,7 @@ function CreateProfilePage() {
           errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
         setTimeout(() => {
-          router.push(`/user?id=${user?.identityId}`)
+          router.push('/feed')
         }, 2000)
         return
       }
