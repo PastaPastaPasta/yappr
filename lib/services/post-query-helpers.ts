@@ -313,9 +313,11 @@ export async function fetchQuotePosts(
 
     return documents
       .map((doc) => transformDocument(doc))
-      // Read back through the SAME field the query keyed on, resolved from the
-      // descriptor rather than compared against a literal.
-      .filter((post) => (quoteField === quoteFieldFor('reply') ? post.quotedReplyId : post.quotedPostId) === quotedPostId)
+      // Read back through the SAME field the query keyed on. Compare the literal
+      // field name: on v2 BOTH kinds resolve to 'quotedPostId' (the polymorphic
+      // field), so testing against quoteFieldFor('reply') would route every v2
+      // read through the absent quotedReplyId and empty the listing.
+      .filter((post) => (quoteField === 'quotedReplyId' ? post.quotedReplyId : post.quotedPostId) === quotedPostId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit);
   } catch (error) {

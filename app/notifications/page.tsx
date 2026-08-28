@@ -52,13 +52,13 @@ function getNotificationUrl(notification: Notification): string | null {
     return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
   }
 
-  // A reply that names its thread root (v3) links to the WHOLE thread, with the
-  // reply itself as an anchor param — replies no longer nest into sub-pages, so
-  // the root is the only place a given reply is actually rendered. Present only
-  // on the v3 topology, which is why v2's link targets below are untouched.
-  const threadRoot = notification.post?.rootPostId
-  if (threadRoot && notification.post) {
-    return `/post?id=${threadRoot}&reply=${notification.post.id}`
+  // A v3 reply links to ITSELF: usePostDetail renders a reply as the main card
+  // with the thread root as context, which is always reliable — whereas the root
+  // page fetches replies oldest-first in pages and renders limited nesting, so a
+  // deep or recent reply may not be present there at all. v2's link targets
+  // below are untouched.
+  if (notification.post?.rootPostId) {
+    return `/post?id=${notification.post.id}`
   }
 
   // For reply notifications, navigate to the parent post (where the reply appears)

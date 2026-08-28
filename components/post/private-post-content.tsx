@@ -208,7 +208,12 @@ export function PrivatePostContent({
   // State for showing cancel option when pending is clicked
   const [showCancelOption, setShowCancelOption] = useState(false)
 
-  const isOwner = user?.identityId === post.author.id
+  // Role for key-recovery and access-request controls follows the ENCRYPTION
+  // owner — the root author for an inherited-encrypted reply — not the reply's
+  // author: access is granted per feed, and the "enter your key" affordance
+  // belongs to whoever owns that feed. On v2 encryptionSourceOwnerId falls back
+  // to post.author.id, so this is identical there.
+  const isOwner = user?.identityId === encryptionSourceOwnerId
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = post.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
@@ -390,7 +395,7 @@ export function PrivatePostContent({
         if (isOwner) {
           try {
             const { privateFeedService } = await import('@/lib/services')
-            followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
+            followerCount = await privateFeedService.getPrivateFollowerCount(encryptionSourceOwnerId)
           } catch (err) {
             logger.warn('Failed to fetch private follower count:', err)
             // Continue without follower count - it's not critical

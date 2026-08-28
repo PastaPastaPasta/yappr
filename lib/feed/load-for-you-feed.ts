@@ -38,7 +38,13 @@ export async function loadForYouFeed(options: {
     return { posts: [], cursor: null, hasMore: false };
   }
 
-  const firstBatchPosts = firstBatchRaw.map((doc) => transformRawPost(doc as Record<string, unknown>));
+  // Tombstones are dropped here, before the raw batch renders — the async
+  // enrichment merge falls back to the ORIGINAL post for ids missing from the
+  // enriched result, so filtering only inside enrichPostsWithRepostsAndQuotes
+  // would let deleted posts reappear. `deleted` is never set on v2.
+  const firstBatchPosts = firstBatchRaw
+    .map((doc) => transformRawPost(doc as Record<string, unknown>))
+    .filter((post) => !post.deleted);
   const firstBatchCursor = (firstBatchRaw[firstBatchRaw.length - 1].$id ||
     firstBatchRaw[firstBatchRaw.length - 1].id) as string;
 
@@ -93,7 +99,9 @@ export async function loadForYouFeed(options: {
           break;
         }
 
-        const bgPosts = bgRawPosts.map((doc) => transformRawPost(doc as Record<string, unknown>));
+        const bgPosts = bgRawPosts
+          .map((doc) => transformRawPost(doc as Record<string, unknown>))
+          .filter((post) => !post.deleted);
 
         enrichPostsWithRepostsAndQuotes(bgPosts)
           .then((enrichedPosts) => {
