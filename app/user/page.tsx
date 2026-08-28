@@ -160,6 +160,11 @@ function UserProfileContent() {
   useEffect(() => {
     setNsfwAcknowledged(false)
   }, [userId])
+  // Consent screen before any profile content renders. Applies in both 'blur'
+  // and 'hide' modes — hiding is a browsing preference, and navigating here is
+  // deliberate, so a warning beats a dead end. 'show' viewers skip it.
+  const showNsfwInterstitial =
+    profile?.nsfw === true && !isOwnProfile && sensitiveContentMode !== 'show' && !nsfwAcknowledged
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
   const [profileDocumentMissing, setProfileDocumentMissing] = useState(false)
@@ -1013,11 +1018,7 @@ function UserProfileContent() {
               <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
             </div>
           </div>
-        ) : Boolean(profile?.nsfw) && !isOwnProfile && sensitiveContentMode !== 'show' && !nsfwAcknowledged ? (
-          // NSFW-profile interstitial: consent screen before any profile
-          // content renders. Applies in both 'blur' and 'hide' modes — hiding
-          // is a browsing preference, and navigating here is deliberate, so a
-          // warning beats a dead end. Viewers who chose 'show' skip it.
+        ) : showNsfwInterstitial ? (
           <div
             data-testid="nsfw-interstitial"
             className="flex flex-col items-center justify-center gap-4 px-8 py-24 text-center"

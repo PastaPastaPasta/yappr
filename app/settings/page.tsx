@@ -66,6 +66,12 @@ const settingsSections = [
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
 
+const SENSITIVE_CONTENT_OPTIONS: Array<{ value: SensitiveContentMode; label: string; description: string }> = [
+  { value: 'blur', label: 'Warn first', description: 'Cover NSFW posts until you choose to show them' },
+  { value: 'show', label: 'Always show', description: 'Show NSFW posts without a warning' },
+  { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
+]
+
 const NOTIFICATION_LABELS: Record<string, string> = {
   likes: 'Likes',
   reposts: 'Reposts',
@@ -459,11 +465,7 @@ function SettingsPage() {
           onValueChange={(value) => setSensitiveContentMode(value as SensitiveContentMode)}
           className="space-y-2"
         >
-          {([
-            { value: 'blur', label: 'Warn first', description: 'Cover NSFW posts until you choose to show them' },
-            { value: 'show', label: 'Always show', description: 'Show NSFW posts without a warning' },
-            { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
-          ] as const).map((option) => (
+          {SENSITIVE_CONTENT_OPTIONS.map((option) => (
             <div key={option.value} className="relative">
               <RadioGroup.Item
                 value={option.value}

@@ -203,17 +203,15 @@ export function ComposeModal() {
     }
     let cancelled = false
     const seedFromProfile = async () => {
-      try {
-        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-        const profile = await unifiedProfileService.getProfile(user.identityId)
-        if (!cancelled && !sensitiveTouchedRef.current) {
-          setMarkSensitive(profile?.nsfw === true)
-        }
-      } catch {
-        // No profile (or lookup failed) — leave the toggle off.
+      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      const profile = await unifiedProfileService.getProfile(user.identityId)
+      if (!cancelled && !sensitiveTouchedRef.current) {
+        setMarkSensitive(profile?.nsfw === true)
       }
     }
-    seedFromProfile().catch(() => {})
+    seedFromProfile().catch(() => {
+      // No profile (or lookup failed) — leave the toggle off.
+    })
     return () => {
       cancelled = true
     }
@@ -1245,7 +1243,7 @@ export function ComposeModal() {
                             data-testid="sensitive-toggle"
                             onClick={() => {
                               sensitiveTouchedRef.current = true
-                              setMarkSensitive(!markSensitive)
+                              setMarkSensitive((v) => !v)
                             }}
                             disabled={isPosting}
                             title="Mark this post as NSFW"

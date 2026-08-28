@@ -11,6 +11,7 @@
  *   thing that CANNOT be asserted here is 'hide' filtering of someone else's
  *   post, because 'hide' deliberately never hides the viewer's own posts.
  */
+import type { Page } from '@playwright/test'
 import { appUrl } from '../fixtures/app'
 import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
@@ -20,7 +21,7 @@ import { uniqueTag } from '../fixtures/run-tag'
 test.describe.configure({ mode: 'serial' })
 
 /** Selects a sensitive-content mode through the Privacy settings UI. */
-async function chooseSensitiveMode(page: import('@playwright/test').Page, mode: 'blur' | 'show' | 'hide') {
+async function chooseSensitiveMode(page: Page, mode: 'blur' | 'show' | 'hide') {
   await page.goto(appUrl('/settings?section=privacy'))
   const option = page.locator(`label[for="sensitive-mode-${mode}"]`)
   await expect(option).toBeVisible({ timeout: 30_000 })

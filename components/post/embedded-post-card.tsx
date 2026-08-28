@@ -7,7 +7,8 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { PostContent } from './post-content'
 import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
-import { SensitiveContentGate, isSensitivePost } from './sensitive-content-gate'
+import { SensitiveContentGate } from './sensitive-content-gate'
+import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { useSettingsStore } from '@/lib/store'
 
 export interface EmbeddedPostCardProps {
@@ -30,7 +31,7 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
 
   // A quote of a sensitive post gates the inner content independently of the
   // quoting card — the mini author row stays visible, the content does not.
-  const gateSensitive = isSensitivePost(post) && sensitiveContentMode !== 'show'
+  const gateSensitive = shouldGateSensitive(post, sensitiveContentMode)
 
   return (
     <Link

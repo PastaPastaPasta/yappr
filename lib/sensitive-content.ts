@@ -10,6 +10,11 @@ export function isSensitivePost(post: Post): boolean {
   return post.sensitive === true && post.deleted !== true
 }
 
+/** Whether the gate should cover this post's content for a viewer in `mode`. */
+export function shouldGateSensitive(post: Post | undefined, mode: SensitiveContentMode): boolean {
+  return post !== undefined && isSensitivePost(post) && mode !== 'show'
+}
+
 /**
  * Applies the 'hide' viewer preference to a list surface. Only browsing lists
  * filter — post detail, threads and bookmarks always render the gate instead,

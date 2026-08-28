@@ -34,7 +34,8 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
-import { SensitiveContentGate, isSensitivePost } from './sensitive-content-gate'
+import { SensitiveContentGate } from './sensitive-content-gate'
+import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { PollCard } from '@/components/poll/poll-card'
@@ -180,7 +181,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // the full region rather than any single branch. 'hide' filtering is the
   // list's job — on detail/thread surfaces 'hide' behaves like 'blur'.
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
-  const gateSensitive = !isTombstoned && isSensitivePost(post) && sensitiveContentMode !== 'show'
+  const gateSensitive = !isTombstoned && shouldGateSensitive(post, sensitiveContentMode)
 
   // Use progressive enrichment data when available, fall back to post._enrichment (old path)
   const legacyEnrichment = post._enrichment
