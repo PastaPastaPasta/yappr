@@ -175,7 +175,6 @@ class NotificationService {
 
       return perKind
         .flat()
-        .filter(like => like.$ownerId !== userId) // Exclude self-likes
         .map(like => ({
           id: `like-${like.$id}`,
           type: 'like' as const,
@@ -200,7 +199,6 @@ class NotificationService {
       const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp));
 
       return reposts
-        .filter(repost => repost.$ownerId !== userId) // Exclude self-reposts
         .map(repost => ({
           id: `repost-${repost.$id}`,
           type: 'repost' as const,
@@ -224,7 +222,6 @@ class NotificationService {
       const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp));
 
       return replies
-        .filter(reply => reply.author.id !== userId) // Exclude self-replies
         .map(reply => ({
           id: `reply-${reply.id}`,
           type: 'reply' as const,
@@ -653,13 +650,19 @@ class NotificationService {
       this.getBlogPostNotifications(userId, sinceTimestamp)
     ]);
 
-    const rawNotifications = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];
+    const allRaw = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];
+
+    // Drop self-notifications across every type (liking/reposting/replying to your
+    // own content, mentioning yourself, your own posts in a blog you follow).
+    const rawNotifications = allRaw.filter(n => n.fromUserId !== userId);
     rawNotifications.sort((a, b) => b.createdAt - a.createdAt);
 
     const notifications = await this.enrichNotifications(rawNotifications, readIds);
 
-    const latestTimestamp = rawNotifications.length > 0
-      ? Math.max(...rawNotifications.map(n => n.createdAt))
+    // Advance the poll watermark past self-actions too, so filtered-out events
+    // aren't re-fetched on every poll.
+    const latestTimestamp = allRaw.length > 0
+      ? Math.max(...allRaw.map(n => n.createdAt))
       : fallbackTimestamp;
 
     return { notifications, latestTimestamp };
