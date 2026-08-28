@@ -257,6 +257,13 @@ export function usePostDetail({
           replyChain: current.replyChain.map(p => enrichedMap.get(p.id) || p)
         }
       })
+
+      // Drop the click-time navigation snapshot once fresh data for the main
+      // post lands — a placeholder displayName captured mid-load would
+      // otherwise shadow the resolved author forever
+      if (postId && enrichedPosts.some(p => p.id === postId)) {
+        setPostEnrichment(undefined)
+      }
     }
   })
 

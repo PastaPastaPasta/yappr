@@ -85,10 +85,10 @@ function resolveUsernameState(
 /**
  * Checks if a display name represents a real profile (not a placeholder).
  */
-function hasRealProfile(displayName: string | undefined): boolean {
+function hasRealProfile(displayName: string | undefined, identityId: string): boolean {
   if (!displayName) return false
   if (displayName === 'Unknown User') return false
-  if (displayName.startsWith('User ')) return false
+  if (displayName === `User ${identityId.slice(-6)}` || displayName === `User ${identityId.slice(-8)}`) return false
   return true
 }
 
@@ -123,6 +123,8 @@ function ActionTooltip({ label, children }: ActionTooltipProps): React.ReactElem
 export interface ProgressiveEnrichment {
   username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
   displayName: string | undefined
+  /** True once the profile lookup completed, even when no profile exists. Omitted = already resolved. */
+  profileLoaded?: boolean
   avatarUrl: string | undefined
   stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined
   interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
@@ -185,7 +187,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   )
 
   // Check if user has a real profile (not a placeholder)
-  const hasProfile = hasRealProfile(displayName)
+  const hasProfile = hasRealProfile(displayName, post.author.id)
+
+  // Whether the profile lookup has finished. Callers that don't pass
+  // progressive enrichment resolve authors before render, so treat as loaded.
+  const profileLoaded = progressiveEnrichment?.profileLoaded ?? true
 
   // Stats: use progressive enrichment > post data
   const statsLikes = progressiveEnrichment?.stats?.likes ?? post.likes
@@ -606,6 +612,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       // Use resolved values (what's currently displayed) instead of raw progressive state
       username: usernameState,
       displayName: displayName,
+      profileLoaded: profileLoaded,
       avatarUrl: avatarUrl,
       // Preserve stats and interactions from progressive enrichment
       stats: progressiveEnrichment?.stats ?? {
@@ -680,7 +687,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             <div className="flex items-center gap-1 text-sm min-w-0">
               {!hideAvatar && (
                 <>
-                  {usernameState === undefined || (displayName === 'Unknown User' || displayName?.startsWith('User ')) ? (
+                  {usernameState === undefined || (!hasProfile && !profileLoaded) ? (
                     // Still loading - show skeleton for display name
                     <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                   ) : (
@@ -695,7 +702,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                         onClick={(e) => e.stopPropagation()}
                         className="font-semibold hover:underline truncate"
                       >
-                        {displayName}
+                        {hasProfile ? displayName : 'Unknown User'}
                       </Link>
                     </ProfileHoverCard>
                   )}
