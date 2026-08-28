@@ -101,9 +101,10 @@ function SettingsPage() {
   // the menu, the section title, and the render gate can't drift apart.
   const visibleSections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
-  const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
-  const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
-  const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
+  const linkPreviewsEnabled = useSettingsStore((s) => s.linkPreviewsEnabled)
+  const setLinkPreviewsEnabled = useSettingsStore((s) => s.setLinkPreviewsEnabled)
+  const gateMediaFromNonFollowed = useSettingsStore((s) => s.gateMediaFromNonFollowed)
+  const setGateMediaFromNonFollowed = useSettingsStore((s) => s.setGateMediaFromNonFollowed)
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
   const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
   const notificationSettings = useSettingsStore((s) => s.notificationSettings)
@@ -411,7 +412,7 @@ function SettingsPage() {
             </div>
             <SettingsSwitch
               checked={linkPreviewsEnabled}
-              onCheckedChange={(checked) => setLinkPreviewsChoice(checked ? 'enabled' : 'disabled')}
+              onCheckedChange={setLinkPreviewsEnabled}
             />
           </div>
           {linkPreviewsEnabled && (
@@ -437,9 +438,20 @@ function SettingsPage() {
               </p>
             </div>
           )}
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Blur Media From People You Don&apos;t Follow</p>
+              <p className="text-sm text-gray-500">Images and link previews from accounts you don&apos;t follow stay hidden behind a blurred placeholder until you tap to reveal them</p>
+            </div>
+            <SettingsSwitch
+              checked={gateMediaFromNonFollowed}
+              onCheckedChange={setGateMediaFromNonFollowed}
+            />
+          </div>
         </div>
       </div>
-      
+
       <div>
         <h3 className="font-semibold mb-4">Direct Messages</h3>
         <div className="flex items-center justify-between">

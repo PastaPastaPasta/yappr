@@ -25,6 +25,10 @@
  *               owner = devnet maker DuqE3zgXprS5zU51YaB4GuGxTRzzukW59XAYKeM6gKGA (seed index 9);
  *               `verify-topology.mjs` passed all 31 checks against it.
  *
+ * The topology file has since relaxed post/reply.mediaUrl to allow ipfs://
+ * (2026-08-29); the registered contracts above predate that and need a fresh
+ * registration before ipfs:// media writes validate.
+ *
  * Devnet is disposable; iterate freely.
  *
  * ## Network

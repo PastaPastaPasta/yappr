@@ -3,8 +3,8 @@
 import { useState, createContext, useContext } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { LinkIcon, SparklesIcon, PlayIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/solid'
-import { useSettingsStore, LinkPreviewChoice } from '@/lib/store'
+import { LinkIcon, PlayIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/solid'
+import { useSettingsStore } from '@/lib/store'
 import { CORS_PROXY_INFO, isDirectImageUrl, isYouTubeUrl } from '@/hooks/use-link-preview'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 
@@ -51,10 +51,10 @@ export function LinkPreviewModalProvider({ children }: { children: React.ReactNo
  */
 function LinkPreviewModal({ onClose }: { onClose: () => void }) {
   const [showDetails, setShowDetails] = useState(false)
-  const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
+  const setLinkPreviewsEnabled = useSettingsStore((s) => s.setLinkPreviewsEnabled)
 
-  const handleChoice = (choice: LinkPreviewChoice) => {
-    setLinkPreviewsChoice(choice)
+  const handleChoice = (enabled: boolean) => {
+    setLinkPreviewsEnabled(enabled)
     onClose()
   }
 
@@ -91,6 +91,9 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
             </p>
             <p>
               To do this, Yappr needs to fetch preview content from the web. In some cases, the service providing the preview may see the URL being viewed.
+            </p>
+            <p>
+              Previews are on by default. You can turn them off here or anytime in Settings.
             </p>
           </div>
 
@@ -189,43 +192,19 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
         {/* Actions */}
         <div className="flex gap-3 p-4 border-t border-neutral-200 dark:border-neutral-700 flex-shrink-0">
           <button
-            onClick={() => handleChoice('disabled')}
+            onClick={() => handleChoice(false)}
             className="flex-1 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-lg transition-colors"
           >
-            Not now
+            Disable previews
           </button>
           <button
-            onClick={() => handleChoice('enabled')}
+            onClick={() => handleChoice(true)}
             className="flex-1 px-4 py-2 text-sm font-medium text-white bg-yappr-500 hover:bg-yappr-600 rounded-lg transition-colors"
           >
             Enable previews
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-/**
- * Prompt shown when user hasn't made a choice about link previews yet.
- * Only shown when linkPreviewsChoice is 'undecided'.
- */
-export function LinkPreviewEnablePrompt() {
-  const { openModal } = useLinkPreviewModal()
-
-  return (
-    <div className="mt-3">
-      <button
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          openModal()
-        }}
-        className="flex items-center gap-1.5 px-3 py-2 text-sm text-yappr-500 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-900/20 hover:bg-yappr-100 dark:hover:bg-yappr-900/30 border border-yappr-200 dark:border-yappr-800 rounded-lg transition-colors"
-      >
-        <SparklesIcon className="h-4 w-4" />
-        <span className="font-medium">Enable link previews</span>
-      </button>
     </div>
   )
 }

@@ -185,8 +185,6 @@ interface NotificationSettings {
   blogPosts: boolean
 }
 
-export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
-
 /**
  * How the viewer wants author-flagged sensitive (NSFW) posts handled:
  * blur = gate behind an opaque warning with a per-post reveal (default),
@@ -196,9 +194,12 @@ export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
 export type SensitiveContentMode = 'blur' | 'show' | 'hide'
 
 interface SettingsState {
-  /** Link preview preference: undecided (show prompt), enabled, or disabled */
-  linkPreviewsChoice: LinkPreviewChoice
-  setLinkPreviewsChoice: (choice: LinkPreviewChoice) => void
+  /** Fetch link previews and post media (opt-out; disabling stops all preview fetches) */
+  linkPreviewsEnabled: boolean
+  setLinkPreviewsEnabled: (enabled: boolean) => void
+  /** Hide media/previews from non-followed authors behind a click-to-reveal placeholder */
+  gateMediaFromNonFollowed: boolean
+  setGateMediaFromNonFollowed: (enabled: boolean) => void
   /** Send read receipts in direct messages */
   sendReadReceipts: boolean
   setSendReadReceipts: (enabled: boolean) => void
@@ -219,8 +220,10 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      linkPreviewsChoice: 'undecided' as LinkPreviewChoice,
-      setLinkPreviewsChoice: (choice) => set({ linkPreviewsChoice: choice }),
+      linkPreviewsEnabled: true, // Opt-out: previews/media fetch by default
+      setLinkPreviewsEnabled: (enabled) => set({ linkPreviewsEnabled: enabled }),
+      gateMediaFromNonFollowed: true, // Media from non-followed authors is blurred until revealed
+      setGateMediaFromNonFollowed: (enabled) => set({ gateMediaFromNonFollowed: enabled }),
       sendReadReceipts: true, // Enabled by default
       setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
       notificationSettings: {
@@ -245,6 +248,17 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: scopedKey('yappr-settings'),
+      version: 1,
+      migrate: (persistedState, version) => {
+        const state = (persistedState ?? {}) as Partial<SettingsState> & { linkPreviewsChoice?: string }
+        if (version === 0) {
+          // v0 stored a tri-state linkPreviewsChoice; only an explicit
+          // 'disabled' opt-out carries over now that previews default on.
+          state.linkPreviewsEnabled = state.linkPreviewsChoice !== 'disabled'
+          delete state.linkPreviewsChoice
+        }
+        return state as SettingsState
+      },
     }
   )
 )

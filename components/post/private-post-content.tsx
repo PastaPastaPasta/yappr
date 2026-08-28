@@ -6,6 +6,7 @@ import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, KeyIcon, ArrowPa
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
 import { PostContent } from './post-content'
+import type { MediaGate } from '@/hooks/use-media-gate'
 import { cn } from '@/lib/utils'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { useAuth } from '@/contexts/auth-context'
@@ -35,6 +36,8 @@ interface PrivatePostContentProps {
   onFailedMentionClick?: (username: string) => void
   /** @deprecated Use authorId instead. This prop is kept for backwards compatibility. */
   onRequestAccess?: () => void
+  /** Follow-gate for external media/previews in teaser and decrypted content */
+  mediaGate?: MediaGate
 }
 
 type DecryptionState =
@@ -129,13 +132,14 @@ interface TeaserProps {
   onFailedHashtagClick?: (hashtag: string) => void
   mentionValidations?: Map<string, MentionValidationStatus>
   onFailedMentionClick?: (username: string) => void
+  mediaGate?: MediaGate
 }
 
 /**
  * Renders the teaser content for private posts.
  * Used across multiple decryption states to avoid prop drilling repetition.
  */
-function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
+function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, mediaGate, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
   if (muted) {
     return (
       <div className="text-gray-500 dark:text-gray-400 text-sm">
@@ -146,6 +150,7 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
           mentionValidations={mentionValidations}
           onFailedMentionClick={onFailedMentionClick}
           disableLinkPreview={disableLinkPreview}
+          mediaGate={mediaGate}
         />
       </div>
     )
@@ -159,6 +164,7 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
       mentionValidations={mentionValidations}
       onFailedMentionClick={onFailedMentionClick}
       disableLinkPreview={disableLinkPreview}
+      mediaGate={mediaGate}
     />
   )
 }
@@ -178,6 +184,7 @@ export function PrivatePostContent({
   onFailedHashtagClick,
   mentionValidations,
   onFailedMentionClick,
+  mediaGate,
 }: PrivatePostContentProps) {
   // Whose CEK this content was encrypted under. For a top-level post that is its
   // author; for a reply it is the ROOT author, because replies inherit the
@@ -225,6 +232,7 @@ export function PrivatePostContent({
     onFailedHashtagClick,
     mentionValidations,
     onFailedMentionClick,
+    mediaGate,
   }
 
   // Attempt follower key recovery using encryption key
@@ -573,6 +581,7 @@ export function PrivatePostContent({
             onFailedHashtagClick={onFailedHashtagClick}
             mentionValidations={mentionValidations}
             onFailedMentionClick={onFailedMentionClick}
+            mediaGate={mediaGate}
           />
         </PrivateContentCard>
       </div>

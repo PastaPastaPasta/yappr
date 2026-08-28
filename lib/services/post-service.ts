@@ -10,6 +10,7 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
+import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 
 export interface PostDocument {
   $id: string;
@@ -250,7 +251,7 @@ class PostService extends BaseDocumentService<Post> {
       media: mediaUrl ? [{
         id: id + '-media',
         type: 'image',
-        url: mediaUrl
+        url: normalizeMediaUrl(mediaUrl)
       }] : undefined,
       // Expose IDs for lazy loading at component level
       quotedPostId: quotedPostId || undefined,
@@ -421,6 +422,11 @@ class PostService extends BaseDocumentService<Post> {
     data.language = options.language || 'en';
 
     // Add optional fields (use contract field names)
+    if (options.mediaUrl && options.encryption) {
+      // A plaintext mediaUrl on an encrypted post would leak the private media
+      // reference; callers must keep it inside the encrypted content instead.
+      throw new Error('mediaUrl cannot be combined with encryption');
+    }
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedReplyId) data.quotedReplyId = identifierStringToDocumentBytes(options.quotedReplyId);

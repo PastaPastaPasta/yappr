@@ -10,6 +10,7 @@ import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { useSettingsStore } from '@/lib/store'
+import { useMediaGate } from '@/hooks/use-media-gate'
 
 export interface EmbeddedPostCardProps {
   post: Post
@@ -25,6 +26,9 @@ const EMBED_CONTAINER_CLASS = 'mt-3 block border border-gray-200 dark:border-gra
 export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps) {
   const createdAtLabel = useRelativeTime(post.createdAt)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  // Quoted authors have no enrichment hint here; the shared follow cache and
+  // own-post check still lift the gate, otherwise media is click-to-reveal.
+  const mediaGate = useMediaGate(post.author.id)
   if (isQuotedPostPrivate(post)) {
     return <PrivateQuotedPostContent quotedPost={post} className={className} />
   }
@@ -55,7 +59,7 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
         <span>{createdAtLabel}</span>
       </div>
       <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
-        <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed />
+        <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed mediaGate={mediaGate} />
       </SensitiveContentGate>
     </Link>
   )

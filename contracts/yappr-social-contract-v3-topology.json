@@ -572,10 +572,10 @@
         },
         "mediaUrl": {
           "type": "string",
-          "pattern": "^https?://.+$",
+          "pattern": "^(https?|ipfs)://.+$",
           "position": 1,
           "maxLength": 512,
-          "description": "URL to media file (temporary field - will support multiple media in future)"
+          "description": "URL to media file, https or ipfs (temporary field - will support multiple media in future)"
         },
         "quotedPostId": {
           "type": "array",
@@ -1144,10 +1144,10 @@
         },
         "mediaUrl": {
           "type": "string",
-          "pattern": "^https?://.+$",
+          "pattern": "^(https?|ipfs)://.+$",
           "position": 1,
           "maxLength": 512,
-          "description": "URL to media file"
+          "description": "URL to media file, https or ipfs"
         },
         "rootPostId": {
           "type": "array",

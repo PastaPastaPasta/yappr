@@ -4,7 +4,6 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
 import { motion } from 'framer-motion'
 import {
   ChatBubbleOvalLeftIcon,
@@ -46,6 +45,8 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { categorizeError, isFrozenBalanceError } from '@/lib/error-utils'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
+import { useMediaGate } from '@/hooks/use-media-gate'
+import { GatedPostMedia } from './gated-media'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
 import { useMentionValidation } from '@/hooks/use-mention-validation'
@@ -332,6 +333,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id, {
     initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
   })
+
+  // Follow-gates this card's media/previews. Only trust useFollow's value once
+  // it has settled (its state defaults to false while loading), so a followed
+  // author isn't flashed as gated and a Follow tap ungates immediately.
+  const mediaGate = useMediaGate(
+    post.author.id,
+    progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing ?? (followLoading ? undefined : isFollowing)
+  )
 
   // Check if user can reply to private posts (PRD §5.5)
   // For replies, check access against root post owner, not the reply author
@@ -827,6 +836,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 onFailedHashtagClick={handleFailedHashtagClick}
                 mentionValidations={mentionValidations}
                 onFailedMentionClick={handleFailedMentionClick}
+                mediaGate={mediaGate}
               />
             ) : displayContent ? (
               <PostContent
@@ -836,6 +846,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 onFailedHashtagClick={handleFailedHashtagClick}
                 mentionValidations={mentionValidations}
                 onFailedMentionClick={handleFailedMentionClick}
+                mediaGate={mediaGate}
               />
             ) : null}
 
@@ -876,12 +887,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       post.media && post.media.length === 3 && index === 0 && 'row-span-2'
                     )}
                   >
-                    <Image
-                      src={media.url}
-                      alt={media.alt || ''}
-                      fill
-                      className="object-cover"
-                    />
+                    <GatedPostMedia media={media} gate={mediaGate} />
                   </div>
                 ))}
               </div>
