@@ -145,7 +145,7 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
           following: 0,
           verified: false,
           joinedAt: new Date(0),
-          hasDpns: username ? true : undefined,
+          hasDpns: Boolean(username),
         },
         content: blogPost.subtitle || blogPost.title,
         createdAt: blogPost.createdAt,

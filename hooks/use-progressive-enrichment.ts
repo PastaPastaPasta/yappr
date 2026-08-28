@@ -76,6 +76,7 @@ interface UseProgressiveEnrichmentResult {
   getPostEnrichment: (post: Post) => {
     username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
     displayName: string | undefined
+    profileLoaded: boolean  // true once the profile query resolved, even for authors with no profile
     avatarUrl: string | undefined
     stats: PostStats | undefined
     interactions: UserInteractions | undefined
@@ -164,6 +165,19 @@ export function useProgressiveEnrichment(
 
     // Priority 1: Profiles (display names)
     const profilePromise = unifiedProfileService.getProfilesByIdentityIds(authorIds)
+    // Seed queried authors that have no entry yet, so consumers can
+    // distinguish "loaded, no profile" (empty entry) from "still loading"
+    // (no entry) without clobbering profiles from earlier batches
+    const seedMissingAuthors = (profiles: Map<string, ProfileData>): Map<string, ProfileData> => {
+      const seeded = new Map(profiles)
+      for (const id of authorIds) {
+        if (!seeded.has(id)) {
+          seeded.set(id, {})
+        }
+      }
+      return seeded
+    }
+
     profilePromise.then(profiles => {
       if (!isValid()) return
       const profileMap = new Map<string, ProfileData>()
@@ -181,9 +195,18 @@ export function useProgressiveEnrichment(
       }
       setEnrichmentState(prev => ({
         ...prev,
-        profiles: mergeMaps(prev.profiles, profileMap)
+        profiles: seedMissingAuthors(mergeMaps(prev.profiles, profileMap))
       }))
-    }).catch(err => logger.error('Progressive enrichment: profiles failed', err))
+    }).catch(err => {
+      logger.error('Progressive enrichment: profiles failed', err)
+      if (!isValid()) return
+      // Mark the authors as loaded so cards fall back to identity display
+      // instead of showing a loading skeleton forever
+      setEnrichmentState(prev => ({
+        ...prev,
+        profiles: seedMissingAuthors(prev.profiles)
+      }))
+    })
 
     // Priority 2: Avatars
     const avatarPromise = unifiedProfileService.getAvatarUrlsBatch(authorIds)
@@ -284,6 +307,7 @@ export function useProgressiveEnrichment(
     return {
       username,
       displayName: enrichmentState.profiles.get(authorId)?.displayName,
+      profileLoaded: enrichmentState.profiles.has(authorId),
       avatarUrl: enrichmentState.avatars.get(authorId),
       stats: enrichmentState.stats.get(postId),
       interactions: enrichmentState.interactions.get(postId),
