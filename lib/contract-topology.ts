@@ -125,9 +125,17 @@ const POST_INTERACTIONS: InteractionSurface = {
   replyCountField: 'parentId',
 }
 
-/** v3's post surface: same engagement doctypes, thread-wide reply count. */
+/**
+ * v3's post surface: same engagement doctypes, thread-wide reply count — and an
+ * OWNER-FIRST like index. The v3 contract declares `like.ownerAndPost` as
+ * `[$ownerId, postId]` (v2's `postAndOwner` was `[postId, $ownerId]`), which is
+ * what lets `queryOwnedPostIds` batch the whole "did I like these?" page into
+ * one `in` query instead of a per-target fan-out. Uniqueness is order-
+ * independent; likers listings ride `byPost`; see PLAN_CONTRACT_V3_TOPOLOGY.md.
+ */
 const V3_POST_INTERACTIONS: InteractionSurface = {
   ...POST_INTERACTIONS,
+  like: { ...POST_INTERACTIONS.like, ownerFirst: true },
   replyCountField: 'rootPostId',
 }
 
@@ -152,7 +160,7 @@ const V3_DESCRIPTOR: ContractTopologyDescriptor = {
   interactions: {
     post: V3_POST_INTERACTIONS,
     reply: {
-      like: { docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: 'replyOwnerId' },
+      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyOwnerId' },
       repost: null,
       bookmark: null,
       quoteField: 'quotedReplyId',
