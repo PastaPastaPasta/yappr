@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { useSettingsStore } from '@/lib/store'
+import { filterHiddenSensitive } from '@/lib/sensitive-content'
 
 function MentionsPageContent() {
   const router = useRouter()
@@ -24,6 +25,7 @@ function MentionsPageContent() {
   const userId = searchParams.get('user')
   const { user: currentUser } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -183,7 +185,7 @@ function MentionsPageContent() {
                 </p>
               </div>
             ) : (
-              posts.map((post, index) => (
+              filterHiddenSensitive(posts, sensitiveContentMode, currentUser?.identityId).map((post, index) => (
                 <motion.div
                   key={post.id}
                   initial={{ opacity: 0, y: 20 }}

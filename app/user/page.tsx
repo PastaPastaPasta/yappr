@@ -19,6 +19,7 @@ import {
   UserPlusIcon,
   LockClosedIcon,
   CheckIcon,
+  EyeSlashIcon,
 } from '@heroicons/react/24/outline'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -52,6 +53,7 @@ import { cn } from '@/lib/utils'
 import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 import { UsernameModal } from '@/components/dpns/username-modal'
 import { useSettingsStore } from '@/lib/store'
+import { filterHiddenSensitive } from '@/lib/sensitive-content'
 
 interface ProfileData {
   displayName: string
@@ -142,6 +144,7 @@ function UserProfileContent() {
   const { user: currentUser, logout } = useAuth()
   const { requireAuth } = useRequireAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const isOwnProfile = currentUser?.identityId === userId
 
@@ -152,6 +155,11 @@ function UserProfileContent() {
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isFollowing, setIsFollowing] = useState(false)
+  // NSFW-profile interstitial acknowledgement — per visit, not persisted.
+  const [nsfwAcknowledged, setNsfwAcknowledged] = useState(false)
+  useEffect(() => {
+    setNsfwAcknowledged(false)
+  }, [userId])
   const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
   const [profileDocumentMissing, setProfileDocumentMissing] = useState(false)
@@ -1005,6 +1013,31 @@ function UserProfileContent() {
               <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
             </div>
           </div>
+        ) : Boolean(profile?.nsfw) && !isOwnProfile && sensitiveContentMode !== 'show' && !nsfwAcknowledged ? (
+          // NSFW-profile interstitial: consent screen before any profile
+          // content renders. Applies in both 'blur' and 'hide' modes — hiding
+          // is a browsing preference, and navigating here is deliberate, so a
+          // warning beats a dead end. Viewers who chose 'show' skip it.
+          <div
+            data-testid="nsfw-interstitial"
+            className="flex flex-col items-center justify-center gap-4 px-8 py-24 text-center"
+          >
+            <EyeSlashIcon className="h-12 w-12 text-gray-400" />
+            <div>
+              <h2 className="text-xl font-semibold mb-1">This profile may contain adult content</h2>
+              <p className="text-sm text-gray-500">
+                {profile?.displayName || 'This user'} marked their profile as containing sensitive content.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" onClick={() => router.back()}>
+                Go back
+              </Button>
+              <Button data-testid="nsfw-interstitial-view" onClick={() => setNsfwAcknowledged(true)}>
+                View profile
+              </Button>
+            </div>
+          </div>
         ) : (
           <>
             {/* Banner */}
@@ -1637,7 +1670,7 @@ function UserProfileContent() {
                     </div>
                   ) : (
                     <div>
-                      {filteredPosts.map((post) => (
+                      {filterHiddenSensitive(filteredPosts, sensitiveContentMode, currentUser?.identityId).map((post) => (
                         <PostCard
                           key={post.id}
                           post={post}
@@ -1676,7 +1709,7 @@ function UserProfileContent() {
                   </div>
                 ) : (
                   <div>
-                    {mentions.map((post) => (
+                    {filterHiddenSensitive(mentions, sensitiveContentMode, currentUser?.identityId).map((post) => (
                       <PostCard
                         key={post.id}
                         post={post}

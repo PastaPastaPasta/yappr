@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
@@ -33,6 +34,7 @@ export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
@@ -324,7 +326,7 @@ export default function ExplorePage() {
                             </h3>
                           </div>
                         )}
-                        {searchResults.map((post) => <PostCard key={post.id} post={post} />)}
+                        {filterHiddenSensitive(searchResults, sensitiveContentMode, user?.identityId).map((post) => <PostCard key={post.id} post={post} />)}
                       </div>
                     )}
                   </>

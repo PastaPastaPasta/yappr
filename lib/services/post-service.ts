@@ -257,6 +257,7 @@ class PostService extends BaseDocumentService<Post> {
       quotedPostOwnerId: quotedPostOwnerId || undefined,
       quotedReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
+      sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
       ...embed,
       // Private feed fields
       encryptedContent,

@@ -84,6 +84,10 @@ export function ComposeModal() {
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  // Author-declared sensitive flag for the top-level post being composed.
+  // Replies are never individually flagged, and in a thread only the first
+  // item is a post — so one toggle covers the whole composer.
+  const [markSensitive, setMarkSensitive] = useState(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
   const teaserTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -180,6 +184,34 @@ export function ComposeModal() {
         }
       }
       checkPrivateFeed().catch(err => logger.error('Failed to check private feed:', err))
+    }
+  }, [isComposeOpen, user])
+
+  // Seed the sensitive toggle from the composer's own profile flag when the
+  // modal opens — an author who marked their profile NSFW almost always wants
+  // their posts flagged too. Only on the open transition, so a manual uncheck
+  // is never fought mid-compose.
+  useEffect(() => {
+    if (!isComposeOpen) return
+    if (!user) {
+      setMarkSensitive(false)
+      return
+    }
+    let cancelled = false
+    const seedFromProfile = async () => {
+      try {
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+        const profile = await unifiedProfileService.getProfile(user.identityId)
+        if (!cancelled) {
+          setMarkSensitive(profile?.nsfw === true)
+        }
+      } catch {
+        // No profile (or lookup failed) — leave the toggle off.
+      }
+    }
+    seedFromProfile().catch(() => {})
+    return () => {
+      cancelled = true
     }
   }, [isComposeOpen, user])
 
@@ -796,6 +828,7 @@ export function ComposeModal() {
                 ...(i === 0 ? quoteFields : {}),
                 embed: i === 0 ? quoteEmbed ?? postEmbed : undefined,
                 encryption: encryptionOptions,
+                sensitive: markSensitive || undefined,
               })
               const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
               return { postId: post.id, document: post, isReply: false, confirmed }
@@ -1133,6 +1166,7 @@ export function ComposeModal() {
     setQuotingPost(null)
     resetThreadPosts()
     setShowPreview(false)
+    setMarkSensitive(false)
     setPostingProgress(null)
   }
 
@@ -1198,6 +1232,25 @@ export function ComposeModal() {
                             disabled={isPosting}
                             onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
                           />
+                        )}
+                        {/* Sensitive toggle — replies are never individually
+                            flagged, so it only shows for top-level posts */}
+                        {!replyingTo && (
+                          <button
+                            type="button"
+                            data-testid="sensitive-toggle"
+                            onClick={() => setMarkSensitive(!markSensitive)}
+                            disabled={isPosting}
+                            title="Mark this post as sensitive content"
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                              markSensitive
+                                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                          >
+                            <ExclamationTriangleIcon className="w-3.5 h-3.5" />
+                            Sensitive
+                          </button>
                         )}
                       </div>
 

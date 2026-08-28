@@ -46,7 +46,7 @@ import { ModerationSettings } from '@/components/settings/moderation-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
-import { useSettingsStore } from '@/lib/store'
+import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
@@ -106,6 +106,8 @@ function SettingsPage() {
   const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
   const feedLanguage = useSettingsStore((s) => s.feedLanguage)
   const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const setSensitiveContentMode = useSettingsStore((s) => s.setSensitiveContentMode)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -444,6 +446,43 @@ function SettingsPage() {
             onCheckedChange={setSendReadReceipts}
           />
         </div>
+      </div>
+
+      {/* Sensitive Content Section */}
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-1">Sensitive Content</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          How to handle posts their author flagged as sensitive
+        </p>
+        <RadioGroup.Root
+          value={sensitiveContentMode}
+          onValueChange={(value) => setSensitiveContentMode(value as SensitiveContentMode)}
+          className="space-y-2"
+        >
+          {([
+            { value: 'blur', label: 'Warn first', description: 'Cover sensitive posts until you choose to show them' },
+            { value: 'show', label: 'Always show', description: 'Show sensitive posts without a warning' },
+            { value: 'hide', label: 'Hide', description: 'Remove sensitive posts from your feeds' },
+          ] as const).map((option) => (
+            <div key={option.value} className="relative">
+              <RadioGroup.Item
+                value={option.value}
+                id={`sensitive-mode-${option.value}`}
+                data-testid={`sensitive-mode-${option.value}`}
+                className="peer sr-only"
+              />
+              <label
+                htmlFor={`sensitive-mode-${option.value}`}
+                className="flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
+              >
+                <div>
+                  <p className="font-medium">{option.label}</p>
+                  <p className="text-sm text-gray-500">{option.description}</p>
+                </div>
+              </label>
+            </div>
+          ))}
+        </RadioGroup.Root>
       </div>
 
       {/* Block Lists Section */}

@@ -24,7 +24,7 @@ import { formatNumber } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { IconButton } from '@/components/ui/icon-button'
 import { cn } from '@/lib/utils'
-import { useAppStore } from '@/lib/store'
+import { useAppStore, useSettingsStore } from '@/lib/store'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -34,6 +34,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
+import { SensitiveContentGate, isSensitivePost } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { PollCard } from '@/components/poll/poll-card'
@@ -172,6 +173,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // media), not just the plain-content one, or a freshly tombstoned card keeps
   // exposing its former attachments until fresh Platform data arrives.
   const isTombstoned = Boolean(post.deleted) || locallyTombstoned
+
+  // Author-flagged sensitive content gets an opaque gate over the whole
+  // content region. Like the tombstone flag above, it must beat EVERY content
+  // branch (tip text, poll, quote, media, link previews), so the gate wraps
+  // the full region rather than any single branch. 'hide' filtering is the
+  // list's job — on detail/thread surfaces 'hide' behaves like 'blur'.
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const gateSensitive = !isTombstoned && isSensitivePost(post) && sensitiveContentMode !== 'show'
 
   // Use progressive enrichment data when available, fall back to post._enrichment (old path)
   const legacyEnrichment = post._enrichment
@@ -777,104 +786,106 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Tip post - show tip badge with recipient and message */}
           {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
-          {isTombstoned ? (
-            <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">
-              {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
-            </p>
-          ) : isTipPost ? (
-            <div className="mt-2">
-              <Tooltip.Provider>
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium mb-2 cursor-help">
-                      <CurrencyDollarIcon className="h-4 w-4" />
-                      <span>
-                        Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
-                      </span>
-                    </div>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                      sideOffset={5}
-                    >
-                      Unverified - awaiting SDK support
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-              </Tooltip.Provider>
-              {tipInfo.message && (
-                <PostContent content={tipInfo.message} className="mt-1" />
-              )}
-            </div>
-          ) : isPrivatePost(post) ? (
-            <PrivatePostContent
-              post={post}
-              rootPostOwnerId={rootPostOwnerId}
-              className="mt-1"
-              hashtagValidations={hashtagValidations}
-              onFailedHashtagClick={handleFailedHashtagClick}
-              mentionValidations={mentionValidations}
-              onFailedMentionClick={handleFailedMentionClick}
-            />
-          ) : displayContent ? (
-            <PostContent
-              content={displayContent}
-              className="mt-1"
-              hashtagValidations={hashtagValidations}
-              onFailedHashtagClick={handleFailedHashtagClick}
-              mentionValidations={mentionValidations}
-              onFailedMentionClick={handleFailedMentionClick}
-            />
-          ) : null}
+          <SensitiveContentGate postId={post.id} active={gateSensitive}>
+            {isTombstoned ? (
+              <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">
+                {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
+              </p>
+            ) : isTipPost ? (
+              <div className="mt-2">
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium mb-2 cursor-help">
+                        <CurrencyDollarIcon className="h-4 w-4" />
+                        <span>
+                          Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}
+                        </span>
+                      </div>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                        sideOffset={5}
+                      >
+                        Unverified - awaiting SDK support
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+                {tipInfo.message && (
+                  <PostContent content={tipInfo.message} className="mt-1" />
+                )}
+              </div>
+            ) : isPrivatePost(post) ? (
+              <PrivatePostContent
+                post={post}
+                rootPostOwnerId={rootPostOwnerId}
+                className="mt-1"
+                hashtagValidations={hashtagValidations}
+                onFailedHashtagClick={handleFailedHashtagClick}
+                mentionValidations={mentionValidations}
+                onFailedMentionClick={handleFailedMentionClick}
+              />
+            ) : displayContent ? (
+              <PostContent
+                content={displayContent}
+                className="mt-1"
+                hashtagValidations={hashtagValidations}
+                onFailedHashtagClick={handleFailedHashtagClick}
+                mentionValidations={mentionValidations}
+                onFailedMentionClick={handleFailedMentionClick}
+              />
+            ) : null}
 
-          {/* Native poll (Pollr contract) — suppressed on tombstones */}
-          {!isTombstoned && embeddedPollId && !isPrivatePost(post) && (
-            <PollCard
-              pollId={embeddedPollId}
-              postContent={displayContent}
-              postAuthorId={post.author.id}
-            />
-          )}
+            {/* Native poll (Pollr contract) — suppressed on tombstones */}
+            {!isTombstoned && embeddedPollId && !isPrivatePost(post) && (
+              <PollCard
+                pollId={embeddedPollId}
+                postContent={displayContent}
+                postAuthorId={post.author.id}
+              />
+            )}
 
-          {/* Quoted post - show skeleton while loading, then actual content.
-              Either quote field may hold the reference (v3 splits them). */}
-          {!isTombstoned && (post.quotedPostId || post.quotedReplyId) && !post.quotedPost && (
-            <EmbeddedPostSkeleton />
-          )}
+            {/* Quoted post - show skeleton while loading, then actual content.
+                Either quote field may hold the reference (v3 splits them). */}
+            {!isTombstoned && (post.quotedPostId || post.quotedReplyId) && !post.quotedPost && (
+              <EmbeddedPostSkeleton />
+            )}
 
-          {!isTombstoned && post.quotedPost && (
-            isEmbeddedBlogPostLike(post.quotedPost)
-              ? <EmbeddedBlogPostCard post={post.quotedPost} />
-              : <EmbeddedPostCard post={post.quotedPost} />
-          )}
+            {!isTombstoned && post.quotedPost && (
+              isEmbeddedBlogPostLike(post.quotedPost)
+                ? <EmbeddedBlogPostCard post={post.quotedPost} />
+                : <EmbeddedPostCard post={post.quotedPost} />
+            )}
 
-          {!isTombstoned && post.media && post.media.length > 0 && (
-            <div className={cn(
-              'mt-3 grid gap-1 rounded-xl overflow-hidden',
-              post.media.length === 1 && 'grid-cols-1',
-              post.media.length === 2 && 'grid-cols-2',
-              post.media.length === 3 && 'grid-cols-2',
-              post.media.length >= 4 && 'grid-cols-2'
-            )}>
-              {post.media.map((media, index) => (
-                <div
-                  key={media.id}
-                  className={cn(
-                    'relative aspect-video bg-gray-100 dark:bg-gray-900',
-                    post.media && post.media.length === 3 && index === 0 && 'row-span-2'
-                  )}
-                >
-                  <Image
-                    src={media.url}
-                    alt={media.alt || ''}
-                    fill
-                    className="object-cover"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+            {!isTombstoned && post.media && post.media.length > 0 && (
+              <div className={cn(
+                'mt-3 grid gap-1 rounded-xl overflow-hidden',
+                post.media.length === 1 && 'grid-cols-1',
+                post.media.length === 2 && 'grid-cols-2',
+                post.media.length === 3 && 'grid-cols-2',
+                post.media.length >= 4 && 'grid-cols-2'
+              )}>
+                {post.media.map((media, index) => (
+                  <div
+                    key={media.id}
+                    className={cn(
+                      'relative aspect-video bg-gray-100 dark:bg-gray-900',
+                      post.media && post.media.length === 3 && index === 0 && 'row-span-2'
+                    )}
+                  >
+                    <Image
+                      src={media.url}
+                      alt={media.alt || ''}
+                      fill
+                      className="object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </SensitiveContentGate>
 
           <div className="flex items-center justify-between mt-3 -ml-2">
             <Tooltip.Provider>

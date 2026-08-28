@@ -15,6 +15,7 @@ import { hashtagService } from '@/lib/services/hashtag-service'
 import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link'
@@ -25,6 +26,7 @@ function HashtagPageContent() {
   const tag = searchParams.get('tag') || ''
   const { user } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -167,7 +169,7 @@ function HashtagPageContent() {
                 <LegacyYapprLink />
               </div>
             ) : (
-              posts.map((post, index) => (
+              filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId).map((post, index) => (
                 <motion.div
                   key={post.id}
                   initial={{ opacity: 0, y: 20 }}

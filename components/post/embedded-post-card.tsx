@@ -7,6 +7,8 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { PostContent } from './post-content'
 import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
+import { SensitiveContentGate, isSensitivePost } from './sensitive-content-gate'
+import { useSettingsStore } from '@/lib/store'
 
 export interface EmbeddedPostCardProps {
   post: Post
@@ -21,9 +23,14 @@ const EMBED_CONTAINER_CLASS = 'mt-3 block border border-gray-200 dark:border-gra
 
 export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps) {
   const createdAtLabel = useRelativeTime(post.createdAt)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   if (isQuotedPostPrivate(post)) {
     return <PrivateQuotedPostContent quotedPost={post} className={className} />
   }
+
+  // A quote of a sensitive post gates the inner content independently of the
+  // quoting card — the mini author row stays visible, the content does not.
+  const gateSensitive = isSensitivePost(post) && sensitiveContentMode !== 'show'
 
   return (
     <Link
@@ -46,7 +53,9 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
         <span>·</span>
         <span>{createdAtLabel}</span>
       </div>
-      <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed />
+      <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
+        <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed />
+      </SensitiveContentGate>
     </Link>
   )
 }

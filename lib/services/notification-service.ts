@@ -519,7 +519,8 @@ class NotificationService {
           views: 0,
           liked: false,
           reposted: false,
-          bookmarked: false
+          bookmarked: false,
+          sensitive: (docData.sensitive ?? nestedData?.sensitive) === true ? true : undefined
         };
         result.set(id, post);
         foundPostIds.add(id);

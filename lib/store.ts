@@ -187,6 +187,14 @@ interface NotificationSettings {
 
 export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
 
+/**
+ * How the viewer wants author-flagged sensitive (NSFW) posts handled:
+ * blur = gate behind an opaque warning with a per-post reveal (default),
+ * show = never gate, hide = remove from list feeds entirely (detail pages,
+ * threads and bookmarks still show the gate so conversations keep their shape).
+ */
+export type SensitiveContentMode = 'blur' | 'show' | 'hide'
+
 interface SettingsState {
   /** Link preview preference: undecided (show prompt), enabled, or disabled */
   linkPreviewsChoice: LinkPreviewChoice
@@ -203,6 +211,9 @@ interface SettingsState {
   /** Preferred language for the For You feed */
   feedLanguage: string
   setFeedLanguage: (language: string) => void
+  /** How to treat posts the author flagged as sensitive */
+  sensitiveContentMode: SensitiveContentMode
+  setSensitiveContentMode: (mode: SensitiveContentMode) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -229,6 +240,8 @@ export const useSettingsStore = create<SettingsState>()(
       setPotatoMode: (enabled) => set({ potatoMode: enabled }),
       feedLanguage: 'en', // Default to English
       setFeedLanguage: (language) => set({ feedLanguage: language }),
+      sensitiveContentMode: 'blur' as SensitiveContentMode,
+      setSensitiveContentMode: (mode) => set({ sensitiveContentMode: mode }),
     }),
     {
       name: scopedKey('yappr-settings'),

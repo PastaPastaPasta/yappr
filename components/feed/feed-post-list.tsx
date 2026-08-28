@@ -5,6 +5,9 @@ import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
 import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link';
 import { PostCard } from '@/components/post/post-card';
+import { useSettingsStore } from '@/lib/store';
+import { useAuth } from '@/contexts/auth-context';
+import { filterHiddenSensitive } from '@/lib/sensitive-content';
 
 interface FeedPostListProps {
   posts: Post[] | null;
@@ -44,6 +47,12 @@ export function FeedPostList({
   onPostDelete,
   getPostEnrichment,
 }: FeedPostListProps) {
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode);
+  const { user } = useAuth();
+  // 'hide' filters at render time so pagination cursors stay untouched — a
+  // short page is fine, a broken cursor is not.
+  const visiblePosts = posts && filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId);
+
   return (
     <ErrorBoundary level="component">
       {pendingNewPosts.length > 0 && (
@@ -70,7 +79,7 @@ export function FeedPostList({
         emptyAction={<LegacyYapprLink />}
       >
         <div data-testid="feed-post-list">
-          {posts?.map((post) => (
+          {visiblePosts?.map((post) => (
             <ErrorBoundary key={post.id} level="component">
               <PostCard
                 post={post}
