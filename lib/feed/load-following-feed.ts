@@ -142,7 +142,10 @@ export async function loadFollowingFeed(options: {
 
             for (const repost of canonicalReposts) {
               const originalPost = repostedPostMap.get(repost.postId);
-              if (originalPost && !existingPostIds.has(repost.postId)) {
+              // Repost documents outlive a tombstoned target (reposts are
+              // deletable, targets are not) — skip deleted targets here just
+              // like the direct-timeline filter above does.
+              if (originalPost && !originalPost.deleted && !existingPostIds.has(repost.postId)) {
                 existingPostIds.add(repost.postId);
                 const reposterProfile = reposterProfiles.get(repost.reposterId);
 

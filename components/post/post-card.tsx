@@ -165,6 +165,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Set after this card's own document was tombstoned this session, so the
   // deleted state renders in place even when no parent list removes the card.
   const [locallyTombstoned, setLocallyTombstoned] = useState(false)
+  // Single source of truth for "this card's document is a tombstone" — the
+  // deleted paragraph must beat EVERY content branch (tip text, poll, quote,
+  // media), not just the plain-content one, or a freshly tombstoned card keeps
+  // exposing its former attachments until fresh Platform data arrives.
+  const isTombstoned = Boolean(post.deleted) || locallyTombstoned
 
   // Use progressive enrichment data when available, fall back to post._enrichment (old path)
   const legacyEnrichment = post._enrichment
@@ -765,7 +770,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Tip post - show tip badge with recipient and message */}
           {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
-          {isTipPost ? (
+          {isTombstoned ? (
+            <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">
+              {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
+            </p>
+          ) : isTipPost ? (
             <div className="mt-2">
               <Tooltip.Provider>
                 <Tooltip.Root>
@@ -791,10 +800,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 <PostContent content={tipInfo.message} className="mt-1" />
               )}
             </div>
-          ) : (post.deleted || locallyTombstoned) ? (
-            <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">
-              {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
-            </p>
           ) : isPrivatePost(post) ? (
             <PrivatePostContent
               post={post}
@@ -816,8 +821,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             />
           ) : null}
 
-          {/* Native poll (Pollr contract) */}
-          {embeddedPollId && !isPrivatePost(post) && (
+          {/* Native poll (Pollr contract) — suppressed on tombstones */}
+          {!isTombstoned && embeddedPollId && !isPrivatePost(post) && (
             <PollCard
               pollId={embeddedPollId}
               postContent={displayContent}
@@ -827,17 +832,17 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Quoted post - show skeleton while loading, then actual content.
               Either quote field may hold the reference (v3 splits them). */}
-          {(post.quotedPostId || post.quotedReplyId) && !post.quotedPost && (
+          {!isTombstoned && (post.quotedPostId || post.quotedReplyId) && !post.quotedPost && (
             <EmbeddedPostSkeleton />
           )}
 
-          {post.quotedPost && (
+          {!isTombstoned && post.quotedPost && (
             isEmbeddedBlogPostLike(post.quotedPost)
               ? <EmbeddedBlogPostCard post={post.quotedPost} />
               : <EmbeddedPostCard post={post.quotedPost} />
           )}
 
-          {post.media && post.media.length > 0 && (
+          {!isTombstoned && post.media && post.media.length > 0 && (
             <div className={cn(
               'mt-3 grid gap-1 rounded-xl overflow-hidden',
               post.media.length === 1 && 'grid-cols-1',
