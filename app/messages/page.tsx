@@ -20,6 +20,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
 import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
+import { getPrimaryUsername } from '@/lib/utils/username'
 import { base58ToBytes } from '@/lib/services/sdk-helpers'
 import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
@@ -435,20 +436,23 @@ function MessagesPage() {
         // Create profile map
         const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
 
-        // Build results, grouping by owner
-        const seenOwners = new Set<string>()
-        const results: UserSearchResult[] = []
-
+        // Group matched names by owner to handle multiple names per owner
+        const ownerToNames = new Map<string, string[]>()
         for (const dpnsResult of dpnsResults) {
           if (!dpnsResult.ownerId || dpnsResult.ownerId === user?.identityId) continue
-          if (seenOwners.has(dpnsResult.ownerId)) continue
-          seenOwners.add(dpnsResult.ownerId)
+          const names = ownerToNames.get(dpnsResult.ownerId) || []
+          names.push(dpnsResult.username)
+          ownerToNames.set(dpnsResult.ownerId, names)
+        }
 
-          const profile = profileMap.get(dpnsResult.ownerId)
-          const username = dpnsResult.username.replace(/\.dash$/, '')
+        // Build results (one per unique owner, picking the best matched name)
+        const results: UserSearchResult[] = []
+        for (const [ownerId, names] of Array.from(ownerToNames.entries())) {
+          const profile = profileMap.get(ownerId)
+          const username = (getPrimaryUsername(names) ?? names[0]).replace(/\.dash$/, '')
 
           results.push({
-            id: dpnsResult.ownerId,
+            id: ownerId,
             username,
             displayName: profile?.displayName || username,
             bio: profile?.bio

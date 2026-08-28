@@ -12,6 +12,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { getPrimaryUsername } from '@/lib/utils/username'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
 import { useSettingsStore } from '@/lib/store'
@@ -156,22 +157,19 @@ function SearchPageContent() {
         }
       })
 
-      // Build results
-      const results: UserResult[] = await Promise.all(
-        Array.from(ownerToNames.entries()).map(async ([ownerId, names]) => {
-          const profile = profileMap.get(ownerId)
-          const profileData = (profile as any)?.data || profile
-          const sortedNames = await dpnsService.sortUsernamesByContested(names)
-          const primaryUsername = sortedNames[0]
+      // Build results, picking the best matched name via the canonical ordering
+      const results: UserResult[] = Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
+        const profile = profileMap.get(ownerId)
+        const profileData = (profile as any)?.data || profile
+        const primaryUsername = getPrimaryUsername(names) ?? names[0]
 
-          return {
-            id: ownerId,
-            username: primaryUsername,
-            displayName: profileData?.displayName || primaryUsername,
-            bio: profileData?.bio
-          }
-        })
-      )
+        return {
+          id: ownerId,
+          username: primaryUsername,
+          displayName: profileData?.displayName || primaryUsername,
+          bio: profileData?.bio
+        }
+      })
 
       return results
     } catch (error) {
