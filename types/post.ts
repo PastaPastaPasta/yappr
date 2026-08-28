@@ -126,7 +126,8 @@ export interface ReplyThread {
   content: Reply                // The reply (could be nested)
   isAuthorThread: boolean       // true if same author as main post
   isThreadContinuation: boolean // true if continues previous author reply
-  nestedReplies: ReplyThread[]  // 2nd level replies (depth limited)
+  nestedReplies: ReplyThread[]  // deeper replies, capped at MAX_NESTED_DEPTH levels
+  hiddenReplyCount?: number     // known descendants past the depth cap (reachable via "Continue thread")
 }
 
 export interface Comment {

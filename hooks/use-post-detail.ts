@@ -58,57 +58,125 @@ interface UsePostDetailResult {
 const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
 
 /**
+ * Nesting levels rendered inline below a top-level reply. Its children (level 1)
+ * indent once and level 2 renders flattened at that same indent; anything deeper
+ * is reachable through the "Continue thread" row instead of being rendered.
+ */
+const MAX_NESTED_DEPTH = 2
+
+/**
+ * Count the descendants of a reply that the tree will not render, so the
+ * "Continue thread" row can say how much lies past the cut. Excluded ids
+ * (author-thread posts hoisted to the top level) are neither counted nor
+ * descended into — they and their subtrees are already visible elsewhere.
+ */
+function countHiddenDescendants(
+  rootId: string,
+  childrenOf: Map<string, Reply[]>,
+  exclude: Set<string>
+): number {
+  let count = 0
+  const visited = new Set<string>([rootId])
+  const stack = [rootId]
+  for (let id = stack.pop(); id !== undefined; id = stack.pop()) {
+    for (const child of childrenOf.get(id) ?? []) {
+      if (exclude.has(child.id) || visited.has(child.id)) continue
+      visited.add(child.id)
+      count++
+      stack.push(child.id)
+    }
+  }
+  return count
+}
+
+/**
+ * Build the nested subtree under one reply, recursing down to MAX_NESTED_DEPTH.
+ * A node at the cap that still has known children records them as
+ * `hiddenReplyCount` instead. On v2 `childrenOf` only holds one level, so the
+ * recursion naturally stops early and hidden counts stay 0 — the renderer falls
+ * back to enrichment counts there.
+ */
+function buildNestedThreads(
+  parentId: string,
+  childrenOf: Map<string, Reply[]>,
+  exclude: Set<string>,
+  depth: number
+): ReplyThread[] {
+  const atCap = depth >= MAX_NESTED_DEPTH
+  return (childrenOf.get(parentId) ?? [])
+    .filter(reply => !exclude.has(reply.id))
+    .map(reply => ({
+      content: reply,
+      isAuthorThread: false,
+      isThreadContinuation: false,
+      nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
+      hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0
+    }))
+}
+
+/**
  * Build a threaded reply tree from flat replies and nested replies.
  * Author's thread is shown first (all at same indent level), then other replies with nesting.
  *
  * @param authorThreadChain - Pre-fetched complete author thread chain (all levels)
  * @param otherDirectReplies - All other direct replies that are NOT part of author thread
- * @param nestedRepliesMap - Map of replyId -> nested replies for non-author posts
+ * @param childrenOf - Map of replyId -> child replies (full thread on v3, one level on v2)
  */
 function buildReplyTree(
   authorThreadChain: Reply[],
   otherDirectReplies: Reply[],
-  nestedRepliesMap: Map<string, Reply[]>
+  childrenOf: Map<string, Reply[]>
 ): ReplyThread[] {
   const threads: ReplyThread[] = []
   const authorThreadIds = new Set(authorThreadChain.map(r => r.id))
 
   // Add author's thread first - all at same level (no nesting within thread)
   authorThreadChain.forEach((reply, index) => {
-    // Get replies to this thread post that are NOT part of the author thread
-    const nestedReplies = (nestedRepliesMap.get(reply.id) || [])
-      .filter(nested => !authorThreadIds.has(nested.id))
-
     threads.push({
       content: reply,
       isAuthorThread: true,
       isThreadContinuation: index > 0,
-      nestedReplies: nestedReplies.map(nested => ({
-        content: nested,
-        isAuthorThread: false,
-        isThreadContinuation: false,
-        nestedReplies: [] // 2-level max for non-author replies
-      }))
+      nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1)
     })
   })
 
   // Add other direct replies (not part of author thread)
   otherDirectReplies.forEach(reply => {
-    const nestedReplies = nestedRepliesMap.get(reply.id) || []
     threads.push({
       content: reply,
       isAuthorThread: false,
       isThreadContinuation: false,
-      nestedReplies: nestedReplies.map(nested => ({
-        content: nested,
-        isAuthorThread: false,
-        isThreadContinuation: false,
-        nestedReplies: [] // 2-level max for non-author replies
-      }))
+      nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1)
     })
   })
 
   return threads
+}
+
+/**
+ * Insert `newThread` under the reply with id `parentId`, at any rendered depth.
+ * Returns null when the parent is not on this page (past the depth cap), so
+ * the caller can fall back to the top of the list.
+ */
+function nestUnderReply(
+  threads: ReplyThread[],
+  parentId: string,
+  newThread: ReplyThread
+): ReplyThread[] | null {
+  let changed = false
+  const result = threads.map((thread) => {
+    if (thread.content.id === parentId) {
+      changed = true
+      return { ...thread, nestedReplies: [...thread.nestedReplies, newThread] }
+    }
+    const nested = nestUnderReply(thread.nestedReplies, parentId, newThread)
+    if (nested) {
+      changed = true
+      return { ...thread, nestedReplies: nested }
+    }
+    return thread
+  })
+  return changed ? result : null
 }
 
 /**
@@ -537,21 +605,17 @@ export function usePostDetail({
 
       // A reply to a reply belongs UNDER that reply. Dropping it at the top would
       // show it in the wrong place, and on a flat thread nothing refetches in
-      // between. A nesting target that is not on this page (a 3rd-level reply,
-      // which the tree does not render) falls back to the top of the list.
+      // between. A nesting target that is not on this page (past the rendered
+      // depth cap) falls back to the top of the list.
       const nestUnder = reply.replyToReplyId
-      const canNest = Boolean(nestUnder) && current.replyThreads.some((t) => t.content.id === nestUnder)
+      const nestedThreads = nestUnder
+        ? nestUnderReply(current.replyThreads, nestUnder, newThread)
+        : null
 
       return {
         ...current,
         replies: [reply, ...current.replies],
-        replyThreads: canNest
-          ? current.replyThreads.map((thread) =>
-              thread.content.id === nestUnder
-                ? { ...thread, nestedReplies: [...thread.nestedReplies, newThread] }
-                : thread
-            )
-          : [newThread, ...current.replyThreads],
+        replyThreads: nestedThreads ?? [newThread, ...current.replyThreads],
         post: current.post
           ? { ...current.post, replies: current.post.replies + 1 }
           : null
