@@ -127,6 +127,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     quotedPostId,
     quotedReplyId,
     deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
+    sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
     ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     epoch,

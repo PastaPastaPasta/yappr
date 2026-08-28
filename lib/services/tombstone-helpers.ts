@@ -11,7 +11,7 @@
  * and a transformed `Post`/`Reply` is a UI shape: it carries `author`, `likes`,
  * `createdAt` as a `Date`, `media` as an array of objects, base58 strings where
  * the contract wants raw bytes, and it has already dropped contract properties
- * the UI does not use (`language`, `sensitive`). Feeding that back into a replace
+ * the UI does not use (`language`). Feeding that back into a replace
  * either fails validation or silently rewrites the document into something else.
  *
  * So the replacement is built from the RAW document instead, keeping only the

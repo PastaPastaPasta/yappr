@@ -78,6 +78,12 @@ export interface Post {
    * this flag instead of removing anything.
    */
   deleted?: boolean
+  /**
+   * Author-declared sensitive/NSFW flag. Only `post` documents carry it — the
+   * app never flags individual replies — so a Post backed by a reply leaves it
+   * unset.
+   */
+  sensitive?: boolean
   // Blog quote fields (present when this Post represents a quoted blog post)
   __isBlogPostQuote?: boolean
   title?: string

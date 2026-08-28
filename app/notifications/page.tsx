@@ -21,8 +21,9 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { withAuth } from '@/contexts/auth-context'
+import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatTimeCompact } from '@/lib/utils'
 import Link from 'next/link'
@@ -152,6 +153,8 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
 
 function NotificationsPage() {
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const { user } = useAuth()
   // Store - polling is handled by Sidebar, we just display data
   const filter = useNotificationStore((s) => s.filter)
   const isLoading = useNotificationStore((s) => s.isLoading)
@@ -411,13 +414,21 @@ function NotificationsPage() {
                           const notifUrl = getNotificationUrl(notification)
                           if (!notifUrl) return null
                           const post = notification.post
+                          // Cards gate the viewer's own posts; previews of
+                          // their own content deliberately do not.
+                          const gateSensitivePreview =
+                            shouldGateSensitive(post, sensitiveContentMode) && post?.author.id !== user?.identityId
                           return (
                             <Link
                               href={notifUrl}
                               onClick={(e) => e.stopPropagation()}
                               className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
                             >
-                              {post?.content || 'View post'}
+                              {gateSensitivePreview ? (
+                                <span className="italic text-gray-500">NSFW content</span>
+                              ) : (
+                                post?.content || 'View post'
+                              )}
                             </Link>
                           )
                         })()}
