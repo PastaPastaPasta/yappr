@@ -404,18 +404,26 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 }
 
 function PollFooter({ pollId, ownerId }: { pollId: string; ownerId?: string | null }) {
+  const pollUrl = pollrPollUrl(pollId)
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-400">
-      <a
-        href={pollrPollUrl(pollId)}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={stopPropagation}
-        className="inline-flex items-center gap-1 hover:text-yappr-500 transition-colors"
-      >
-        <ChartBarIcon className="h-3.5 w-3.5" />
-        Powered by Pollr
-      </a>
+      {pollUrl ? (
+        <a
+          href={pollUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={stopPropagation}
+          className="inline-flex items-center gap-1 hover:text-yappr-500 transition-colors"
+        >
+          <ChartBarIcon className="h-3.5 w-3.5" />
+          Powered by Pollr
+        </a>
+      ) : (
+        <span className="inline-flex items-center gap-1">
+          <ChartBarIcon className="h-3.5 w-3.5" />
+          Powered by Pollr
+        </span>
+      )}
       {ownerId && (
         <span title={ownerId}>· Poll by {ownerId.slice(0, 6)}…</span>
       )}

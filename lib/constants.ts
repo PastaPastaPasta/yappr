@@ -62,6 +62,10 @@ export const LEGACY_POLLR_CONTRACT_IDS = [
   '8R4SgHyxrEZCb5yBb6p4gtT3g1CSRv5GAM4Rehc1vQJq', // v2
 ] as const
 export const POLLR_APP_URL = 'https://pastapastapasta.github.io/pollr'
+// The contract the standalone app at POLLR_APP_URL reads (the testnet v3
+// deployment above). External poll permalinks only resolve when our polls live
+// in that same contract — a devnet clone's polls do not exist there.
+export const POLLR_APP_CONTRACT_ID = 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
 
 /**
  * `VOTE` and `MULTI_VOTE` are the two ballot doctypes. A poll's immutable

@@ -465,7 +465,8 @@ export function ComposeModal() {
   // attempt starts a fresh one), so say where the old one lives.
   const clearPoll = useCallback(() => {
     if (createdPollId) {
-      toast(`Your poll stays live on Pollr: ${pollrPollUrl(createdPollId)}`, {
+      const pollUrl = pollrPollUrl(createdPollId)
+      toast(pollUrl ? `Your poll stays live on Pollr: ${pollUrl}` : 'Your poll document stays live on the Pollr contract.', {
         duration: 8000,
         icon: '📊',
       })
@@ -1035,7 +1036,8 @@ export function ComposeModal() {
             { duration: 5000, icon: '⚠️' }
           )
           if (pollId) {
-            toast(`Your poll is live on Pollr: ${pollrPollUrl(pollId)}. Retrying re-uses it.`, {
+            const pollUrl = pollrPollUrl(pollId)
+            toast(`Your poll is live${pollUrl ? ` on Pollr: ${pollUrl}` : ''}. Retrying re-uses it.`, {
               duration: 8000,
               icon: '📊',
             })
@@ -1105,7 +1107,8 @@ export function ComposeModal() {
       // where it lives so the spend isn't silently lost. Pressing Post again
       // re-uses this same poll.
       if (pollId) {
-        toast(`Your poll is already live on Pollr: ${pollrPollUrl(pollId)}. Press Post to retry the post.`, {
+        const pollUrl = pollrPollUrl(pollId)
+        toast(`Your poll is already live${pollUrl ? ` on Pollr: ${pollUrl}` : ''}. Press Post to retry the post.`, {
           duration: 10000,
           icon: '📊',
         })
