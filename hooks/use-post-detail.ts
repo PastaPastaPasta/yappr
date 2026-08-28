@@ -480,6 +480,24 @@ export function usePostDetail({
         replies = result.documents
         replyCursorRef.current = result.nextCursor
         setHasMoreReplies(Boolean(result.nextCursor))
+
+        // Viewing a reply renders a slice of the thread — its own subtree — but
+        // the thread query pages oldest-first from the root, so on threads
+        // longer than one page that slice can sit entirely past the loaded
+        // page. Landing here from a "Continue thread" row would then show
+        // "No replies yet" despite the row promising more. A targeted children
+        // query guarantees the focused reply's direct replies are on hand;
+        // deeper descendants surface through their own Continue rows.
+        if (targetKindOf(loadedPost) === 'reply' && result.nextCursor) {
+          const childrenMap = await replyService.getNestedReplies([loadedPost.id])
+          if (!isCurrent()) return
+          const known = new Set(replies.map((reply) => reply.id))
+          replies = [
+            ...replies,
+            ...(childrenMap.get(loadedPost.id) ?? []).filter((reply) => !known.has(reply.id))
+          ]
+        }
+
         replyThreads = assembleFlatThread(loadedPost, replies)
       } else {
         ;({ replies, replyThreads } = await loadV2Thread(loadedPost, postId, isCurrent))
