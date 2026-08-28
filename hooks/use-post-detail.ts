@@ -1,8 +1,10 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, Reply, ReplyThread } from '@/lib/types'
-import { postService } from '@/lib/services/post-service'
+import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
+import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
+import { hasFlatThreads, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
@@ -33,6 +35,12 @@ interface UsePostDetailResult {
   isLoading: boolean
   /** Whether replies are still loading (separate from main post) */
   isLoadingReplies: boolean
+  /** Whether another page of replies is available */
+  hasMoreReplies: boolean
+  /** Whether a Load More request is in flight */
+  isLoadingMoreReplies: boolean
+  /** Fetch the next page of replies */
+  loadMoreReplies: () => Promise<void>
   /** Enrichment data for the main post (from cache or progressive loading) */
   postEnrichment?: ProgressiveEnrichment
   /** Error message if load failed */
@@ -47,17 +55,17 @@ interface UsePostDetailResult {
   updateReply: (replyId: string, updates: Partial<Reply>) => void
 }
 
+const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
+
 /**
  * Build a threaded reply tree from flat replies and nested replies.
  * Author's thread is shown first (all at same indent level), then other replies with nesting.
  *
- * @param mainPost - The main post being replied to
  * @param authorThreadChain - Pre-fetched complete author thread chain (all levels)
  * @param otherDirectReplies - All other direct replies that are NOT part of author thread
  * @param nestedRepliesMap - Map of replyId -> nested replies for non-author posts
  */
 function buildReplyTree(
-  mainPost: Post,
   authorThreadChain: Reply[],
   otherDirectReplies: Reply[],
   nestedRepliesMap: Map<string, Reply[]>
@@ -101,6 +109,58 @@ function buildReplyTree(
   })
 
   return threads
+}
+
+/**
+ * Assemble a thread from the flat reply list a v3 `rootAndTime` query returns.
+ *
+ * Every reply in a thread names the same `rootPostId`, so one query has all of
+ * them and the shape is reconstructed here rather than discovered by walking the
+ * chain: children group under `replyToReplyId`, and the author's own
+ * continuation is a local filter instead of the recursive round-trips v2 needs.
+ */
+function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyThread[] {
+  const childrenOf = new Map<string, Reply[]>()
+  const topOfThread: Reply[] = []
+
+  for (const reply of [...allReplies].sort(byCreatedAtAsc)) {
+    const parentId = reply.replyToReplyId
+    if (!parentId) {
+      topOfThread.push(reply)
+      continue
+    }
+    const siblings = childrenOf.get(parentId)
+    if (siblings) siblings.push(reply)
+    else childrenOf.set(parentId, [reply])
+  }
+
+  // Viewing a reply shows ITS subtree; viewing the root post shows the thread's
+  // top level. (A reply's page still loads the whole thread — one query — and
+  // simply renders a slice of it.)
+  const directReplies = targetKindOf(mainPost) === 'reply'
+    ? childrenOf.get(mainPost.id) ?? []
+    : topOfThread
+
+  // The author's own continuation: their direct replies, then their replies to
+  // those, and so on.
+  const authorThreadChain: Reply[] = []
+  const authorThreadIds = new Set<string>()
+  let frontier = directReplies.filter((reply) => reply.author.id === mainPost.author.id)
+  while (frontier.length > 0) {
+    const next: Reply[] = []
+    for (const reply of frontier) {
+      if (authorThreadIds.has(reply.id)) continue
+      authorThreadChain.push(reply)
+      authorThreadIds.add(reply.id)
+      next.push(
+        ...(childrenOf.get(reply.id) ?? []).filter((child) => child.author.id === mainPost.author.id)
+      )
+    }
+    frontier = next
+  }
+
+  const otherDirectReplies = directReplies.filter((reply) => !authorThreadIds.has(reply.id))
+  return buildReplyTree(authorThreadChain, otherDirectReplies, childrenOf)
 }
 
 /**
@@ -162,6 +222,9 @@ export function usePostDetail({
     return true
   })
 
+  const [isLoadingMoreReplies, setIsLoadingMoreReplies] = useState(false)
+  const [hasMoreReplies, setHasMoreReplies] = useState(false)
+
   const [postEnrichment, setPostEnrichment] = useState<ProgressiveEnrichment | undefined>(() => {
     const initial = getInitialData()
     return initial?.enrichment
@@ -173,6 +236,9 @@ export function usePostDetail({
   const loadedPostIdRef = useRef<string | null>(null)
   // Incrementing token to ignore stale async responses
   const loadRequestIdRef = useRef(0)
+  // The thread this page is showing, and where the next page of it starts.
+  const threadRootIdRef = useRef<string | null>(null)
+  const replyCursorRef = useRef<string | undefined>(undefined)
 
   // Track if we used navigation data for initial render (computed once at mount)
   const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
@@ -195,54 +261,49 @@ export function usePostDetail({
   })
 
   /**
-   * Fetch the chain of parent posts/replies leading up to a reply.
-   * Walks up the parentId chain until reaching the original post.
-   * Returns the chain in order from oldest (OP) to most recent parent.
+   * The posts shown above the main item.
+   *
+   * On v3 a reply names its thread root, so the ancestry is exactly one document
+   * — no walk, and no ambiguity about which of several nesting levels is "the"
+   * context. On v2 the only link is the polymorphic direct parent, so the chain
+   * has to be walked one lookup at a time.
    */
-  const fetchReplyChain = async (parentId: string): Promise<Post[]> => {
+  const fetchReplyChain = async (mainPost: Post): Promise<Post[]> => {
     const chain: Post[] = []
-    let currentParentId: string | undefined = parentId
-    const MAX_DEPTH = 50 // Safety limit to prevent infinite loops
 
-    while (currentParentId && chain.length < MAX_DEPTH) {
-      // First try as a post
-      let parent = await postService.getPostById(currentParentId, { skipEnrichment: true })
+    if (hasFlatThreads()) {
+      const rootPost = await postService.getPostById(threadRootIdOf(mainPost), { skipEnrichment: true })
+      if (rootPost) chain.push(rootPost)
+    } else {
+      let currentParentId: string | undefined = mainPost.parentId
+      const MAX_DEPTH = 50 // Safety limit to prevent infinite loops
 
-      if (!parent) {
-        // Try as a reply
-        const reply = await replyService.getReplyById(currentParentId, { skipEnrichment: true })
-        if (reply) {
-          // Convert reply to Post-like structure
-          parent = reply as Post
-        }
-      }
+      while (currentParentId && chain.length < MAX_DEPTH) {
+        // First try as a post
+        let parent = await postService.getPostById(currentParentId, { skipEnrichment: true })
 
-      if (!parent) break
-
-      // Add to the beginning of the chain (we're walking backwards)
-      chain.unshift(parent)
-
-      // Continue up the chain if this parent also has a parent
-      currentParentId = parent.parentId
-    }
-
-    // Fetch quoted posts for any chain items that reference them (e.g. reposts/quote posts)
-    const chainQuotedPostIds = chain
-      .filter(p => p.quotedPostId && !p.quotedPost)
-      .map(p => p.quotedPostId!)
-    if (chainQuotedPostIds.length > 0) {
-      try {
-        const quotedPosts = await postService.fetchPostsOrReplies(chainQuotedPostIds)
-        const quotedPostMap = new Map(quotedPosts.map(qp => [qp.id, qp]))
-        for (const post of chain) {
-          if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
-            post.quotedPost = quotedPostMap.get(post.quotedPostId)
+        if (!parent) {
+          // Try as a reply
+          const reply = await replyService.getReplyById(currentParentId, { skipEnrichment: true })
+          if (reply) {
+            // The adapter (not a spread) so the Post shape is complete — a spread
+            // leaves `quotes` undefined in a `quotes: number` field.
+            parent = replyToPost(reply)
           }
         }
-      } catch (err) {
-        logger.error('usePostDetail: Failed to fetch quoted posts for reply chain:', err)
+
+        if (!parent) break
+
+        // Add to the beginning of the chain (we're walking backwards)
+        chain.unshift(parent)
+
+        // Continue up the chain if this parent also has a parent
+        currentParentId = parent.parentId
       }
     }
+
+    // Resolve whatever the chain items quote (reposts / quote posts).
+    await attachQuotedPosts(chain)
 
     // Enrich all posts in the chain
     if (chain.length > 0) {
@@ -272,6 +333,8 @@ export function usePostDetail({
     // Always loading replies until we fetch them
     setIsLoadingReplies(true)
     setError(null)
+    replyCursorRef.current = undefined
+    setHasMoreReplies(false)
 
     let loadedPost: Post | null = null
 
@@ -284,8 +347,9 @@ export function usePostDetail({
         // Not a post - check if it's a reply
         const reply = await replyService.getReplyById(postId, { skipEnrichment: true })
         if (reply) {
-          // Treat the reply as the main "post" for this detail view
-          loadedPost = reply as Post
+          // Treat the reply as the main "post" for this detail view, tagged with
+          // the doctype it actually came from.
+          loadedPost = replyToPost(reply)
         }
       }
 
@@ -298,10 +362,12 @@ export function usePostDetail({
         return
       }
 
-      // If the loaded item is a reply (has parentId), fetch the parent chain
+      threadRootIdRef.current = threadRootIdOf(loadedPost)
+
+      // If the loaded item is a reply, show the context it hangs off
       let replyChain: Post[] = []
-      if (loadedPost.parentId) {
-        replyChain = await fetchReplyChain(loadedPost.parentId)
+      if (targetKindOf(loadedPost) === 'reply') {
+        replyChain = await fetchReplyChain(loadedPost)
         if (!isCurrent()) return
       }
 
@@ -329,94 +395,28 @@ export function usePostDetail({
     if (!loadedPost) return
 
     try {
-      // Load direct replies (now from reply-service)
-      const repliesResult = await replyService.getReplies(postId)
-      if (!isCurrent()) return
-      const directReplies = repliesResult.documents
+      let replies: Reply[]
+      let replyThreads: ReplyThread[]
 
-      // Build author's thread chain recursively
-      // Find author's direct reply, then follow the chain of author replies
-      const mainAuthorId = loadedPost.author.id
-      const authorThreadChain: Reply[] = []
-      const authorThreadIds = new Set<string>([loadedPost.id])
-
-      // Helper to recursively fetch author's thread continuation
-      const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
-        if (parentIds.length === 0) return []
-        const nestedMap = await replyService.getNestedReplies(parentIds)
-        const authorContinuations: Reply[] = []
-
-        nestedMap.forEach((nested, parentId) => {
-          for (const reply of nested) {
-            if (reply.author.id === mainAuthorId && authorThreadIds.has(parentId)) {
-              authorContinuations.push(reply)
-              authorThreadIds.add(reply.id)
-            }
-          }
-        })
-        return authorContinuations
-      }
-
-      // Start with author's direct replies to main post
-      const sortedDirectReplies = [...directReplies].sort(
-        (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
-      )
-
-      for (const reply of sortedDirectReplies) {
-        if (reply.author.id === mainAuthorId) {
-          authorThreadChain.push(reply)
-          authorThreadIds.add(reply.id)
-        }
-      }
-
-      // Recursively fetch author's thread continuations (replies to thread posts)
-      let currentThreadIds = authorThreadChain.map(r => r.id)
-      while (currentThreadIds.length > 0) {
-        const continuations = await fetchAuthorThreadContinuation(currentThreadIds)
+      if (hasFlatThreads()) {
+        // One query for the entire thread, keyed on the root every reply shares.
+        const result = await replyService.getReplies(threadRootIdOf(loadedPost))
         if (!isCurrent()) return
-        if (continuations.length === 0) break
-
-        // Sort and add to chain
-        continuations.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-        authorThreadChain.push(...continuations)
-        currentThreadIds = continuations.map(r => r.id)
+        replies = result.documents
+        replyCursorRef.current = result.nextCursor
+        setHasMoreReplies(Boolean(result.nextCursor))
+        replyThreads = assembleFlatThread(loadedPost, replies)
+      } else {
+        ;({ replies, replyThreads } = await loadV2Thread(loadedPost, postId, isCurrent))
+        if (!isCurrent()) return
       }
 
-      // Other direct replies (not part of author thread)
-      const otherDirectReplies = directReplies.filter(r => !authorThreadIds.has(r.id))
-
-      // Fetch nested replies for all posts (author thread + other direct replies)
-      const allDirectReplyIds = directReplies.map(r => r.id)
-      const allThreadReplyIds = authorThreadChain.map(r => r.id)
-      const allIdsForNested = Array.from(new Set([...allDirectReplyIds, ...allThreadReplyIds]))
-
-      const nestedRepliesMap = allIdsForNested.length > 0
-        ? await replyService.getNestedReplies(allIdsForNested)
-        : new Map<string, Reply[]>()
+      // Resolve whatever the main post quotes (chain items are done in fetchReplyChain)
+      await attachQuotedPosts([loadedPost])
       if (!isCurrent()) return
-
-      // Build threaded reply tree
-      const replyThreads = buildReplyTree(loadedPost, authorThreadChain, otherDirectReplies, nestedRepliesMap)
-
-      // All replies for backwards compat
-      const replies = [...directReplies, ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id))]
-
-      // Fetch quoted post for the main post (reply chain quoted posts are handled in fetchReplyChain)
-      let quotedPost: Post | undefined
-      if (loadedPost.quotedPostId) {
-        try {
-          const quotedPosts = await postService.fetchPostsOrReplies([loadedPost.quotedPostId])
-          if (!isCurrent()) return
-          if (quotedPosts.length > 0) {
-            quotedPost = quotedPosts[0]
-          }
-        } catch (quoteError) {
-          logger.error('Failed to fetch quoted post:', quoteError)
-        }
-      }
+      const quotedPost = loadedPost.quotedPost
 
       // Update replies after they're ready, preserve any enriched main post and replyChain
-      if (!isCurrent()) return
       setState(current => {
         const mergedPost = current.post
           ? { ...current.post, quotedPost: quotedPost ?? current.post.quotedPost }
@@ -434,6 +434,37 @@ export function usePostDetail({
       }
     }
   }, [postId, enabled, enrich])
+
+  /**
+   * Fetch the next page of the thread (v3 only — v2's `getReplies` covers one
+   * level, which the old code already fetched whole).
+   */
+  const loadMoreReplies = useCallback(async () => {
+    const cursor = replyCursorRef.current
+    const rootId = threadRootIdRef.current
+    if (!cursor || !rootId || isLoadingMoreReplies) return
+
+    setIsLoadingMoreReplies(true)
+    try {
+      const result = await replyService.getReplies(rootId, { startAfter: cursor })
+      // Navigating away mid-flight would otherwise merge this thread's next page
+      // into whatever post the page moved on to.
+      if (threadRootIdRef.current !== rootId) return
+      replyCursorRef.current = result.nextCursor
+      setHasMoreReplies(Boolean(result.nextCursor))
+
+      setState(current => {
+        if (!current.post) return current
+        const known = new Set(current.replies.map((reply) => reply.id))
+        const merged = [...current.replies, ...result.documents.filter((reply) => !known.has(reply.id))]
+        return { ...current, replies: merged, replyThreads: assembleFlatThread(current.post, merged) }
+      })
+    } catch (err) {
+      logger.error('usePostDetail: Failed to load more replies:', err)
+    } finally {
+      setIsLoadingMoreReplies(false)
+    }
+  }, [isLoadingMoreReplies])
 
   // Load on mount/postId change/enabled change
   useEffect(() => {
@@ -490,7 +521,6 @@ export function usePostDetail({
 
   const addOptimisticReply = useCallback((reply: Reply) => {
     setState(current => {
-      // Create a new thread entry for the reply
       const newThread: ReplyThread = {
         content: reply,
         isAuthorThread: false,
@@ -498,10 +528,23 @@ export function usePostDetail({
         nestedReplies: []
       }
 
+      // A reply to a reply belongs UNDER that reply. Dropping it at the top would
+      // show it in the wrong place, and on a flat thread nothing refetches in
+      // between. A nesting target that is not on this page (a 3rd-level reply,
+      // which the tree does not render) falls back to the top of the list.
+      const nestUnder = reply.replyToReplyId
+      const canNest = Boolean(nestUnder) && current.replyThreads.some((t) => t.content.id === nestUnder)
+
       return {
         ...current,
         replies: [reply, ...current.replies],
-        replyThreads: [newThread, ...current.replyThreads],
+        replyThreads: canNest
+          ? current.replyThreads.map((thread) =>
+              thread.content.id === nestUnder
+                ? { ...thread, nestedReplies: [...thread.nestedReplies, newThread] }
+                : thread
+            )
+          : [newThread, ...current.replyThreads],
         post: current.post
           ? { ...current.post, replies: current.post.replies + 1 }
           : null
@@ -529,16 +572,18 @@ export function usePostDetail({
   useEffect(() => {
     if (!postId) return
 
-    const handleReplyCreated = (event: CustomEvent<{ reply: any }>) => {
+    const handleReplyCreated = (event: CustomEvent<{ reply?: Reply }>) => {
       const newReply = event.detail?.reply
       if (!newReply) return
 
-      // Check if this is a reply to the current post or any reply we're showing
-      const parentId = newReply.parentId
-      const isReplyToCurrentPost = parentId === postId
-      const isReplyToAReply = state.replies.some(r => r.id === parentId)
+      // A v3 reply names the thread it belongs to, so membership is exact — a
+      // reply to a reply three levels down still refreshes this page. On v2 the
+      // only signal is the direct parent, so the check stays as it was.
+      const belongsHere = newReply.rootPostId
+        ? newReply.rootPostId === threadRootIdRef.current
+        : newReply.parentId === postId || state.replies.some(r => r.id === newReply.parentId)
 
-      if (isReplyToCurrentPost || isReplyToAReply) {
+      if (belongsHere) {
         // Refresh to get the new reply with proper data
         refresh()
       }
@@ -557,6 +602,9 @@ export function usePostDetail({
     replyChain: state.replyChain,
     isLoading,
     isLoadingReplies,
+    hasMoreReplies,
+    isLoadingMoreReplies,
+    loadMoreReplies,
     postEnrichment,
     error,
     refresh,
@@ -564,4 +612,78 @@ export function usePostDetail({
     updatePost,
     updateReply
   }
+}
+
+/**
+ * v2 thread assembly: one query per level, plus a recursive walk to discover the
+ * author's own continuation, because `reply.parentId` names only the direct
+ * parent and nothing links a reply to its thread.
+ */
+async function loadV2Thread(
+  loadedPost: Post,
+  postId: string,
+  isCurrent: () => boolean
+): Promise<{ replies: Reply[]; replyThreads: ReplyThread[] }> {
+  const repliesResult = await replyService.getReplies(postId)
+  const directReplies = repliesResult.documents
+
+  const mainAuthorId = loadedPost.author.id
+  const authorThreadChain: Reply[] = []
+  const authorThreadIds = new Set<string>([loadedPost.id])
+
+  // Helper to recursively fetch author's thread continuation
+  const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
+    if (parentIds.length === 0) return []
+    const nestedMap = await replyService.getNestedReplies(parentIds)
+    const authorContinuations: Reply[] = []
+
+    nestedMap.forEach((nested, parentId) => {
+      for (const reply of nested) {
+        if (reply.author.id === mainAuthorId && authorThreadIds.has(parentId)) {
+          authorContinuations.push(reply)
+          authorThreadIds.add(reply.id)
+        }
+      }
+    })
+    return authorContinuations
+  }
+
+  // Start with author's direct replies to main post
+  for (const reply of [...directReplies].sort(byCreatedAtAsc)) {
+    if (reply.author.id === mainAuthorId) {
+      authorThreadChain.push(reply)
+      authorThreadIds.add(reply.id)
+    }
+  }
+
+  // Recursively fetch author's thread continuations (replies to thread posts)
+  let currentThreadIds = authorThreadChain.map(r => r.id)
+  while (currentThreadIds.length > 0) {
+    const continuations = await fetchAuthorThreadContinuation(currentThreadIds)
+    if (!isCurrent()) break
+    if (continuations.length === 0) break
+
+    continuations.sort(byCreatedAtAsc)
+    authorThreadChain.push(...continuations)
+    currentThreadIds = continuations.map(r => r.id)
+  }
+
+  // Other direct replies (not part of author thread)
+  const otherDirectReplies = directReplies.filter(r => !authorThreadIds.has(r.id))
+
+  // Fetch nested replies for all posts (author thread + other direct replies)
+  const allIdsForNested = Array.from(
+    new Set([...directReplies.map(r => r.id), ...authorThreadChain.map(r => r.id)])
+  )
+  const nestedRepliesMap = allIdsForNested.length > 0
+    ? await replyService.getNestedReplies(allIdsForNested)
+    : new Map<string, Reply[]>()
+
+  const replyThreads = buildReplyTree(authorThreadChain, otherDirectReplies, nestedRepliesMap)
+  const replies = [
+    ...directReplies,
+    ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id)),
+  ]
+
+  return { replies, replyThreads }
 }

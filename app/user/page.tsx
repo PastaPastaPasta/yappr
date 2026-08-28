@@ -39,6 +39,8 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
+import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
+import { replyToPost } from '@/lib/services/post-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
@@ -435,26 +437,8 @@ function UserProfileContent() {
           // Continue without reposts - non-critical
         }
 
-        // Fetch quoted posts for quote posts (can be posts or replies)
-        try {
-          const quotedPostIds = transformedPosts
-            .filter((p: any) => p.quotedPostId)
-            .map((p: any) => p.quotedPostId)
-
-          if (quotedPostIds.length > 0) {
-            const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
-            const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
-
-            for (const post of transformedPosts) {
-              if ((post as any).quotedPostId && quotedPostMap.has((post as any).quotedPostId)) {
-                (post as any).quotedPost = quotedPostMap.get((post as any).quotedPostId)
-              }
-            }
-          }
-        } catch (quoteError) {
-          logger.error('Failed to fetch quoted posts:', quoteError)
-          // Continue without quoted posts - non-critical
-        }
+        // Resolve whatever each post quotes (post, reply, or blog-post embed).
+        await attachQuotedPosts(transformedPosts)
 
         if (transformedPosts.length > 0) {
           setPosts(transformedPosts)
@@ -665,25 +649,8 @@ function UserProfileContent() {
         }
       }
 
-      // Fetch quoted posts for quote posts (can be posts or replies)
-      try {
-        const quotedPostIds = newPosts
-          .filter((p: any) => p.quotedPostId)
-          .map((p: any) => p.quotedPostId)
-
-        if (quotedPostIds.length > 0) {
-          const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
-          const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
-
-          for (const post of newPosts) {
-            if ((post as any).quotedPostId && quotedPostMap.has((post as any).quotedPostId)) {
-              (post as any).quotedPost = quotedPostMap.get((post as any).quotedPostId)
-            }
-          }
-        }
-      } catch (quoteError) {
-        logger.error('Failed to fetch quoted posts:', quoteError)
-      }
+      // Resolve whatever each post quotes (post, reply, or blog-post embed).
+      await attachQuotedPosts(newPosts)
 
       // Append to existing posts and sort
       setPosts(currentPosts => {
@@ -797,24 +764,7 @@ function UserProfileContent() {
       }
 
       // Convert Reply objects to Post-compatible objects for PostCard display
-      const replyPosts: Post[] = result.documents.map(reply => ({
-        id: reply.id,
-        author: reply.author,
-        content: reply.content,
-        createdAt: reply.createdAt,
-        likes: reply.likes,
-        reposts: reply.reposts,
-        replies: reply.replies,
-        quotes: 0,
-        views: reply.views,
-        liked: reply.liked,
-        reposted: reply.reposted,
-        bookmarked: reply.bookmarked,
-        media: reply.media,
-        parentId: reply.parentId,
-        parentOwnerId: reply.parentOwnerId,
-        _enrichment: reply._enrichment,
-      }))
+      const replyPosts: Post[] = result.documents.map(replyToPost)
 
       setUserReplies(replyPosts)
 

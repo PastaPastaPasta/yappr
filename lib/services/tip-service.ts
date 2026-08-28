@@ -8,6 +8,13 @@ import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/k
 import { isInsufficientTokenError } from '@/lib/error-utils';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { keyNetwork } from '@/lib/constants'
+import { replyLinkageTo, type ThreadBearing } from '@/lib/contract-topology'
+
+/**
+ * What a tip announcement needs to know about the tipped item: enough to place a
+ * reply under the right thread root. Any `Post` satisfies it.
+ */
+export type TipTarget = ThreadBearing;
 
 export interface TipResult {
   success: boolean;
@@ -104,7 +111,7 @@ class TipService {
    * Send a tip (credit transfer) to another user and optionally create a tip post
    * @param senderId - The sender's identity ID
    * @param recipientId - The recipient's identity ID (post author or user being tipped)
-   * @param postId - The post being tipped (optional - when null, no tip post is created)
+   * @param target - The post or reply being tipped (optional - when null, no tip post is created)
    * @param amountCredits - Amount in credits
    * @param transferKeyWif - The sender's transfer private key in WIF format
    * @param message - Optional tip message
@@ -113,7 +120,7 @@ class TipService {
   async sendTip(
     senderId: string,
     recipientId: string,
-    postId: string | null,
+    target: TipTarget | null,
     amountCredits: number,
     transferKeyWif: string,
     message?: string,
@@ -269,8 +276,8 @@ class TipService {
       // The tip (credit transfer) already succeeded; the announcement reply is a
       // `reply` doc with a YAPP tokenCost, so a 0-YAPP tipper's reply can fail —
       // report that so the UI can tell the user rather than losing it silently.
-      const announcement = postId
-        ? await this.createTipPost(senderId, postId, recipientId, amountCredits, message)
+      const announcement = target
+        ? await this.createTipPost(senderId, target, recipientId, amountCredits, message)
         : { posted: true as const };
 
       return {
@@ -294,8 +301,8 @@ class TipService {
         identityService.clearCache(senderId);
 
         // Create tip post (amount is known even if confirmation timed out)
-        const announcement = postId
-          ? await this.createTipPost(senderId, postId, recipientId, amountCredits, message)
+        const announcement = target
+          ? await this.createTipPost(senderId, target, recipientId, amountCredits, message)
           : { posted: true as const };
 
         return {
@@ -342,7 +349,7 @@ class TipService {
    */
   private async createTipPost(
     senderId: string,
-    postId: string,
+    target: TipTarget,
     postOwnerId: string,
     amountCredits: number,
     tipMessage?: string
@@ -354,9 +361,14 @@ class TipService {
         ? `tip:${amountCredits}\n${tipMessage}`
         : `tip:${amountCredits}`;
 
-      // Tips are created as replies to the tipped post
+      // Tips are announced as a reply to the tipped item. Tipping a REPLY is
+      // allowed, so the announcement has to hang off the right thread root
+      // rather than assuming the target is a top-level post.
       const { replyService } = await import('./reply-service');
-      await replyService.createReply(senderId, content, postId, postOwnerId);
+      await replyService.createReply(senderId, content, {
+        ...replyLinkageTo(target),
+        parentOwnerId: postOwnerId,
+      });
 
       logger.info('Tip reply created successfully');
       return { posted: true };

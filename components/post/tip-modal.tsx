@@ -188,7 +188,7 @@ export function TipModal() {
     const result = await tipService.sendTip(
       user.identityId,
       recipientInfo.id,
-      post?.id || null,
+      post ?? null,
       credits,
       keyToUse,
       tipMessage.trim() || undefined

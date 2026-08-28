@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
+import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { useSdk } from '@/contexts/sdk-context'
@@ -132,26 +133,8 @@ export function useHomepageData(): HomepageData {
     try {
       const posts = await postService.getTopPostsByLikes(5)
 
-      // Fetch quoted posts for posts that have a quotedPostId
-      const quotedPostIds = posts
-        .filter((p) => p.quotedPostId)
-        .map((p) => p.quotedPostId as string)
-
-      if (quotedPostIds.length > 0) {
-        try {
-          const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds)
-          const quotedPostMap = new Map(quotedPosts.map(p => [p.id, p]))
-
-          for (const post of posts) {
-            if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
-              post.quotedPost = quotedPostMap.get(post.quotedPostId)
-            }
-          }
-        } catch (quoteError) {
-          logger.error('Error fetching quoted posts for featured posts:', quoteError)
-          // Don't fail the whole load if quoted posts fail
-        }
-      }
+      // Resolve whatever each post quotes (post, reply, or blog-post embed).
+      await attachQuotedPosts(posts)
 
       cache.featuredPosts = { data: posts, timestamp: Date.now() }
 

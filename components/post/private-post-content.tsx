@@ -19,6 +19,15 @@ import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 
 interface PrivatePostContentProps {
   post: Post
+  /**
+   * Owner of the thread ROOT, when this card is showing a reply.
+   *
+   * A reply to a private post inherits the root author's CEK, so the root author
+   * — not the reply author — is whose feed keys decrypt it. Without this, a reply
+   * written by anyone other than the root author cannot be decrypted at all: the
+   * lookup goes to the wrong identity's grant.
+   */
+  rootPostOwnerId?: string
   className?: string
   hashtagValidations?: Map<string, HashtagValidationStatus>
   onFailedHashtagClick?: (hashtag: string) => void
@@ -163,12 +172,17 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
  */
 export function PrivatePostContent({
   post,
+  rootPostOwnerId,
   className = '',
   hashtagValidations,
   onFailedHashtagClick,
   mentionValidations,
   onFailedMentionClick,
 }: PrivatePostContentProps) {
+  // Whose CEK this content was encrypted under. For a top-level post that is its
+  // author; for a reply it is the ROOT author, because replies inherit the
+  // thread's encryption (PRD §5.5).
+  const encryptionSourceOwnerId = rootPostOwnerId ?? post.author.id
   const { user } = useAuth()
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
@@ -184,7 +198,9 @@ export function PrivatePostContent({
     onKeyAdded,
     dismissKeyModal,
   } = usePrivateFeedRequest({
-    ownerId: post.author.id,
+    // Access is granted per FEED, so the request goes to whoever owns the
+    // encryption — the root author for an inherited-encrypted reply.
+    ownerId: encryptionSourceOwnerId,
     currentUserId: user?.identityId ?? null,
     onRequireAuth: () => openLoginPrompt('generic'),
   })
@@ -192,7 +208,12 @@ export function PrivatePostContent({
   // State for showing cancel option when pending is clicked
   const [showCancelOption, setShowCancelOption] = useState(false)
 
-  const isOwner = user?.identityId === post.author.id
+  // Role for key-recovery and access-request controls follows the ENCRYPTION
+  // owner — the root author for an inherited-encrypted reply — not the reply's
+  // author: access is granted per feed, and the "enter your key" affordance
+  // belongs to whoever owns that feed. On v2 encryptionSourceOwnerId falls back
+  // to post.author.id, so this is identical there.
+  const isOwner = user?.identityId === encryptionSourceOwnerId
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = post.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
@@ -220,10 +241,6 @@ export function PrivatePostContent({
         setState({ status: 'locked', reason: 'approved-no-keys' })
         return
       }
-
-      // For posts, the encryption source is always the post author
-      // (Replies use inherited encryption but that's handled separately)
-      const encryptionSourceOwnerId = post.author.id
 
       // Attempt to recover follower keys from grant
       const { privateFeedFollowerService } = await import('@/lib/services')
@@ -267,7 +284,7 @@ export function PrivatePostContent({
         message: error instanceof Error ? error.message : 'Recovery failed',
       })
     }
-  }, [post, user])
+  }, [post, user, encryptionSourceOwnerId])
 
   // Handle "Recover Access" button click
   const handleRecoverAccess = useCallback(() => {
@@ -297,10 +314,6 @@ export function PrivatePostContent({
     try {
       const { privateFeedFollowerService } = await import('@/lib/services')
       const { privateFeedKeyStore } = await import('@/lib/services')
-
-      // For posts, the encryption source is always the post author
-      // (Replies use inherited encryption but that's handled by reply-service)
-      const encryptionSourceOwnerId = post.author.id
 
       // Check if user is the encryption source owner (can decrypt with their own feed keys)
       const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
@@ -382,7 +395,7 @@ export function PrivatePostContent({
         if (isOwner) {
           try {
             const { privateFeedService } = await import('@/lib/services')
-            followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
+            followerCount = await privateFeedService.getPrivateFollowerCount(encryptionSourceOwnerId)
           } catch (err) {
             logger.warn('Failed to fetch private follower count:', err)
             // Continue without follower count - it's not critical
@@ -490,7 +503,7 @@ export function PrivatePostContent({
         message: error instanceof Error ? error.message : 'Decryption failed',
       })
     }
-  }, [post, user, isOwner, attemptRecovery])
+  }, [post, user, isOwner, attemptRecovery, encryptionSourceOwnerId])
 
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {

@@ -16,6 +16,7 @@ import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 
 function PostDetailContent() {
@@ -35,6 +36,9 @@ function PostDetailContent() {
     replyChain,
     isLoading,
     isLoadingReplies,
+    hasMoreReplies,
+    isLoadingMoreReplies,
+    loadMoreReplies,
     postEnrichment
   } = usePostDetail({
     postId,
@@ -47,23 +51,40 @@ function PostDetailContent() {
     reset: resetReplyEnrichment
   } = useProgressiveEnrichment({ currentUserId: user?.identityId })
 
-  // Check if user can reply to private posts
-  // Posts are top-level content, so the feed owner is the post author
-  const feedOwnerId = post?.author.id
-  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, feedOwnerId)
+  // The thread ROOT's author. Encryption is inherited from the root, so that is
+  // whose feed keys decrypt anything in this thread and who grants access to it —
+  // which is not the same identity when the item being viewed is a reply by
+  // someone else. replyChain[0] is the root (v3) or the oldest known ancestor (v2).
+  const rootPostOwnerId = (replyChain[0] ?? post)?.author.id ?? ''
+  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
   useEffect(() => {
     resetReplyEnrichment()
   }, [postId, resetReplyEnrichment])
 
+  // Notifications about a reply link to the whole thread with the reply as
+  // `?reply=`, because a reply is only ever rendered inside its root's thread —
+  // which on a flat topology can be fifty cards long. Scroll to it once the
+  // thread has rendered. A reply on a not-yet-loaded page simply does not move
+  // the viewport.
+  const highlightReplyId = searchParams.get('reply')
+  useEffect(() => {
+    if (!highlightReplyId || replyThreads.length === 0) return
+    document
+      .querySelector(`[data-testid="post-card-${highlightReplyId}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [highlightReplyId, replyThreads])
+
   useEffect(() => {
     if (replyThreads.length === 0) return
 
+    // Replies rendered as Post shapes: tagged as `reply` so their enrichment
+    // queries resolve against the reply interaction doctypes.
     const replyMap = new Map<string, Post>()
     replyThreads.forEach((thread) => {
-      replyMap.set(thread.content.id, thread.content as unknown as Post)
+      replyMap.set(thread.content.id, replyToPost(thread.content))
       thread.nestedReplies.forEach((nested) => {
-        replyMap.set(nested.content.id, nested.content as unknown as Post)
+        replyMap.set(nested.content.id, replyToPost(nested.content))
       })
     })
 
@@ -138,7 +159,7 @@ function PostDetailContent() {
 
             {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} enrichment={postEnrichment} />
+              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} />
             </div>
 
             {user ? (
@@ -192,10 +213,22 @@ function PostDetailContent() {
                   <ReplyThreadItem
                     key={thread.content.id}
                     thread={thread}
-                    mainPostAuthorId={post.author.id}
+                    rootPostOwnerId={rootPostOwnerId}
                     getPostEnrichment={getReplyEnrichment}
                   />
                 ))
+              )}
+
+              {hasMoreReplies && (
+                <div className="p-4 flex justify-center">
+                  <button
+                    onClick={() => { loadMoreReplies().catch(() => undefined) }}
+                    disabled={isLoadingMoreReplies}
+                    className="px-6 py-2 rounded-full bg-yappr-500 text-white hover:bg-yappr-600 disabled:opacity-50 transition-colors"
+                  >
+                    {isLoadingMoreReplies ? 'Loading...' : 'Load More'}
+                  </button>
+                </div>
               )}
             </div>
           </>

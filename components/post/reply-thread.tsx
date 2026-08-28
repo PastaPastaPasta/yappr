@@ -1,41 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { ReplyThread, Reply, Post } from '@/lib/types'
+import { ReplyThread, Post } from '@/lib/types'
+import { replyToPost } from '@/lib/services/post-service'
 import { PostCard, ProgressiveEnrichment } from './post-card'
-
-/**
- * Convert a Reply to a Post-like object for PostCard rendering.
- * This is a temporary adapter until PostCard is updated to handle both types.
- * Preserves parentId/parentOwnerId so PostCard can detect replies for deletion.
- */
-function replyToPostLike(reply: Reply): Post {
-  return {
-    id: reply.id,
-    author: reply.author,
-    content: reply.content,
-    createdAt: reply.createdAt,
-    likes: reply.likes,
-    reposts: reply.reposts,
-    replies: reply.replies,
-    quotes: 0,
-    views: reply.views,
-    liked: reply.liked,
-    reposted: reply.reposted,
-    bookmarked: reply.bookmarked,
-    media: reply.media,
-    _enrichment: reply._enrichment,
-    encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
-    nonce: reply.nonce,
-    parentId: reply.parentId,
-    parentOwnerId: reply.parentOwnerId,
-  }
-}
 
 interface ReplyThreadItemProps {
   thread: ReplyThread
-  mainPostAuthorId: string
+  rootPostOwnerId: string
   getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
 }
 
@@ -44,9 +16,9 @@ interface ReplyThreadItemProps {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }: ReplyThreadItemProps) {
+export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThreadItemProps) {
   const { content, isAuthorThread, isThreadContinuation, nestedReplies } = thread
-  const postLike = replyToPostLike(content)
+  const postLike = replyToPost(content)
 
   return (
     <div className="relative">
@@ -71,7 +43,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }:
       <PostCard
         post={postLike}
         enrichment={getPostEnrichment?.(postLike)}
-        rootPostOwnerId={mainPostAuthorId}
+        rootPostOwnerId={rootPostOwnerId}
       />
 
       {/* Nested replies (2nd level) - indented */}
@@ -81,7 +53,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }:
             <NestedReply
               key={nested.content.id}
               thread={nested}
-              mainPostAuthorId={mainPostAuthorId}
+              rootPostOwnerId={rootPostOwnerId}
               getPostEnrichment={getPostEnrichment}
             />
           ))}
@@ -93,7 +65,7 @@ export function ReplyThreadItem({ thread, mainPostAuthorId, getPostEnrichment }:
 
 interface NestedReplyProps {
   thread: ReplyThread
-  mainPostAuthorId: string
+  rootPostOwnerId: string
   getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
 }
 
@@ -101,16 +73,16 @@ interface NestedReplyProps {
  * Renders a nested (2nd level) reply. The indentation and left border
  * visually indicate the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ thread, mainPostAuthorId, getPostEnrichment }: NestedReplyProps) {
+function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: NestedReplyProps) {
   const { content } = thread
-  const postLike = replyToPostLike(content)
+  const postLike = replyToPost(content)
 
   return (
     <div className="relative">
       <PostCard
         post={postLike}
         enrichment={getPostEnrichment?.(postLike)}
-        rootPostOwnerId={mainPostAuthorId}
+        rootPostOwnerId={rootPostOwnerId}
       />
 
       {/* Show "View more replies" if this reply has replies (3+ level) */}

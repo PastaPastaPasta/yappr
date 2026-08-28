@@ -1,4 +1,10 @@
 import { logger } from '@/lib/logger';
+import {
+  bookmarkIndexFor,
+  groupByInteractionSurface,
+  repostIndexFor,
+  type KindedTarget,
+} from '@/lib/contract-topology';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
@@ -9,41 +15,42 @@ export interface PostInteractionState {
 
 const STATS_CACHE_TTL_MS = 60_000;
 
+/**
+ * Stats and interactions are cached and deduplicated per (surface, id): a `post`
+ * id and a `reply` id are drawn from the same keyspace but, on the v3 topology,
+ * are answered by different doctypes.
+ */
+function statsCacheKey(target: KindedTarget): string {
+  return `${target.kind}:${target.id}`;
+}
+
 export async function fetchPostStats(
-  postId: string,
+  target: KindedTarget,
   statsCache: Map<string, { data: PostStats; timestamp: number }>
 ): Promise<PostStats> {
-  const cached = statsCache.get(postId);
+  const { id: postId, kind } = target;
+  const cacheKey = statsCacheKey(target);
+  const cached = statsCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < STATS_CACHE_TTL_MS) {
     return cached.data;
   }
 
   try {
-    const countLikes = async (): Promise<number> => {
-      const { likeService } = await import('./like-service');
-      return likeService.countLikes(postId);
-    };
-
-    const countReposts = async (): Promise<number> => {
-      const { repostService } = await import('./repost-service');
-      return repostService.countReposts(postId);
-    };
-
-    const countReplies = async (): Promise<number> => {
-      const { replyService } = await import('./reply-service');
-      return replyService.countReplies(postId);
-    };
-
-    const countQuotes = async (): Promise<number> => {
-      const { postService } = await import('./post-service');
-      return postService.countQuotes(postId);
-    };
+    const [{ likeService }, { repostService }, { replyService }, { postService }] = await Promise.all([
+      import('./like-service'),
+      import('./repost-service'),
+      import('./reply-service'),
+      import('./post-service'),
+    ]);
 
     const [likes, reposts, replies, quotes] = await Promise.all([
-      countLikes(),
-      countReposts(),
-      countReplies(),
-      countQuotes(),
+      likeService.countLikes(postId, kind),
+      // A kind the topology forbids reposting has no repost doctype to count.
+      repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
+      // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v3 a
+      // post counts its whole thread and a reply its direct children.
+      replyService.countReplies(postId, kind),
+      postService.countQuotes(postId, kind),
     ]);
 
     const stats: PostStats = {
@@ -55,7 +62,7 @@ export async function fetchPostStats(
       views: 0,
     };
 
-    statsCache.set(postId, {
+    statsCache.set(cacheKey, {
       data: stats,
       timestamp: Date.now(),
     });
@@ -68,12 +75,14 @@ export async function fetchPostStats(
 }
 
 export async function fetchUserInteractions(
-  postId: string,
+  target: KindedTarget,
   currentUserId: string | null
 ): Promise<PostInteractionState> {
   if (!currentUserId) {
     return { liked: false, reposted: false, bookmarked: false };
   }
+
+  const { id: postId, kind } = target;
 
   try {
     const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
@@ -82,10 +91,12 @@ export async function fetchUserInteractions(
       import('./bookmark-service'),
     ]);
 
+    // Kinds the topology forbids reposting/bookmarking have no document to look
+    // for, so those queries are skipped rather than pointed at the wrong doctype.
     const [liked, reposted, bookmarked] = await Promise.all([
-      likeService.isLiked(postId, currentUserId),
-      repostService.isReposted(postId, currentUserId),
-      bookmarkService.isBookmarked(postId, currentUserId),
+      likeService.isLiked(postId, currentUserId, kind),
+      repostIndexFor(kind) ? repostService.isReposted(postId, currentUserId) : Promise.resolve(false),
+      bookmarkIndexFor(kind) ? bookmarkService.isBookmarked(postId, currentUserId) : Promise.resolve(false),
     ]);
 
     return { liked, reposted, bookmarked };
@@ -96,16 +107,16 @@ export async function fetchUserInteractions(
 }
 
 export async function fetchBatchUserInteractions(
-  postIds: string[],
+  targets: readonly KindedTarget[],
   currentUserId: string
 ): Promise<Map<string, PostInteractionState>> {
   const result = new Map<string, PostInteractionState>();
 
-  postIds.forEach((id) => {
+  targets.forEach(({ id }) => {
     result.set(id, { liked: false, reposted: false, bookmarked: false });
   });
 
-  if (postIds.length === 0) {
+  if (targets.length === 0) {
     return result;
   }
 
@@ -116,24 +127,36 @@ export async function fetchBatchUserInteractions(
       import('./bookmark-service'),
     ]);
 
-    // Query only the CURRENT user's own likes/reposts (bounded by page size via
-    // the composite indexes) instead of fetching all users' likes capped at 100
-    // and filtering client-side — which could miss the user's own on busy pages.
-    const [likedPostIds, repostedPostIds, userBookmarks] = await Promise.all([
-      likeService.getUserLikedPostIds(currentUserId, postIds),
-      repostService.getUserRepostedPostIds(currentUserId, postIds),
-      bookmarkService.getUserBookmarksForPosts(currentUserId, postIds),
-    ]);
+    // One pass per distinct interaction surface. On v2 both kinds share one
+    // surface, so this is a single pass over every id — the same three queries
+    // the pre-topology code issued.
+    await Promise.all(
+      groupByInteractionSurface(targets).map(async ({ kind, ids }) => {
+        // Query only the CURRENT user's own likes/reposts (bounded by page size
+        // via the composite indexes) instead of fetching all users' likes capped
+        // at 100 and filtering client-side — which could miss the user's own on
+        // busy pages.
+        const [likedPostIds, repostedPostIds, userBookmarks] = await Promise.all([
+          likeService.getUserLikedPostIds(currentUserId, ids, kind),
+          repostIndexFor(kind)
+            ? repostService.getUserRepostedPostIds(currentUserId, ids)
+            : Promise.resolve(new Set<string>()),
+          bookmarkIndexFor(kind)
+            ? bookmarkService.getUserBookmarksForPosts(currentUserId, ids)
+            : Promise.resolve([]),
+        ]);
 
-    const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
+        const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
 
-    postIds.forEach((postId) => {
-      result.set(postId, {
-        liked: likedPostIds.has(postId),
-        reposted: repostedPostIds.has(postId),
-        bookmarked: bookmarkedPostIds.has(postId),
-      });
-    });
+        ids.forEach((postId) => {
+          result.set(postId, {
+            liked: likedPostIds.has(postId),
+            reposted: repostedPostIds.has(postId),
+            bookmarked: bookmarkedPostIds.has(postId),
+          });
+        });
+      })
+    );
   } catch (error) {
     logger.error('Error getting batch user interactions:', error);
   }
@@ -141,14 +164,14 @@ export async function fetchBatchUserInteractions(
   return result;
 }
 
-export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string, PostStats>> {
+export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Promise<Map<string, PostStats>> {
   const result = new Map<string, PostStats>();
 
-  postIds.forEach((id) => {
+  targets.forEach(({ id }) => {
     result.set(id, { postId: id, likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 });
   });
 
-  if (postIds.length === 0) {
+  if (targets.length === 0) {
     return result;
   }
 
@@ -164,22 +187,32 @@ export async function fetchBatchPostStats(postIds: string[]): Promise<Map<string
     // batched `in`-queries had once a page collectively exceeded ~100
     // engagements) instead of 3xN per-post reads; each transparently falls
     // back to per-post reads if the grouped response doesn't decode as expected.
-    const [likeCounts, repostCounts, replyCounts, quoteCounts] = await Promise.all([
-      likeService.countLikesForPosts(postIds),
-      repostService.countRepostsForPosts(postIds),
-      replyService.countRepliesForPosts(postIds),
-      postService.countQuotesForPosts(postIds),
-    ]);
+    //
+    // Grouped once per interaction surface: on v2 that is a single group holding
+    // every id, so the query count is unchanged.
+    await Promise.all(
+      groupByInteractionSurface(targets).map(async ({ kind, ids }) => {
+        const [likeCounts, repostCounts, replyCounts, quoteCounts] = await Promise.all([
+          likeService.countLikesForPosts(ids, kind),
+          repostIndexFor(kind)
+            ? repostService.countRepostsForPosts(ids)
+            : Promise.resolve(new Map<string, number>()),
+          // Per-kind count tree — see fetchPostStats.
+          replyService.countRepliesForPosts(ids, kind),
+          postService.countQuotesForPosts(ids, kind),
+        ]);
 
-    postIds.forEach((id) => {
-      const stats = result.get(id);
-      if (stats) {
-        stats.likes = likeCounts.get(id) ?? 0;
-        stats.reposts = repostCounts.get(id) ?? 0;
-        stats.replies = replyCounts.get(id) ?? 0;
-        stats.quotes = quoteCounts.get(id) ?? 0;
-      }
-    });
+        ids.forEach((id) => {
+          const stats = result.get(id);
+          if (stats) {
+            stats.likes = likeCounts.get(id) ?? 0;
+            stats.reposts = repostCounts.get(id) ?? 0;
+            stats.replies = replyCounts.get(id) ?? 0;
+            stats.quotes = quoteCounts.get(id) ?? 0;
+          }
+        });
+      })
+    );
   } catch (error) {
     logger.error('Error getting batch post stats:', error);
   }

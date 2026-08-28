@@ -147,3 +147,90 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # The v3 interaction topology only exists on the moutai devnet contract, so the
+  # specs that assert it can only run there. Every step is continue-on-error for
+  # the same reason deploy.yml's devnet build is: the devnet is disposable and
+  # resets without notice, its nodes are a hand-maintained three-machine pool, and
+  # the bot identities are funded by hand — none of which may block a PR. Read its
+  # result as a signal, not a gate; a genuine regression reproduces locally.
+  devnet-e2e:
+    name: End-to-End (devnet, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # BASE_PATH=/devnet, matching the deployed /devnet site, so client-side
+      # storage is scoped the same way it is in production for that deployment.
+      - name: Build devnet bundle
+        continue-on-error: true
+        run: npm run build:devnet
+
+      - name: Detect E2E seed secret
+        env:
+          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+        run: |
+          if [ -n "$E2E_SEED_PHRASE" ]; then
+            echo "HAS_SEED=true" >> "$GITHUB_ENV"
+          else
+            echo "HAS_SEED=false" >> "$GITHUB_ENV"
+            echo "::notice::E2E_SEED_PHRASE unavailable (fork PR?) — skipping the devnet write specs"
+          fi
+
+      # The devnet quorum service cold-starts (~10s) after idle and every SDK
+      # connect fails until it is warm, so warm it before the run rather than
+      # burning a retry on it.
+      - name: Warm the devnet quorum service
+        continue-on-error: true
+        run: |
+          for path in quorums previous masternodes; do
+            curl -sS -o /dev/null --max-time 60 \
+              "https://quorums.moutai.networks.dash.org/$path" || true
+          done
+
+      - name: Run the devnet topology specs
+        if: env.HAS_SEED == 'true'
+        continue-on-error: true
+        env:
+          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+          E2E_BASE_PATH: /devnet
+          E2E_ENV_FILE: .env.devnet
+          NETWORK: devnet
+        run: npx playwright test --project=write topology
+
+      - name: Upload Playwright report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-devnet
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

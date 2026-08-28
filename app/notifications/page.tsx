@@ -52,6 +52,15 @@ function getNotificationUrl(notification: Notification): string | null {
     return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
   }
 
+  // A v3 reply links to ITSELF: usePostDetail renders a reply as the main card
+  // with the thread root as context, which is always reliable — whereas the root
+  // page fetches replies oldest-first in pages and renders limited nesting, so a
+  // deep or recent reply may not be present there at all. v2's link targets
+  // below are untouched.
+  if (notification.post?.rootPostId) {
+    return `/post?id=${notification.post.id}`
+  }
+
   // For reply notifications, navigate to the parent post (where the reply appears)
   // The post.parentId contains the ID of the post/reply that was replied to
   if (notification.type === 'reply' && notification.post?.parentId) {
@@ -64,6 +73,19 @@ function getNotificationUrl(notification: Notification): string | null {
   }
 
   return null
+}
+
+/**
+ * What the notification says happened. `targetKind` only differs from the
+ * default where the topology can tell a reply from a post — the v3 `likeReply`
+ * doctype, and replies that carry a thread root.
+ */
+function notificationMessage(notification: Notification): string {
+  if (notification.targetKind === 'reply') {
+    if (notification.type === 'like') return 'liked your reply'
+    if (notification.type === 'reply') return 'replied to your reply'
+  }
+  return NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'
 }
 
 // Map notification types to settings keys
@@ -358,7 +380,7 @@ function NotificationsPage() {
                               {notification.from?.displayName || notification.from?.username || 'Unknown User'}
                             </Link>
                             {' '}
-                            {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
+                            {notificationMessage(notification)}
                             <span className="text-gray-500 ml-2">
                               {formatTimeCompact(notification.createdAt)}
                             </span>

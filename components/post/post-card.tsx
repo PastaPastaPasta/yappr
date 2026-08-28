@@ -51,6 +51,8 @@ import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { tipService } from '@/lib/services/tip-service'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { canBookmark, canRepost, deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
+import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 
 // Username loading state: undefined = loading, null = no DPNS, string = username
 type UsernameState = string | null | undefined
@@ -148,6 +150,26 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   // Compute isOwnPost from auth context if not explicitly provided
   const isOwnPost = isOwnPostProp ?? (user?.identityId === post.author.id)
+
+  // Which document type this card is actually showing. Everything that reads or
+  // writes an engagement has to dispatch on it, because the v3 topology gives
+  // posts and replies different interaction doctypes (and forbids reposting or
+  // bookmarking a reply at all).
+  const targetKind = targetKindOf(post)
+  const isReply = targetKind === 'reply'
+  const repostable = canRepost(targetKind)
+  const bookmarkable = canBookmark(targetKind)
+  // On v3 posts and replies are permanent, so "delete" blanks the document and
+  // flags it instead of removing it.
+  const tombstones = deletesAreTombstones()
+  // Set after this card's own document was tombstoned this session, so the
+  // deleted state renders in place even when no parent list removes the card.
+  const [locallyTombstoned, setLocallyTombstoned] = useState(false)
+  // Single source of truth for "this card's document is a tombstone" — the
+  // deleted paragraph must beat EVERY content branch (tip text, poll, quote,
+  // media), not just the plain-content one, or a freshly tombstoned card keeps
+  // exposing its former attachments until fresh Platform data arrives.
+  const isTombstoned = Boolean(post.deleted) || locallyTombstoned
 
   // Use progressive enrichment data when available, fall back to post._enrichment (old path)
   const legacyEnrichment = post._enrichment
@@ -267,8 +289,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [reposted, setReposted] = useState(initialReposted)
   const [reposts, setReposts] = useState(statsReposts)
   const [bookmarked, setBookmarked] = useState(initialBookmarked)
-  // The repost control shows reposts + quote-posts combined.
-  const totalReposts = reposts + statsQuotes
+  // The repost control shows reposts + quote-posts combined — or, where the
+  // topology forbids reposting this kind, just the quotes (there is no repost
+  // doctype to have counted).
+  const totalReposts = (repostable ? reposts : 0) + statsQuotes
   const [showLikesModal, setShowLikesModal] = useState(false)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
@@ -376,10 +400,18 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     setLikeLoading(true)
 
     try {
+      // A like references its target, and on v3 that reference is checked by
+      // consensus — so liking a card this session just created but never saw
+      // confirmed would be rejected with the YAPP spent. Only reachable on the
+      // DAPI-timeout path; a no-op otherwise.
+      if (isUnconfirmed(post.id) && !(await settleUnconfirmed(post.id))) {
+        throw new Error('This post has not confirmed yet. Try again in a moment.')
+      }
+
       const { likeService } = await import('@/lib/services/like-service')
       const success = wasLiked
-        ? await likeService.unlikePost(post.id, authedUser.identityId)
-        : await likeService.likePost(post.id, authedUser.identityId, post.author.id)
+        ? await likeService.unlikePost(post.id, authedUser.identityId, targetKind)
+        : await likeService.likePost(post.id, authedUser.identityId, post.author.id, targetKind)
 
       if (!success) throw new Error('Like operation failed')
     } catch (error) {
@@ -403,6 +435,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     const authedUser = requireAuth('repost')
     if (!authedUser) return
 
+    // The topology may forbid reposting this kind entirely (v3 replies), in which
+    // case there is no doctype to write. The control is still rendered today, so
+    // this guard — not the action row — is what enforces the rule.
+    if (!repostable) return
+
     if (repostLoading) return
 
     const wasReposted = reposted
@@ -414,6 +451,14 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     setRepostLoading(true)
 
     try {
+      // Same consensus-reference rule as likes: on v3 a repost names its target
+      // through a checked permanentDocument reference, so creating one against a
+      // not-yet-confirmed post would be rejected with the YAPP already spent.
+      // Removal needs no gate — the repost document itself already exists.
+      if (!wasReposted && isUnconfirmed(post.id) && !(await settleUnconfirmed(post.id))) {
+        throw new Error('This post has not confirmed yet. Try again in a moment.')
+      }
+
       const { repostService } = await import('@/lib/services/repost-service')
       const success = wasReposted
         ? await repostService.removeRepost(post.id, authedUser.identityId)
@@ -448,6 +493,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     const authedUser = requireAuth('bookmark')
     if (!authedUser) return
 
+    // Same guard as handleRepost: on v3 replies have no bookmark doctype.
+    if (!bookmarkable) return
+
     if (bookmarkLoading) return
 
     const wasBookmarked = bookmarked
@@ -457,6 +505,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     setBookmarkLoading(true)
 
     try {
+      // Same unconfirmed-target gate as likes/reposts (bookmark.postId is a
+      // checked reference on v3); removal is ungated.
+      if (!wasBookmarked && isUnconfirmed(post.id) && !(await settleUnconfirmed(post.id))) {
+        throw new Error('This post has not confirmed yet. Try again in a moment.')
+      }
+
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
       const success = wasBookmarked
         ? await bookmarkService.removeBookmark(post.id, authedUser.identityId)
@@ -508,25 +562,33 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     const authedUser = requireAuth('delete')
     if (!authedUser) return
 
-    // Check if this is a reply (has parentId) or a post
-    const isReply = Boolean(post.parentId)
-
     openDeleteModal(post, async () => {
       let success: boolean
 
       if (isReply) {
         // Use replyService for replies (document type 'reply')
         const { replyService } = await import('@/lib/services/reply-service')
-        success = await replyService.deleteReply(post.id, authedUser.identityId)
+        success = tombstones
+          ? await replyService.tombstoneReply(post.id, authedUser.identityId)
+          : await replyService.deleteReply(post.id, authedUser.identityId)
       } else {
         // Use postService for posts (document type 'post')
         const { postService } = await import('@/lib/services/post-service')
-        success = await postService.deletePost(post.id, authedUser.identityId)
+        success = tombstones
+          ? await postService.tombstonePost(post.id, authedUser.identityId)
+          : await postService.deletePost(post.id, authedUser.identityId)
       }
 
       if (!success) throw new Error('Delete operation failed')
 
       toast.success(isReply ? 'Reply deleted' : 'Post deleted')
+      // On v3 the document still exists as a tombstone. Flip the card into its
+      // tombstone rendering immediately — detail and thread callers pass no
+      // onDelete, so without this the pre-delete content would stay on screen
+      // (and the service cache could re-serve it) until a full reload.
+      if (tombstones) {
+        setLocallyTombstoned(true)
+      }
       // Notify parent to remove post from list if callback provided
       if (onDelete) {
         onDelete(post.id)
@@ -656,7 +718,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <span className="text-gray-500 text-sm">{createdAtLabel}</span>
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <IconButton onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                <IconButton data-testid={`more-btn-${post.id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                   <EllipsisHorizontalIcon className="h-5 w-5" />
                 </IconButton>
               </DropdownMenu.Trigger>
@@ -676,7 +738,9 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <DropdownMenu.Item
                     onClick={(e) => {
                       e.stopPropagation();
-                      router.push(`/post/engagements?id=${post.id}`);
+                      // The kind travels in the URL: the engagements page has to
+                      // know which doctypes to read, and an id alone no longer says.
+                      router.push(`/post/engagements?id=${post.id}&kind=${targetKind}`);
                     }}
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none"
                   >
@@ -688,7 +752,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none text-red-500"
                     >
                       <TrashIcon className="h-4 w-4" />
-                      Delete post
+                      Delete {isReply ? 'reply' : 'post'}
                     </DropdownMenu.Item>
                   )}
                   <DropdownMenu.Item
@@ -706,7 +770,11 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
           {/* Tip post - show tip badge with recipient and message */}
           {/* TODO: Remove tooltip once SDK exposes transition IDs for on-chain verification */}
-          {isTipPost ? (
+          {isTombstoned ? (
+            <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">
+              {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
+            </p>
+          ) : isTipPost ? (
             <div className="mt-2">
               <Tooltip.Provider>
                 <Tooltip.Root>
@@ -735,6 +803,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
           ) : isPrivatePost(post) ? (
             <PrivatePostContent
               post={post}
+              rootPostOwnerId={rootPostOwnerId}
               className="mt-1"
               hashtagValidations={hashtagValidations}
               onFailedHashtagClick={handleFailedHashtagClick}
@@ -752,8 +821,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             />
           ) : null}
 
-          {/* Native poll (Pollr contract) */}
-          {embeddedPollId && !isPrivatePost(post) && (
+          {/* Native poll (Pollr contract) — suppressed on tombstones */}
+          {!isTombstoned && embeddedPollId && !isPrivatePost(post) && (
             <PollCard
               pollId={embeddedPollId}
               postContent={displayContent}
@@ -761,18 +830,19 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             />
           )}
 
-          {/* Quoted post - show skeleton while loading, then actual content */}
-          {post.quotedPostId && !post.quotedPost && (
+          {/* Quoted post - show skeleton while loading, then actual content.
+              Either quote field may hold the reference (v3 splits them). */}
+          {!isTombstoned && (post.quotedPostId || post.quotedReplyId) && !post.quotedPost && (
             <EmbeddedPostSkeleton />
           )}
 
-          {post.quotedPost && (
+          {!isTombstoned && post.quotedPost && (
             isEmbeddedBlogPostLike(post.quotedPost)
               ? <EmbeddedBlogPostCard post={post.quotedPost} />
               : <EmbeddedPostCard post={post.quotedPost} />
           )}
 
-          {post.media && post.media.length > 0 && (
+          {!isTombstoned && post.media && post.media.length > 0 && (
             <div className={cn(
               'mt-3 grid gap-1 rounded-xl overflow-hidden',
               post.media.length === 1 && 'grid-cols-1',
@@ -833,6 +903,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <button
+                    data-testid={`repost-menu-btn-${post.id}`}
                     onClick={(e) => e.stopPropagation()}
                     disabled={repostLoading}
                     className={cn(
@@ -862,13 +933,18 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     sideOffset={5}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <DropdownMenu.Item
-                      onClick={(e) => { e.stopPropagation(); handleRepost().catch((error) => logger.error(error)); }}
-                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
-                    >
-                      <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
-                      {reposted ? 'Undo Repost' : 'Repost'}
-                    </DropdownMenu.Item>
+                    {/* Reposting a reply has no doctype to write on v3 —
+                        consensus rejects a reply id on `repost.postId` — so the
+                        item is absent rather than failing when clicked. */}
+                    {repostable && (
+                      <DropdownMenu.Item
+                        onClick={(e) => { e.stopPropagation(); handleRepost().catch((error) => logger.error(error)); }}
+                        className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
+                      >
+                        <ArrowPathIcon className={cn('h-5 w-5', reposted ? 'text-green-500' : '')} />
+                        {reposted ? 'Undo Repost' : 'Repost'}
+                      </DropdownMenu.Item>
+                    )}
                     <DropdownMenu.Item
                       onClick={(e) => { e.stopPropagation(); handleQuote(); }}
                       className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer outline-none"
@@ -933,22 +1009,27 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               </ActionTooltip>
 
               <div className="flex items-center gap-1">
-                <ActionTooltip label="Bookmark">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleBookmark().catch((error) => logger.error(error)); }}
-                    disabled={bookmarkLoading}
-                    className={cn(
-                      'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
-                      bookmarkLoading && 'opacity-50 cursor-wait'
-                    )}
-                  >
-                    {bookmarked ? (
-                      <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
-                    ) : (
-                      <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
-                    )}
-                  </button>
-                </ActionTooltip>
+                {/* Same rule as Repost: `bookmark.postId` only accepts posts on
+                    v3, so replies have no bookmark control at all. */}
+                {bookmarkable && (
+                  <ActionTooltip label="Bookmark">
+                    <button
+                      data-testid={`bookmark-btn-${post.id}`}
+                      onClick={(e) => { e.stopPropagation(); handleBookmark().catch((error) => logger.error(error)); }}
+                      disabled={bookmarkLoading}
+                      className={cn(
+                        'p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors',
+                        bookmarkLoading && 'opacity-50 cursor-wait'
+                      )}
+                    >
+                      {bookmarked ? (
+                        <BookmarkIconSolid className="h-5 w-5 text-yappr-500" />
+                      ) : (
+                        <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+                      )}
+                    </button>
+                  </ActionTooltip>
+                )}
 
                 <ActionTooltip label="Share">
                   <button

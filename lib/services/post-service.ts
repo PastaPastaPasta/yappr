@@ -1,10 +1,12 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
-import { Post, PostQueryOptions } from '../../types';
+import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
+import { groupByInteractionSurface, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
@@ -52,6 +54,123 @@ export interface PostStats {
   views: number;
 }
 
+/**
+ * Dedupe key for a batch of targets, namespaced per doctype set: the same id
+ * list answers differently depending on which interaction surface it is asked
+ * about, so two batches may only share an in-flight request when they resolve
+ * to the same doctypes.
+ */
+function batchDedupeKey(targets: readonly KindedTarget[]): string {
+  return groupByInteractionSurface(targets)
+    .map(({ key, ids }) => `${key}#${RequestDeduplicator.createBatchKey(ids)}`)
+    .sort()
+    .join('||');
+}
+
+/**
+ * Render a `reply` document through the Post shape, tagged with the doctype it
+ * came from so engagements and deletes keep addressing `reply`.
+ */
+export function replyToPost(reply: Reply): Post {
+  return {
+    id: reply.id,
+    targetKind: 'reply',
+    author: reply.author,
+    content: reply.content,
+    createdAt: reply.createdAt,
+    likes: reply.likes,
+    reposts: reply.reposts,
+    replies: reply.replies,
+    quotes: 0,
+    views: reply.views,
+    liked: reply.liked,
+    reposted: reply.reposted,
+    bookmarked: reply.bookmarked,
+    media: reply.media,
+    encryptedContent: reply.encryptedContent,
+    epoch: reply.epoch,
+    nonce: reply.nonce,
+    parentId: reply.parentId,
+    parentOwnerId: reply.parentOwnerId,
+    rootPostId: reply.rootPostId,
+    replyToReplyId: reply.replyToReplyId,
+    deleted: reply.deleted,
+    _enrichment: reply._enrichment,
+  };
+}
+
+/**
+ * Load blog posts by id and render them through the Post shape used for embedded
+ * blog-quote cards. Ids that are not blog posts are simply absent from the result.
+ */
+async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
+  if (blogPostIds.length === 0) return [];
+
+  const { blogPostService } = await import('./blog-post-service');
+  const { blogService } = await import('./blog-service');
+  const { dpnsService } = await import('./dpns-service');
+  const { unifiedProfileService } = await import('./unified-profile-service');
+
+  const settled = await Promise.allSettled(blogPostIds.map((id) => blogPostService.getPost(id)));
+  const blogPosts = settled
+    .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
+    .map((r) => r.value)
+    .filter((post): post is BlogPost => post !== null);
+
+  return Promise.all(
+    blogPosts.map(async (blogPost) => {
+      const [blog, username, profile] = await Promise.all([
+        blogService.getBlog(blogPost.blogId).catch((err) => {
+          logger.warn('Failed to load quoted blog:', err);
+          return null;
+        }),
+        dpnsService.resolveUsername(blogPost.ownerId).catch((err) => {
+          logger.warn('Failed to resolve quoted blog username:', err);
+          return null;
+        }),
+        unifiedProfileService.getProfile(blogPost.ownerId).catch((err) => {
+          logger.warn('Failed to load quoted blog profile:', err);
+          return null;
+        }),
+      ]);
+
+      return {
+        id: blogPost.id,
+        author: {
+          id: blogPost.ownerId,
+          username: username || '',
+          displayName: profile?.displayName || blog?.name || 'Blog author',
+          avatar: profile?.avatar || blog?.avatar || '',
+          followers: 0,
+          following: 0,
+          verified: false,
+          joinedAt: new Date(0),
+          hasDpns: username ? true : undefined,
+        },
+        content: blogPost.subtitle || blogPost.title,
+        createdAt: blogPost.createdAt,
+        likes: 0,
+        reposts: 0,
+        replies: 0,
+        quotes: 0,
+        views: 0,
+        liked: false,
+        reposted: false,
+        bookmarked: false,
+        __isBlogPostQuote: true,
+        title: blogPost.title,
+        subtitle: blogPost.subtitle,
+        coverImage: blogPost.coverImage,
+        slug: blogPost.slug,
+        blogId: blogPost.blogId,
+        blogName: blog?.name,
+        blogUsername: username || undefined,
+        blogContent: blogPost.content,
+      };
+    })
+  );
+}
+
 class PostService extends BaseDocumentService<Post> {
   private statsCache: Map<string, { data: PostStats; timestamp: number }> = new Map();
 
@@ -94,6 +213,11 @@ class PostService extends BaseDocumentService<Post> {
     const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
     const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
 
+    // v3 only: a quote of a REPLY lands in its own field so the reference can be
+    // refersTo-checked. Absent on v2 documents.
+    const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
+    const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
+
     // Cross-contract embed (native polls); identifiers normalized to base58.
     const embed = extractPostEmbedFields(data, doc);
 
@@ -110,6 +234,8 @@ class PostService extends BaseDocumentService<Post> {
     // Return a basic Post object - additional data will be loaded separately
     const post: Post = {
       id,
+      // This transform only ever reads `post` documents.
+      targetKind: 'post',
       author: createDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
@@ -129,6 +255,8 @@ class PostService extends BaseDocumentService<Post> {
       // Expose IDs for lazy loading at component level
       quotedPostId: quotedPostId || undefined,
       quotedPostOwnerId: quotedPostOwnerId || undefined,
+      quotedReplyId,
+      deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       ...embed,
       // Private feed fields
       encryptedContent,
@@ -146,8 +274,8 @@ class PostService extends BaseDocumentService<Post> {
   async enrichPostFull(post: Post): Promise<Post> {
     return enrichPostFullHelper(
       post,
-      (postId) => this.getPostStats(postId),
-      (postId) => this.getUserInteractions(postId)
+      (target) => this.getPostStats(target),
+      (target) => this.getUserInteractions(target)
     );
   }
 
@@ -159,8 +287,8 @@ class PostService extends BaseDocumentService<Post> {
   async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
     return enrichPostsBatchHelper(
       posts,
-      (postIds) => this.getBatchPostStats(postIds),
-      (postIds) => this.getBatchUserInteractions(postIds),
+      (targets) => this.getBatchPostStats(targets),
+      (targets) => this.getBatchUserInteractions(targets),
       this.getCurrentUserId()
     );
   }
@@ -198,6 +326,27 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
+   * Blank a post in place, leaving a tombstone.
+   *
+   * The v3 `post` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. Only `language` (the one required content property) survives;
+   * body, media, quote, embed and every encrypted field are dropped.
+   */
+  async tombstonePost(postId: string, ownerId: string): Promise<boolean> {
+    const ok = await tombstoneDocument({
+      contractId: this.contractId,
+      documentType: this.documentType,
+      documentId: postId,
+      ownerId,
+      preserveScalars: ['language'],
+    });
+    // The inherited 2-minute content cache would otherwise re-serve the
+    // pre-tombstone plaintext to a detail view reached via SPA navigation.
+    if (ok) this.cache.delete(postId);
+    return ok;
+  }
+
+  /**
    * Create a new post (public or private)
    *
    * This is the unified post creation method that handles both public and private posts.
@@ -214,6 +363,8 @@ class PostService extends BaseDocumentService<Post> {
       mediaUrl?: string;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
+      /** v3 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
+      quotedReplyId?: string;
       language?: string;
       sensitive?: boolean;
       /**
@@ -271,6 +422,7 @@ class PostService extends BaseDocumentService<Post> {
     // Add optional fields (use contract field names)
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
+    if (options.quotedReplyId) data.quotedReplyId = identifierStringToDocumentBytes(options.quotedReplyId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
     if (options.embed) {
@@ -429,21 +581,21 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get post statistics (likes, reposts, replies)
+   * Get statistics (likes, reposts, replies) for a post or reply
    */
-  private async getPostStats(postId: string): Promise<PostStats> {
-    return fetchPostStats(postId, this.statsCache);
+  private async getPostStats(target: KindedTarget): Promise<PostStats> {
+    return fetchPostStats(target, this.statsCache);
   }
 
   /**
-   * Get user interactions with a post
+   * Get user interactions with a post or reply
    */
-  private async getUserInteractions(postId: string): Promise<{
+  private async getUserInteractions(target: KindedTarget): Promise<{
     liked: boolean;
     reposted: boolean;
     bookmarked: boolean;
   }> {
-    return fetchUserInteractions(postId, this.getCurrentUserId());
+    return fetchUserInteractions(target, this.getCurrentUserId());
   }
 
   /**
@@ -454,47 +606,38 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Batch get user interactions for multiple posts.
+   * Batch get user interactions for multiple posts/replies.
    * Deduplicates in-flight requests.
    */
-  async getBatchUserInteractions(postIds: string[]): Promise<Map<string, {
+  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, {
     liked: boolean;
     reposted: boolean;
     bookmarked: boolean;
   }>> {
     const currentUserId = this.getCurrentUserId();
-    if (!currentUserId || postIds.length === 0) {
+    if (!currentUserId || targets.length === 0) {
       const result = new Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>();
-      postIds.forEach(id => result.set(id, { liked: false, reposted: false, bookmarked: false }));
+      targets.forEach(({ id }) => result.set(id, { liked: false, reposted: false, bookmarked: false }));
       return result;
     }
 
-    // Include userId in cache key since interactions are user-specific
-    const cacheKey = `${currentUserId}:${RequestDeduplicator.createBatchKey(postIds)}`;
-    return this.interactionsDeduplicator.dedupe(cacheKey, () => this.fetchBatchUserInteractions(postIds, currentUserId));
-  }
-
-  /** Internal: Actually fetch user interactions */
-  private async fetchBatchUserInteractions(postIds: string[], currentUserId: string): Promise<Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>> {
-    return fetchBatchUserInteractions(postIds, currentUserId);
+    // Include userId in the key since interactions are user-specific, and the
+    // doctype set because the same id list answers differently per surface.
+    const cacheKey = `${currentUserId}:${batchDedupeKey(targets)}`;
+    return this.interactionsDeduplicator.dedupe(cacheKey, () => fetchBatchUserInteractions(targets, currentUserId));
   }
 
   /**
-   * Batch get stats for multiple posts using efficient batch queries.
-   * Deduplicates in-flight requests: multiple callers with same postIds share one request.
+   * Batch get stats for multiple posts/replies using efficient batch queries.
+   * Deduplicates in-flight requests: multiple callers with the same targets
+   * share one request.
    */
-  async getBatchPostStats(postIds: string[]): Promise<Map<string, PostStats>> {
-    if (postIds.length === 0) {
+  async getBatchPostStats(targets: readonly KindedTarget[]): Promise<Map<string, PostStats>> {
+    if (targets.length === 0) {
       return new Map<string, PostStats>();
     }
 
-    const cacheKey = RequestDeduplicator.createBatchKey(postIds);
-    return this.statsDeduplicator.dedupe(cacheKey, () => this.fetchBatchPostStats(postIds));
-  }
-
-  /** Internal: Actually fetch batch post stats */
-  private async fetchBatchPostStats(postIds: string[]): Promise<Map<string, PostStats>> {
-    return fetchBatchPostStats(postIds);
+    return this.statsDeduplicator.dedupe(batchDedupeKey(targets), () => fetchBatchPostStats(targets));
   }
 
   /**
@@ -518,7 +661,7 @@ class PostService extends BaseDocumentService<Post> {
     return fetchTopPostsByLikes(
       limit,
       (options) => this.getTimeline(options),
-      (postIds) => this.getBatchPostStats(postIds),
+      (targets) => this.getBatchPostStats(targets),
       (posts) => this.enrichPostsBatch(posts)
     );
   }
@@ -534,27 +677,38 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get posts that quote a specific post.
-   * Uses quotedPostAndOwner index via quotedPostId lookup.
+   * Get posts that quote a specific post or reply, newest first.
+   *
+   * The listing index depends on the kind: `quotedPostAndOwner` on v2, and the
+   * chronological `quotesOfPost`/`quotesOfReply` indexes on v3 (where the old
+   * unique index is gone, because re-quoting a target is legitimate).
    */
-  async getQuotePosts(quotedPostId: string, options: { limit?: number } = {}): Promise<Post[]> {
+  async getQuotePosts(quotedPostId: string, kind: TargetKind = 'post', options: { limit?: number } = {}): Promise<Post[]> {
+    const quoteField = quoteFieldFor(kind);
+    if (!quoteField) return [];
     return fetchQuotePosts(
       quotedPostId,
+      quoteField,
       this.contractId,
       (doc) => this.transformDocument(doc),
       options
     );
   }
 
-  /** Count quotes of a post — O(1) `quoteCount` count tree. */
-  async countQuotes(quotedPostId: string): Promise<number> {
+  /**
+   * Count quotes of a post or reply — O(1) count tree on the quote field for
+   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v3).
+   */
+  async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
+    const quoteField = quoteFieldFor(kind);
+    if (!quoteField) return 0;
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
       return await documentCount(sdk, {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
-        where: [['quotedPostId', '==', quotedPostId]],
+        where: [[quoteField, '==', quotedPostId]],
       });
     } catch (error) {
       logger.error('Error counting quotes:', error);
@@ -562,15 +716,17 @@ class PostService extends BaseDocumentService<Post> {
     }
   }
 
-  /** Quote counts for multiple posts via one grouped count-tree query (falls back to per-post reads). */
-  async countQuotesForPosts(quotedPostIds: string[]): Promise<Map<string, number>> {
+  /** Quote counts for multiple targets via one grouped count-tree query (falls back to per-target reads). */
+  async countQuotesForPosts(quotedPostIds: string[], kind: TargetKind = 'post'): Promise<Map<string, number>> {
+    const quoteField = quoteFieldFor(kind);
+    if (!quoteField) return new Map(quotedPostIds.map((id) => [id, 0]));
     const { getEvoSdk } = await import('./evo-sdk-service');
     const sdk = await getEvoSdk();
     return groupedDocumentCount(
       sdk,
-      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'quotedPostId' },
+      { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: quoteField },
       quotedPostIds,
-      (id) => this.countQuotes(id)
+      (id) => this.countQuotes(id, kind)
     );
   }
 
@@ -599,10 +755,6 @@ class PostService extends BaseDocumentService<Post> {
     if (ids.length === 0) return [];
 
     const { replyService } = await import('./reply-service');
-    const { blogPostService } = await import('./blog-post-service');
-    const { blogService } = await import('./blog-service');
-    const { dpnsService } = await import('./dpns-service');
-    const { unifiedProfileService } = await import('./unified-profile-service');
 
     const posts = await this.getPostsByIds(ids);
     const foundPostIds = new Set(posts.map((post) => post.id));
@@ -615,94 +767,37 @@ class PostService extends BaseDocumentService<Post> {
     const replies = await replyService.getRepliesByIds(missingIds);
     const foundReplyIds = new Set(replies.map((reply) => reply.id));
     const remainingIds = missingIds.filter((id) => !foundReplyIds.has(id));
-    const convertedReplies: Post[] = replies.map((reply) => ({
-      id: reply.id,
-      author: reply.author,
-      content: reply.content,
-      createdAt: reply.createdAt,
-      likes: reply.likes,
-      reposts: reply.reposts,
-      replies: reply.replies,
-      quotes: 0,
-      views: reply.views,
-      liked: reply.liked,
-      reposted: reply.reposted,
-      bookmarked: reply.bookmarked,
-      media: reply.media,
-      encryptedContent: reply.encryptedContent,
-      epoch: reply.epoch,
-      nonce: reply.nonce,
-      parentId: reply.parentId,
-      parentOwnerId: reply.parentOwnerId,
-      _enrichment: reply._enrichment,
-    }));
+    const convertedReplies = replies.map(replyToPost);
 
     if (remainingIds.length === 0) {
       return [...posts, ...convertedReplies];
     }
 
-    const blogPostResults = await Promise.allSettled(remainingIds.map((id) => blogPostService.getPost(id)));
-    const blogPosts = blogPostResults
-      .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
-      .map(r => r.value)
-      .filter((post): post is BlogPost => post !== null);
-
-    const convertedBlogPosts: Post[] = await Promise.all(
-      blogPosts.map(async (blogPost) => {
-        const [blog, username, profile] = await Promise.all([
-          blogService.getBlog(blogPost.blogId).catch((err) => {
-            logger.warn('Failed to load quoted blog:', err);
-            return null;
-          }),
-          dpnsService.resolveUsername(blogPost.ownerId).catch((err) => {
-            logger.warn('Failed to resolve quoted blog username:', err);
-            return null;
-          }),
-          unifiedProfileService.getProfile(blogPost.ownerId).catch((err) => {
-            logger.warn('Failed to load quoted blog profile:', err);
-            return null;
-          }),
-        ]);
-
-        const blogText = blogPost.subtitle || blogPost.title;
-
-        return {
-          id: blogPost.id,
-          author: {
-            id: blogPost.ownerId,
-            username: username || '',
-            displayName: profile?.displayName || blog?.name || 'Blog author',
-            avatar: profile?.avatar || blog?.avatar || '',
-            followers: 0,
-            following: 0,
-            verified: false,
-            joinedAt: new Date(0),
-            hasDpns: username ? true : undefined,
-          },
-          content: blogText,
-          createdAt: blogPost.createdAt,
-          likes: 0,
-          reposts: 0,
-          replies: 0,
-          quotes: 0,
-          views: 0,
-          liked: false,
-          reposted: false,
-          bookmarked: false,
-          __isBlogPostQuote: true,
-          title: blogPost.title,
-          subtitle: blogPost.subtitle,
-          coverImage: blogPost.coverImage,
-          slug: blogPost.slug,
-          blogId: blogPost.blogId,
-          blogName: blog?.name,
-          blogUsername: username || undefined,
-          blogContent: blogPost.content,
-        };
-      })
-    );
-
+    const convertedBlogPosts = await fetchBlogPostsAsQuotes(remainingIds);
     return [...posts, ...convertedReplies, ...convertedBlogPosts];
+  }
+
+  /**
+   * Resolve quote targets when each quote field names exactly ONE doctype (v3).
+   *
+   * `fetchPostsOrReplies`'s cascade exists because v2's single `quotedPostId`
+   * could hold a post id, a reply id or a blog-post id, so every miss had to be
+   * retried against the next doctype. v3 splits those into `quotedPostId`,
+   * `quotedReplyId` and the cross-contract embed triple, so the caller already
+   * knows where each id lives and nothing is probed.
+   */
+  async fetchQuotedTargets(ids: {
+    postIds: string[];
+    replyIds: string[];
+    blogPostIds: string[];
+  }): Promise<Post[]> {
+    const { replyService } = await import('./reply-service');
+    const [posts, replies, blogPosts] = await Promise.all([
+      ids.postIds.length > 0 ? this.getPostsByIds(ids.postIds) : Promise.resolve<Post[]>([]),
+      ids.replyIds.length > 0 ? replyService.getRepliesByIds(ids.replyIds) : Promise.resolve<Reply[]>([]),
+      fetchBlogPostsAsQuotes(ids.blogPostIds),
+    ]);
+    return [...posts, ...replies.map(replyToPost), ...blogPosts];
   }
 
   /**

@@ -5,18 +5,20 @@ import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
 import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
+import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
 
 export async function enrichPostFull(
   post: Post,
-  getPostStats: (postId: string) => Promise<PostStats>,
-  getUserInteractions: (postId: string) => Promise<PostInteractionState>
+  getPostStats: (target: KindedTarget) => Promise<PostStats>,
+  getUserInteractions: (target: KindedTarget) => Promise<PostInteractionState>
 ): Promise<Post> {
   try {
+    const target = targetOf(post);
     const [stats, interactions, author] = await Promise.all([
-      getPostStats(post.id),
-      getUserInteractions(post.id),
+      getPostStats(target),
+      getUserInteractions(target),
       unifiedProfileService.getProfileWithUsername(post.author.id),
     ]);
 
@@ -46,14 +48,16 @@ export async function enrichPostFull(
 
 export async function enrichPostsBatch(
   posts: Post[],
-  getBatchPostStats: (postIds: string[]) => Promise<Map<string, PostStats>>,
-  getBatchUserInteractions: (postIds: string[]) => Promise<Map<string, PostInteractionState>>,
+  getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
+  getBatchUserInteractions: (targets: readonly KindedTarget[]) => Promise<Map<string, PostInteractionState>>,
   currentUserId: string | null
 ): Promise<Post[]> {
   if (posts.length === 0) return posts;
 
   try {
-    const postIds = posts.map((post) => post.id);
+    // Tagged with each post's kind so the batch queries hit the right doctypes
+    // (a no-op on v2, where both kinds share one surface).
+    const targets = posts.map(targetOf);
     const authorIds = Array.from(new Set(posts.map((post) => post.author.id).filter(Boolean)));
 
     const [
@@ -65,8 +69,8 @@ export async function enrichPostsBatch(
       followStatusMap,
       avatarUrlMap,
     ] = await Promise.all([
-      getBatchPostStats(postIds),
-      getBatchUserInteractions(postIds),
+      getBatchPostStats(targets),
+      getBatchUserInteractions(targets),
       dpnsService.resolveUsernamesBatch(authorIds),
       unifiedProfileService.getProfilesByIdentityIds(authorIds),
       currentUserId

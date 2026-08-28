@@ -2,7 +2,8 @@
 
 import { logger } from '@/lib/logger';
 import { useEffect, useMemo, useState } from 'react'
-import type { Post, Reply } from '@/lib/types'
+import type { Post } from '@/lib/types'
+import { replyToPost } from '@/lib/services/post-service'
 import { extractYapprPostId } from './use-link-preview'
 
 interface UseYapprPostReferenceOptions {
@@ -18,30 +19,6 @@ export interface UseYapprPostReferenceResult {
 
 const referenceCache = new Map<string, Post | null>()
 const pendingReferences = new Map<string, Promise<Post | null>>()
-
-function convertReplyToPost(reply: Reply): Post {
-  return {
-    id: reply.id,
-    author: reply.author,
-    content: reply.content,
-    createdAt: reply.createdAt,
-    likes: reply.likes,
-    reposts: reply.reposts,
-    replies: reply.replies,
-    quotes: 0,
-    views: reply.views,
-    liked: reply.liked,
-    reposted: reply.reposted,
-    bookmarked: reply.bookmarked,
-    media: reply.media,
-    parentId: reply.parentId,
-    parentOwnerId: reply.parentOwnerId,
-    encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
-    nonce: reply.nonce,
-    _enrichment: reply._enrichment,
-  }
-}
 
 async function fetchReferencedPost(postId: string): Promise<Post | null> {
   if (referenceCache.has(postId)) {
@@ -64,7 +41,7 @@ async function fetchReferencedPost(postId: string): Promise<Post | null> {
 
       const { replyService } = await import('@/lib/services/reply-service')
       const reply = await replyService.getReplyById(postId)
-      const convertedReply = reply ? convertReplyToPost(reply) : null
+      const convertedReply = reply ? replyToPost(reply) : null
       referenceCache.set(postId, convertedReply)
       return convertedReply
     } catch (error) {

@@ -12,12 +12,18 @@ export const YAPP_TOKEN_POSITION = 0
 // so the settings moderation gate must compare against that owner there.
 // Mainnet TODO: move moderation to a Group and drop this single-identity gate.
 export const YAPP_TOKEN_AUTHORITY_ID = process.env.NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID || 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A'
-// Per-action token cost baked into the v2 contract's tokenCost.create (immutable ratio).
+// Per-action token cost baked into the contract's tokenCost.create (immutable ratio).
 // Used as the `maximumTokenCost` guard when creating token-paid documents.
+//
+// A doctype MISSING from this table gets no token-payment agreement attached, and
+// consensus then rejects its create outright — so every doctype that declares a
+// tokenCost on any deployed contract must appear here, keyed by document type
+// name. `likeReply` only exists on the v3 topology; on v2 nothing looks it up.
 export const YAPP_TOKEN_COSTS = {
   post: 10,
   reply: 3,
   like: 1,
+  likeReply: 1,
   repost: 1,
 } as const
 export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID || 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
@@ -113,6 +119,34 @@ export function getConfiguredNetwork(): AppNetwork {
 /** The network whose address/WIF prefixes apply. Devnets use testnet's. */
 export function keyNetwork(): KeyNetwork {
   return getConfiguredNetwork() === 'mainnet' ? 'mainnet' : 'testnet'
+}
+
+// Contract interaction topology.
+//
+// `v2` is the shape every deployed contract has today: replies chain through a
+// single polymorphic `parentId`, and like/repost/bookmark/quote all address
+// posts and replies through the same `postId`/`quotedPostId` keyspace.
+//
+// `v3` is the topology from PLAN_CONTRACT_V3_TOPOLOGY.md: flat threads
+// (`rootPostId` + `replyToReplyId`), a separate `likeReply` doctype, posts-only
+// repost/bookmark, and dual quote fields — each reference `refersTo`-checked by
+// consensus, which is only possible once every field points at exactly one
+// document type.
+//
+// The two are wired into the app through `lib/contract-topology.ts`. A
+// deployment must set this to match the contract in
+// `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
+export type ContractTopology = 'v2' | 'v3'
+
+export const DEFAULT_CONTRACT_TOPOLOGY: ContractTopology = 'v2'
+
+/** The interaction topology of the configured contract, from `NEXT_PUBLIC_CONTRACT_TOPOLOGY`. */
+export function getContractTopology(): ContractTopology {
+  const configured = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
+  if (configured === 'v2' || configured === 'v3') {
+    return configured
+  }
+  return DEFAULT_CONTRACT_TOPOLOGY
 }
 
 // Devnet wiring. A devnet has no public masternode discovery, so the DAPI

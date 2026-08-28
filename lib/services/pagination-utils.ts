@@ -188,16 +188,30 @@ export async function groupedDocumentCount(
 
 /**
  * Which of `postIds` appear in the caller's OWN documents of a type indexed
- * uniquely on `$ownerId` + `postId` — the "did I like/repost this?" lookup.
+ * uniquely on `$ownerId` + a target field — the "did I like/repost this?" lookup.
  *
- * Queries only the user's own docs, batched to respect the 100-value `in` cap.
- * A unique (owner, postId) index yields at most one doc per postId, so
- * `limit: batch.length` can never truncate a batch. `ownerFirst` selects the
+ * Queries only the user's own docs. A unique (owner, target) index yields at most
+ * one doc per target id, so nothing can truncate. `ownerFirst` selects the
  * where/orderBy ordering to match how the contract declares that index
- * (`true` = [$ownerId, postId], `false` = [postId, $ownerId]).
+ * (`true` = [$ownerId, field], `false` = [field, $ownerId]) — and, crucially,
+ * also decides whether the whole batch fits in ONE query:
  *
- * Returns the set of matching postIds; on error logs `errorLabel` and returns
- * whatever was collected so far.
+ * Drive treats `in` as a RANGE. A query may only range over the LAST index
+ * property it constrains, so `[$ownerId ==, field in [...]]` (repost, bookmark)
+ * is a valid single query, while `[field in [...], $ownerId ==]` (like,
+ * likeReply) is not — and Drive answers that one with an empty result set rather
+ * than an error, which is why it read as "you have not liked anything" instead of
+ * as a bug. Verified against both testnet and the moutai devnet: swapping the
+ * target's `in` for `==` returns the document every time.
+ *
+ * So a target-first index is queried once per target, with bounded concurrency.
+ *
+ * `field` names the identifier property holding the target id. It defaults to
+ * `postId`, which is what every v2 doctype uses; the v3 topology's `likeReply`
+ * names it `replyId` instead.
+ *
+ * Returns the set of matching target ids; on error logs `errorLabel` and returns
+ * an empty set (fail closed).
  */
 export async function queryOwnedPostIds(
   params: {
@@ -207,31 +221,49 @@ export async function queryOwnedPostIds(
     userId: string;
     postIds: string[];
     ownerFirst: boolean;
+    /** Identifier property naming the target. Default: `postId`. */
+    field?: string;
     getPostId: (doc: Record<string, unknown>) => string | undefined;
     errorLabel: string;
   }
 ): Promise<Set<string>> {
   if (params.postIds.length === 0) return new Set();
+  const field = params.field ?? 'postId';
   const found = new Set<string>();
+  const ownerClause = ['$ownerId', '==', params.userId];
+  const ownerOrder = ['$ownerId', 'asc'];
+  const postOrder = [field, 'asc'];
+
   try {
     const sdk = await params.getSdk();
-    const ownerClause = ['$ownerId', '==', params.userId];
-    const ownerOrder = ['$ownerId', 'asc'];
-    await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
-      const postClause = ['postId', 'in', batch];
-      const postOrder = ['postId', 'asc'];
+
+    const collect = async (where: unknown[][], limit: number) => {
       const response = await sdk.documents.query({
         dataContractId: params.dataContractId,
         documentTypeName: params.documentTypeName,
-        where: params.ownerFirst ? [ownerClause, postClause] : [postClause, ownerClause],
+        where,
         orderBy: params.ownerFirst ? [ownerOrder, postOrder] : [postOrder, ownerOrder],
-        limit: batch.length,
+        limit,
       });
       for (const doc of normalizeSDKResponse(response)) {
         const postId = params.getPostId(doc);
         if (postId) found.add(postId);
       }
-    });
+    };
+
+    if (params.ownerFirst) {
+      // One query per 100-id batch: the range sits on the last property, so this
+      // is a shape Drive can answer.
+      await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, (batch) =>
+        collect([ownerClause, [field, 'in', batch]], batch.length)
+      );
+    } else {
+      // Target-first index: equality on both properties, one target at a time.
+      await mapLimit(params.postIds, 6, (postId) =>
+        collect([[field, '==', postId], ownerClause], 1)
+      );
+    }
+
     return found;
   } catch (error) {
     // Fail closed: a failed batch/SDK acquisition returns an empty set rather

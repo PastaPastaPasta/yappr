@@ -6,9 +6,17 @@ import { XMarkIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
+import { deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
 
 export function DeleteConfirmationModal() {
   const { isOpen, post, isDeleting, onConfirm, close, setDeleting } = useDeleteConfirmationModal()
+
+  // On the v3 topology `post` and `reply` are `canBeDeleted: false`, so this
+  // action blanks the document rather than removing it. Promising the user a
+  // permanent removal there would be a lie, and the difference is exactly the
+  // thing they might care about.
+  const isTombstone = deletesAreTombstones()
+  const noun = post && targetKindOf(post) === 'reply' ? 'reply' : 'post'
 
   const handleConfirm = async () => {
     if (!onConfirm || isDeleting) return
@@ -45,11 +53,13 @@ export function DeleteConfirmationModal() {
                   >
                     <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
                       <TrashIcon className="h-6 w-6 text-red-500" />
-                      Delete post?
+                      Delete {noun}?
                     </Dialog.Title>
 
                     <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-6">
-                      This action cannot be undone. The post will be permanently removed from the platform.
+                      {isTombstone
+                        ? `This action cannot be undone. The ${noun}'s content is erased and it stops appearing in feeds, but a tombstone remains on-chain forever — anything that referenced it keeps resolving.`
+                        : `This action cannot be undone. The ${noun} will be permanently removed from the platform.`}
                     </Dialog.Description>
 
                     {!isDeleting && (
