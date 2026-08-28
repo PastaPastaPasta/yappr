@@ -73,6 +73,7 @@ testing-identity-*.json
 
 # One-shot asset-lock private keys recorded by scripts/provision-test-identity.mjs
 .devnet-locks.local
+.devnet-lock-*.key
 
 # Rust build artifacts
 target/
