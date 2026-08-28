@@ -52,6 +52,12 @@ class BlogService extends BaseDocumentService<Blog> {
     super('blog', YAPPR_BLOG_CONTRACT_ID)
   }
 
+  // Deployments without a provisioned blog contract blank the id (see
+  // .env.devnet); reads fail closed as "no blogs" instead of erroring.
+  isConfigured(): boolean {
+    return Boolean(YAPPR_BLOG_CONTRACT_ID)
+  }
+
   protected extractContentFields(doc: Blog): Record<string, unknown> {
     const fields = super.extractContentFields(doc)
     // Serialize themeConfig back to compressed bytes for platform
@@ -103,10 +109,12 @@ class BlogService extends BaseDocumentService<Blog> {
   }
 
   async getBlog(blogId: string): Promise<Blog | null> {
+    if (!this.isConfigured()) return null
     return this.get(blogId)
   }
 
   async getBlogsByOwner(ownerId: string): Promise<Blog[]> {
+    if (!this.isConfigured()) return []
     const options: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
       orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
@@ -121,6 +129,7 @@ class BlogService extends BaseDocumentService<Blog> {
    * then sorts client-side by createdAt desc for display.
    */
   async getAllBlogs(limit = 100): Promise<Blog[]> {
+    if (!this.isConfigured()) return []
     const blogs: Blog[] = []
     const pageSize = Math.min(100, limit)
     let startAfter: string | undefined
