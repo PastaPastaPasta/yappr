@@ -1186,11 +1186,20 @@ export function ComposeModal() {
                                   onImageClick: handleImageButtonClick,
                                   canAttachImage,
                                   imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
-                                  ...(post.id === unpostedPosts[0]?.id ? { fileInputRef, onFileSelect: handleFileSelect } : {}),
                                 } : {})}
                               />
                             ))}
                           </AnimatePresence>
+
+                          {/* Hidden file input - lives at modal level so the attach
+                              button works from any thread post's toolbar */}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFileSelect}
+                            className="hidden"
+                          />
 
                           {/* Image attachment preview */}
                           {attachedImage && (
