@@ -5,6 +5,8 @@
  * Used by avatar display, banner display, and link preview components.
  */
 
+import { getContractTopology } from '../constants'
+
 /**
  * IPFS Gateway Configuration
  * These public gateways are used to resolve ipfs:// protocol URLs.
@@ -72,6 +74,60 @@ function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | nul
  */
 function isCidV0(cid: string): boolean {
   return cid.startsWith('Qm')
+}
+
+/**
+ * Convert an HTTP(S) gateway URL back to its canonical ipfs:// form.
+ * Handles both gateway shapes, from any host:
+ * - path: https://<host>/ipfs/<CID>[/path]
+ * - subdomain: https://<CID>.ipfs.<domain>[/path]
+ *
+ * @returns ipfs://CID[/path], or null if the URL is not a recognizable gateway URL
+ */
+export function gatewayUrlToIpfsUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
+
+    // Path gateway: /ipfs/<CID>[/path] on any host
+    const pathMatch = parsed.pathname.match(/^\/ipfs\/([^/]+)(\/.*)?$/)
+    if (pathMatch) {
+      return `ipfs://${pathMatch[1]}${pathMatch[2] || ''}`
+    }
+
+    // Subdomain gateway: <CID>.ipfs.<domain>
+    const hostMatch = parsed.hostname.match(/^([^.]+)\.ipfs\./i)
+    if (hostMatch) {
+      const path = parsed.pathname === '/' ? '' : parsed.pathname
+      return `ipfs://${hostMatch[1]}${path}`
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Normalize a stored media URL to its canonical form for rendering.
+ * IPFS content (whether stored as ipfs:// or as a gateway HTTPS URL) becomes
+ * ipfs://CID so display components can apply multi-gateway failover.
+ * Non-IPFS URLs pass through untouched.
+ */
+export function normalizeMediaUrl(url: string): string {
+  if (isIpfsProtocol(url)) return url
+  return gatewayUrlToIpfsUrl(url) ?? url
+}
+
+/**
+ * Form of an IPFS media URL suitable for the active contract's mediaUrl field.
+ * The v3 contract accepts ipfs:// natively; the immutable v2 contract requires
+ * ^https?:// so IPFS content is stored as a primary-gateway URL there
+ * (normalizeMediaUrl restores the ipfs:// form on read).
+ */
+export function mediaUrlForContract(url: string): string {
+  if (!isIpfsProtocol(url)) return url
+  return getContractTopology() === 'v3' ? url : ipfsToGatewayUrl(url)
 }
 
 /**

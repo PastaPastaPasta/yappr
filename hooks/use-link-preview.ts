@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import type { LinkPreviewData } from '@/components/post/link-preview'
+import { IPFS_GATEWAYS, isIpfsProtocol, isIpfsUrl, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
 
 // YouTube domain patterns for URL detection
 const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
@@ -144,8 +145,8 @@ const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
  * CORS Proxy Configuration
  *
  * PRIVACY WARNING: These third-party proxies will see all URLs being fetched.
- * Rich link previews are disabled by default for privacy. Users can opt-in
- * via settings, with clear disclosure about third-party data sharing.
+ * Rich link previews are on by default; users can opt out via settings or the
+ * link-preview modal, which discloses this third-party data sharing.
  *
  * Proxy Privacy Policies:
  * - allorigins.win: https://allorigins.win/ (no formal policy)
@@ -162,12 +163,11 @@ export const CORS_PROXY_INFO = {
     { name: 'GitHub', description: 'Raw files (raw.githubusercontent.com)' },
     { name: 'Twitter/X', description: 'Images (pbs.twimg.com)' },
   ],
-  /** IPFS gateways used for ipfs:// URLs */
-  ipfsGateways: [
-    { name: 'dweb.link', url: 'https://dweb.link' },
-    { name: 'ipfs.io', url: 'https://ipfs.io' },
-    { name: 'gateway.pinata.cloud', url: 'https://gateway.pinata.cloud' },
-  ],
+  /** IPFS gateways used for ipfs:// URLs (derived from the shared gateway list) */
+  ipfsGateways: IPFS_GATEWAYS.map((gateway) => ({
+    name: gateway.domain,
+    url: `https://${gateway.domain}`,
+  })),
   /** Third-party proxies used for other URLs */
   proxies: [
     { name: 'allorigins.win', url: 'https://allorigins.win/' },
@@ -217,138 +217,6 @@ const SKIP_DOMAINS = [
 const IMAGE_EXTENSIONS = [
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'
 ]
-
-/**
- * IPFS Gateway Configuration
- * These public gateways are used to resolve ipfs:// protocol URLs.
- * Gateways are tried in order until one succeeds.
- *
- * Two formats are supported:
- * - subdomain: https://CID.ipfs.dweb.link/path (better origin isolation)
- * - path: https://ipfs.io/ipfs/CID/path (traditional format)
- */
-interface IpfsGateway {
-  /** Base domain for the gateway */
-  domain: string
-  /** Gateway format: 'subdomain' or 'path' */
-  format: 'subdomain' | 'path'
-}
-
-const IPFS_GATEWAYS: IpfsGateway[] = [
-  // Subdomain gateway (preferred for origin isolation)
-  { domain: 'ipfs.dweb.link', format: 'subdomain' },
-  // Path gateways (fallback)
-  { domain: 'ipfs.io', format: 'path' },
-  { domain: 'gateway.pinata.cloud', format: 'path' },
-]
-
-/**
- * Check if a URL uses the ipfs:// protocol.
- */
-export function isIpfsProtocol(url: string): boolean {
-  return url.toLowerCase().startsWith('ipfs://')
-}
-
-/**
- * Extract CID from an ipfs:// URL.
- * Handles formats like:
- * - ipfs://CID
- * - ipfs://CID/path/to/file
- */
-function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | null {
-  if (!isIpfsProtocol(url)) return null
-
-  // Remove ipfs:// prefix
-  const remainder = url.slice(7)
-  if (!remainder) return null
-
-  // Split into CID and optional path
-  const slashIndex = remainder.indexOf('/')
-  if (slashIndex === -1) {
-    return { cid: remainder, path: '' }
-  }
-
-  return {
-    cid: remainder.slice(0, slashIndex),
-    path: remainder.slice(slashIndex),
-  }
-}
-
-/**
- * Check if a CID is version 0 (starts with "Qm").
- * CIDv0 uses base58btc which is case-sensitive, making it incompatible
- * with subdomain gateways (DNS is case-insensitive).
- */
-function isCidV0(cid: string): boolean {
-  return cid.startsWith('Qm')
-}
-
-/**
- * Convert an ipfs:// URL to an HTTP gateway URL.
- * Supports both subdomain and path gateway formats.
- *
- * Note: CIDv0 (Qm...) is incompatible with subdomain gateways because
- * base58btc is case-sensitive but DNS is not. Returns null for CIDv0
- * with subdomain gateways, allowing fallback to path gateways.
- */
-function ipfsToGatewayUrl(ipfsUrl: string, gateway: IpfsGateway): string | null {
-  const parsed = extractCidFromIpfsUrl(ipfsUrl)
-  if (!parsed) return null
-
-  if (gateway.format === 'subdomain') {
-    // CIDv0 is case-sensitive (base58btc) - incompatible with DNS subdomains
-    if (isCidV0(parsed.cid)) {
-      return null // Skip this gateway, try next one
-    }
-    // Subdomain format: https://CID.ipfs.dweb.link/path
-    return `https://${parsed.cid}.${gateway.domain}${parsed.path}`
-  } else {
-    // Path format: https://ipfs.io/ipfs/CID/path
-    return `https://${gateway.domain}/ipfs/${parsed.cid}${parsed.path}`
-  }
-}
-
-/**
- * Check if a URL points to IPFS content.
- * IPFS gateways typically have CORS headers enabled, so we can fetch directly.
- *
- * Matches:
- * - Protocol: ipfs:// URLs
- * - Subdomain gateways: hostname contains ".ipfs." (e.g., bafybeib.ipfs.dweb.link)
- * - Direct gateways: ipfs.io domain (e.g., gateway.ipfs.io, ipfs.io)
- * - Path gateways: path starts with /ipfs/ (e.g., https://gateway.pinata.cloud/ipfs/Qm...)
- */
-export function isIpfsUrl(url: string): boolean {
-  // Check for ipfs:// protocol first (before URL parsing which doesn't support it)
-  if (isIpfsProtocol(url)) {
-    return true
-  }
-
-  try {
-    const parsed = new URL(url)
-    const hostname = parsed.hostname.toLowerCase()
-    const pathname = parsed.pathname.toLowerCase()
-
-    // Check for subdomain gateway pattern: *.ipfs.* (e.g., cid.ipfs.dweb.link)
-    if (hostname.includes('.ipfs.')) {
-      return true
-    }
-
-    // Check for ipfs.io domain specifically (e.g., ipfs.io, gateway.ipfs.io)
-    if (hostname === 'ipfs.io' || hostname.endsWith('.ipfs.io')) {
-      return true
-    }
-
-    // Check for path gateway pattern: /ipfs/ in the path
-    if (pathname.startsWith('/ipfs/')) {
-      return true
-    }
-
-    return false
-  } catch {
-    return false
-  }
-}
 
 /**
  * Check if a URL points directly to an image file based on its extension.
@@ -607,12 +475,7 @@ async function fetchViaProxy(url: string): Promise<string> {
 async function fetchIpfsProtocol(ipfsUrl: string): Promise<FetchResult> {
   let lastError: Error | null = null
 
-  for (const gateway of IPFS_GATEWAYS) {
-    const gatewayUrl = ipfsToGatewayUrl(ipfsUrl, gateway)
-    if (!gatewayUrl) {
-      continue
-    }
-
+  for (const gatewayUrl of getAllGatewayUrls(ipfsUrl)) {
     try {
       const result = await fetchDirectly(gatewayUrl)
       // Include the resolved gateway URL so browsers can load it

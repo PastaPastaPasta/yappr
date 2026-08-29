@@ -4,7 +4,6 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
 import { motion } from 'framer-motion'
 import {
   ChatBubbleOvalLeftIcon,
@@ -46,6 +45,8 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { categorizeError, isFrozenBalanceError } from '@/lib/error-utils'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
+import { useMediaGate } from '@/hooks/use-media-gate'
+import { GatedPostMedia } from './gated-media'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
 import { useMentionValidation } from '@/hooks/use-mention-validation'
@@ -332,6 +333,19 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id, {
     initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
   })
+
+  // Live follow state, preferred over the enrichment snapshot as soon as
+  // useFollow settles: the snapshot was taken when the feed was built and goes
+  // stale the moment the viewer unfollows, and a stale `true` would leave that
+  // author's media ungated. While the hook is still resolving its state
+  // defaults to false, so the snapshot covers that window instead (undefined
+  // when there is none, which gates until the answer arrives).
+  const authorIsFollowing = followLoading
+    ? progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
+    : isFollowing
+
+  // Follow-gates this card's media/previews.
+  const mediaGate = useMediaGate(post.author.id, authorIsFollowing)
 
   // Check if user can reply to private posts (PRD §5.5)
   // For replies, check access against root post owner, not the reply author
@@ -638,7 +652,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         bookmarked: bookmarked
       },
       isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
-      isFollowing: progressiveEnrichment?.isFollowing ?? isFollowing,
+      isFollowing: authorIsFollowing,
       replyTo: progressiveEnrichment?.replyTo
     }
     setPendingPostNavigation(enrichedPost, resolvedEnrichment)
@@ -827,6 +841,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 onFailedHashtagClick={handleFailedHashtagClick}
                 mentionValidations={mentionValidations}
                 onFailedMentionClick={handleFailedMentionClick}
+                mediaGate={mediaGate}
               />
             ) : displayContent ? (
               <PostContent
@@ -836,6 +851,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 onFailedHashtagClick={handleFailedHashtagClick}
                 mentionValidations={mentionValidations}
                 onFailedMentionClick={handleFailedMentionClick}
+                mediaGate={mediaGate}
               />
             ) : null}
 
@@ -876,12 +892,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                       post.media && post.media.length === 3 && index === 0 && 'row-span-2'
                     )}
                   >
-                    <Image
-                      src={media.url}
-                      alt={media.alt || ''}
-                      fill
-                      className="object-cover"
-                    />
+                    <GatedPostMedia media={media} gate={mediaGate} />
                   </div>
                 ))}
               </div>

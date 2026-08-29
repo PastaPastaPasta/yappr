@@ -54,6 +54,7 @@ import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
+import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
@@ -332,7 +333,11 @@ export function ComposeModal() {
   const unpostedPostsWithContent = unpostedPosts.filter((p) => p.content.trim().length > 0)
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
   const imageUrl = attachedImage?.uploadResult?.url
-  const imageUrlExtraLength = imageUrl ? imageUrl.length + 2 : 0 // include \n\n separator
+  // Public posts carry the image in the mediaUrl document field (no character
+  // cost). Encrypted posts keep the URL inside the encrypted content — a
+  // plaintext mediaUrl would leak the private media — so only they still pay
+  // the append cost (\n\n separator included).
+  const imageUrlExtraLength = imageUrl && willBeEncrypted ? imageUrl.length + 2 : 0
   const firstUnpostedPostId = unpostedPostsWithContent[0]?.id
   const hasValidContent = unpostedPostsWithContent.length > 0
 
@@ -632,13 +637,20 @@ export function ComposeModal() {
       const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
       const hasInheritedEncryption = inheritedEncryption !== null
 
+      // Encrypted posts keep the image URL inside the (to-be-encrypted) content;
+      // public posts carry it in the mediaUrl document field instead.
+      const mediaInEncryptedContent = !!imageUrl && (isPrivate || hasInheritedEncryption)
+      const mediaUrlField = imageUrl && !mediaInEncryptedContent
+        ? mediaUrlForContract(imageUrl)
+        : undefined
+
       // Filter to only unposted posts with content, preserving their IDs
       const postsToCreate = threadPosts
         .filter((p) => p.content.trim().length > 0 && !p.postedPostId)
         .map((p, index) => ({
           threadPostId: p.id,
-          // Append image URL to first post's content if we have one
-          content: index === 0 && imageUrl
+          // Only encrypted posts still get the image URL appended to content
+          content: index === 0 && imageUrl && mediaInEncryptedContent
             ? `${p.content.trim()}\n\n${imageUrl}`
             : p.content.trim(),
           teaser: p.teaser?.trim(),
@@ -819,7 +831,10 @@ export function ComposeModal() {
                 authedUser.identityId,
                 postContent,
                 { ...linkage, parentOwnerId },
-                { encryption: encryptionOptions }
+                {
+                  encryption: encryptionOptions,
+                  mediaUrl: i === 0 ? mediaUrlField : undefined,
+                }
               )
               const confirmed = (reply as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
               return { postId: reply.id, document: reply, isReply: true, confirmed }
@@ -831,6 +846,7 @@ export function ComposeModal() {
                 embed: i === 0 ? quoteEmbed ?? postEmbed : undefined,
                 encryption: encryptionOptions,
                 sensitive: markSensitive || undefined,
+                mediaUrl: i === 0 ? mediaUrlField : undefined,
               })
               const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
               return { postId: post.id, document: post, isReply: false, confirmed }
@@ -1499,7 +1515,7 @@ export function ComposeModal() {
                                 <div className={`mt-2 text-xs ${
                                   isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'
                                 }`}>
-                                  Image URL adds {imageUrlExtraLength} characters to your post.
+                                  Image URL adds {imageUrlExtraLength} characters to your private post.
                                   {isOverLimitDueToImage && (
                                     <span className="ml-1">
                                       Over limit by {imageOverage}. Trim your text.

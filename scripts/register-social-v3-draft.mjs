@@ -25,6 +25,15 @@
  *               owner = devnet maker DuqE3zgXprS5zU51YaB4GuGxTRzzukW59XAYKeM6gKGA (seed index 9);
  *               `verify-topology.mjs` passed all 31 checks against it.
  *
+ *   v3-topology 4UW9im1ytErbtstoNoFzdWbCHXk8qYaJvM9gkZQ86wbb  (moutai, 2026-08-29)
+ *               same file with post/reply.mediaUrl relaxed to
+ *               `^(https?|ipfs)://.+$`, so image attachments are stored
+ *               natively as ipfs://CID. dataContractUpdate cannot change an
+ *               existing property's pattern, which is why this is a fresh
+ *               registration rather than an update of the id above. Battery
+ *               passed; ipfs:// and https:// mediaUrl writes both verified
+ *               accepted on chain. This is the id in .env.devnet.
+ *
  * Devnet is disposable; iterate freely.
  *
  * ## Network

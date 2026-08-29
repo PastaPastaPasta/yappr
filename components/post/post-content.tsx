@@ -5,7 +5,9 @@ import { Fragment, useMemo } from 'react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
 import { MentionValidationStatus } from '@/hooks/use-mention-validation'
-import { LinkPreview, LinkPreviewSkeleton, LinkPreviewEnablePrompt, LinkPreviewInfoIcon } from './link-preview'
+import { LinkPreview, LinkPreviewSkeleton, LinkPreviewInfoIcon } from './link-preview'
+import { GatedMediaPlaceholder } from './gated-media'
+import type { MediaGate } from '@/hooks/use-media-gate'
 import { useLinkPreview, extractFirstUrl, stripTrailingPunctuation } from '@/hooks/use-link-preview'
 import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
 import { useSettingsStore } from '@/lib/store'
@@ -29,6 +31,8 @@ interface PostContentProps {
   disableLinkPreview?: boolean
   /** Optional: disable internal Yappr post embedding for this content block */
   disableInternalPostEmbed?: boolean
+  /** Optional: follow-gate for external media/previews; omitted = ungated (own/trusted content) */
+  mediaGate?: MediaGate
 }
 
 type PartType = 'text' | 'hashtag' | 'cashtag' | 'mention' | 'url' | 'bold' | 'italic' | 'code'
@@ -78,10 +82,10 @@ export function PostContent({
   mentionValidations,
   onFailedMentionClick,
   disableLinkPreview = false,
-  disableInternalPostEmbed = false
+  disableInternalPostEmbed = false,
+  mediaGate
 }: PostContentProps) {
-  const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
-  const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
+  const linkPreviewsEnabled = useSettingsStore((s) => s.linkPreviewsEnabled)
 
   // Extract first URL for preview
   const firstUrl = useMemo(() => extractFirstUrl(content), [content])
@@ -93,10 +97,11 @@ export function PostContent({
     resolved: internalReferenceResolved
   } = useYapprPostReference(firstUrl, { disabled: !shouldResolveInternalReference })
 
-  // Only fetch preview if link previews are enabled
+  // Only fetch preview if link previews are enabled and the author isn't
+  // follow-gated — a gated author's URL must not be fetched at all.
   const { data: previewData, loading: previewLoading } = useLinkPreview(
     firstUrl,
-    { disabled: disableLinkPreview || !linkPreviewsEnabled }
+    { disabled: disableLinkPreview || !linkPreviewsEnabled || mediaGate?.gated }
   )
 
   const shouldHideFirstUrl = (
@@ -296,7 +301,7 @@ export function PostContent({
       }
 
       // When link previews are disabled, truncate long URLs
-      const shouldTruncate = linkPreviewsChoice === 'disabled'
+      const shouldTruncate = !linkPreviewsEnabled
       const maxLength = 40
       const truncatedDisplay = shouldTruncate && cleanDisplay.length > maxLength
         ? cleanDisplay.slice(0, maxLength) + '...'
@@ -461,9 +466,9 @@ export function PostContent({
       {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferencePost)) && previewData && (
         <LinkPreview data={previewData} />
       )}
-      {/* Enable link previews prompt - only shown when user hasn't made a choice yet */}
-      {!disableLinkPreview && linkPreviewsChoice === 'undecided' && firstUrl && !internalReferenceMatched && (
-        <LinkPreviewEnablePrompt />
+      {/* Follow-gated preview: nothing was fetched; offer click-to-reveal */}
+      {!disableLinkPreview && linkPreviewsEnabled && mediaGate?.gated && firstUrl && !internalReferenceMatched && (
+        <GatedMediaPlaceholder kind="preview" onReveal={mediaGate.reveal} className="mt-3" />
       )}
     </div>
   )

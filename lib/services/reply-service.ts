@@ -6,6 +6,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
+import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { tombstoneDocument } from './tombstone-helpers';
 import {
@@ -134,7 +135,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       media: mediaUrl ? [{
         id: id + '-media',
         type: 'image',
-        url: mediaUrl
+        url: normalizeMediaUrl(mediaUrl)
       }] : undefined,
       parentId,
       parentOwnerId,
@@ -261,6 +262,11 @@ class ReplyService extends BaseDocumentService<Reply> {
       data.content = content;
     }
 
+    if (options.mediaUrl && options.encryption) {
+      // A plaintext mediaUrl on an encrypted reply would leak the private media
+      // reference; callers must keep it inside the encrypted content instead.
+      throw new Error('mediaUrl cannot be combined with encryption');
+    }
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
