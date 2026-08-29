@@ -63,13 +63,13 @@ test.describe('sensitive content on the real testnet', () => {
     await expect(dialog).toBeHidden({ timeout: 120_000 })
 
     // The optimistic prepend must carry the flag: the newest card is covered by
-    // the gate and its text is NOT in the DOM (the gate never mounts children).
+    // the gate, and its text is laid out underneath the cover but never rendered.
     const feed = page.getByTestId('feed-post-list')
     const card = feed
       .locator('[data-testid^="post-card-"]', { has: page.locator('[data-testid="sensitive-gate"]') })
       .first()
     await expect(card).toBeVisible()
-    await expect(feed.getByText(runTag)).toHaveCount(0)
+    await expect(card.getByText(runTag)).toBeHidden()
 
     const testId = await card.getAttribute('data-testid')
     postId = (testId ?? '').replace('post-card-', '')
@@ -78,8 +78,15 @@ test.describe('sensitive content on the real testnet', () => {
     // Per-post reveal. Re-address the card by its id: `card` selects on
     // *having* a sensitive-gate, and the reveal unmounts the gate — so the
     // filtered locator can no longer resolve the very card it just revealed.
+    const revealedCard = feed.getByTestId(`post-card-${postId}`)
+    const boxBefore = await revealedCard.boundingBox()
     await card.getByTestId('sensitive-show-btn').click()
-    await expect(feed.getByTestId(`post-card-${postId}`).getByText(runTag)).toBeVisible()
+    await expect(revealedCard.getByText(runTag)).toBeVisible()
+
+    // Revealing claims no new space: the cover sat on top of the content, so the
+    // card keeps its height and the rest of the feed does not jump.
+    const boxAfter = await revealedCard.boundingBox()
+    expect(Math.abs((boxAfter?.height ?? 0) - (boxBefore?.height ?? 0))).toBeLessThanOrEqual(1)
   })
 
   test('the flag survives the chain read-back', async ({ page, bot }) => {
@@ -90,9 +97,9 @@ test.describe('sensitive content on the real testnet', () => {
       p.getByTestId(`post-card-${postId}`)
     )
 
-    // Fresh page load, so the session reveal set is empty again: gated, no text.
+    // Fresh page load, so the session reveal set is empty again: covered anew.
     await expect(card.getByTestId('sensitive-gate')).toBeVisible()
-    await expect(card.getByText(runTag)).toHaveCount(0)
+    await expect(card.getByText(runTag)).toBeHidden()
 
     await card.getByTestId('sensitive-show-btn').click()
     await expect(card.getByText(runTag)).toBeVisible()
@@ -122,7 +129,7 @@ test.describe('sensitive content on the real testnet', () => {
     const card = page.getByTestId(`post-card-${postId}`)
     await expect(card).toBeVisible({ timeout: 60_000 })
     await expect(card.getByTestId('sensitive-gate')).toBeVisible()
-    await expect(card.getByText(runTag)).toHaveCount(0)
+    await expect(card.getByText(runTag)).toBeHidden()
 
     // The viewer's own posts are exempt from hide-filtering on their profile.
     await page.goto(appUrl(`/user?id=${bot.identityId}`))
