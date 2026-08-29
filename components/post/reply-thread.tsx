@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { ChevronRightIcon } from '@heroicons/react/24/outline'
 import { ReplyThread, Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
 import { PostCard, ProgressiveEnrichment } from './post-card'
@@ -9,6 +10,16 @@ interface ReplyThreadItemProps {
   thread: ReplyThread
   rootPostOwnerId: string
   getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
+}
+
+/**
+ * Depth-first, pre-order flatten of a nested reply subtree: each thread
+ * followed by its whole subtree. Everything below a top-level reply renders at
+ * one indent level — capping the indent keeps deep chains readable on narrow
+ * screens while DFS order keeps each reply directly under its parent.
+ */
+export function flattenReplyThreads(threads: ReplyThread[]): ReplyThread[] {
+  return threads.flatMap((thread) => [thread, ...flattenReplyThreads(thread.nestedReplies)])
 }
 
 /**
@@ -46,10 +57,10 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
         rootPostOwnerId={rootPostOwnerId}
       />
 
-      {/* Nested replies (2nd level) - indented */}
+      {/* Nested replies - flattened to a single indent level */}
       {nestedReplies.length > 0 && (
         <div className="ml-12 border-l-2 border-gray-200 dark:border-gray-700">
-          {nestedReplies.map((nested) => (
+          {flattenReplyThreads(nestedReplies).map((nested) => (
             <NestedReply
               key={nested.content.id}
               thread={nested}
@@ -63,36 +74,52 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
   )
 }
 
-interface NestedReplyProps {
-  thread: ReplyThread
-  rootPostOwnerId: string
-  getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
-}
-
 /**
- * Renders a nested (2nd level) reply. The indentation and left border
- * visually indicate the reply hierarchy without explicit "Replying to" text.
+ * Renders a nested reply. The indentation and left border visually indicate
+ * the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: NestedReplyProps) {
-  const { content } = thread
-  const postLike = replyToPost(content)
+function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThreadItemProps) {
+  const postLike = replyToPost(thread.content)
+  const enrichment = getPostEnrichment?.(postLike)
+
+  // Replies past the depth cap: v3 counts them while assembling the (fully
+  // loaded) thread, and that count stays valid even if children are later
+  // nested optimistically. On v2 they were never fetched, so the enrichment
+  // reply count is the only signal they exist — but it counts direct children,
+  // so it only means "hidden" when none of them rendered.
+  const hiddenCount = Math.max(
+    thread.hiddenReplyCount ?? 0,
+    thread.nestedReplies.length > 0 ? 0 : enrichment?.stats?.replies ?? 0
+  )
 
   return (
     <div className="relative">
       <PostCard
         post={postLike}
-        enrichment={getPostEnrichment?.(postLike)}
+        enrichment={enrichment}
         rootPostOwnerId={rootPostOwnerId}
       />
 
-      {/* Show "View more replies" if this reply has replies (3+ level) */}
-      {content.replies > 0 && (
-        <div className="px-4 pb-3 pl-16">
+      {/* Continuation affordance: refocuses the page on this reply, showing its
+          ancestors above and its full subtree below */}
+      {hiddenCount > 0 && (
+        <div className="relative">
+          <span
+            className="absolute left-[30px] top-0 h-3 w-0.5 bg-gray-300 dark:bg-gray-600"
+            aria-hidden="true"
+          />
           <Link
-            href={`/post?id=${content.id}`}
-            className="text-sm text-yappr-500 hover:underline"
+            href={`/post?id=${thread.content.id}`}
+            className="group flex items-center gap-1.5 px-4 py-3 pl-16 text-sm font-medium text-yappr-500 hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors"
           >
-            View {content.replies} more {content.replies === 1 ? 'reply' : 'replies'}
+            <span>Continue thread</span>
+            <span className="font-normal text-gray-500 dark:text-gray-400">
+              · {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
+            </span>
+            <ChevronRightIcon
+              className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
+              aria-hidden="true"
+            />
           </Link>
         </div>
       )}

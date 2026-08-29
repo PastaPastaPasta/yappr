@@ -6,7 +6,7 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
-import { ReplyThreadItem } from '@/components/post/reply-thread'
+import { ReplyThreadItem, flattenReplyThreads } from '@/components/post/reply-thread'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -79,14 +79,14 @@ function PostDetailContent() {
     if (replyThreads.length === 0) return
 
     // Replies rendered as Post shapes: tagged as `reply` so their enrichment
-    // queries resolve against the reply interaction doctypes.
-    const replyMap = new Map<string, Post>()
-    replyThreads.forEach((thread) => {
-      replyMap.set(thread.content.id, replyToPost(thread.content))
-      thread.nestedReplies.forEach((nested) => {
-        replyMap.set(nested.content.id, replyToPost(nested.content))
-      })
-    })
+    // queries resolve against the reply interaction doctypes. Walks every
+    // rendered nesting level.
+    const replyMap = new Map<string, Post>(
+      flattenReplyThreads(replyThreads).map((thread): [string, Post] => [
+        thread.content.id,
+        replyToPost(thread.content)
+      ])
+    )
 
     const repliesToEnrich = Array.from(replyMap.values())
     enrichRepliesProgressively(repliesToEnrich)
