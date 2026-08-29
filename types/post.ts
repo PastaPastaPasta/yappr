@@ -84,6 +84,12 @@ export interface Post {
    * unset.
    */
   sensitive?: boolean
+  /**
+   * v4 only: the post's single indexed hashtag (lowercase, no '#'; `''` =
+   * untagged). Likes must repeat it verbatim — consensus checks the agreement —
+   * so the like path reads it off this field rather than re-parsing content.
+   */
+  hashtag?: string
   // Blog quote fields (present when this Post represents a quoted blog post)
   __isBlogPostQuote?: boolean
   title?: string
