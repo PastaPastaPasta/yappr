@@ -22,11 +22,17 @@ export interface MediaGate {
  * arrives and re-renders the card. Logged-out users have no follow graph, so
  * everything is gated for them unless the setting is off.
  *
- * `isFollowingHint` is the caller's live follow state and takes precedence
- * outright; the cache is consulted only when there is no hint (quoted and
- * embedded cards, which have no follow hook of their own). Deciding it the
- * other way round would let a cache entry that has gone stale re-open the gate
- * on an author the viewer has since unfollowed.
+ * The shared cache is consulted FIRST and the caller's hint is only a fallback,
+ * because the cache is the one place every follow change lands: `useFollow`
+ * writes it on the optimistic toggle and again on rollback, so it is never
+ * staler than any single hook's state — whereas a hint can be. A card seeded
+ * from batch enrichment keeps its `initialValue` for its whole lifetime
+ * (`useFollow` skips re-checking when one was supplied), so unfollowing an
+ * author from one card leaves every OTHER mounted card for that author holding
+ * a stale `true`. Reading the cache first re-gates all of them, and any card
+ * mounting afterwards, instead of only the one whose button was clicked.
+ * The hint still covers the gaps the cache cannot fill: an entry past its TTL,
+ * or one cleared by `refresh()` mid-refetch.
  */
 export function useMediaGate(authorId: string, isFollowingHint?: boolean): MediaGate {
   const gateEnabled = useSettingsStore((s) => s.gateMediaFromNonFollowed)
@@ -40,6 +46,6 @@ export function useMediaGate(authorId: string, isFollowingHint?: boolean): Media
   if (!viewerId) return { gated: true, reveal }
   if (viewerId === authorId) return { gated: false, reveal }
 
-  const isFollowedAuthor = isFollowingHint ?? getFollowStatus(`${viewerId}:${authorId}`)
+  const isFollowedAuthor = getFollowStatus(`${viewerId}:${authorId}`) ?? isFollowingHint
   return { gated: isFollowedAuthor !== true, reveal }
 }
