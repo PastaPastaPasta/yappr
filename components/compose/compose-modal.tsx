@@ -55,7 +55,7 @@ import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
-import { replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
+import { hashtagsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 
@@ -929,7 +929,10 @@ export function ComposeModal() {
               : isThisReplyInherited
                 ? '' // Inherited encryption replies have no public content
                 : postContent
-            const hashtags = extractAllTags(contentForHashtags)
+            // On the inline-hashtag topology (v4) the post itself carries its
+            // single hashtag — there is no postHashtag doctype and these
+            // fire-and-forget writes must not happen at all.
+            const hashtags = hashtagsAreInline() ? [] : extractAllTags(contentForHashtags)
             if (hashtags.length > 0) {
               hashtagService.createPostHashtags(postId, authedUser.identityId, hashtags)
                 .then((results) => {

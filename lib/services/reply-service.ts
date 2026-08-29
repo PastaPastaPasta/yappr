@@ -10,6 +10,7 @@ import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { tombstoneDocument } from './tombstone-helpers';
 import {
+  authorFieldIsRequired,
   hasFlatThreads,
   replyCountFieldFor,
   replyLinkage,
@@ -184,12 +185,17 @@ class ReplyService extends BaseDocumentService<Reply> {
    * live reply under it) to the top of the thread.
    */
   async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
+    // On v4 the required poster-attested `author` must survive the tombstone
+    // REPLACE verbatim (it must keep equalling $ownerId, and existing likeReply
+    // rows repeated it under the consensus-checked agreement).
     const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
       documentId: replyId,
       ownerId,
-      preserveIdentifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
+      preserveIdentifiers: authorFieldIsRequired()
+        ? ['rootPostId', 'replyToReplyId', 'parentOwnerId', 'author']
+        : ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
     });
     // Mirror tombstonePost: drop the cached pre-tombstone document.
     if (ok) this.cache.delete(replyId);
@@ -227,6 +233,11 @@ class ReplyService extends BaseDocumentService<Reply> {
     };
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
+    }
+    // v4: poster-attested author (== $ownerId), the propertyAgreement source
+    // for likeReply.replyAuthor.
+    if (authorFieldIsRequired()) {
+      data.author = identifierStringToDocumentBytes(ownerId);
     }
 
     // Handle encryption if provided

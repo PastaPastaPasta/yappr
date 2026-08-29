@@ -3,6 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { documentCount, paginateFetchAll } from './pagination-utils';
+import { hashtagsAreInline } from '../contract-topology';
 
 export interface PostHashtagDocument {
   $id: string;
@@ -57,6 +58,13 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    * Create a single hashtag document for a post
    */
   async createPostHashtag(postId: string, ownerId: string, hashtag: string): Promise<boolean> {
+    // v4: the postHashtag doctype does not exist — a post's single hashtag is
+    // written inline at post creation and cannot be added afterwards.
+    if (hashtagsAreInline()) {
+      logger.warn('createPostHashtag called on an inline-hashtag topology — nothing to write');
+      return false;
+    }
+
     // Validate and normalize hashtag
     const normalizedTag = this.normalizeHashtag(hashtag);
     if (!normalizedTag) {
@@ -174,10 +182,16 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    */
   async getPostCountByHashtag(hashtag: string): Promise<number> {
     try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const normalizedTag = this.normalizeHashtag(hashtag);
-
       if (!normalizedTag) return 0;
+
+      // v4: no postHashtag count tree — count posts on post.tagAndTime instead.
+      if (hashtagsAreInline()) {
+        const { postService } = await import('./post-service');
+        return postService.countPostsByHashtag(normalizedTag);
+      }
+
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
       return await documentCount(sdk, {
         dataContractId: this.contractId,
@@ -197,6 +211,10 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    */
   async getPostIdsByHashtag(hashtag: string): Promise<PostHashtagDocument[]> {
     try {
+      // v4: no postHashtag documents to list — tag pages query post.tagAndTime
+      // directly (see postService.getPostsByHashtag / app/hashtag).
+      if (hashtagsAreInline()) return [];
+
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const normalizedTag = this.normalizeHashtag(hashtag);
 
@@ -265,6 +283,12 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       minPosts = 1,
       limit = 12
     } = options;
+
+    // v4: trending rode the postHashtag doctype, which no longer exists. A
+    // ranked/count-based trending surface is deliberately OUT OF SCOPE for the
+    // v4 client migration — explore renders its existing empty state instead of
+    // firing queries against an absent doctype.
+    if (hashtagsAreInline()) return [];
 
     // Check cache
     if (this.trendingCache &&
