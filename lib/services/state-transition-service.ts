@@ -357,8 +357,24 @@ class StateTransitionService {
         tokenContractPosition?: number;
         maximumTokenCost: number;
       };
+      /**
+       * How to confirm the transition. `'strict'` (default) is the historical
+       * path: `waitForResponse` plus get-by-id existence probes and ST-byte
+       * caching for idempotent rebroadcast.
+       *
+       * `'affectedState'` is for **indexOnly** document types (v4 likes): those
+       * have no id-addressable stored row, so `documents.get` can never confirm
+       * one (which also makes the ST-byte replay cache useless — its probe
+       * would never resolve), and their proofs resolve as an affected-state
+       * snapshot rather than `ExecutionProved`, which strict waiting rejects
+       * even though the write landed. This mode skips every get-by-id probe and
+       * waits via `waitForAffectedState`; callers that need a stronger
+       * confirmation must read the write back through a value query.
+       */
+      confirmation?: 'strict' | 'affectedState';
     }
   ): Promise<StateTransitionResult> {
+    const affectedStateMode = options?.confirmation === 'affectedState';
     try {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
@@ -395,7 +411,9 @@ class StateTransitionService {
       logger.info(`Built document, ID: ${documentId}`);
 
       // --- Check for a cached ST from a previous timed-out attempt ---
-      const cachedBytes = loadPendingSTBytes(documentId);
+      // Meaningless in affectedState mode: the replay flow settles through
+      // get-by-id probes an indexOnly doctype cannot answer.
+      const cachedBytes = affectedStateMode ? null : loadPendingSTBytes(documentId);
       if (cachedBytes) {
         logger.info(`Found cached ST bytes for ${documentId} — checking Platform...`);
 
@@ -447,10 +465,12 @@ class StateTransitionService {
       }
 
       // --- Check if document already on Platform (e.g., from a previous session) ---
-      const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
-      if (existingDoc) {
-        logger.info(`Document ${documentId} already exists on Platform — skipping creation`);
-        return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };
+      if (!affectedStateMode) {
+        const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
+        if (existingDoc) {
+          logger.info(`Document ${documentId} already exists on Platform — skipping creation`);
+          return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };
+        }
       }
 
       // --- Build the StateTransition manually ---
@@ -509,22 +529,26 @@ class StateTransitionService {
       stateTransition.sign(privateKey, identityKey);
       logger.info('StateTransition built and signed');
 
-      // Cache the signed ST bytes BEFORE broadcasting
-      const stBytes = stateTransition.toBytes();
-      if (stBytes instanceof Uint8Array) {
-        savePendingSTBytes(documentId, stBytes);
-      } else {
-        // toBytes() might return ArrayBuffer or similar
-        savePendingSTBytes(documentId, new Uint8Array(stBytes));
+      // Cache the signed ST bytes BEFORE broadcasting (strict mode only — the
+      // replay flow depends on get-by-id probes affectedState mode cannot make;
+      // an indexOnly duplicate is instead rejected structurally, 40105).
+      if (!affectedStateMode) {
+        const stBytes = stateTransition.toBytes();
+        if (stBytes instanceof Uint8Array) {
+          savePendingSTBytes(documentId, stBytes);
+        } else {
+          // toBytes() might return ArrayBuffer or similar
+          savePendingSTBytes(documentId, new Uint8Array(stBytes));
+        }
+        logger.info(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
       }
-      logger.info(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
 
       // Broadcast via StateTransitionsFacade (v3.1)
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.info('Broadcast succeeded, waiting for confirmation...');
       } catch (broadcastErr) {
-        if (isAlreadyExistsError(broadcastErr)) {
+        if (!affectedStateMode && isAlreadyExistsError(broadcastErr)) {
           // Race condition: another broadcast landed first
           const doc = await this.checkDocumentExists(contractId, documentType, documentId);
           if (doc) {
@@ -536,9 +560,16 @@ class StateTransitionService {
       }
 
       // Wait for confirmation via StateTransitionsFacade (v3.1)
-      // SDK v3.1 returns typed StateTransitionProofResultType and auto-retries on deadline exceeded
+      // SDK v3.1 returns typed StateTransitionProofResultType and auto-retries on deadline exceeded.
+      // indexOnly transitions never resolve as ExecutionProved — their proof is an
+      // affected-state snapshot — so affectedState mode waits with the method
+      // that accepts that outcome instead of failing a write that landed.
       try {
-        await sdk.stateTransitions.waitForResponse(stateTransition);
+        if (affectedStateMode) {
+          await sdk.stateTransitions.waitForAffectedState(stateTransition);
+        } else {
+          await sdk.stateTransitions.waitForResponse(stateTransition);
+        }
         logger.info(`Document ${documentId} confirmed`);
         clearPendingSTBytes(documentId);
         // Refresh the SDK's internal nonce cache since we manually managed the nonce.
@@ -746,6 +777,87 @@ class StateTransitionService {
       };
     } catch (error) {
       logger.error('Error deleting document:', error);
+      return {
+        success: false,
+        error: extractErrorMessage(error)
+      };
+    }
+  }
+
+  /**
+   * Delete an **indexOnly** document by its full value tuple.
+   *
+   * indexOnly doctypes (v4 `like`/`likeReply`) store nothing under the document
+   * id — the index entries ARE the rows — so the identifier-only delete path is
+   * useless there. Drive instead needs every property value plus the consensus
+   * `$createdAt` to recompute and remove each index entry, which means the
+   * delete must be handed a fully-populated Document (the from_document /
+   * index-only-delete route in the SDK) — the exact call shape the v4 verify
+   * battery (scripts/verify-v4.mjs, b8/b10/b11) proved live on moutai.
+   *
+   * indexOnly transitions never resolve as `ExecutionProved`, so the facade's
+   * internal wait can fail after a broadcast that landed; the transient wait
+   * signatures return optimistic success (`confirmed: false`) here, and callers
+   * that must know re-read the liked state off the chain.
+   */
+  async deleteDocumentByValues(
+    contractId: string,
+    documentType: string,
+    ownerId: string,
+    tuple: {
+      /** The document id to put on the transition ($id from a covering query projection). */
+      documentId: string;
+      /** The consensus `$createdAt` (ms) recovered from a covering index projection. */
+      createdAtMs: number;
+      /** Every content property, with identifier fields as raw `Uint8Array` bytes. */
+      data: Record<string, unknown>;
+    }
+  ): Promise<StateTransitionResult> {
+    const { documentId, createdAtMs, data } = tuple;
+    try {
+      const sdk = await getEvoSdk();
+      const privateKeyWif = await this.getPrivateKey(ownerId);
+
+      logger.info(`Deleting ${documentType} by values (indexOnly): ${documentId}`);
+
+      const identity = await sdk.identities.fetch(ownerId);
+      if (!identity) {
+        throw new Error('Identity not found');
+      }
+
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, identity.publicKeys, SecurityLevel.HIGH);
+      if (!identityKey) {
+        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+      }
+
+      const document = await documentBuilderService.buildDocumentForValuesDelete(
+        contractId,
+        documentType,
+        documentId,
+        ownerId,
+        data,
+        createdAtMs
+      );
+
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
+        privateKeyWif,
+        identityKey
+      );
+
+      try {
+        await sdk.documents.delete({ document, identityKey: signingKey, signer });
+        logger.info(`indexOnly delete ${documentId} confirmed`);
+      } catch (waitErr) {
+        if (!isTimeoutError(waitErr) && !isNonFatalWaitError(waitErr) && !isAlreadyExistsError(waitErr)) {
+          throw waitErr;
+        }
+        logger.warn(`Delete-by-values wait unresolved for ${documentId} — assuming success:`, extractErrorMessage(waitErr));
+        return { success: true, transactionHash: documentId, confirmed: false };
+      }
+
+      return { success: true, transactionHash: documentId, confirmed: true };
+    } catch (error) {
+      logger.error('Error deleting document by values:', error);
       return {
         success: false,
         error: extractErrorMessage(error)

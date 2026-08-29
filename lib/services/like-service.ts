@@ -4,7 +4,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
-import { likeIndexFor, type TargetKind } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -21,6 +21,28 @@ export interface LikeDocument {
 }
 
 /**
+ * What the UI knows about a like's target, forwarded so the v4 (indexOnly)
+ * write paths can fill the agreement-bound fields without a fetch. Both values
+ * are consensus-checked against the target document (40127), so they must be
+ * the TARGET's own values: `author` its `author` property (== its `$ownerId`)
+ * and `hashtag` its `post.hashtag` (`''` when untagged; irrelevant for replies).
+ * Anything missing is fetched from the target document instead.
+ */
+export interface LikeTargetInfo {
+  author?: string;
+  hashtag?: string;
+}
+
+/** The delete tuple an indexOnly unlike needs beyond the content values. */
+interface LikeTuple {
+  documentId: string;
+  createdAt: number;
+}
+
+const LIKE_RECOVERY_PAGE_SIZE = 100;
+const LIKE_RECOVERY_MAX_PAGES = 5;
+
+/**
  * Likes of posts and likes of replies share this service, but not necessarily a
  * document type: the v3 topology routes reply likes to `likeReply` with
  * `replyId`/`replyOwnerId` in place of `postId`/`postOwnerId`. Every method that
@@ -28,10 +50,28 @@ export interface LikeDocument {
  * and field names through the topology descriptor. `kind` defaults to `post`,
  * which on v2 is the same surface a reply resolves to — so v2 queries are
  * unchanged whichever kind is passed.
+ *
+ * On the v4 topology likes are **indexOnly** — see `likeIndexOnly`/
+ * `unlikeIndexOnly`. The read surfaces are shape-compatible (owner-first liked
+ * state lowers onto `byLiker`, counts onto the countable `byPost`/`byReply`),
+ * so every query method below serves all three topologies unchanged.
  */
 class LikeService extends BaseDocumentService<LikeDocument> {
+  /**
+   * Session cache of indexOnly delete tuples, keyed by (kind, ownerId,
+   * targetId) — NEVER by a like document's `$id`: create-time ids and the
+   * deterministic ids synthesized by queries differ, so a like has no single id
+   * to key on. Warmed best-effort after a like lands; `recoverLikeTuple` is the
+   * authoritative fallback.
+   */
+  private likeTupleCache = new Map<string, LikeTuple>();
+
   constructor() {
     super('like');
+  }
+
+  private tupleCacheKey(targetId: string, ownerId: string, kind: TargetKind): string {
+    return `${kind}:${ownerId}:${targetId}`;
   }
 
   protected transformDocument(doc: Record<string, unknown>): LikeDocument {
@@ -70,16 +110,25 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Like a post or a reply
    * @param postId - ID of the post/reply being liked
    * @param ownerId - Identity ID of the user liking it
-   * @param postOwnerId - Identity ID of the target's author (for efficient notification queries)
+   * @param postOwnerId - Identity ID of the target's author (for efficient notification queries; on v4 the agreement-bound author field)
    * @param kind - Whether the target is a post or a reply
+   * @param target - v4 only: agreement-bound values off the target the UI holds (fetched when absent)
    */
-  async likePost(postId: string, ownerId: string, postOwnerId?: string, kind: TargetKind = 'post'): Promise<boolean> {
+  async likePost(postId: string, ownerId: string, postOwnerId?: string, kind: TargetKind = 'post', target?: LikeTargetInfo): Promise<boolean> {
     try {
       // Check if already liked
       const existing = await this.getLike(postId, ownerId, kind);
       if (existing) {
         logger.info('Post already liked');
         return true;
+      }
+
+      const shape = indexOnlyLikeShapeFor(kind);
+      if (shape) {
+        return await this.likeIndexOnly(postId, ownerId, kind, shape, {
+          author: target?.author ?? postOwnerId,
+          hashtag: target?.hashtag,
+        });
       }
 
       const { docType, field, ownerField } = likeIndexFor(kind);
@@ -117,9 +166,15 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
   /**
    * Unlike a post or reply
+   * @param target - v4 only: agreement-bound values off the target (fetched when absent)
    */
-  async unlikePost(postId: string, ownerId: string, kind: TargetKind = 'post'): Promise<boolean> {
+  async unlikePost(postId: string, ownerId: string, kind: TargetKind = 'post', target?: LikeTargetInfo): Promise<boolean> {
     try {
+      const shape = indexOnlyLikeShapeFor(kind);
+      if (shape) {
+        return await this.unlikeIndexOnly(postId, ownerId, kind, shape, target);
+      }
+
       const like = await this.getLike(postId, ownerId, kind);
       if (!like) {
         logger.info('Post not liked');
@@ -138,6 +193,268 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     } catch (error) {
       logger.error('Error unliking post:', error);
       return false;
+    }
+  }
+
+  /**
+   * Resolve the agreement-bound values an indexOnly like must repeat, fetching
+   * the target document for anything the caller could not supply. Consensus
+   * compares these byte-for-byte with the target (40127), so on any doubt the
+   * on-chain document is the source of truth.
+   */
+  private async resolveTargetInfo(
+    targetId: string,
+    kind: TargetKind,
+    shape: IndexOnlyLikeShape,
+    target?: LikeTargetInfo
+  ): Promise<{ author: string; hashtag: string | null }> {
+    let author = target?.author;
+    let hashtag: string | undefined = shape.hashtagField ? target?.hashtag : undefined;
+
+    if (!author || (shape.hashtagField !== null && hashtag === undefined)) {
+      if (kind === 'reply') {
+        const { replyService } = await import('./reply-service');
+        const reply = await replyService.getReplyById(targetId, { skipEnrichment: true });
+        if (!reply) throw new Error(`Cannot resolve like target: reply ${targetId} not found`);
+        author = author || reply.author.id;
+      } else {
+        const { postService } = await import('./post-service');
+        const post = await postService.getPostById(targetId, { skipEnrichment: true });
+        if (!post) throw new Error(`Cannot resolve like target: post ${targetId} not found`);
+        author = author || post.author.id;
+        if (hashtag === undefined) hashtag = post.hashtag ?? '';
+      }
+    }
+
+    if (!author) throw new Error(`Cannot resolve like target author for ${targetId}`);
+    return { author, hashtag: shape.hashtagField !== null ? hashtag ?? '' : null };
+  }
+
+  /** Build an indexOnly like/likeReply's content properties. */
+  private indexOnlyLikeData(
+    targetId: string,
+    shape: IndexOnlyLikeShape,
+    kind: TargetKind,
+    info: { author: string; hashtag: string | null }
+  ): Record<string, unknown> {
+    const { field } = likeIndexFor(kind);
+    return {
+      [field]: identifierStringToDocumentBytes(targetId),
+      [shape.authorField]: identifierStringToDocumentBytes(info.author),
+      ...(shape.hashtagField !== null ? { [shape.hashtagField]: info.hashtag ?? '' } : {}),
+    };
+  }
+
+  /**
+   * v4 like: create an indexOnly document.
+   *
+   * The create carries the target's agreement-bound values and confirms via
+   * affected-state (indexOnly never yields ExecutionProved). KNOWN SDK QUIRK:
+   * the js create path can fail *after* a successful broadcast without ever
+   * returning a usable confirmed Document — so a reported failure is
+   * re-checked against the chain (the byLiker readback) before being believed,
+   * and nothing here relies on the returned document or its `$id`.
+   */
+  private async likeIndexOnly(
+    targetId: string,
+    ownerId: string,
+    kind: TargetKind,
+    shape: IndexOnlyLikeShape,
+    target?: LikeTargetInfo
+  ): Promise<boolean> {
+    const info = await this.resolveTargetInfo(targetId, kind, shape, target);
+    const { docType } = likeIndexFor(kind);
+
+    const result = await stateTransitionService.createDocument(
+      this.contractId,
+      docType,
+      ownerId,
+      this.indexOnlyLikeData(targetId, shape, kind, info),
+      { confirmation: 'affectedState' }
+    );
+
+    if (!result.success) {
+      // Definitive, user-actionable failures propagate to the UI untouched.
+      const err = new Error(result.error || 'Like failed');
+      if (isInsufficientTokenError(err) || isFrozenBalanceError(err)) throw err;
+
+      // Anything else may be the post-broadcast throw: believe the chain.
+      const landed = await this.waitForLikeVisible(targetId, ownerId, kind);
+      if (!landed) throw err;
+      logger.warn('Like create reported failure but the like is on-chain — treating as success');
+    }
+
+    // Warm the unlike tuple ((ownerId, targetId) → $createdAt/$id) while the
+    // covering index is fresh. Best effort: recovery re-runs at unlike time.
+    this.recoverLikeTuple(targetId, ownerId, info.author, kind, shape)
+      .then((tuple) => {
+        if (tuple) this.likeTupleCache.set(this.tupleCacheKey(targetId, ownerId, kind), tuple);
+      })
+      .catch(() => { /* recovery is the fallback path */ });
+
+    return true;
+  }
+
+  /** Poll the liked-state readback briefly — the post-broadcast-failure check. */
+  private async waitForLikeVisible(
+    targetId: string,
+    ownerId: string,
+    kind: TargetKind,
+    { attempts = 4, intervalMs = 2_500 }: { attempts?: number; intervalMs?: number } = {}
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (await this.getLike(targetId, ownerId, kind)) return true;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+    return false;
+  }
+
+  /** Poll for liked-state ABSENCE — the delete-side twin of waitForLikeVisible. */
+  private async waitForLikeGone(
+    targetId: string,
+    ownerId: string,
+    kind: TargetKind,
+    { attempts = 3, intervalMs = 2_500 }: { attempts?: number; intervalMs?: number } = {}
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (!(await this.getLike(targetId, ownerId, kind))) return true;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+    return false;
+  }
+
+  /**
+   * v4 unlike: delete-by-values.
+   *
+   * The delete transition must carry the like's FULL tuple — every content
+   * property plus the consensus `$createdAt`, which only Platform knows.
+   * Recovery (validated live on moutai): walk `byAuthorTimePost` /
+   * `byAuthorTimeReply` pinned on the target's author, newest first — its
+   * projection is the only one carrying `$createdAt` — and match the entry
+   * whose target id and `$ownerId` are ours. The remaining values (hashtag,
+   * author) come from the target document, exactly as the create wrote them.
+   */
+  private async unlikeIndexOnly(
+    targetId: string,
+    ownerId: string,
+    kind: TargetKind,
+    shape: IndexOnlyLikeShape,
+    target?: LikeTargetInfo
+  ): Promise<boolean> {
+    const info = await this.resolveTargetInfo(targetId, kind, shape, target);
+    const cacheKey = this.tupleCacheKey(targetId, ownerId, kind);
+
+    let tuple = this.likeTupleCache.get(cacheKey) ?? null;
+    if (!tuple) {
+      tuple = await this.recoverLikeTuple(targetId, ownerId, info.author, kind, shape);
+    }
+    if (!tuple) {
+      // No tuple anywhere: either there is no like to remove, or the covering
+      // index disagrees with the unique-index readback (which would be a bug).
+      const like = await this.getLike(targetId, ownerId, kind);
+      if (!like) {
+        logger.info('Post not liked');
+        return true;
+      }
+      logger.error('Unlike failed: like exists but its delete tuple could not be recovered', { targetId, kind });
+      return false;
+    }
+
+    const result = await stateTransitionService.deleteDocumentByValues(
+      this.contractId,
+      likeIndexFor(kind).docType,
+      ownerId,
+      {
+        documentId: tuple.documentId,
+        createdAtMs: tuple.createdAt,
+        data: this.indexOnlyLikeData(targetId, shape, kind, info),
+      }
+    );
+
+    if (result.success) {
+      this.likeTupleCache.delete(cacheKey);
+      return true;
+    }
+    // The chain, not the SDK's throw, decides: indexOnly waits can fail after a
+    // broadcast that landed (same quirk as creates). If the like is gone now,
+    // the delete succeeded.
+    if (await this.waitForLikeGone(targetId, ownerId, kind)) {
+      this.likeTupleCache.delete(cacheKey);
+      logger.warn('Unlike reported failure but the like is gone from the chain — treating as success');
+      return true;
+    }
+    // A stale cached tuple (e.g. re-like from another device changed $createdAt)
+    // fails the delete; retry once with a fresh recovery.
+    if (this.likeTupleCache.has(cacheKey)) {
+      this.likeTupleCache.delete(cacheKey);
+      const fresh = await this.recoverLikeTuple(targetId, ownerId, info.author, kind, shape);
+      if (fresh && (fresh.createdAt !== tuple.createdAt || fresh.documentId !== tuple.documentId)) {
+        const retry = await stateTransitionService.deleteDocumentByValues(
+          this.contractId,
+          likeIndexFor(kind).docType,
+          ownerId,
+          {
+            documentId: fresh.documentId,
+            createdAtMs: fresh.createdAt,
+            data: this.indexOnlyLikeData(targetId, shape, kind, info),
+          }
+        );
+        return retry.success;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Recover an indexOnly like's delete tuple from the notification index
+   * (`byAuthorTimePost [postAuthor, $createdAt, postId]` terminal `$ownerId`,
+   * and the `byAuthorTimeReply` mirror) — the only projection that carries the
+   * consensus `$createdAt`. Pinned on the target's author, newest first, so a
+   * recent like is on the first page; bounded rather than exhaustive.
+   */
+  private async recoverLikeTuple(
+    targetId: string,
+    ownerId: string,
+    targetAuthor: string,
+    kind: TargetKind,
+    shape: IndexOnlyLikeShape
+  ): Promise<LikeTuple | null> {
+    try {
+      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+      const { docType } = likeIndexFor(kind);
+
+      let startAfter: string | undefined;
+      for (let page = 0; page < LIKE_RECOVERY_MAX_PAGES; page++) {
+        const response = await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: docType,
+          where: [[shape.authorField, '==', targetAuthor]],
+          orderBy: [[shape.authorField, 'asc'], ['$createdAt', 'desc']],
+          limit: LIKE_RECOVERY_PAGE_SIZE,
+          ...(startAfter ? { startAfter } : {}),
+        });
+
+        const documents = normalizeSDKResponse(response);
+        for (const doc of documents) {
+          const like = this.transformDocumentFor(doc, kind);
+          if (like.postId === targetId && like.$ownerId === ownerId && like.$createdAt) {
+            return { documentId: like.$id, createdAt: Number(like.$createdAt) };
+          }
+        }
+
+        if (documents.length < LIKE_RECOVERY_PAGE_SIZE) break;
+        const lastId = documents[documents.length - 1]?.$id;
+        if (typeof lastId !== 'string' || !lastId) break;
+        startAfter = lastId;
+      }
+      return null;
+    } catch (error) {
+      logger.error('Error recovering like delete tuple:', error);
+      return null;
     }
   }
 
