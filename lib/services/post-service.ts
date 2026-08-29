@@ -5,7 +5,8 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { groupByInteractionSurface, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { authorFieldIsRequired, groupByInteractionSurface, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { firstHashtag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
@@ -259,6 +260,9 @@ class PostService extends BaseDocumentService<Post> {
       quotedReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
+      // v4 only: the single indexed hashtag ('' = untagged). Absent on v2/v3
+      // documents; the like path reads it for the consensus-checked agreement.
+      hashtag: typeof (data.hashtag ?? doc.hashtag) === 'string' ? (data.hashtag ?? doc.hashtag) as string : undefined,
       ...embed,
       // Private feed fields
       encryptedContent,
@@ -330,9 +334,17 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Blank a post in place, leaving a tombstone.
    *
-   * The v3 `post` doctype is `canBeDeleted: false`, so this is what "delete"
-   * means there. Only `language` (the one required content property) survives;
-   * body, media, quote, embed and every encrypted field are dropped.
+   * The v3/v4 `post` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. Only the required content properties survive; body, media,
+   * quote, embed and every encrypted field are dropped. On v3 that is just
+   * `language`; v4 adds `author` and `hashtag`, both carried over VERBATIM:
+   * `author` must keep equalling `$ownerId`, and `hashtag` is client-immutable
+   * because existing likes repeated it under a consensus-checked agreement —
+   * blanking it on the tombstone REPLACE would leave the post claiming
+   * "untagged" while its likes still carry the original tag (and any later
+   * like sourced from a stale UI object would be rejected with 40127). The
+   * tombstone therefore stays in its tag's `tagAndTime` listing, rendered as a
+   * deleted card — same treatment `language` timelines already get.
    */
   async tombstonePost(postId: string, ownerId: string): Promise<boolean> {
     const ok = await tombstoneDocument({
@@ -340,7 +352,8 @@ class PostService extends BaseDocumentService<Post> {
       documentType: this.documentType,
       documentId: postId,
       ownerId,
-      preserveScalars: ['language'],
+      preserveScalars: hashtagsAreInline() ? ['language', 'hashtag'] : ['language'],
+      preserveIdentifiers: authorFieldIsRequired() ? ['author'] : undefined,
     });
     // The inherited 2-minute content cache would otherwise re-serve the
     // pre-tombstone plaintext to a detail view reached via SPA navigation.
@@ -420,6 +433,18 @@ class PostService extends BaseDocumentService<Post> {
 
     // Language is required - default to 'en' if not provided
     data.language = options.language || 'en';
+
+    // v4: the poster-attested author (must equal $ownerId — consensus can't
+    // bind the agreement to a system field, so the client writes it) and the
+    // single indexed hashtag — the FIRST tag of the PUBLIC content only
+    // (`data.content` is already the teaser/placeholder for private posts, so
+    // encrypted text never leaks into the index), '' when untagged.
+    if (authorFieldIsRequired()) {
+      data.author = identifierStringToDocumentBytes(ownerId);
+    }
+    if (hashtagsAreInline()) {
+      data.hashtag = firstHashtag(data.content as string);
+    }
 
     // Add optional fields (use contract field names)
     if (options.mediaUrl && options.encryption) {
@@ -805,6 +830,55 @@ class PostService extends BaseDocumentService<Post> {
       fetchBlogPostsAsQuotes(ids.blogPostIds),
     ]);
     return [...posts, ...replies.map(replyToPost), ...blogPosts];
+  }
+
+  /**
+   * v4 tag page listing: posts carrying `hashtag`, newest first, via the
+   * `tagAndTime [hashtag, $createdAt]` index. Replaces the postHashtag-document
+   * indirection (doctype absent on v4) — the documents ARE the posts, written
+   * by their owners, so no ownership cross-check is needed.
+   */
+  async getPostsByHashtag(hashtag: string, options: { limit?: number } = {}): Promise<Post[]> {
+    try {
+      const result = await this.query({
+        where: [
+          ['hashtag', '==', hashtag],
+          ['$createdAt', '>', 0],
+        ],
+        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+        limit: options.limit ?? 50,
+      });
+      return result.documents;
+    } catch (error) {
+      logger.error('Error getting posts by hashtag:', error);
+      return [];
+    }
+  }
+
+  /**
+   * v4: how many posts carry `hashtag`. `tagAndTime` is not countable, so this
+   * pages through the index and counts — bounded (maxResults 1000), which is
+   * plenty for the search-suggestion count it serves.
+   */
+  async countPostsByHashtag(hashtag: string): Promise<number> {
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+      const { paginateCount } = await import('./pagination-utils');
+      const { count } = await paginateCount(sdk, () => ({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [
+          ['hashtag', '==', hashtag],
+          ['$createdAt', '>', 0],
+        ],
+        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+      }));
+      return count;
+    } catch (error) {
+      logger.error('Error counting posts by hashtag:', error);
+      return 0;
+    }
   }
 
   /**

@@ -6,7 +6,7 @@ import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocument
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
-import { likeSurfacesAreSplit, replyLinkage, type TargetKind } from '../contract-topology';
+import { likesAreIndexOnly, likeSurfacesAreSplit, replyLinkage, type TargetKind } from '../contract-topology';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -173,10 +173,20 @@ class NotificationService {
         kinds.map((kind) => likeService.getLikesOnMyPosts(userId, since, kind))
       );
 
+      // indexOnly likes have no stable `$id` — the create-time id and the ids
+      // synthesized by queries differ — so read-state keys on (owner, target)
+      // plus the like's consensus timestamp. The timestamp matters: read-state
+      // persists across sessions, and without it an unlike→re-like would reuse
+      // the old id and arrive permanently marked as read.
+      const likeNotificationId = (like: { $id: string; $ownerId: string; $createdAt: number; postId: string; targetKind: TargetKind }) =>
+        likesAreIndexOnly()
+          ? `like-${like.targetKind}-${like.$ownerId}:${like.postId}:${like.$createdAt}`
+          : `like-${like.$id}`;
+
       return perKind
         .flat()
         .map(like => ({
-          id: `like-${like.$id}`,
+          id: likeNotificationId(like),
           type: 'like' as const,
           fromUserId: like.$ownerId,
           postId: like.postId,

@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { EvoSDK } from '@dashevo/evo-sdk';
-import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
+import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL, getContractTopology } from '../constants';
 import type { AppNetwork } from '../constants';
 
 export interface EvoSdkConfig {
@@ -125,6 +125,16 @@ class EvoSdkService {
       await this.sdk.connect();
       logger.info('EvoSdkService: Connected successfully');
 
+      // PROTOCOL-VERSION RATCHET (v4 arm): rs-sdk starts devnet connections at
+      // PV12 and only ratchets up from verified response metadata. The v4
+      // contract uses PV14 ranked-index grammar, so the FIRST proved query that
+      // touches it fails deserialization ("value wrong type error: unexpected
+      // property name") — and a failed verification bans the address without
+      // ever ratcheting. One proved warm-up query that does NOT touch the v4
+      // contract (DPNS is on every chain) ratchets the connection to the
+      // chain's real protocol version before any v4 read can race it.
+      await this._warmUpProtocolVersion();
+
       // Preload contracts to avoid repeated fetches.
       // Must happen BEFORE setting _isInitialized so that getSdk()
       // callers don't get an SDK instance without cached contracts.
@@ -141,6 +151,23 @@ class EvoSdkService {
       this.initPromise = null;
       this._isInitialized = false;
       throw error;
+    }
+  }
+
+  /**
+   * See the call site: ratchet the SDK's negotiated protocol version with a
+   * proved query that cannot touch the v4 contract, so the parallel preload
+   * below never races a PV14 contract fetch against a PV12 connection. Only
+   * needed on the v4 topology; failures are non-fatal (the preload's own
+   * fetches would then surface the real problem).
+   */
+  private async _warmUpProtocolVersion(): Promise<void> {
+    if (getContractTopology() !== 'v4' || !this.sdk) return;
+    try {
+      await this.sdk.contracts.fetch(DPNS_CONTRACT_ID);
+      logger.info('EvoSdkService: protocol-version warm-up query completed');
+    } catch (error) {
+      logger.warn('EvoSdkService: protocol-version warm-up query failed:', error);
     }
   }
 
@@ -258,12 +285,27 @@ class EvoSdkService {
   }
 
   /**
+   * Check if error is a stale trusted-context error: devnet DKG rotations
+   * outlive the static quorum prefetch, after which every proof fails with
+   * "invalid quorum: Quorum not found in cache for hash: …" and addresses get
+   * banned. There is no refresh API — the only recovery is a rebuild, which
+   * re-prefetches the current quorums.
+   */
+  isStaleQuorumError(error: unknown): boolean {
+    const message = ((error instanceof Error ? error.message : null) ||
+      ((error as { message?: string })?.message) ||
+      String(error)).toLowerCase();
+    return message.includes('quorum not found in cache') ||
+           message.includes('invalid quorum');
+  }
+
+  /**
    * Handle connection errors by reinitializing the SDK
    * Returns true if recovery was attempted
    */
   async handleConnectionError(error: unknown): Promise<boolean> {
-    if (this.isNoAvailableAddressesError(error)) {
-      logger.info('EvoSdkService: Detected "no available addresses" error, attempting to reconnect...');
+    if (this.isNoAvailableAddressesError(error) || this.isStaleQuorumError(error)) {
+      logger.info('EvoSdkService: Detected connection-level error (address pool exhausted or stale quorum cache), attempting to reconnect...');
       try {
         const savedConfig = this.config;
         await this.cleanup();

@@ -75,9 +75,11 @@ test.describe('sensitive content on the real testnet', () => {
     postId = (testId ?? '').replace('post-card-', '')
     expect(postId, 'the gated card should expose the document id').not.toBe('')
 
-    // Per-post reveal.
+    // Per-post reveal. Re-address the card by its id: `card` selects on
+    // *having* a sensitive-gate, and the reveal unmounts the gate — so the
+    // filtered locator can no longer resolve the very card it just revealed.
     await card.getByTestId('sensitive-show-btn').click()
-    await expect(card.getByText(runTag)).toBeVisible()
+    await expect(feed.getByTestId(`post-card-${postId}`).getByText(runTag)).toBeVisible()
   })
 
   test('the flag survives the chain read-back', async ({ page, bot }) => {

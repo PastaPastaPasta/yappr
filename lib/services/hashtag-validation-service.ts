@@ -1,6 +1,7 @@
 import { logger } from '@/lib/logger';
 import { hashtagService, PostHashtagDocument } from './hashtag-service'
 import { extractAllTags } from '../post-helpers'
+import { hashtagsAreInline } from '../contract-topology'
 
 export interface HashtagValidationKey {
   postId: string
@@ -42,6 +43,13 @@ class HashtagValidationService {
    * Returns true if the hashtag is registered, false otherwise.
    */
   async validateHashtag(postId: string, hashtag: string): Promise<boolean> {
+    // v4: there are no postHashtag documents to validate against — the post's
+    // single hashtag is written atomically with the post, so there is no
+    // "registration failed" state (and nothing to recover). Every tag renders
+    // as a normal link; tag pages simply list only posts whose indexed hashtag
+    // matches.
+    if (hashtagsAreInline()) return true
+
     const normalizedTag = hashtag.toLowerCase().replace(/^#/, '')
     const registeredHashtags = await this.getRegisteredHashtagsForPost(postId)
     return registeredHashtags.has(normalizedTag)
@@ -90,6 +98,12 @@ class HashtagValidationService {
     const result = new Map<string, 'valid' | 'invalid'>()
 
     if (hashtags.length === 0) {
+      return result
+    }
+
+    // v4: see validateHashtag — no secondary write exists to have failed.
+    if (hashtagsAreInline()) {
+      for (const tag of hashtags) result.set(tag, 'valid')
       return result
     }
 

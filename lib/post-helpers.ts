@@ -63,6 +63,18 @@ export function extractHashtags(content: string): string[] {
 }
 
 /**
+ * The FIRST hashtag in the content, in v4 `post.hashtag` storage form:
+ * lowercase, no `#`, and `''` when the content carries no (valid) hashtag —
+ * matching the contract pattern `^$|^[a-z0-9_]{1,63}$`. The single-hashtag
+ * model indexes exactly one tag per post, and "first in the text" is the rule
+ * the client applies.
+ */
+export function firstHashtag(content: string): string {
+  const match = content.match(/#([a-zA-Z0-9_]{1,63})/)
+  return match ? match[1].toLowerCase() : ''
+}
+
+/**
  * Extract cashtags from post content (e.g., $DASH, $BTC)
  * Returns tags in storage format (e.g., "dash_cashtag")
  */

@@ -439,9 +439,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       }
 
       const { likeService } = await import('@/lib/services/like-service')
+      // On v4 the like repeats the target's author and (for posts) hashtag
+      // under a consensus-checked agreement; forwarding them off the card's own
+      // post object saves the service a fetch. Ignored on v2/v3.
+      const targetInfo = { author: post.author.id, hashtag: post.hashtag }
       const success = wasLiked
-        ? await likeService.unlikePost(post.id, authedUser.identityId, targetKind)
-        : await likeService.likePost(post.id, authedUser.identityId, post.author.id, targetKind)
+        ? await likeService.unlikePost(post.id, authedUser.identityId, targetKind, targetInfo)
+        : await likeService.likePost(post.id, authedUser.identityId, post.author.id, targetKind, targetInfo)
 
       if (!success) throw new Error('Like operation failed')
     } catch (error) {

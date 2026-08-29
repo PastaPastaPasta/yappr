@@ -18,6 +18,7 @@ import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { hashtagsAreInline } from '@/lib/contract-topology'
 import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link'
 
 function HashtagPageContent() {
@@ -47,40 +48,55 @@ function HashtagPageContent() {
 
       setIsLoading(true)
       try {
-        // Get post IDs that have this hashtag
-        const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag)
-        setPostCount(hashtagDocs.length)
-
-        if (hashtagDocs.length === 0) {
-          setPosts([])
-          setIsLoading(false)
-          return
-        }
-
-        // Fetch the actual posts using postService
         const { postService } = await import('@/lib/services/post-service')
 
-        const postIds = Array.from(new Set(hashtagDocs.map(h => h.postId)))
+        let fetchedPosts: Post[]
+        if (hashtagsAreInline()) {
+          // v4: posts carry their single hashtag inline — one `tagAndTime`
+          // query IS the tag page (newest first), with no postHashtag
+          // indirection and no ownership cross-check (the tag is a property of
+          // the post itself).
+          fetchedPosts = await postService.getPostsByHashtag(tag)
+          setPostCount(fetchedPosts.length)
 
-        // Fetch posts and validate ownership
-        const fetchedPosts: Post[] = []
-        for (const postId of postIds) {
-          try {
-            const post = await postService.get(postId)
-            if (post) {
-              // Verify hashtag was created by post owner (security filter)
-              const hashtagDoc = hashtagDocs.find(h => h.postId === postId)
-              if (hashtagDoc && hashtagDoc.$ownerId === post.author.id) {
-                fetchedPosts.push(post)
-              }
-            }
-          } catch (error) {
-            logger.error('Failed to fetch post:', postId, error)
+          if (fetchedPosts.length === 0) {
+            setPosts([])
+            setIsLoading(false)
+            return
           }
-        }
+        } else {
+          // Get post IDs that have this hashtag
+          const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag)
+          setPostCount(hashtagDocs.length)
 
-        // Sort by creation date (newest first)
-        fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          if (hashtagDocs.length === 0) {
+            setPosts([])
+            setIsLoading(false)
+            return
+          }
+
+          const postIds = Array.from(new Set(hashtagDocs.map(h => h.postId)))
+
+          // Fetch posts and validate ownership
+          fetchedPosts = []
+          for (const postId of postIds) {
+            try {
+              const post = await postService.get(postId)
+              if (post) {
+                // Verify hashtag was created by post owner (security filter)
+                const hashtagDoc = hashtagDocs.find(h => h.postId === postId)
+                if (hashtagDoc && hashtagDoc.$ownerId === post.author.id) {
+                  fetchedPosts.push(post)
+                }
+              }
+            } catch (error) {
+              logger.error('Failed to fetch post:', postId, error)
+            }
+          }
+
+          // Sort by creation date (newest first)
+          fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        }
 
         // Enrich posts with author data (DPNS names, displayNames, stats)
         let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)

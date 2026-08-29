@@ -59,10 +59,34 @@ export interface OwnedTargetIndex {
   ownerField: string | null
 }
 
+/**
+ * The extra content properties an indexOnly like doctype carries, all consensus-
+ * checked against the referenced target via `propertyAgreement` (40127): the
+ * like MUST repeat the target's values exactly, so the client sources them from
+ * the target document rather than computing anything.
+ */
+export interface IndexOnlyLikeShape {
+  /** Property naming the target's author — agreement-bound to `<target>.author`. */
+  authorField: string
+  /**
+   * Property carrying the post's hashtag (agreement-bound to `post.hashtag`,
+   * `''` = untagged), or null on a doctype without one (`likeReply`).
+   */
+  hashtagField: string | null
+}
+
 /** The doctypes and fields one target kind's engagements live in. */
 export interface InteractionSurface {
   /** Likes of this kind. */
   like: OwnedTargetIndex
+  /**
+   * Set when this kind's like doctype is `indexOnly` (v4): creates must carry
+   * the agreement-bound denormalizations, unlike is a delete-by-values needing
+   * the full tuple (including the consensus `$createdAt`), and nothing may key
+   * state off a like document's `$id` (create-time and query-synthesized ids
+   * differ). Null on v2/v3, where likes are ordinary stored documents.
+   */
+  indexOnlyLike: IndexOnlyLikeShape | null
   /** Reposts of this kind, or null when the topology forbids reposting it. */
   repost: OwnedTargetIndex | null
   /** Bookmarks of this kind, or null when the topology forbids bookmarking it. */
@@ -119,6 +143,7 @@ export interface ContractTopologyDescriptor {
  */
 const POST_INTERACTIONS: InteractionSurface = {
   like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postOwnerId' },
+  indexOnlyLike: null,
   repost: { docType: 'repost', field: 'postId', ownerFirst: true, ownerField: 'postOwnerId' },
   bookmark: { docType: 'bookmark', field: 'postId', ownerFirst: true, ownerField: null },
   quoteField: 'quotedPostId',
@@ -161,6 +186,48 @@ const V3_DESCRIPTOR: ContractTopologyDescriptor = {
     post: V3_POST_INTERACTIONS,
     reply: {
       like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyOwnerId' },
+      indexOnlyLike: null,
+      repost: null,
+      bookmark: null,
+      quoteField: 'quotedReplyId',
+      replyCountField: 'replyToReplyId',
+    },
+  },
+}
+
+/**
+ * v4 — `contracts/yappr-social-contract-v4.json` (the like overhaul).
+ *
+ * Same document graph as v3 except for likes and hashtags:
+ *
+ * - `like`/`likeReply` are **indexOnly**: no stored body, structural
+ *   one-like-per-(target, owner) uniqueness, delete-by-values with refund. The
+ *   liked-state queries keep v3's owner-first shapes — `[$ownerId ==, target ==]`
+ *   and the batched `[$ownerId ==, target in [...]]` — which lower onto the
+ *   `byLiker [$ownerId] → target` projection. `postOwnerId`/`replyOwnerId` are
+ *   replaced by the agreement-bound `postAuthor`/`replyAuthor`, and the
+ *   notification index becomes `byAuthorTimePost [postAuthor, $createdAt,
+ *   postId]` / `byAuthorTimeReply` — the same `[ownerField, $createdAt]` query
+ *   shape the v2/v3 notification reads use.
+ * - `like` additionally repeats the post's `hashtag` (agreement-bound), feeding
+ *   the per-tag ranked axis.
+ * - The `postHashtag` doctype is GONE: a post carries one inline `hashtag`
+ *   property (`''` = untagged) and tag listings ride `post.tagAndTime`.
+ * - `post`/`reply` gain a required poster-attested `author` identifier that the
+ *   like agreements bind to; the client writes it equal to `$ownerId`.
+ */
+const V4_DESCRIPTOR: ContractTopologyDescriptor = {
+  topology: 'v4',
+  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
+  interactions: {
+    post: {
+      ...V3_POST_INTERACTIONS,
+      like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag' },
+    },
+    reply: {
+      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
       repost: null,
       bookmark: null,
       quoteField: 'quotedReplyId',
@@ -183,7 +250,10 @@ let resolved: ContractTopologyDescriptor | null = null
 /** The descriptor for the configured topology, resolved once and frozen. */
 export function topologyDescriptor(): ContractTopologyDescriptor {
   if (!resolved) {
-    resolved = deepFreeze(getContractTopology() === 'v3' ? V3_DESCRIPTOR : V2_DESCRIPTOR)
+    const topology = getContractTopology()
+    resolved = deepFreeze(
+      topology === 'v4' ? V4_DESCRIPTOR : topology === 'v3' ? V3_DESCRIPTOR : V2_DESCRIPTOR
+    )
   }
   return resolved
 }
@@ -227,7 +297,7 @@ export function quoteFieldFor(kind: TargetKind): string | null {
  * content, not toggles) and a newest-first listing is what the UI wants.
  */
 export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
-  return topologyDescriptor().topology === 'v3' ? '$createdAt' : '$ownerId'
+  return topologyDescriptor().topology === 'v2' ? '$ownerId' : '$createdAt'
 }
 
 /** The `reply` property whose count tree holds this kind's reply count. */
@@ -272,7 +342,7 @@ export function likeSurfacesAreSplit(): boolean {
  * wait for an unconfirmed parent instead of racing it.
  */
 export function referencesAreEnforced(): boolean {
-  return topologyDescriptor().topology === 'v3'
+  return topologyDescriptor().topology !== 'v2'
 }
 
 /**
@@ -281,7 +351,42 @@ export function referencesAreEnforced(): boolean {
  * rather than a document removal.
  */
 export function deletesAreTombstones(): boolean {
-  return topologyDescriptor().topology === 'v3'
+  return topologyDescriptor().topology !== 'v2'
+}
+
+/**
+ * The indexOnly shape of this kind's like doctype, or null when likes are
+ * ordinary stored documents (v2/v3). Non-null means: creates must carry the
+ * agreement-bound fields, unlikes are deletes-by-values, confirmation resolves
+ * as AffectedState rather than ExecutionProved, and like `$id`s must never be
+ * used as keys or compared across sources.
+ */
+export function indexOnlyLikeShapeFor(kind: TargetKind): IndexOnlyLikeShape | null {
+  return interactionsFor(kind).indexOnlyLike
+}
+
+/** True when the configured topology's like doctypes are indexOnly (v4). */
+export function likesAreIndexOnly(): boolean {
+  return indexOnlyLikeShapeFor('post') !== null
+}
+
+/**
+ * True when a post carries its (single) hashtag inline in `post.hashtag` and
+ * the `postHashtag` doctype does not exist (v4). Tag listings then query
+ * `post.tagAndTime` directly, the compose flow writes no secondary hashtag
+ * documents, and there is nothing to "recover" when one is missing.
+ */
+export function hashtagsAreInline(): boolean {
+  return topologyDescriptor().topology === 'v4'
+}
+
+/**
+ * True when `post`/`reply` documents must carry the poster-attested `author`
+ * identifier (v4) — the propertyAgreement source for likes. The client always
+ * writes it equal to the signing `$ownerId`.
+ */
+export function authorFieldIsRequired(): boolean {
+  return topologyDescriptor().topology === 'v4'
 }
 
 export function canRepost(kind: TargetKind): boolean {

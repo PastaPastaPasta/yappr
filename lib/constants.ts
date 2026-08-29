@@ -137,17 +137,24 @@ export function keyNetwork(): KeyNetwork {
 // consensus, which is only possible once every field points at exactly one
 // document type.
 //
-// The two are wired into the app through `lib/contract-topology.ts`. A
+// `v4` is the like-overhaul topology (PLAN_LIKE_OVERHAUL.md,
+// contracts/yappr-social-contract-v4.json): same document graph as v3 plus
+// indexOnly `like`/`likeReply` doctypes (no stored body, delete-by-values,
+// ranked/count axes), a single inline `post.hashtag` property replacing the
+// `postHashtag` doctype, and required poster-attested `author` fields on
+// post/reply serving the likes' propertyAgreement.
+//
+// The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export type ContractTopology = 'v2' | 'v3'
+export type ContractTopology = 'v2' | 'v3' | 'v4'
 
 export const DEFAULT_CONTRACT_TOPOLOGY: ContractTopology = 'v2'
 
 /** The interaction topology of the configured contract, from `NEXT_PUBLIC_CONTRACT_TOPOLOGY`. */
 export function getContractTopology(): ContractTopology {
   const configured = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
-  if (configured === 'v2' || configured === 'v3') {
+  if (configured === 'v2' || configured === 'v3' || configured === 'v4') {
     return configured
   }
   return DEFAULT_CONTRACT_TOPOLOGY

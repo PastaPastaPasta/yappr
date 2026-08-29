@@ -41,6 +41,7 @@ function toCanonicalDocumentObject(fields: {
   documentTypeName: string;
   revision: number;
   entropy?: Uint8Array;
+  createdAtMs?: number;
   data: Record<string, unknown>;
 }): DocumentObject {
   const canonical: Record<string, unknown> = {
@@ -51,6 +52,7 @@ function toCanonicalDocumentObject(fields: {
     $type: fields.documentTypeName,
     $revision: BigInt(fields.revision),
     ...(fields.entropy ? { $entropy: fields.entropy } : {}),
+    ...(fields.createdAtMs !== undefined ? { $createdAt: BigInt(fields.createdAtMs) } : {}),
     ...fields.data,
   };
 
@@ -161,6 +163,45 @@ class DocumentBuilderService {
         contractId,
         documentTypeName,
         revision: newRevision,
+        data,
+      }),
+      PlatformVersion.current()
+    );
+  }
+
+  /**
+   * Build a fully-populated Document for an indexOnly delete-by-values.
+   *
+   * An indexOnly doctype has no id-addressable stored row: its index entries
+   * ARE the document, and a delete transition must therefore carry every
+   * property value plus the consensus `$createdAt` so Drive can locate and
+   * remove each entry. Passing this Document into the delete path (rather than
+   * the identifier-only shape below) is what selects the from_document /
+   * index-only-delete route in the SDK.
+   *
+   * @param createdAtMs - The like's consensus `$createdAt` (ms). Not knowable
+   *   client-side at create time — recovered from a `$createdAt`-carrying index
+   *   projection (e.g. `byAuthorTimePost`).
+   */
+  async buildDocumentForValuesDelete(
+    contractId: string,
+    documentTypeName: string,
+    documentId: string,
+    ownerId: string,
+    data: Record<string, unknown>,
+    createdAtMs: number
+  ): Promise<InstanceType<typeof Document>> {
+    await ensureWasmReady();
+
+    return Document.fromObject(
+      toCanonicalDocumentObject({
+        id: documentId,
+        ownerId,
+        contractId,
+        documentTypeName,
+        // indexOnly doctypes are documentsMutable: false — revision stays 1.
+        revision: 1,
+        createdAtMs,
         data,
       }),
       PlatformVersion.current()

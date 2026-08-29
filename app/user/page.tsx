@@ -31,6 +31,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { PostCard } from '@/components/post/post-card'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { formatNumber } from '@/lib/utils'
+import { likesAreIndexOnly } from '@/lib/contract-topology'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
 import { BannerImage, invalidateBannerCache } from '@/components/ui/banner-image'
 import { AvatarCustomization } from '@/components/settings/avatar-customization'
@@ -206,7 +207,7 @@ function UserProfileContent() {
 
   // Tab state for Posts/Mentions/Blog
   const [activeTab, setActiveTab] = useState<'posts' | 'mentions' | 'blog'>('posts')
-  const [postFilter, setPostFilter] = useState<'posts' | 'replies'>('posts')
+  const [postFilter, setPostFilter] = useState<'posts' | 'replies' | 'top'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
@@ -218,6 +219,11 @@ function UserProfileContent() {
   const [userReplies, setUserReplies] = useState<Post[]>([])
   const [repliesLoading, setRepliesLoading] = useState(false)
   const [repliesLoaded, setRepliesLoaded] = useState(false)
+
+  // Top posts state (v4 only — server-ranked by like count via byAuthorPost)
+  const [topPosts, setTopPosts] = useState<Post[]>([])
+  const [topLoading, setTopLoading] = useState(false)
+  const [topLoaded, setTopLoaded] = useState(false)
 
   // Private feed state
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
@@ -236,9 +242,12 @@ function UserProfileContent() {
     if (postFilter === 'posts') {
       return posts.filter(p => !p.repostedBy)
     }
+    if (postFilter === 'top') {
+      return topPosts
+    }
     // 'replies' filter - show user's replies from replyService
     return userReplies
-  }, [posts, postFilter, userReplies])
+  }, [posts, postFilter, userReplies, topPosts])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
@@ -789,12 +798,60 @@ function UserProfileContent() {
     }
   }, [userId, repliesLoaded, enrichProgressively])
 
+  /**
+   * Load the author's top posts by like count (lazy, v4 only).
+   *
+   * One proved server-side ranked query on `like.byAuthorPost` pinned to this
+   * profile — the ranking (order AND counts) comes out of the count trees, not
+   * from fetching posts and sorting client-side.
+   */
+  const loadTopPosts = useCallback(async () => {
+    if (!userId || topLoaded) return
+
+    setTopLoading(true)
+    try {
+      const [{ topLikedPosts }, { postService }] = await Promise.all([
+        import('@/lib/services/ranked-likes'),
+        import('@/lib/services/post-service'),
+      ])
+
+      const ranked = await topLikedPosts({ postAuthor: userId, limit: 10 })
+      if (ranked.length === 0) {
+        setTopPosts([])
+        return
+      }
+
+      const fetched = await postService.getPostsByIds(ranked.map(r => r.postId))
+      const byId = new Map(fetched.map(p => [p.id, p]))
+      // Preserve the proved ranking order; drop ids that failed to load.
+      const ordered = ranked
+        .map(r => byId.get(r.postId))
+        .filter((p): p is Post => p !== undefined)
+
+      setTopPosts(ordered)
+      enrichProgressively(ordered)
+    } catch (error) {
+      logger.error('Failed to load top posts:', error)
+      setTopPosts([])
+    } finally {
+      setTopLoading(false)
+      setTopLoaded(true)
+    }
+  }, [userId, topLoaded, enrichProgressively])
+
   // Load mentions when tab is activated
   useEffect(() => {
     if (activeTab === 'mentions' && !mentionsLoaded) {
       loadMentions().catch(err => logger.error('Failed to load mentions:', err))
     }
   }, [activeTab, mentionsLoaded, loadMentions])
+
+  // Load ranked top posts when the Top filter is selected (v4 only)
+  useEffect(() => {
+    if (postFilter === 'top' && !topLoaded) {
+      loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
+    }
+  }, [postFilter, topLoaded, loadTopPosts])
 
   // Load user replies when filter is selected
   useEffect(() => {
@@ -810,6 +867,8 @@ function UserProfileContent() {
     setMentionCount(null)
     setUserReplies([])
     setRepliesLoaded(false)
+    setTopPosts([])
+    setTopLoaded(false)
     setActiveTab('posts')
     setPostFilter('posts')
     setHasPrivateFeed(false)
@@ -1657,17 +1716,38 @@ function UserProfileContent() {
                     >
                       Replies
                     </button>
+                    {/* Server-ranked top posts need the v4 ranked like axes. */}
+                    {likesAreIndexOnly() && (
+                      <button
+                        onClick={() => setPostFilter('top')}
+                        data-testid="profile-top-filter"
+                        className={cn(
+                          'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
+                          postFilter === 'top'
+                            ? 'bg-yappr-500 text-white'
+                            : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                        )}
+                      >
+                        Top
+                      </button>
+                    )}
                   </div>
 
                   {/* Posts List */}
-                  {postFilter === 'replies' && repliesLoading ? (
+                  {(postFilter === 'replies' && repliesLoading) || (postFilter === 'top' && topLoading) ? (
                     <div className="p-8 text-center">
                       <Spinner size="md" className="mx-auto mb-4" />
-                      <p className="text-gray-500">Loading replies...</p>
+                      <p className="text-gray-500">{postFilter === 'top' ? 'Loading top posts...' : 'Loading replies...'}</p>
                     </div>
                   ) : filteredPosts.length === 0 ? (
-                    <div className="p-8 text-center text-gray-500">
-                      <p>{postFilter === 'posts' ? 'No original posts yet' : 'No replies yet'}</p>
+                    <div className="p-8 text-center text-gray-500" data-testid={postFilter === 'top' ? 'profile-top-empty' : undefined}>
+                      <p>
+                        {postFilter === 'posts'
+                          ? 'No original posts yet'
+                          : postFilter === 'top'
+                            ? 'No liked posts yet'
+                            : 'No replies yet'}
+                      </p>
                     </div>
                   ) : (
                     <div>
