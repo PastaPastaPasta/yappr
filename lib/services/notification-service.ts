@@ -174,11 +174,13 @@ class NotificationService {
       );
 
       // indexOnly likes have no stable `$id` — the create-time id and the ids
-      // synthesized by queries differ — so read-state keys on (owner, target),
-      // which IS the like's identity (one like per pair, structurally).
-      const likeNotificationId = (like: { $id: string; $ownerId: string; postId: string; targetKind: TargetKind }) =>
+      // synthesized by queries differ — so read-state keys on (owner, target)
+      // plus the like's consensus timestamp. The timestamp matters: read-state
+      // persists across sessions, and without it an unlike→re-like would reuse
+      // the old id and arrive permanently marked as read.
+      const likeNotificationId = (like: { $id: string; $ownerId: string; $createdAt: number; postId: string; targetKind: TargetKind }) =>
         likesAreIndexOnly()
-          ? `like-${like.targetKind}-${like.$ownerId}:${like.postId}`
+          ? `like-${like.targetKind}-${like.$ownerId}:${like.postId}:${like.$createdAt}`
           : `like-${like.$id}`;
 
       return perKind

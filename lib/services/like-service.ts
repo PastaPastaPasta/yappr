@@ -66,6 +66,15 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    */
   private likeTupleCache = new Map<string, LikeTuple>();
 
+  /**
+   * Monotonic token per tuple-cache key. A background warm-up may only write
+   * its result if no newer like/unlike for the same key started after it —
+   * otherwise a slow recovery from a previous like could clobber the cache
+   * with an already-deleted tuple after an unlike→re-like.
+   */
+  private tupleWarmTokens = new Map<string, number>();
+  private tupleWarmCounter = 0;
+
   constructor() {
     super('like');
   }
@@ -286,9 +295,16 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
     // Warm the unlike tuple ((ownerId, targetId) → $createdAt/$id) while the
     // covering index is fresh. Best effort: recovery re-runs at unlike time.
+    // The token keeps a slow warm-up from a previous like of this key from
+    // clobbering the cache after an unlike→re-like.
+    const warmKey = this.tupleCacheKey(targetId, ownerId, kind);
+    const warmToken = ++this.tupleWarmCounter;
+    this.tupleWarmTokens.set(warmKey, warmToken);
     this.recoverLikeTuple(targetId, ownerId, info.author, kind, shape)
       .then((tuple) => {
-        if (tuple) this.likeTupleCache.set(this.tupleCacheKey(targetId, ownerId, kind), tuple);
+        if (tuple && this.tupleWarmTokens.get(warmKey) === warmToken) {
+          this.likeTupleCache.set(warmKey, tuple);
+        }
       })
       .catch(() => { /* recovery is the fallback path */ });
 
@@ -347,6 +363,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   ): Promise<boolean> {
     const info = await this.resolveTargetInfo(targetId, kind, shape, target);
     const cacheKey = this.tupleCacheKey(targetId, ownerId, kind);
+    // Invalidate any in-flight warm-up for this key: its tuple describes the
+    // like being deleted and must not repopulate the cache afterwards.
+    this.tupleWarmTokens.set(cacheKey, ++this.tupleWarmCounter);
 
     let tuple = this.likeTupleCache.get(cacheKey) ?? null;
     if (!tuple) {
@@ -508,6 +527,34 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const { docType, field } = likeIndexFor(kind);
+
+      if (indexOnlyLikeShapeFor(kind)) {
+        // indexOnly queries reject id-shaped startAfter cursors (synthesized
+        // $ids address nothing), so paginateFetchAll's cursor would error on
+        // page two. Keyset-paginate on the terminal instead. Verified live:
+        // page one must be the PLAIN prefix shape (members come back in
+        // $ownerId key order; a terminal orderBy without a terminal clause is
+        // refused), and later pages use the full terminal shape — prefix
+        // equality + `$ownerId > last` + orderBy on the terminal.
+        const PAGE = 100;
+        const documents: LikeDocument[] = [];
+        let lastOwner: string | null = null;
+        for (;;) {
+          const where: DocumentWhereClause[] = [[field, '==', postId]];
+          if (lastOwner) where.push(['$ownerId', '>', lastOwner]);
+          const response = await sdk.documents.query({
+            dataContractId: this.contractId,
+            documentTypeName: docType,
+            where,
+            ...(lastOwner ? { orderBy: [['$ownerId', 'asc'] as DocumentOrderByClause] } : {}),
+            limit: PAGE
+          });
+          const page = normalizeSDKResponse(response);
+          documents.push(...page.map((doc) => this.transformDocumentFor(doc, kind)));
+          if (page.length < PAGE) return documents;
+          lastOwner = documents[documents.length - 1].$ownerId;
+        }
+      }
 
       // Use 'in' with single-element array - matches working feed pattern
       const { documents } = await paginateFetchAll(
