@@ -802,6 +802,8 @@ function UserProfileContent() {
         author: reply.author,
         content: reply.content,
         createdAt: reply.createdAt,
+        updatedAt: reply.updatedAt,
+        isEdited: reply.isEdited,
         likes: reply.likes,
         reposts: reply.reposts,
         replies: reply.replies,
