@@ -15,12 +15,18 @@ export interface MediaGate {
 /**
  * Decide whether media from an author should be fetched, based on follow status.
  *
- * Deliberately synchronous: reads only the enrichment hint and the shared
+ * Deliberately synchronous: reads only the caller's hint and the shared
  * follow-status cache, never issuing a network query (a feed of gated cards
  * must not fan out per-author follow lookups). While follow status is unknown
- * the author is treated as not followed — the gate lifts when enrichment
- * resolves and re-renders the card. Logged-out users have no follow graph, so
+ * the author is treated as not followed — the gate lifts when the answer
+ * arrives and re-renders the card. Logged-out users have no follow graph, so
  * everything is gated for them unless the setting is off.
+ *
+ * `isFollowingHint` is the caller's live follow state and takes precedence
+ * outright; the cache is consulted only when there is no hint (quoted and
+ * embedded cards, which have no follow hook of their own). Deciding it the
+ * other way round would let a cache entry that has gone stale re-open the gate
+ * on an author the viewer has since unfollowed.
  */
 export function useMediaGate(authorId: string, isFollowingHint?: boolean): MediaGate {
   const gateEnabled = useSettingsStore((s) => s.gateMediaFromNonFollowed)
@@ -29,14 +35,11 @@ export function useMediaGate(authorId: string, isFollowingHint?: boolean): Media
 
   const reveal = useCallback(() => setRevealed(true), [])
 
-  if (!gateEnabled || revealed) {
-    return { gated: false, reveal }
-  }
-
   const viewerId = user?.identityId
-  const isOwnMedia = !!viewerId && viewerId === authorId
-  const isFollowedAuthor =
-    !!viewerId && (isFollowingHint === true || getFollowStatus(`${viewerId}:${authorId}`) === true)
+  if (!gateEnabled || revealed) return { gated: false, reveal }
+  if (!viewerId) return { gated: true, reveal }
+  if (viewerId === authorId) return { gated: false, reveal }
 
-  return { gated: !isOwnMedia && !isFollowedAuthor, reveal }
+  const isFollowedAuthor = isFollowingHint ?? getFollowStatus(`${viewerId}:${authorId}`)
+  return { gated: isFollowedAuthor !== true, reveal }
 }

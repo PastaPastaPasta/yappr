@@ -139,6 +139,16 @@ export function useProgressiveEnrichment(
       targets.push(targetOf(post))
     }
     const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
+    // Quoted authors are gated for media just like top-level ones, but they are
+    // NOT enriched as authors (no username/profile/avatar/block lookups) and
+    // must never be seeded as followed on the Following tab — following the
+    // quoter says nothing about who they quoted. Their follow status rides
+    // along on the real batch query only, which seeds the shared cache that
+    // useMediaGate reads, so an embedded card of someone you follow renders its
+    // media instead of a placeholder.
+    const followLookupIds = Array.from(
+      new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
+    )
 
     // Set loading phase
     setEnrichmentState(prev => ({ ...prev, phase: 'loading' }))
@@ -255,7 +265,7 @@ export function useProgressiveEnrichment(
 
       // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
       if (!skipFollowStatus) {
-        const followPromise = followService.getFollowStatusBatch(authorIds, currentUserId)
+        const followPromise = followService.getFollowStatusBatch(followLookupIds, currentUserId)
         followPromise.then(followStatus => {
           if (!isValid()) return
           seedFollowStatusCache(currentUserId, followStatus)

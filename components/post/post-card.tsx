@@ -334,13 +334,18 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
   })
 
-  // Follow-gates this card's media/previews. Only trust useFollow's value once
-  // it has settled (its state defaults to false while loading), so a followed
-  // author isn't flashed as gated and a Follow tap ungates immediately.
-  const mediaGate = useMediaGate(
-    post.author.id,
-    progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing ?? (followLoading ? undefined : isFollowing)
-  )
+  // Live follow state, preferred over the enrichment snapshot as soon as
+  // useFollow settles: the snapshot was taken when the feed was built and goes
+  // stale the moment the viewer unfollows, and a stale `true` would leave that
+  // author's media ungated. While the hook is still resolving its state
+  // defaults to false, so the snapshot covers that window instead (undefined
+  // when there is none, which gates until the answer arrives).
+  const authorIsFollowing = followLoading
+    ? progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing
+    : isFollowing
+
+  // Follow-gates this card's media/previews.
+  const mediaGate = useMediaGate(post.author.id, authorIsFollowing)
 
   // Check if user can reply to private posts (PRD §5.5)
   // For replies, check access against root post owner, not the reply author
@@ -647,7 +652,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         bookmarked: bookmarked
       },
       isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
-      isFollowing: progressiveEnrichment?.isFollowing ?? isFollowing,
+      isFollowing: authorIsFollowing,
       replyTo: progressiveEnrichment?.replyTo
     }
     setPendingPostNavigation(enrichedPost, resolvedEnrichment)
