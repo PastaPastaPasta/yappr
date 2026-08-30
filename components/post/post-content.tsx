@@ -98,10 +98,12 @@ export function PostContent({
   } = useYapprPostReference(firstUrl, { disabled: !shouldResolveInternalReference })
 
   // Only fetch preview if link previews are enabled and the author isn't
-  // follow-gated — a gated author's URL must not be fetched at all.
+  // follow-gated — a gated author's URL must not be fetched at all. Internal
+  // post links are never previewed either: even when embedding is disabled
+  // (quote-in-quote) they degrade to a plain link, not an external preview.
   const { data: previewData, loading: previewLoading } = useLinkPreview(
     firstUrl,
-    { disabled: disableLinkPreview || !linkPreviewsEnabled || mediaGate?.gated }
+    { disabled: disableLinkPreview || !linkPreviewsEnabled || mediaGate?.gated || internalReferenceMatched }
   )
 
   const shouldHideFirstUrl = (
