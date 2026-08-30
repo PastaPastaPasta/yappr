@@ -23,6 +23,7 @@
 
 import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
+import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
 
 export interface RankedLikedPost {
@@ -81,6 +82,86 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
       .filter((entry) => entry.postId !== '');
   } catch (error) {
     logger.error('topLikedPosts: ranked query failed:', error);
+    return [];
+  }
+}
+
+export interface HydratedTopPostsOptions {
+  /** Pin the per-hashtag axis. Storage form (lowercase, no '#'), never `''`. */
+  hashtag?: string;
+  /** 1..100, default 20. */
+  limit?: number;
+}
+
+/**
+ * Rankings move slowly and every ranked page is a proved read, so hydrated
+ * results are held for a minute per pin. Session-scoped: module state lives
+ * exactly as long as the page load.
+ */
+const HYDRATED_CACHE_TTL_MS = 60_000;
+const hydratedCache = new Map<string, { posts: Post[]; timestamp: number }>();
+
+/**
+ * A ranked top-liked page hydrated into renderable posts: the proved ranking
+ * from {@link topLikedPosts} (global `byPost`, or `byHashtagPost` when a tag is
+ * pinned), fetched by id, re-ordered to the proved order with each post's
+ * `likes` set to the proved count, then batch-enriched (authors, stats,
+ * viewer interactions).
+ *
+ * Tombstoned posts are dropped after hydration: likes outlive tombstones (the
+ * ranked axes keep counting a blanked post), but a deleted card has no place in
+ * a "top posts" surface.
+ *
+ * v4-only, same as the underlying ranked query — callers gate on
+ * `likesAreIndexOnly()`. Returns `[]` on failure.
+ */
+export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {}): Promise<Post[]> {
+  const { hashtag, limit = 20 } = options;
+  if (hashtag === '') {
+    // The '' group is the untagged bucket, not a tag — nothing should ask for it.
+    logger.warn('topLikedPostsHydrated: refusing the empty hashtag group');
+    return [];
+  }
+
+  const cacheKey = hashtag === undefined ? 'global' : `tag:${hashtag}`;
+  const cached = hydratedCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < HYDRATED_CACHE_TTL_MS) {
+    return cached.posts;
+  }
+
+  try {
+    const ranked = await topLikedPosts(hashtag === undefined ? { limit } : { hashtag, limit });
+
+    let posts: Post[] = [];
+    let complete = true;
+    if (ranked.length > 0) {
+      const { postService } = await import('./post-service');
+      const fetched = await postService.getPostsByIds(ranked.map((entry) => entry.postId));
+      const byId = new Map(fetched.map((post) => [post.id, post]));
+
+      // Posts are tombstoned by edit, never removed, so a ranked id that
+      // failed to hydrate is a transient fetch failure — don't cache that
+      // page as if it were the real (smaller) ranking.
+      complete = ranked.every((entry) => byId.has(entry.postId));
+
+      // Preserve the proved ranking order; carry the proved count onto the
+      // card; drop ids that failed to load and tombstones.
+      const ordered = ranked
+        .map((entry) => {
+          const post = byId.get(entry.postId);
+          return post ? { ...post, likes: entry.likes } : undefined;
+        })
+        .filter((post): post is Post => post !== undefined && post.deleted !== true);
+
+      posts = await postService.enrichPostsBatch(ordered);
+    }
+
+    if (complete) {
+      hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
+    }
+    return posts;
+  } catch (error) {
+    logger.error('topLikedPostsHydrated: hydration failed:', error);
     return [];
   }
 }
