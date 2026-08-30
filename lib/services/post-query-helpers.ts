@@ -238,7 +238,12 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
   const authorCounts = new Map<string, number>();
 
   try {
-    let startAfter: string | undefined = undefined;
+    // Value cursor, not `startAfter`: a cursor continuation on this
+    // equality + $createdAt-range index in desc order returns a proof that
+    // doesn't verify (see the same workaround in dash-platform-client and
+    // hashtag-service). Same-millisecond boundary posts may be skipped, which
+    // an approximate counting scan tolerates.
+    let beforeTs: number | undefined = undefined;
     const PAGE_SIZE = 100;
     let totalProcessed = 0;
     const MAX_POSTS = 10_000;
@@ -249,11 +254,10 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
         documentTypeName: 'post',
         where: [
           ['language', '==', 'en'],
-          ['$createdAt', '>', 0],
+          ['$createdAt', beforeTs === undefined ? '>' : '<', beforeTs === undefined ? 0 : beforeTs],
         ],
         orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
         limit: PAGE_SIZE,
-        startAfter,
       });
 
       for (const doc of documents) {
@@ -268,8 +272,9 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
       if (documents.length < PAGE_SIZE) break;
 
       const lastDoc = documents[documents.length - 1];
-      if (!lastDoc.$id) break;
-      startAfter = lastDoc.$id as string;
+      const lastTs = (lastDoc.$createdAt ?? lastDoc.createdAt) as number | undefined;
+      if (typeof lastTs !== 'number' || lastTs <= 0) break;
+      beforeTs = lastTs;
     }
 
     return authorCounts;
