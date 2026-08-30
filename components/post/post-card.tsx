@@ -391,7 +391,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const isTipPost = !!tipInfo
-  const createdAtLabel = useRelativeTime(post.createdAt)
+  const createdAtLabel = useRelativeTime(post.createdAt, { compact: true })
+  // Guarded like every other timestamp consumer — toISOString() throws on an invalid Date.
+  const createdAtDate = new Date(post.createdAt)
+  const createdAtValid = Number.isFinite(createdAtDate.getTime())
 
   // Native poll embed, or a legacy post that only links to the Pollr web app.
   const nativePollId = getEmbeddedPollId(post)
@@ -670,19 +673,17 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   return (
-    <motion.article
+    <article
       data-testid={`post-card-${post.id}`}
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
       onClick={handleCardClick}
-      className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
+      className="border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-1 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
     >
       {/* Reposted by header */}
       {post.repostedBy && (
         <Link
           href={`/user?id=${post.repostedBy.id}`}
           onClick={(e) => e.stopPropagation()}
-          className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-8 hover:underline"
+          className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-9 hover:underline"
         >
           <ArrowPathIcon className="h-4 w-4" />
           <span>
@@ -740,8 +741,16 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     </svg>
                   )}
                   {renderUsernameOrIdentity()}
+                  <span className="text-gray-500 flex-shrink-0">·</span>
                 </>
               )}
+              <time
+                dateTime={createdAtValid ? createdAtDate.toISOString() : undefined}
+                title={createdAtValid ? createdAtDate.toLocaleString() : undefined}
+                className="text-gray-500 flex-shrink-0"
+              >
+                {createdAtLabel}
+              </time>
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
@@ -750,7 +759,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                   <LockClosedIcon className="h-3.5 w-3.5" />
                 </span>
               )}
-              <span className="text-gray-500 text-sm">{createdAtLabel}</span>
               <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton data-testid={`more-btn-${post.id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
@@ -903,7 +911,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
             )}
           </SensitiveContentGate>
 
-          <div className="flex items-center justify-between mt-3 -ml-2">
+          <div className="flex items-center justify-between mt-1 -ml-2 max-w-[485px]">
             <Tooltip.Provider>
               <ActionTooltip label={cantReplyReason || 'Reply'}>
                 <button
@@ -1084,6 +1092,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
         onClose={() => setShowLikesModal(false)}
         postId={post.id}
       />
-    </motion.article>
+    </article>
   )
 }

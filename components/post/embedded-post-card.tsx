@@ -24,7 +24,7 @@ export interface EmbeddedPostSkeletonProps {
 const EMBED_CONTAINER_CLASS = 'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer'
 
 export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps) {
-  const createdAtLabel = useRelativeTime(post.createdAt)
+  const createdAtLabel = useRelativeTime(post.createdAt, { compact: true })
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   // Quoted authors have no enrichment hint here; the shared follow cache and
   // own-post check still lift the gate, otherwise media is click-to-reveal.

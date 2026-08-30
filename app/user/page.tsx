@@ -205,13 +205,11 @@ function UserProfileContent() {
   // Tip modal
   const { openForUser: openTipModal } = useTipModal()
 
-  // Tab state for Posts/Mentions/Blog
-  const [activeTab, setActiveTab] = useState<'posts' | 'mentions' | 'blog'>('posts')
-  const [postFilter, setPostFilter] = useState<'posts' | 'replies' | 'top'>('posts')
+  // Single X-style tab row: Posts / Replies / Top / Mentions / Blog
+  const [activeTab, setActiveTab] = useState<'posts' | 'replies' | 'top' | 'mentions' | 'blog'>('posts')
   const [mentions, setMentions] = useState<Post[]>([])
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
-  const [mentionCount, setMentionCount] = useState<number | null>(null)
   const [blogs, setBlogs] = useState<ProfileBlog[]>([])
   const [blogsLoading, setBlogsLoading] = useState(false)
 
@@ -239,15 +237,14 @@ function UserProfileContent() {
 
   // Filter posts - all posts are now top-level (replies are a separate document type)
   const filteredPosts = useMemo(() => {
-    if (postFilter === 'posts') {
-      return posts.filter(p => !p.repostedBy)
-    }
-    if (postFilter === 'top') {
+    if (activeTab === 'top') {
       return topPosts
     }
-    // 'replies' filter - show user's replies from replyService
-    return userReplies
-  }, [posts, postFilter, userReplies, topPosts])
+    if (activeTab === 'replies') {
+      return userReplies
+    }
+    return posts.filter(p => !p.repostedBy)
+  }, [posts, activeTab, userReplies, topPosts])
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
 
@@ -721,7 +718,6 @@ function UserProfileContent() {
     setMentionsLoading(true)
     try {
       const mentionDocs = await mentionService.getPostsMentioningUser(userId)
-      setMentionCount(mentionDocs.length)
 
       if (mentionDocs.length === 0) {
         setMentions([])
@@ -756,7 +752,6 @@ function UserProfileContent() {
       const enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
 
       setMentions(enrichedPosts)
-      setMentionCount(enrichedPosts.length)
     } catch (error) {
       logger.error('Failed to load mentions:', error)
       setMentions([])
@@ -846,31 +841,29 @@ function UserProfileContent() {
     }
   }, [activeTab, mentionsLoaded, loadMentions])
 
-  // Load ranked top posts when the Top filter is selected (v4 only)
+  // Load ranked top posts when the Top tab is selected (v4 only)
   useEffect(() => {
-    if (postFilter === 'top' && !topLoaded) {
+    if (activeTab === 'top' && !topLoaded) {
       loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
     }
-  }, [postFilter, topLoaded, loadTopPosts])
+  }, [activeTab, topLoaded, loadTopPosts])
 
-  // Load user replies when filter is selected
+  // Load user replies when the Replies tab is selected
   useEffect(() => {
-    if (postFilter === 'replies' && !repliesLoaded) {
+    if (activeTab === 'replies' && !repliesLoaded) {
       loadUserReplies().catch(err => logger.error('Failed to load user replies:', err))
     }
-  }, [postFilter, repliesLoaded, loadUserReplies])
+  }, [activeTab, repliesLoaded, loadUserReplies])
 
-  // Reset mentions, replies, post filter, private feed, and store state when user changes
+  // Reset mentions, replies, active tab, private feed, and store state when user changes
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
-    setMentionCount(null)
     setUserReplies([])
     setRepliesLoaded(false)
     setTopPosts([])
     setTopLoaded(false)
     setActiveTab('posts')
-    setPostFilter('posts')
     setHasPrivateFeed(false)
     setIsPrivateFollower(false)
     setUserStore(null)
@@ -1045,7 +1038,7 @@ function UserProfileContent() {
               {isDisplayNameLoading ? (
                 <div className="h-6 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
               ) : (
-                <h1 className="text-xl font-bold">{displayName}</h1>
+                <h1 className="text-xl font-extrabold">{displayName}</h1>
               )}
               <p className="text-sm text-gray-500">{postCount !== null ? postCount : '–'} posts</p>
             </div>
@@ -1202,8 +1195,8 @@ function UserProfileContent() {
                     ) : (
                       <Button
                         variant="outline"
-                        size="sm"
                         onClick={handleStartEdit}
+                        className="font-bold"
                       >
                         Edit profile
                       </Button>
@@ -1254,9 +1247,9 @@ function UserProfileContent() {
                       </Tooltip.Provider>
                       <Button
                         variant={isFollowing ? "outline" : "default"}
-                        size="sm"
                         onClick={handleFollow}
                         disabled={followLoading}
+                        className="font-bold px-5"
                       >
                         {isFollowing ? 'Following' : 'Follow'}
                       </Button>
@@ -1373,7 +1366,7 @@ function UserProfileContent() {
                     {isDisplayNameLoading ? (
                       <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
                     ) : (
-                      <h2 className="text-xl font-bold">{displayName}</h2>
+                      <h2 className="text-xl font-extrabold">{displayName}</h2>
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
                       {hasDpns && username ? (
@@ -1637,114 +1630,53 @@ function UserProfileContent() {
             )}
 
             <div className="border-t border-gray-200 dark:border-gray-800">
-              {/* Tab Navigation */}
+              {/* Tab Navigation — single X-style row */}
               <div className="flex border-b border-gray-200 dark:border-gray-800">
-                <button
-                  onClick={() => setActiveTab('posts')}
-                  className={cn(
-                    'flex-1 py-4 text-center font-medium transition-colors relative',
-                    activeTab === 'posts'
-                      ? 'text-gray-900 dark:text-white'
-                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                  )}
-                >
-                  Posts {postCount !== null && `(${postCount})`}
-                  {activeTab === 'posts' && (
-                    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
-                  )}
-                </button>
-                <button
-                  onClick={() => setActiveTab('mentions')}
-                  className={cn(
-                    'flex-1 py-4 text-center font-medium transition-colors relative',
-                    activeTab === 'mentions'
-                      ? 'text-gray-900 dark:text-white'
-                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                  )}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    <AtSymbolIcon className="h-4 w-4" />
-                    Mentions {mentionCount !== null && `(${mentionCount})`}
-                  </span>
-                  {activeTab === 'mentions' && (
-                    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
-                  )}
-                </button>
-                {blogs.length > 0 && (
+                {([
+                  { key: 'posts' as const, label: 'Posts' },
+                  { key: 'replies' as const, label: 'Replies' },
+                  // Server-ranked top posts need the v4 ranked like axes.
+                  ...(likesAreIndexOnly() ? [{ key: 'top' as const, label: 'Top', testId: 'profile-top-filter' }] : []),
+                  { key: 'mentions' as const, label: 'Mentions' },
+                  ...(blogs.length > 0 ? [{ key: 'blog' as const, label: 'Blog' }] : []),
+                ]).map((tab) => (
                   <button
-                    onClick={() => setActiveTab('blog')}
-                    className={cn(
-                      'flex-1 py-4 text-center font-medium transition-colors relative',
-                      activeTab === 'blog'
-                        ? 'text-gray-900 dark:text-white'
-                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                    )}
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key)}
+                    data-testid={'testId' in tab ? tab.testId : undefined}
+                    className="flex-1 flex justify-center transition-colors hover:bg-gray-100/50 dark:hover:bg-gray-900/50"
                   >
-                    Blog ({blogs.length})
-                    {activeTab === 'blog' && (
-                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
-                    )}
+                    <span
+                      className={cn(
+                        'relative py-4 text-[15px]',
+                        activeTab === tab.key
+                          ? 'font-bold text-gray-900 dark:text-white'
+                          : 'font-medium text-gray-500'
+                      )}
+                    >
+                      {tab.label}
+                      {activeTab === tab.key && (
+                        <span className="absolute inset-x-0 bottom-0 h-1 rounded-full bg-yappr-500" />
+                      )}
+                    </span>
                   </button>
-                )}
+                ))}
               </div>
 
               {/* Tab Content */}
-              {activeTab === 'posts' ? (
-                // Posts Tab
+              {activeTab === 'posts' || activeTab === 'replies' || activeTab === 'top' ? (
                 <>
-                  {/* Post Filter Pills */}
-                  <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-                    <button
-                      onClick={() => setPostFilter('posts')}
-                      className={cn(
-                        'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
-                        postFilter === 'posts'
-                          ? 'bg-yappr-500 text-white'
-                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                      )}
-                    >
-                      Posts
-                    </button>
-                    <button
-                      onClick={() => setPostFilter('replies')}
-                      className={cn(
-                        'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
-                        postFilter === 'replies'
-                          ? 'bg-yappr-500 text-white'
-                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                      )}
-                    >
-                      Replies
-                    </button>
-                    {/* Server-ranked top posts need the v4 ranked like axes. */}
-                    {likesAreIndexOnly() && (
-                      <button
-                        onClick={() => setPostFilter('top')}
-                        data-testid="profile-top-filter"
-                        className={cn(
-                          'px-3 py-1.5 text-sm font-medium rounded-full transition-colors',
-                          postFilter === 'top'
-                            ? 'bg-yappr-500 text-white'
-                            : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                        )}
-                      >
-                        Top
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Posts List */}
-                  {(postFilter === 'replies' && repliesLoading) || (postFilter === 'top' && topLoading) ? (
+                  {(activeTab === 'replies' && repliesLoading) || (activeTab === 'top' && topLoading) ? (
                     <div className="p-8 text-center">
                       <Spinner size="md" className="mx-auto mb-4" />
-                      <p className="text-gray-500">{postFilter === 'top' ? 'Loading top posts...' : 'Loading replies...'}</p>
+                      <p className="text-gray-500">{activeTab === 'top' ? 'Loading top posts...' : 'Loading replies...'}</p>
                     </div>
                   ) : filteredPosts.length === 0 ? (
-                    <div className="p-8 text-center text-gray-500" data-testid={postFilter === 'top' ? 'profile-top-empty' : undefined}>
+                    <div className="p-8 text-center text-gray-500" data-testid={activeTab === 'top' ? 'profile-top-empty' : undefined}>
                       <p>
-                        {postFilter === 'posts'
+                        {activeTab === 'posts'
                           ? 'No original posts yet'
-                          : postFilter === 'top'
+                          : activeTab === 'top'
                             ? 'No liked posts yet'
                             : 'No replies yet'}
                       </p>
@@ -1759,8 +1691,8 @@ function UserProfileContent() {
                         />
                       ))}
 
-                    {/* Load More button */}
-                    {(hasMore || hasMoreReposts) && (
+                    {/* Load More button — only the Posts tab paginates */}
+                    {activeTab === 'posts' && (hasMore || hasMoreReposts) && (
                       <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
                         <Button
                           variant="outline"

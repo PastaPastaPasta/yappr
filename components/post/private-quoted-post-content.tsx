@@ -43,7 +43,7 @@ export function PrivateQuotedPostContent({
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = quotedPost.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
-  const createdAtLabel = useRelativeTime(quotedPost.createdAt)
+  const createdAtLabel = useRelativeTime(quotedPost.createdAt, { compact: true })
 
   // Get display name for author
   const authorDisplay = getAuthorDisplay(quotedPost.author)
