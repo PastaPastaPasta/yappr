@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { formatTime } from '@/lib/utils'
+import { formatTime, formatTimeCompact } from '@/lib/utils'
 
 type RelativeTimeInput = Date | string
+
+interface RelativeTimeOptions {
+  /** Use the compact X-style label ("30s", "2m", "3h") instead of "2 minutes ago". */
+  compact?: boolean
+}
 
 const MAX_RELATIVE_AGE_SECONDS = 7 * 24 * 60 * 60
 
@@ -32,10 +37,10 @@ function getNextUpdateDelayMs(dateMs: number, nowMs: number): number | null {
 }
 
 /**
- * Returns a live relative time label (e.g. "4 seconds ago", "2 minutes ago")
- * with adaptive updates for recent timestamps.
+ * Returns a live relative time label (e.g. "4 seconds ago", "2 minutes ago",
+ * or "4s"/"2m" with `compact`) with adaptive updates for recent timestamps.
  */
-export function useRelativeTime(date: RelativeTimeInput): string {
+export function useRelativeTime(date: RelativeTimeInput, options?: RelativeTimeOptions): string {
   const [_tick, setTick] = useState(0)
 
   const dateMs = useMemo(() => {
@@ -75,5 +80,5 @@ export function useRelativeTime(date: RelativeTimeInput): string {
     return ''
   }
 
-  return formatTime(new Date(dateMs))
+  return options?.compact ? formatTimeCompact(new Date(dateMs)) : formatTime(new Date(dateMs))
 }
