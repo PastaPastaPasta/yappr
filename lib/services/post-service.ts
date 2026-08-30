@@ -886,7 +886,7 @@ class PostService extends BaseDocumentService<Post> {
    * Useful for fetching original posts when displaying reposts or quotes.
    * Author info is resolved for each post.
    */
-  async getPostsByIds(postIds: string[]): Promise<Post[]> {
+  async getPostsByIds(postIds: string[], options: PostQueryOptions = {}): Promise<Post[]> {
     if (postIds.length === 0) return [];
 
     try {
@@ -897,7 +897,9 @@ class PostService extends BaseDocumentService<Post> {
       for (let i = 0; i < postIds.length; i += BATCH_SIZE) {
         const batch = postIds.slice(i, i + BATCH_SIZE);
         const batchPosts = await Promise.all(
-          batch.map(id => this.getPostById(id)) // Don't skip enrichment - resolve authors
+          // Authors resolve per post by default; callers that batch-enrich
+          // afterwards pass skipEnrichment to avoid paying for them twice.
+          batch.map(id => this.getPostById(id, options))
         );
         posts.push(...batchPosts.filter((p): p is Post => p !== null));
       }

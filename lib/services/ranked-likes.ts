@@ -136,7 +136,12 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
     let complete = true;
     if (ranked.length > 0) {
       const { postService } = await import('./post-service');
-      const fetched = await postService.getPostsByIds(ranked.map((entry) => entry.postId));
+      // skipEnrichment: enrichPostsBatch below resolves authors in batch —
+      // per-post DPNS/profile lookups here would be thrown-away duplicates.
+      const fetched = await postService.getPostsByIds(
+        ranked.map((entry) => entry.postId),
+        { skipEnrichment: true }
+      );
       const byId = new Map(fetched.map((post) => [post.id, post]));
 
       // Posts are tombstoned by edit, never removed, so a ranked id that
