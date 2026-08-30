@@ -261,24 +261,48 @@ export class DashPlatformClient {
   private async _executePostsQuery(contractId: string, options: any, cacheKey: string): Promise<any[]> {
     try {
 
+      // Drive returns an unverifiable proof for a `startAfter` continuation on
+      // these equality-prefix + $createdAt-range indexes ("V1 proof is missing
+      // lower layer for non-empty tree"), and every failed verification also
+      // burns addresses from the SDK's pool. Paginate by $createdAt value
+      // instead: resolve the cursor post's timestamp and range below it.
+      // Strictly '<', so a page boundary can skip (never duplicate) posts
+      // sharing the cursor's exact millisecond — rare, and far better than a
+      // hard failure on every second page.
+      let cursorCreatedAt: number | undefined
+      if (options?.startAfter) {
+        const cursorDoc = await this.sdk.documents.get(contractId, 'post', options.startAfter)
+        const cursorData = cursorDoc ? documentToPlainObject(cursorDoc) as Record<string, unknown> : null
+        const rawTs = cursorData?.$createdAt ?? cursorData?.createdAt
+        if (typeof rawTs === 'number' && rawTs > 0) {
+          cursorCreatedAt = rawTs
+        } else {
+          logger.warn('DashPlatformClient: could not resolve startAfter cursor timestamp, stopping pagination', options.startAfter)
+          return []
+        }
+      }
+
       // Build where clause
       const where: any[] = []
       let orderBy: any[] = []
+      const createdAtClause: [string, string, number] = cursorCreatedAt !== undefined
+        ? ['$createdAt', '<', cursorCreatedAt]
+        : ['$createdAt', '>', 0]
 
       if (options?.authorId) {
         // Query by $ownerId (system field) using ownerAndTime index
         where.push(['$ownerId', '==', options.authorId])
-        where.push(['$createdAt', '>', 0])
+        where.push(createdAtClause)
         orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']]
       } else {
         // Use languageTimeline index: [language, $createdAt]
         // The old timeline index was removed - we now require language filter
         const language = options?.language || 'en'
         where.push(['language', '==', language])
-        where.push(['$createdAt', '>', 0])
+        where.push(createdAtClause)
         orderBy = [['language', 'asc'], ['$createdAt', 'desc']]
       }
-      
+
       try {
         // Use EvoSDK documents facade
         const postsResponse = await this.sdk.documents.query({
@@ -286,8 +310,7 @@ export class DashPlatformClient {
           documentTypeName: 'post',
           where: where.length > 0 ? where : undefined,
           orderBy,
-          limit: options?.limit || 20,
-          startAfter: options?.startAfter || undefined
+          limit: options?.limit || 20
         })
         
         logger.info('DashPlatformClient: Posts query response received')

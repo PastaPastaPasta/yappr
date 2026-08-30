@@ -362,7 +362,13 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     const PAGE_SIZE = 100;
     const counts = new Map<string, number>();
     let sampled = 0;
-    let startAfter: string | undefined;
+    // Value cursor, not `startAfter`: Drive's proof for a startAfter
+    // continuation on this equality + $createdAt-range index doesn't verify
+    // ("V1 proof is missing lower layer for non-empty tree"), and each failed
+    // verification burns addresses. Ranging strictly below the last seen
+    // timestamp sidesteps the broken proof path; same-millisecond siblings at
+    // a page boundary may be skipped, which sampling tolerates.
+    let beforeTs: number | undefined;
 
     while (sampled < SAMPLE_TARGET) {
       const documents = await queryRawDocuments({
@@ -370,11 +376,10 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         documentTypeName: 'post',
         where: [
           ['language', '==', 'en'],
-          ['$createdAt', '>', 0],
+          ['$createdAt', beforeTs === undefined ? '>' : '<', beforeTs === undefined ? 0 : beforeTs],
         ],
         orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
         limit: PAGE_SIZE,
-        startAfter,
       });
 
       for (const doc of documents) {
@@ -389,9 +394,10 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       sampled += documents.length;
       if (documents.length < PAGE_SIZE) break;
 
-      const lastId = documents[documents.length - 1].$id;
-      if (typeof lastId !== 'string' || lastId === '') break;
-      startAfter = lastId;
+      const lastDoc = documents[documents.length - 1] as Record<string, unknown>;
+      const lastTs = (lastDoc.$createdAt ?? lastDoc.createdAt) as number | undefined;
+      if (typeof lastTs !== 'number' || lastTs <= 0) break;
+      beforeTs = lastTs;
     }
 
     const trending: TrendingHashtag[] = [];
