@@ -297,7 +297,12 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
  *   was recovered from `byAuthorTimePost`; re-like proves the entries really
  *   left the trees (a duplicate would be rejected structurally, 40105);
  * - the Top tab renders from a proved `documents.ranked()` page on
- *   `byAuthorPost` pinned to the author.
+ *   `byAuthorPost` pinned to the author;
+ * - the explore Top tab renders the GLOBAL ranked page (`byPost`, unpinned) and
+ *   the tag page's Top toggle the tag-pinned one (`byHashtagPost` — fed by the
+ *   like's agreement-bound `hashtag` copy);
+ * - the trending widget is client-derived activity (inline hashtags of recent
+ *   posts, deliberately unproven) and is labeled as such.
  */
 test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
@@ -415,5 +420,52 @@ test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
     await expect(
       page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
     ).toBeVisible({ timeout: 60_000 })
+  })
+
+  test('the explore Top tab lists the liked post', async ({ page }) => {
+    test.setTimeout(180_000)
+
+    // The liked post has a proved count on the GLOBAL byPost axis, so the
+    // explore Top tab — one unpinned ranked page hydrated into post cards —
+    // must list it. (Top-20 only; if the devnet ever accumulates more than 20
+    // higher-ranked posts, the run tag ages out and this needs a re-think.)
+    await page.goto(appUrl('/explore/'))
+    const topTab = page.getByTestId('explore-top-tab')
+    await expect(topTab).toBeVisible({ timeout: 60_000 })
+    await topTab.click()
+
+    await expect(
+      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
+    ).toBeVisible({ timeout: 60_000 })
+  })
+
+  test('the tag page Top toggle lists the liked post under its hashtag', async ({ page }) => {
+    test.setTimeout(180_000)
+
+    // The like repeated the post's hashtag (agreement-bound), so the tag-pinned
+    // byHashtagPost axis ranks the post inside its own tag group. The tag is
+    // run-unique, so the Top listing can only contain this run's post.
+    await page.goto(appUrl(`/hashtag?tag=${hashtag}`))
+    const topToggle = page.getByTestId('hashtag-sort-top')
+    await expect(topToggle).toBeVisible({ timeout: 60_000 })
+    await topToggle.click()
+
+    await expect(
+      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
+    ).toBeVisible({ timeout: 60_000 })
+  })
+
+  test('the trending widget surfaces the tag from recent activity', async ({ page }) => {
+    test.setTimeout(180_000)
+
+    // v4 trending is client-derived (activity-based, unproven by design until
+    // prefix-level ranked aggregation ships upstream): the inline hashtags of
+    // the most recent posts, newest-first. The tagged post from this run is
+    // among the newest posts on the chain, so its tag must surface — and the
+    // surface must be labeled as activity-based rather than a proved count.
+    await reloadUntilVisible(page, appUrl('/explore/'), (p) =>
+      p.getByText(`#${hashtag}`, { exact: true })
+    )
+    await expect(page.getByTestId('trending-activity-note')).toBeVisible()
   })
 })

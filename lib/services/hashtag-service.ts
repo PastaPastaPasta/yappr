@@ -284,16 +284,26 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       limit = 12
     } = options;
 
-    // v4: trending rode the postHashtag doctype, which no longer exists. A
-    // ranked/count-based trending surface is deliberately OUT OF SCOPE for the
-    // v4 client migration — explore renders its existing empty state instead of
-    // firing queries against an absent doctype.
-    if (hashtagsAreInline()) return [];
-
     // Check cache
     if (this.trendingCache &&
         Date.now() - this.trendingCache.timestamp < this.TRENDING_CACHE_TTL) {
       return this.trendingCache.data.slice(0, limit);
+    }
+
+    // v4: trending rode the postHashtag doctype, which no longer exists, and a
+    // PROVED tag ranking is not servable (it would need prefix-level groupBy on
+    // `like.byHashtagPost` — the creator-leaderboard gap). Until the upstream
+    // aggregation ask lands, trending is derived client-side from recent post
+    // activity: an unproven sample, labeled as such in the UI.
+    if (hashtagsAreInline()) {
+      try {
+        const trending = await this.deriveTrendingFromRecentPosts(minPosts);
+        this.trendingCache = { data: trending, timestamp: Date.now() };
+        return trending.slice(0, limit);
+      } catch (error) {
+        logger.error('Error deriving trending hashtags from recent posts:', error);
+        return [];
+      }
     }
 
     try {
@@ -329,6 +339,71 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       logger.error('Error calculating trending hashtags:', error);
       return [];
     }
+  }
+
+  /**
+   * v4 trending, client-derived (D-R1a): sample the most recent ~200 posts off
+   * the `languageTimeline` index and count their inline `hashtag` values.
+   *
+   * NOT a proved ranking — it is a recency-weighted activity signal, which is
+   * why consumers label it "based on recent activity". Counting the indexed
+   * `hashtag` property (rather than re-parsing content for inline tags) keeps
+   * the numbers consistent with what a tag page can actually list: on v4 a post
+   * is discoverable under exactly one tag via `post.tagAndTime`.
+   *
+   * Posts are scanned newest-first and JS sorts are stable, so among tags with
+   * equal counts the most recently used one ranks first — a fresh tag surfaces
+   * immediately instead of being buried under older ties.
+   */
+  private async deriveTrendingFromRecentPosts(minPosts: number): Promise<TrendingHashtag[]> {
+    const { queryRawDocuments } = await import('./document-service');
+
+    const SAMPLE_TARGET = 200;
+    const PAGE_SIZE = 100;
+    const counts = new Map<string, number>();
+    let sampled = 0;
+    let startAfter: string | undefined;
+
+    while (sampled < SAMPLE_TARGET) {
+      const documents = await queryRawDocuments({
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [
+          ['language', '==', 'en'],
+          ['$createdAt', '>', 0],
+        ],
+        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
+        limit: PAGE_SIZE,
+        startAfter,
+      });
+
+      for (const doc of documents) {
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const tag = data.hashtag ?? doc.hashtag;
+        // '' is the untagged stand-in, not a tag.
+        if (typeof tag === 'string' && tag !== '') {
+          counts.set(tag, (counts.get(tag) || 0) + 1);
+        }
+      }
+
+      sampled += documents.length;
+      if (documents.length < PAGE_SIZE) break;
+
+      const lastId = documents[documents.length - 1].$id;
+      if (typeof lastId !== 'string' || lastId === '') break;
+      startAfter = lastId;
+    }
+
+    const trending: TrendingHashtag[] = [];
+    counts.forEach((postCount, hashtag) => {
+      if (postCount >= minPosts) {
+        trending.push({ hashtag, postCount });
+      }
+    });
+
+    // Stable sort: ties keep newest-first encounter order.
+    trending.sort((a, b) => b.postCount - a.postCount);
+    return trending;
   }
 
   /**

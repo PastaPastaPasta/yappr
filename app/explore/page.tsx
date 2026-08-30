@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
+import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon, TrophyIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
@@ -18,6 +18,7 @@ import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
@@ -28,7 +29,7 @@ interface RawPostDocument {
   content?: string
 }
 
-type ExploreTab = 'hashtags' | 'blogs'
+type ExploreTab = 'hashtags' | 'top' | 'blogs'
 
 export default function ExplorePage() {
   const router = useRouter()
@@ -45,7 +46,40 @@ export default function ExplorePage() {
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
+  const [topPosts, setTopPosts] = useState<Post[]>([])
+  const [isLoadingTop, setIsLoadingTop] = useState(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
+
+  // Load the global most-liked posts when the Top tab is activated (v4 only —
+  // the ranking is one proved `documents.ranked()` page on `like.byPost`).
+  // Re-activations are cheap: hydration is session-cached for a minute.
+  useEffect(() => {
+    if (activeTab !== 'top' || !likesAreIndexOnly()) return
+
+    const loadTopPosts = async () => {
+      setIsLoadingTop(true)
+      try {
+        const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
+        let posts = await topLikedPostsHydrated({ limit: 20 })
+
+        // Filter out posts from blocked users, same as the search results above.
+        if (user?.identityId && posts.length > 0) {
+          const authorIds = Array.from(new Set(posts.map(p => p.author.id)))
+          const blockedMap = await checkBlockedForAuthors(user.identityId, authorIds)
+          posts = posts.filter(post => !blockedMap.get(post.author.id))
+        }
+
+        setTopPosts(posts)
+      } catch (error) {
+        logger.error('Failed to load top posts:', error)
+        setTopPosts([])
+      } finally {
+        setIsLoadingTop(false)
+      }
+    }
+
+    loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
+  }, [activeTab, user?.identityId])
 
   // Load trending hashtags
   useEffect(() => {
@@ -258,6 +292,29 @@ export default function ExplorePage() {
                     />
                   )}
                 </button>
+                {/* Server-ranked global Top posts need the v4 ranked like axes. */}
+                {likesAreIndexOnly() && (
+                  <button
+                    onClick={() => setActiveTab('top')}
+                    data-testid="explore-top-tab"
+                    className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
+                      activeTab === 'top'
+                        ? 'text-foreground'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <TrophyIcon className="h-4 w-4" />
+                      Top
+                    </span>
+                    {activeTab === 'top' && (
+                      <motion.div
+                        layoutId="explore-tab-indicator"
+                        className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
+                      />
+                    )}
+                  </button>
+                )}
                 <button
                   onClick={() => setActiveTab('blogs')}
                   className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
@@ -354,6 +411,16 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Trending Hashtags */}
+                      {/* v4 trending is derived from recent post activity, not a
+                          proved count — label it so nobody reads it as one. */}
+                      {hashtagsAreInline() && !isLoadingTrends && trendingHashtags.length > 0 && (
+                        <div
+                          className="px-4 py-2 text-xs text-gray-400 border-b border-gray-200 dark:border-gray-800"
+                          data-testid="trending-activity-note"
+                        >
+                          Based on recent activity
+                        </div>
+                      )}
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
                           <div className="p-8 text-center">
@@ -393,6 +460,34 @@ export default function ExplorePage() {
                               </motion.div>
                             )
                           })
+                        )}
+                      </div>
+                    </motion.div>
+                  ) : activeTab === 'top' ? (
+                    <motion.div
+                      key="tab-top"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {/* Global most-liked posts (proved ranking, top 20) */}
+                      <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                        {isLoadingTop ? (
+                          <div className="p-8 text-center">
+                            <Spinner size="md" className="mx-auto mb-4" />
+                            <p className="text-gray-500">Loading top posts...</p>
+                          </div>
+                        ) : topPosts.length === 0 ? (
+                          <div className="p-8 text-center" data-testid="explore-top-empty">
+                            <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                            <p className="text-gray-500">No liked posts yet</p>
+                            <p className="text-sm text-gray-400 mt-1">The most-liked posts will appear here</p>
+                          </div>
+                        ) : (
+                          filterHiddenSensitive(topPosts, sensitiveContentMode, user?.identityId).map((post) => (
+                            <PostCard key={post.id} post={post} />
+                          ))
                         )}
                       </div>
                     </motion.div>
