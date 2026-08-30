@@ -62,10 +62,13 @@ export function useYapprPostReference(
 ): UseYapprPostReferenceResult {
   const { disabled = false } = options
 
+  // `matched` is a pure pattern check on the URL and stays truthful even when
+  // resolution is disabled — callers rely on it to keep internal post links
+  // out of the external link-preview and media-gate paths.
   const referencedPostId = useMemo(() => {
-    if (!url || disabled) return null
+    if (!url) return null
     return extractYapprPostId(url)
-  }, [url, disabled])
+  }, [url])
 
   const matched = referencedPostId !== null
   const [post, setPost] = useState<Post | null>(null)
@@ -73,7 +76,7 @@ export function useYapprPostReference(
   const [resolved, setResolved] = useState(false)
 
   useEffect(() => {
-    if (!matched || !referencedPostId) {
+    if (disabled || !matched || !referencedPostId) {
       setPost(null)
       setLoading(false)
       setResolved(false)
@@ -108,7 +111,7 @@ export function useYapprPostReference(
     return () => {
       cancelled = true
     }
-  }, [matched, referencedPostId])
+  }, [disabled, matched, referencedPostId])
 
   return {
     matched,
