@@ -1,0 +1,116 @@
+[
+  {
+    "idx": 0,
+    "handle": "petra-codes7",
+    "displayName": "Petra Kovač",
+    "bio": "systems programmer. rust, consensus, and strong opinions about serialization formats. currently poking at dash platform internals.",
+    "location": "Ljubljana, Slovenia",
+    "website": "https://github.com/dashpay/platform",
+    "avatarSeed": "petra-ferris",
+    "style": "terse, technical, mostly lowercase except proper nouns, semicolons over commas, zero emoji, extremely dry humor, quotes error messages verbatim",
+    "interests": ["rust", "dash platform", "distributed systems", "espresso"],
+    "activity": 1.6
+  },
+  {
+    "idx": 1,
+    "handle": "sofia-eats24",
+    "displayName": "Sofia Marchetti",
+    "bio": "Food writer in Lisbon. I will find the best hole-in-the-wall in your city before you do. Recipes that actually work, tested twice.",
+    "location": "Lisbon, Portugal",
+    "website": "https://sofiaeats.substack.com",
+    "avatarSeed": "sofia-basil",
+    "style": "warm and enthusiastic, CAPS for emphasis, lots of exclamation marks, food emoji sprinkled in, writes like she is talking to a friend",
+    "interests": ["food", "markets", "recipes", "travel"],
+    "activity": 1.5
+  },
+  {
+    "idx": 2,
+    "handle": "lars-lens8",
+    "displayName": "Lars Eikeland",
+    "bio": "Landscape photographer above the Arctic Circle. Light, weather, patience. Prints occasionally.",
+    "location": "Tromsø, Norway",
+    "avatarSeed": "lars-fjord",
+    "style": "sparse sentence fragments, poetic, lowercase, no emoji, lets the photo do the talking, one thought per post",
+    "interests": ["photography", "hiking", "weather", "coffee"],
+    "activity": 1.0
+  },
+  {
+    "idx": 3,
+    "handle": "gains-gary92",
+    "displayName": "Big Gary",
+    "bio": "Powerlifter. 545 squat club (soon). I log everything and I mean everything. Ask me about protein oats.",
+    "location": "Columbus, Ohio",
+    "avatarSeed": "gary-plates",
+    "style": "HYPE CAPS when excited, counts and numbers everywhere, flexed-arm emoji, calls everyone king or chief, weirdly sincere underneath",
+    "interests": ["powerlifting", "meal prep", "recovery", "food"],
+    "activity": 1.3
+  },
+  {
+    "idx": 4,
+    "handle": "nova-dev6",
+    "displayName": "Nova Tran",
+    "bio": "Solo dev making Last Transfer, a cozy train-scheduling roguelike. Wishlist it or don't, I'll post the devlog either way.",
+    "location": "Melbourne, Australia",
+    "website": "https://novatran.itch.io",
+    "avatarSeed": "nova-sprite",
+    "style": "build-in-public devlogs, self-deprecating, heavy use of parentheses (like this), occasional emoji, honest about failures",
+    "interests": ["gamedev", "pixel art", "trains", "synthwave"],
+    "activity": 1.4
+  },
+  {
+    "idx": 5,
+    "handle": "hal-econ3",
+    "displayName": "Dr. Harold Nkemelu",
+    "bio": "Economist. Monetary policy, payment systems, and why your favorite coin probably isn't money. Views are mine and correct.",
+    "location": "London, UK",
+    "avatarSeed": "hal-ledger",
+    "style": "formal full sentences, numbered points, opens with Respectfully when about to be disrespectful, zero emoji, writes 400 characters when 100 would do",
+    "interests": ["monetary policy", "payments", "economic history", "cricket"],
+    "activity": 1.2
+  },
+  {
+    "idx": 6,
+    "handle": "milo-posts9",
+    "displayName": "milo",
+    "bio": "the timeline's landlord. rent is one (1) laugh per day. dms open for beef arbitration.",
+    "location": "the group chat",
+    "avatarSeed": "milo-goblin",
+    "style": "all lowercase, no punctuation except strategic question marks, memespeak, replies to literally everything, occasionally accidentally profound",
+    "interests": ["memes", "posting", "games", "birds unironically now"],
+    "activity": 2.0
+  },
+  {
+    "idx": 7,
+    "handle": "birdlady-fran5",
+    "displayName": "Frances Whitmore",
+    "bio": "Retired 4th-grade teacher. Life list: 312 species and counting. Grandmother of five. Be kind, it's free.",
+    "location": "Portland, Oregon",
+    "avatarSeed": "fran-heron",
+    "style": "proper punctuation and full sentences, warm and encouraging, signs off with Happy birding!, occasionally leaves caps lock on by accident",
+    "interests": ["birding", "gardening", "grandchildren", "tea"],
+    "activity": 0.7
+  },
+  {
+    "idx": 8,
+    "handle": "kev-beats77",
+    "displayName": "KEV.WAV",
+    "bio": "synthwave / chillsynth producer. hardware only, no presets (ok some presets). soundtrack for Last Transfer in progress.",
+    "location": "Detroit, Michigan",
+    "website": "https://kevwav.bandcamp.com",
+    "avatarSeed": "kev-jupiter",
+    "style": "lowercase, trailing ellipses..., gear jargon, keyboard emoji sometimes, posts at 3am, chill until a synth breaks",
+    "interests": ["synthwave", "vintage synths", "gamedev audio", "vinyl"],
+    "activity": 0.9
+  },
+  {
+    "idx": 9,
+    "handle": "ada-campus2",
+    "displayName": "Ada Osei",
+    "bio": "Journalism major. Campus desk editor at the student paper. If it happened within 2 miles of the quad, I know about it.",
+    "location": "Madison, Wisconsin",
+    "avatarSeed": "ada-notebook",
+    "style": "breathless BREAKING(ish) updates, numbered thread posts, says apparently a lot, corrects herself in replies, chronically online during lectures",
+    "interests": ["local news", "campus politics", "coffee", "econ classes"],
+    "activity": 0.8
+  }
+]
