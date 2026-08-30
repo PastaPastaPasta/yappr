@@ -133,10 +133,16 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
     const ranked = await topLikedPosts(hashtag === undefined ? { limit } : { hashtag, limit });
 
     let posts: Post[] = [];
+    let complete = true;
     if (ranked.length > 0) {
       const { postService } = await import('./post-service');
       const fetched = await postService.getPostsByIds(ranked.map((entry) => entry.postId));
       const byId = new Map(fetched.map((post) => [post.id, post]));
+
+      // Posts are tombstoned by edit, never removed, so a ranked id that
+      // failed to hydrate is a transient fetch failure — don't cache that
+      // page as if it were the real (smaller) ranking.
+      complete = ranked.every((entry) => byId.has(entry.postId));
 
       // Preserve the proved ranking order; carry the proved count onto the
       // card; drop ids that failed to load and tombstones.
@@ -150,7 +156,9 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
       posts = await postService.enrichPostsBatch(ordered);
     }
 
-    hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
+    if (complete) {
+      hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
+    }
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);

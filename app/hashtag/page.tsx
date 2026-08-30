@@ -135,6 +135,12 @@ function HashtagPageContent() {
     setTopLoaded(false)
   }, [tag])
 
+  // The block filter depends on the viewer, so a Top list loaded under one
+  // identity is stale after login/logout — force a refetch.
+  useEffect(() => {
+    setTopLoaded(false)
+  }, [user?.identityId])
+
   // Lazy-load the tag's top-liked posts the first time Top is selected.
   useEffect(() => {
     // `tag` is never '' here (the page early-returns without one), so the
