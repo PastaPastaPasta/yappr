@@ -71,12 +71,17 @@ def build():
         {'name': 'byPost', 'properties': [{'postId': 'asc'}],
          'terminal': '$ownerId', 'preallocated': True, **RANKED_CHAIN, 'rankedCountable': True},
         # skipIfAbsent: an untagged like (hashtag ABSENT) writes no entry here at
-        # all; {at: "hashtag"} ranks hashtags by total like count across all
-        # their posts (trending). The optional trigger must be FIRST and this
-        # must be its only index (closure rules), which it is.
+        # all. Multi-at {at: [hashtag, postId]}: the hashtag level ranks tags by
+        # total like count (trending), and the terminal postId level (array's
+        # last name folds to the boolean form) ranks posts WITHIN a pinned tag —
+        # the tag page's Top toggle. Live wipe-day calibration proved the
+        # single-level {at: "hashtag"} form serves ONLY trending: the router
+        # refuses `group_by=[postId]` with a hashtag pin ("no ranked index
+        # covers ..."), which silently killed per-tag Top. The optional trigger
+        # must be FIRST and this must be its only index (closure rules).
         {'name': 'byHashtagPost', 'properties': [{'hashtag': 'asc'}, {'postId': 'asc'}],
          'terminal': '$ownerId', 'preallocated': True, **RANKED_CHAIN,
-         'rankedCountable': {'at': 'hashtag'}, 'skipIfAbsent': True},
+         'rankedCountable': {'at': ['hashtag', 'postId']}, 'skipIfAbsent': True},
         # Multi-at: postAuthor level = creator leaderboard (authors by likes
         # received), terminal postId level = per-author Top posts — one index
         # serves both (D-V5-1 merged option).
@@ -166,11 +171,11 @@ def self_test(built):
               'preallocated': True, 'countable': 'countable', 'rangeCountable': True,
               'rankedCountable': True,
           }, json.dumps(idx.get('byPost')))
-    check('byHashtagPost = [hashtag, postId] + skipIfAbsent + rankedCountable {at: "hashtag"} (upstream plike spelling)',
+    check('byHashtagPost = [hashtag, postId] + skipIfAbsent + rankedCountable {at: ["hashtag", "postId"]} (upstream "both" fixture spelling)',
           idx.get('byHashtagPost') == {
               'name': 'byHashtagPost', 'properties': [{'hashtag': 'asc'}, {'postId': 'asc'}],
               'terminal': '$ownerId', 'preallocated': True, 'countable': 'countable',
-              'rangeCountable': True, 'rankedCountable': {'at': 'hashtag'}, 'skipIfAbsent': True,
+              'rangeCountable': True, 'rankedCountable': {'at': ['hashtag', 'postId']}, 'skipIfAbsent': True,
           }, json.dumps(idx.get('byHashtagPost')))
     check('byAuthorPost = [postAuthor, postId] + rankedCountable {at: ["postAuthor", "postId"]} (multi-at form)',
           idx.get('byAuthorPost') == {
