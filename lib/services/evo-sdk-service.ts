@@ -135,9 +135,10 @@ class EvoSdkService {
       // chain's real protocol version before any v4 read can race it.
       await this._warmUpProtocolVersion();
 
-      // Preload contracts to avoid repeated fetches.
-      // Must happen BEFORE setting _isInitialized so that getSdk()
-      // callers don't get an SDK instance without cached contracts.
+      // Resolve the configured contracts once, before _isInitialized flips, so a
+      // missing or misconfigured contract is reported here rather than surfacing
+      // as an opaque failure in whichever query happens to need it first. One
+      // batched request, so this costs a single round trip.
       await this._preloadContracts();
 
       this._isInitialized = true;
@@ -172,15 +173,27 @@ class EvoSdkService {
   }
 
   /**
-   * Preload contracts to cache them and avoid repeated fetches
-   * Fetches all contracts in parallel for faster initialization
+   * Preload the app's contracts, so a missing or unreachable contract surfaces
+   * once here instead of as a confusing failure inside the first query needing it.
+   *
+   * This is ONE batched `getDataContracts` round trip rather than a request per
+   * contract. The app configures ten of them, and ten concurrent requests spread
+   * over a five-node pool spend far longer in failover retries than one request
+   * does — on a cold devnet load the individual-fetch burst stretched past two
+   * seconds, all of it in front of the first feed query.
+   *
+   * This does NOT populate any contract cache, and never did: neither
+   * `contracts.fetch()` nor `contracts.getMany()` registers anything with the
+   * trusted context provider, and wasm-sdk exposes no API to seed it (only
+   * `removeCachedContract`). rs-sdk fills that cache itself, lazily, while
+   * verifying the first proof that needs each contract. Preload failures are
+   * therefore non-fatal — they cost a log line, not a query.
    */
   private async _preloadContracts(): Promise<void> {
-    if (!this.config || !this.sdk) {
+    const sdk = this.sdk;
+    if (!this.config || !sdk) {
       return;
     }
-
-    logger.info('EvoSdkService: Preloading contracts in parallel...');
 
     // Build list of contracts to fetch
     const contractsToFetch: Array<{ id: string; name: string }> = [
@@ -216,26 +229,24 @@ class EvoSdkService {
       contractsToFetch.push({ id: YAPPR_AUTH_VAULT_CONTRACT_ID, name: 'AuthVault' });
     }
 
-    // Fetch all contracts in parallel
-    const results = await Promise.allSettled(
-      contractsToFetch.map(async ({ id, name }) => {
-        const contract = await this.sdk!.contracts.fetch(id);
-        if (!contract) {
-          throw new Error(`Contract ${name} (${id}) not found on network`);
-        }
-        return name;
-      })
-    );
+    logger.info(`EvoSdkService: Preloading ${contractsToFetch.length} contracts in one request...`);
 
-    // Log results
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const contract = contractsToFetch[i];
-      if (result.status === 'fulfilled') {
-        logger.info(`EvoSdkService: ${contract.name} contract cached`);
-      } else {
-        logger.warn(`EvoSdkService: ${contract.name} contract fetch failed:`, result.reason);
-      }
+    // A contract that does not resolve comes back as an absent map entry rather
+    // than a rejection, so one bad optional contract ID cannot sink the batch.
+    let contracts: Map<string, unknown>;
+    try {
+      contracts = await sdk.contracts.getMany(contractsToFetch.map(({ id }) => id));
+    } catch (error) {
+      logger.warn('EvoSdkService: contract preload failed:', error);
+      return;
+    }
+
+    const missing = contractsToFetch.filter(({ id }) => !contracts.get(id));
+    logger.info(
+      `EvoSdkService: ${contractsToFetch.length - missing.length}/${contractsToFetch.length} contracts resolved`
+    );
+    for (const { id, name } of missing) {
+      logger.warn(`EvoSdkService: ${name} contract (${id}) not found on network`);
     }
   }
 
