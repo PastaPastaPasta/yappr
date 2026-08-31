@@ -26,17 +26,20 @@ interface IpfsGateway {
 }
 
 export const IPFS_GATEWAYS: IpfsGateway[] = [
-  // ipfs.io is the canonical IPFS Foundation gateway
+  // Pinata first: uploads go through Pinata, so this is the only gateway
+  // guaranteed to have fresh content (public gateways can take a while to
+  // retrieve Pinata-pinned blocks). Serves ACAO: * with no CORP header.
+  { domain: 'gateway.pinata.cloud', format: 'path' },
+  // 4everland: independent backend from the IPFS Foundation gateways below
+  { domain: 'ipfs.4everland.io', format: 'path' },
+  // ipfs.io is the canonical IPFS Foundation gateway (aggressively
+  // rate-limited by Cloudflare - bursts of image loads get 403s)
   { domain: 'ipfs.io', format: 'path' },
-  // dweb.link subdomain gateway (IPFS Foundation)
+  // dweb.link subdomain gateway (same rainbow backend as ipfs.io)
   { domain: 'ipfs.dweb.link', format: 'subdomain' },
-  // w3s.link is Storacha's gateway — serves freshly uploaded Storacha
-  // content before it propagates to other public gateways
-  { domain: 'ipfs.w3s.link', format: 'subdomain' },
-  // nftstorage.link (NFT.storage gateway)
-  { domain: 'nftstorage.link', format: 'path' },
   // Note: cloudflare-ipfs.com deprecated Aug 2024
-  // Note: gateway.pinata.cloud has CORS restrictions
+  // Note: nftstorage.link removed - now just 302-redirects to ipfs.io
+  // Note: ipfs.w3s.link removed - now just 301-redirects to dweb.link
 ]
 
 /**
