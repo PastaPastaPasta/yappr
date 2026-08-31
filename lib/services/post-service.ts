@@ -496,10 +496,12 @@ class PostService extends BaseDocumentService<Post> {
    *
    * Features adaptive window sizing based on post density to target ~50 posts per load.
    *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
+   * Pagination note: the old belief that 'in' queries return incomplete results
+   * (empty subtrees eating the limit) described pre-PV14 behavior and is fixed —
+   * on PV14 empty/absent in-members consume nothing and coverage is complete, so
+   * cursor pagination over this query is now implementable. Caveat: 'in'
+   * continuation pages can come back one row short (limit-1), so terminate on an
+   * empty page or use value cursors, never `rows < limit`.
    */
   async getFollowingFeed(
     userId: string,
@@ -882,33 +884,109 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get multiple posts by their IDs.
-   * Useful for fetching original posts when displaying reposts or quotes.
-   * Author info is resolved for each post.
+   * Get multiple posts by their IDs with a single proved `$id in [...]` query
+   * per chunk of 100 (the platform's in-clause cap; typical callers pass ≤20,
+   * so usually one round trip vs. one per post).
+   *
+   * Absence is authoritative: an id missing from a successful response is
+   * proved not to exist — it consumes no limit and is not a transport failure.
+   * Results are returned in the caller's id order. Author info is resolved for
+   * each post (deduped by author) unless `skipEnrichment` is set.
    */
   async getPostsByIds(postIds: string[], options: PostQueryOptions = {}): Promise<Post[]> {
     if (postIds.length === 0) return [];
 
-    try {
-      // Fetch posts in parallel with concurrency limit
-      const BATCH_SIZE = 5;
-      const posts: Post[] = [];
+    // The platform rejects duplicate in-clause members; duplicates in the
+    // input collapse to one result anyway.
+    const uniqueIds = Array.from(new Set(postIds));
 
-      for (let i = 0; i < postIds.length; i += BATCH_SIZE) {
-        const batch = postIds.slice(i, i + BATCH_SIZE);
-        const batchPosts = await Promise.all(
-          // Authors resolve per post by default; callers that batch-enrich
-          // afterwards pass skipEnrichment to avoid paying for them twice.
-          batch.map(id => this.getPostById(id, options))
-        );
-        posts.push(...batchPosts.filter((p): p is Post => p !== null));
+    const byId = new Map<string, Post>();
+    const toFetch: string[] = [];
+    for (const id of uniqueIds) {
+      const cached = this.cache.get(id);
+      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+        byId.set(id, cached.data);
+      } else {
+        toFetch.push(id);
       }
-
-      return posts;
-    } catch (error) {
-      logger.error('Error getting posts by IDs:', error);
-      return [];
     }
+
+    // Platform caps `in` clauses at 100 members per query.
+    const CHUNK_SIZE = 100;
+    let loggedFallback = false;
+
+    for (let i = 0; i < toFetch.length; i += CHUNK_SIZE) {
+      const chunk = toFetch.slice(i, i + CHUNK_SIZE);
+      try {
+        // Primary-key in-query: returns exactly the existing documents among
+        // `chunk` (results arrive in $id byte order; orderBy is optional and
+        // omitted). Goes through the same transformDocument path as get().
+        const result = await this.query({
+          where: [['$id', 'in', chunk]],
+          limit: chunk.length,
+        });
+        for (const post of result.documents) {
+          byId.set(post.id, post);
+          this.cache.set(post.id, { data: post, timestamp: Date.now() });
+        }
+      } catch (error) {
+        // Transport blip: degrade to the old per-id path for this chunk
+        // rather than dropping the whole batch.
+        if (!loggedFallback) {
+          logger.warn('getPostsByIds: batched $id-in query failed, falling back to per-id fetches:', error);
+          loggedFallback = true;
+        }
+        const FALLBACK_BATCH_SIZE = 5;
+        for (let j = 0; j < chunk.length; j += FALLBACK_BATCH_SIZE) {
+          const batch = chunk.slice(j, j + FALLBACK_BATCH_SIZE);
+          const batchPosts = await Promise.all(
+            // Authors resolve in the shared deduped pass below.
+            batch.map(id => this.getPostById(id, { ...options, skipEnrichment: true }))
+          );
+          for (const post of batchPosts) {
+            if (post) byId.set(post.id, post);
+          }
+        }
+      }
+    }
+
+    const posts = uniqueIds
+      .map(id => byId.get(id))
+      .filter((p): p is Post => p !== undefined);
+
+    // Authors resolve by default, deduped by author; callers that batch-enrich
+    // afterwards pass skipEnrichment to avoid paying for them twice.
+    if (!options.skipEnrichment) {
+      await this.resolveAuthorsForPosts(posts);
+    }
+
+    return posts;
+  }
+
+  /**
+   * Resolve authors for a batch of posts, one profile lookup per unique author.
+   */
+  private async resolveAuthorsForPosts(posts: Post[]): Promise<void> {
+    const byAuthor = new Map<string, Post[]>();
+    for (const post of posts) {
+      const authorId = post.author?.id;
+      if (!authorId || authorId === 'unknown') continue;
+      const group = byAuthor.get(authorId);
+      if (group) {
+        group.push(post);
+      } else {
+        byAuthor.set(authorId, [post]);
+      }
+    }
+
+    await Promise.all(
+      Array.from(byAuthor.values()).map(async (group) => {
+        await this.resolvePostAuthor(group[0]);
+        for (let i = 1; i < group.length; i++) {
+          group[i].author = group[0].author;
+        }
+      })
+    );
   }
 }
 
