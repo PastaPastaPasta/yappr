@@ -217,7 +217,6 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
     const ranked = await topLikedPosts(hashtag === undefined ? { limit } : { hashtag, limit });
 
     let posts: Post[] = [];
-    let complete = true;
     if (ranked.length > 0) {
       const { postService } = await import('./post-service');
       // skipEnrichment: enrichPostsBatch below resolves authors in batch —
@@ -228,13 +227,23 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
       );
       const byId = new Map(fetched.map((post) => [post.id, post]));
 
-      // Posts are tombstoned by edit, never removed, so a ranked id that
-      // failed to hydrate is a transient fetch failure — don't cache that
-      // page as if it were the real (smaller) ranking.
-      complete = ranked.every((entry) => byId.has(entry.postId));
+      // getPostsByIds hydrates via one proved $id-in query, so an id missing
+      // from the batch is authoritatively absent, not a suspected transient
+      // failure (query errors degrade to per-id fetches inside getPostsByIds
+      // rather than silently shrinking the page). Posts are tombstoned by
+      // edit, never removed, so a genuinely missing ranked id is an anomaly
+      // worth noting — but not a reason to withhold the page from the
+      // 60-second cache.
+      const missing = ranked.filter((entry) => !byId.has(entry.postId));
+      if (missing.length > 0) {
+        logger.warn(
+          'topLikedPostsHydrated: ranked ids proved absent (posts should be tombstoned, never removed):',
+          missing.map((entry) => entry.postId)
+        );
+      }
 
       // Preserve the proved ranking order; carry the proved count onto the
-      // card; drop ids that failed to load and tombstones.
+      // card; drop absent ids and tombstones.
       const ordered = ranked
         .map((entry) => {
           const post = byId.get(entry.postId);
@@ -245,9 +254,7 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
       posts = await postService.enrichPostsBatch(ordered);
     }
 
-    if (complete) {
-      hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
-    }
+    hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);
