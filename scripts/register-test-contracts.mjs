@@ -7,10 +7,10 @@
  * mechanism: new contracts start empty, and the old ones are simply abandoned.
  *
  * Both schemas are read back from an already-deployed contract and re-published
- * verbatim under the new owner. (The checked-in
- * contracts/yappr-social-contract-actual.json predates current DPP validation —
- * its per-type `mutable` keys are rejected on registration — while the chain\'s
- * `schemas` getter returns the canonical registrable form.)
+ * verbatim under the new owner. (Reading from chain rather than a checked-in
+ * file matters: the chain's `schemas` getter returns the canonical registrable
+ * form, while old exports with per-type `mutable` keys are rejected by current
+ * DPP validation.)
  *
  * The clone goes through the contract's full JSON, so the social contract's
  * `tokens` block (plus `groups`, `config`, `keywords`, `description`) is carried

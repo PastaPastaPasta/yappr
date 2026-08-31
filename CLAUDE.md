@@ -140,7 +140,7 @@ Singleton service classes handle all Dash Platform operations:
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
-The deployed social contract (`contracts/yappr-social-contract-v2.json`) defines 16 document types:
+The deployed social contract (`contracts/yappr-social-contract-v2.json` on staging/prod; the /devnet build runs the v5 contract, `contracts/yappr-social-contract-v5.json`) defines 16 document types:
 - `profile` - User data (name, bio, avatar/banner references)
 - `post`, `reply` - Content; `post` is 500 chars, optional media
 - `like`, `repost`, `follow`, `followRequest` - Social interactions

@@ -5,9 +5,21 @@ import { ArrowLeftIcon, DocumentDuplicateIcon, CheckIcon, CodeBracketIcon } from
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
-import socialContract from '@/contracts/yappr-social-contract-v2.json'
+import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
+import socialContractV4 from '@/contracts/yappr-social-contract-v4.json'
+import socialContractV5 from '@/contracts/yappr-social-contract-v5.json'
+import { getContractTopology } from '@/lib/constants'
 
-// The deployed social contract, reshaped for display
+// The deployed social contract for this build's topology, reshaped for display.
+// v3 was never promoted beyond devnet and has no checked-in contract file, so
+// it falls through to the v2 contract.
+const CONTRACTS_BY_TOPOLOGY = {
+  v2: socialContractV2,
+  v3: socialContractV2,
+  v4: socialContractV4,
+  v5: socialContractV5,
+}
+const socialContract = CONTRACTS_BY_TOPOLOGY[getContractTopology()]
 const dataContract = {
   version: socialContract.version,
   documents: socialContract.documentSchemas
