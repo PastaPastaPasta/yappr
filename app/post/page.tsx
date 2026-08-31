@@ -7,7 +7,6 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
 import { ReplyThreadItem } from '@/components/post/reply-thread'
-import { ComposeModal } from '@/components/compose/compose-modal'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -208,7 +207,6 @@ function PostDetailContent() {
       </div>
 
       <RightSidebar />
-      <ComposeModal />
     </div>
   )
 }

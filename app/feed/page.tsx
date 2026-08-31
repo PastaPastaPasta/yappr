@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { logger } from '@/lib/logger';
 import { Sidebar } from '@/components/layout/sidebar';
 import { RightSidebar } from '@/components/layout/right-sidebar';
-import { ComposeModal } from '@/components/compose/compose-modal';
 import { withAuth, useAuth } from '@/contexts/auth-context';
 import { useSettingsStore } from '@/lib/store';
 import { FeedHeader } from '@/components/feed/feed-header';
@@ -99,7 +98,6 @@ function FeedPage() {
       </div>
 
       <RightSidebar />
-      <ComposeModal />
     </div>
   );
 }
