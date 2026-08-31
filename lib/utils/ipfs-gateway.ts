@@ -152,13 +152,15 @@ export function normalizeMediaUrl(url: string): string {
 
 /**
  * Form of an IPFS media URL suitable for the active contract's mediaUrl field.
- * The v3 contract accepts ipfs:// natively; the immutable v2 contract requires
- * ^https?:// so IPFS content is stored as a primary-gateway URL there
- * (normalizeMediaUrl restores the ipfs:// form on read).
+ * The v3+ contracts accept ipfs:// natively (`^(https?|ipfs)://`); only the
+ * immutable v2 contract requires ^https?://, so IPFS content is stored as a
+ * primary-gateway URL there (normalizeMediaUrl restores the ipfs:// form on
+ * read). Storing ipfs:// keeps documents gateway-agnostic instead of freezing
+ * whichever gateway happened to be primary at write time.
  */
 export function mediaUrlForContract(url: string): string {
   if (!isIpfsProtocol(url)) return url
-  return getContractTopology() === 'v3' ? url : ipfsToGatewayUrl(url)
+  return getContractTopology() === 'v2' ? ipfsToGatewayUrl(url) : url
 }
 
 /**
