@@ -1,6 +1,7 @@
 import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
+import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -102,6 +103,8 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
 
   // Same media mapping as postService.transformDocument — without it, feed
   // cards render without the post's image while the detail page shows it.
+  // normalizeMediaUrl restores ipfs:// from stored gateway URLs so IpfsImage
+  // gets multi-gateway failover instead of being pinned to one host.
   const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
   return {
@@ -132,7 +135,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     media: mediaUrl ? [{
       id: id + '-media',
       type: 'image',
-      url: mediaUrl,
+      url: normalizeMediaUrl(mediaUrl),
     }] : undefined,
     quotedPostId,
     quotedReplyId,
