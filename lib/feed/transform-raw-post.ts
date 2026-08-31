@@ -98,9 +98,14 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     : new Date((createdAtValue as number | string | undefined) || Date.now());
 
   const resolvedId = getFirstValidIdentifier(doc.$id, doc.id);
+  const id = resolvedId || createPlaceholderPostId(doc, data);
+
+  // Same media mapping as postService.transformDocument — without it, feed
+  // cards render without the post's image while the detail page shows it.
+  const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
   return {
-    id: resolvedId || createPlaceholderPostId(doc, data),
+    id,
     // Feed documents come off the `post` doctype.
     targetKind: 'post',
     content: (data.content || '') as string,
@@ -124,6 +129,11 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     liked: (doc.liked as boolean | undefined) || false,
     reposted: (doc.reposted as boolean | undefined) || false,
     bookmarked: (doc.bookmarked as boolean | undefined) || false,
+    media: mediaUrl ? [{
+      id: id + '-media',
+      type: 'image',
+      url: mediaUrl,
+    }] : undefined,
     quotedPostId,
     quotedReplyId,
     deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
