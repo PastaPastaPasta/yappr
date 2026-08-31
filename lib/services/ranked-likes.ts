@@ -19,6 +19,9 @@
  *
  * v4-only: on v2/v3 the like doctypes declare no ranked axes and the node
  * refuses the query. Callers gate on `likesAreIndexOnly()`.
+ *
+ * v5 adds PREFIX-level rankings on the same surface (`rankedCountable: {at:…}`
+ * at-form): see {@link rankedGroupCounts} and its wrappers below.
  */
 
 import { logger } from '@/lib/logger';
@@ -84,6 +87,87 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
     logger.error('topLikedPosts: ranked query failed:', error);
     return [];
   }
+}
+
+/** One group of a proved PREFIX-level ranking (v5 at-form axes). */
+export interface RankedGroupCount {
+  /** The group key: a hashtag (storage form) or a base58 identity id. */
+  key: string;
+  /** The proved count for the group. */
+  count: number;
+}
+
+/**
+ * A proved prefix-level ranked page: `documents.ranked()` with the groupBy at
+ * a NON-terminal index level and no pins — the v5 at-form
+ * (`rankedCountable: {at: …}`) surface, same request grammar as the terminal
+ * rankings above minus the pin.
+ *
+ * v5-only, and additionally requires a dev.7+ node (and a dev.7 wasm for
+ * proof verification of these shapes) — the calls are written to the known
+ * grammar and guarded fail-soft, so on anything older the surfaces simply
+ * come back empty. Callers gate on `prefixRankingsAvailable()` /
+ * `followRankingsAvailable()`.
+ *
+ * Zero-count groups are filtered (preallocated group trees and fully drained
+ * groups both report 0), as are group keys that failed to decode to the
+ * expected type.
+ */
+async function rankedGroupCounts(
+  documentTypeName: string,
+  groupBy: string,
+  limit: number
+): Promise<RankedGroupCount[]> {
+  try {
+    const sdk = await getEvoSdk();
+    const result = await sdk.documents.ranked({
+      dataContractId: YAPPR_CONTRACT_ID,
+      documentTypeName,
+      groupBy,
+      aggregate: { type: 'count' },
+      direction: 'desc',
+      limit,
+    });
+
+    return result.entries
+      .filter((entry) => entry.value !== BigInt(0))
+      .map((entry) => ({
+        key: typeof entry.groupValue === 'string' ? entry.groupValue : '',
+        count: Number(entry.value),
+      }))
+      .filter((entry) => entry.key !== '');
+  } catch (error) {
+    logger.error(`rankedGroupCounts(${documentTypeName}.${groupBy}): ranked query failed:`, error);
+    return [];
+  }
+}
+
+/**
+ * The top hashtags by LIKE count — the proved v5 trending axis: prefix groupBy
+ * at `hashtag` on `like.byHashtagPost {at: hashtag}`. The index is
+ * `skipIfAbsent`, so untagged likes are structurally invisible here and no
+ * "untagged bucket" group can appear.
+ */
+export async function topHashtagsByLikes(limit: number = 12): Promise<RankedGroupCount[]> {
+  return rankedGroupCounts('like', 'hashtag', limit);
+}
+
+/**
+ * The top authors by likes RECEIVED — the v5 creator leaderboard: prefix
+ * groupBy at `postAuthor` on `like.byAuthorPost {at: [postAuthor, postId]}`
+ * (the same index whose terminal level serves the profile Top tab). Keys are
+ * base58 identity ids.
+ */
+export async function topCreatorsByLikes(limit: number = 10): Promise<RankedGroupCount[]> {
+  return rankedGroupCounts('like', 'postAuthor', limit);
+}
+
+/**
+ * The most-followed identities — the v5 ranked chain on
+ * `follow.followerCount [followingId]`. Keys are base58 identity ids.
+ */
+export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroupCount[]> {
+  return rankedGroupCounts('follow', 'followingId', limit);
 }
 
 export interface HydratedTopPostsOptions {
