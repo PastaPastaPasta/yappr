@@ -91,7 +91,7 @@ export function KeyRegistrationFlow({
             {/* Explanation */}
             <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-xs">
               Your login keys need to be added to your identity.
-              Scan this QR code with Dash Evo Tool to complete setup.
+              Approve this request with your Dash wallet to complete setup.
             </p>
 
             {/* QR Code */}

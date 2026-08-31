@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline'
+import { ClipboardIcon, CheckIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
+import { buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 interface KeyExchangeQRProps {
-  /** The dash-key: URI to display */
+  /** The dash-key: or dash-st: URI to display */
   uri: string
   /** Size of the QR code in pixels (default: 200) */
   size?: number
@@ -16,8 +18,10 @@ interface KeyExchangeQRProps {
 /**
  * QR code component for key exchange URI.
  *
- * Displays a dash-key: URI as a QR code that can be scanned by a wallet app.
- * Includes copy-to-clipboard functionality for manual entry.
+ * Displays a dash-key:/dash-st: URI as a QR code that can be scanned by a
+ * wallet app. On touch devices (where scanning your own screen is impossible)
+ * it also offers an "Open in wallet app" deep link into a wallet registered
+ * for the URI scheme. Includes copy-to-clipboard functionality for manual entry.
  */
 export function KeyExchangeQR({
   uri,
@@ -25,6 +29,13 @@ export function KeyExchangeQR({
   remainingTime
 }: KeyExchangeQRProps) {
   const [copied, setCopied] = useState(false)
+  const [isTouchDevice, setIsTouchDevice] = useState(false)
+
+  // Coarse-pointer detection has to run client-side; the static export renders
+  // the desktop (QR-first) layout until hydration.
+  useEffect(() => {
+    setIsTouchDevice(window.matchMedia('(pointer: coarse)').matches)
+  }, [])
 
   const handleCopy = async () => {
     try {
@@ -45,6 +56,17 @@ export function KeyExchangeQR({
 
   return (
     <div className="flex flex-col items-center gap-4">
+      {/* Deep link for wallets installed on this device */}
+      {isTouchDevice && (
+        <a
+          href={uri}
+          className={cn(buttonVariants({ size: 'lg' }), 'w-full gap-2')}
+        >
+          <ArrowTopRightOnSquareIcon className="w-5 h-5" />
+          Open in Wallet App
+        </a>
+      )}
+
       {/* QR Code */}
       <div className="p-4 bg-white rounded-xl shadow-sm border-2 border-blue-500">
         <QRCodeSVG
@@ -60,7 +82,9 @@ export function KeyExchangeQR({
       {/* Instructions */}
       <div className="text-center">
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Scan with Dash Evo Tool or compatible wallet
+          {isTouchDevice
+            ? 'Open in a wallet app on this device, or scan the QR code with a wallet on another device'
+            : 'Scan with a compatible Dash wallet, such as Dash Evo Tool'}
         </p>
         {remainingTime !== null && remainingTime !== undefined && (
           <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
