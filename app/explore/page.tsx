@@ -7,7 +7,6 @@ import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentText
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
-import { ComposeModal } from '@/components/compose/compose-modal'
 import { Spinner } from '@/components/ui/spinner'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
@@ -435,7 +434,6 @@ export default function ExplorePage() {
       </div>
 
       <RightSidebar />
-      <ComposeModal />
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { DevelopmentBanner } from '@/components/ui/development-banner'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { LoginModal } from '@/components/auth/login-modal'
 import { KeyExchangeLoginModal } from '@/components/auth/key-exchange-login-modal'
+import { ComposeModal } from '@/components/compose/compose-modal'
 import { LinkPreviewModalProvider } from '@/components/post/link-preview'
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -23,6 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <MobileBottomNav />
       <LoginModal />
       <KeyExchangeLoginModal />
+      <ComposeModal />
     </LinkPreviewModalProvider>
   )
 }

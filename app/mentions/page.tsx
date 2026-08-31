@@ -8,7 +8,6 @@ import { ArrowLeftIcon, AtSymbolIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
-import { ComposeModal } from '@/components/compose/compose-modal'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { mentionService } from '@/lib/services/mention-service'
@@ -199,7 +198,6 @@ function MentionsPageContent() {
       </div>
 
       <RightSidebar />
-      <ComposeModal />
     </div>
   )
 }
