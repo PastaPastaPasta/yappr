@@ -85,9 +85,13 @@ export interface Post {
    */
   sensitive?: boolean
   /**
-   * v4 only: the post's single indexed hashtag (lowercase, no '#'; `''` =
-   * untagged). Likes must repeat it verbatim — consensus checks the agreement —
-   * so the like path reads it off this field rather than re-parsing content.
+   * v4/v5 only: the post's single indexed hashtag (lowercase, no '#'; `''` =
+   * known untagged, `undefined` = unknown). Likes must repeat it — consensus
+   * checks the agreement — so the like path reads it off this field rather
+   * than re-parsing content. The `''` convention holds on v5 too, even though
+   * the chain stores "untagged" as an absent property there: the post
+   * transform and the write paths translate at the boundary
+   * (see `hashtagIsOptional()` in lib/contract-topology).
    */
   hashtag?: string
   // Blog quote fields (present when this Post represents a quoted blog post)

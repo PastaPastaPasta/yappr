@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon, TrophyIcon } from '@heroicons/react/24/outline'
+import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon, TrophyIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
@@ -18,7 +18,8 @@ import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
-import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
+import { hashtagsAreInline, likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
+import { TopCreators } from '@/components/explore/top-creators'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
@@ -29,7 +30,7 @@ interface RawPostDocument {
   content?: string
 }
 
-type ExploreTab = 'hashtags' | 'top' | 'blogs'
+type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
 export default function ExplorePage() {
   const router = useRouter()
@@ -292,7 +293,7 @@ export default function ExplorePage() {
                     />
                   )}
                 </button>
-                {/* Server-ranked global Top posts need the v4 ranked like axes. */}
+                {/* Server-ranked global Top posts need the v4+ ranked like axes. */}
                 {likesAreIndexOnly() && (
                   <button
                     onClick={() => setActiveTab('top')}
@@ -308,6 +309,30 @@ export default function ExplorePage() {
                       Top
                     </span>
                     {activeTab === 'top' && (
+                      <motion.div
+                        layoutId="explore-tab-indicator"
+                        className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
+                      />
+                    )}
+                  </button>
+                )}
+                {/* The creator leaderboard needs the v5 prefix ranked axes
+                    (byAuthorPost at-form) — no earlier contract can serve it. */}
+                {prefixRankingsAvailable() && (
+                  <button
+                    onClick={() => setActiveTab('creators')}
+                    data-testid="explore-creators-tab"
+                    className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
+                      activeTab === 'creators'
+                        ? 'text-foreground'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <UserGroupIcon className="h-4 w-4" />
+                      Creators
+                    </span>
+                    {activeTab === 'creators' && (
                       <motion.div
                         layoutId="explore-tab-indicator"
                         className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
@@ -412,8 +437,10 @@ export default function ExplorePage() {
                     >
                       {/* Trending Hashtags */}
                       {/* v4 trending is derived from recent post activity, not a
-                          proved count — label it so nobody reads it as one. */}
-                      {hashtagsAreInline() && !isLoadingTrends && trendingHashtags.length > 0 && (
+                          proved count — label it so nobody reads it as one. On
+                          v5 the ranking IS a proved prefix ranked page, so the
+                          disclaimer must not show. */}
+                      {hashtagsAreInline() && !prefixRankingsAvailable() && !isLoadingTrends && trendingHashtags.length > 0 && (
                         <div
                           className="px-4 py-2 text-xs text-gray-400 border-b border-gray-200 dark:border-gray-800"
                           data-testid="trending-activity-note"
@@ -453,7 +480,11 @@ export default function ExplorePage() {
                                   <div className="flex-1">
                                     <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
                                     <p className="text-sm text-gray-500">
-                                      {formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}
+                                      {/* v5's proved ranking counts LIKES on tagged
+                                          posts; earlier topologies count posts. */}
+                                      {prefixRankingsAvailable()
+                                        ? `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'like' : 'likes'}`
+                                        : `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'post' : 'posts'}`}
                                     </p>
                                   </div>
                                 </div>
@@ -490,6 +521,17 @@ export default function ExplorePage() {
                           ))
                         )}
                       </div>
+                    </motion.div>
+                  ) : activeTab === 'creators' ? (
+                    <motion.div
+                      key="tab-creators"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {/* v5 creator leaderboard (proved prefix rankings). */}
+                      <TopCreators />
                     </motion.div>
                   ) : (
                     <motion.div

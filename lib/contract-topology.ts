@@ -69,8 +69,13 @@ export interface IndexOnlyLikeShape {
   /** Property naming the target's author — agreement-bound to `<target>.author`. */
   authorField: string
   /**
-   * Property carrying the post's hashtag (agreement-bound to `post.hashtag`,
-   * `''` = untagged), or null on a doctype without one (`likeReply`).
+   * Property carrying the post's hashtag (agreement-bound to `post.hashtag`),
+   * or null on a doctype without one (`likeReply`). How "untagged" is spelled
+   * depends on the topology: v4 writes the `''` sentinel, while on v5 the
+   * property is optional and an untagged like OMITS it — absence-aware
+   * propertyAgreement treats both-absent as agreement, and sending `''`
+   * against an absent `post.hashtag` would be a 40127 mismatch. See
+   * {@link hashtagIsOptional}.
    */
   hashtagField: string | null
 }
@@ -236,6 +241,33 @@ const V4_DESCRIPTOR: ContractTopologyDescriptor = {
   },
 }
 
+/**
+ * v5 — `contracts/yappr-social-contract-v5.json` (the dev.6 re-cut,
+ * PLAN_DEV6_V5.md).
+ *
+ * The document graph and every doctype/field name are v4's — the descriptor
+ * shape is identical — and what changes is expressed through the capability
+ * helpers below rather than new fields:
+ *
+ * - `hashtag` (post AND like) is **optional**: an untagged post omits the
+ *   property instead of writing v4's `''` sentinel, and a like mirrors the
+ *   post's absence exactly ({@link hashtagIsOptional}). `like.byHashtagPost`
+ *   is `skipIfAbsent`, so untagged likes write no per-tag index entries and
+ *   the index is a tagged-only sparse projection. maxLength shrinks 63 → 61
+ *   (the ranked key-size ceiling; {@link hashtagMaxLength}).
+ * - the at-form `rankedCountable` chains (`byHashtagPost {at: hashtag}`,
+ *   `byAuthorPost {at: [postAuthor, postId]}`) serve proved PREFIX rankings —
+ *   trending hashtags and the creator leaderboard
+ *   ({@link prefixRankingsAvailable}) — on top of the terminal rankings v4
+ *   already had.
+ * - `follow.followerCount [followingId]` gains the full ranked chain, so
+ *   most-followed is a proved ranking too ({@link followRankingsAvailable}).
+ */
+const V5_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V4_DESCRIPTOR,
+  topology: 'v5',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -252,7 +284,13 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
   if (!resolved) {
     const topology = getContractTopology()
     resolved = deepFreeze(
-      topology === 'v4' ? V4_DESCRIPTOR : topology === 'v3' ? V3_DESCRIPTOR : V2_DESCRIPTOR
+      topology === 'v5'
+        ? V5_DESCRIPTOR
+        : topology === 'v4'
+          ? V4_DESCRIPTOR
+          : topology === 'v3'
+            ? V3_DESCRIPTOR
+            : V2_DESCRIPTOR
     )
   }
   return resolved
@@ -372,21 +410,75 @@ export function likesAreIndexOnly(): boolean {
 
 /**
  * True when a post carries its (single) hashtag inline in `post.hashtag` and
- * the `postHashtag` doctype does not exist (v4). Tag listings then query
+ * the `postHashtag` doctype does not exist (v4/v5). Tag listings then query
  * `post.tagAndTime` directly, the compose flow writes no secondary hashtag
  * documents, and there is nothing to "recover" when one is missing.
  */
 export function hashtagsAreInline(): boolean {
-  return topologyDescriptor().topology === 'v4'
+  const topology = topologyDescriptor().topology
+  return topology === 'v4' || topology === 'v5'
 }
 
 /**
  * True when `post`/`reply` documents must carry the poster-attested `author`
- * identifier (v4) — the propertyAgreement source for likes. The client always
- * writes it equal to the signing `$ownerId`.
+ * identifier (v4/v5) — the propertyAgreement source for likes. The client
+ * always writes it equal to the signing `$ownerId`.
  */
 export function authorFieldIsRequired(): boolean {
-  return topologyDescriptor().topology === 'v4'
+  const topology = topologyDescriptor().topology
+  return topology === 'v4' || topology === 'v5'
+}
+
+/**
+ * True when `hashtag` is an OPTIONAL property (v5): an untagged post omits it
+ * entirely instead of writing v4's `''` sentinel, and a like must mirror the
+ * post's absence — absence-aware propertyAgreement treats both-absent as
+ * agreement, while writing `''` against an absent `post.hashtag` is a 40127
+ * mismatch. `like.byHashtagPost` is `skipIfAbsent` there, so untagged likes
+ * write no per-tag index entries at all and reads of that index only ever see
+ * tagged likes.
+ *
+ * The CLIENT-side convention is unchanged across v4/v5: `Post.hashtag === ''`
+ * still means "known untagged" everywhere in memory (and `undefined` means
+ * "unknown — fetch the post"), so caches, `LikeTargetInfo` and the tuple
+ * plumbing round-trip absence without a third state. The `''` ↔ absent
+ * translation happens exactly once, at the chain boundary (post create, like
+ * create, unlike delete-by-values, post transform).
+ */
+export function hashtagIsOptional(): boolean {
+  return topologyDescriptor().topology === 'v5'
+}
+
+/**
+ * The longest hashtag the contract's `post.hashtag`/`like.hashtag` pattern
+ * accepts. v5 shrinks it 63 → 61: an at-level ranked string key must fit the
+ * 247-byte encoded ceiling, and 63 was rejected at contract validation
+ * (PLAN_DEV6_V5.md D-V5-1).
+ */
+export function hashtagMaxLength(): number {
+  return hashtagIsOptional() ? 61 : 63
+}
+
+/**
+ * True when the like doctype's at-form `rankedCountable` chains can answer
+ * proved PREFIX-level ranked groupBy queries (v5): trending hashtags off
+ * `byHashtagPost {at: hashtag}` and the creator leaderboard off
+ * `byAuthorPost {at: [postAuthor, postId]}`. On v4 the boolean ranked chains
+ * only rank at the terminal (per-post) level and a prefix groupBy is refused
+ * by the node.
+ */
+export function prefixRankingsAvailable(): boolean {
+  return topologyDescriptor().topology === 'v5'
+}
+
+/**
+ * True when `follow.followerCount [followingId]` carries the full ranked
+ * chain (v5), making "most followed" a proved ranked groupBy on `followingId`.
+ * The O(1) follower COUNT (countable chain) exists on every topology and is
+ * not gated here.
+ */
+export function followRankingsAvailable(): boolean {
+  return topologyDescriptor().topology === 'v5'
 }
 
 export function canRepost(kind: TargetKind): boolean {

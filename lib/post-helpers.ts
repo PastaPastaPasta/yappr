@@ -63,14 +63,19 @@ export function extractHashtags(content: string): string[] {
 }
 
 /**
- * The FIRST hashtag in the content, in v4 `post.hashtag` storage form:
- * lowercase, no `#`, and `''` when the content carries no (valid) hashtag —
- * matching the contract pattern `^$|^[a-z0-9_]{1,63}$`. The single-hashtag
- * model indexes exactly one tag per post, and "first in the text" is the rule
- * the client applies.
+ * The FIRST hashtag in the content, in `post.hashtag` storage form: lowercase,
+ * no `#`, and `''` when the content carries no (valid) hashtag. The
+ * single-hashtag model indexes exactly one tag per post, and "first in the
+ * text" is the rule the client applies.
+ *
+ * `maxLength` is the contract's pattern ceiling — 63 on v4, 61 on v5 (the
+ * ranked key-size limit; see `hashtagMaxLength()` in lib/contract-topology).
+ * A longer tag is truncated to the ceiling, matching how the v4 regex already
+ * treated 64+-char tags. How `''` is spelled on-chain is the CALLER's concern:
+ * v4 writes it verbatim, v5 omits the property.
  */
-export function firstHashtag(content: string): string {
-  const match = content.match(/#([a-zA-Z0-9_]{1,63})/)
+export function firstHashtag(content: string, maxLength: number = 63): string {
+  const match = content.match(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`))
   return match ? match[1].toLowerCase() : ''
 }
 

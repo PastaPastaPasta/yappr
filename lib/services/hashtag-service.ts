@@ -3,7 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { documentCount, paginateFetchAll } from './pagination-utils';
-import { hashtagsAreInline } from '../contract-topology';
+import { hashtagsAreInline, prefixRankingsAvailable } from '../contract-topology';
 
 export interface PostHashtagDocument {
   $id: string;
@@ -290,11 +290,35 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       return this.trendingCache.data.slice(0, limit);
     }
 
+    // v5: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
+    // `like.byHashtagPost {at: hashtag}` (skipIfAbsent, so only tagged likes
+    // exist in the index). NOTE the metric change: under v5 the count is
+    // LIKES ON TAGGED POSTS per tag, not post-count — a ranking of tag
+    // engagement rather than tag usage. It rides the TrendingHashtag shape
+    // unchanged; consumers that print a unit label gate on
+    // `prefixRankingsAvailable()`. Fail-soft: on any error (e.g. a pre-dev.7
+    // node that cannot serve the prefix form yet) trending degrades to empty
+    // rather than falling back to the unproven v4 derivation.
+    if (prefixRankingsAvailable()) {
+      try {
+        const { topHashtagsByLikes } = await import('./ranked-likes');
+        const ranked = await topHashtagsByLikes(limit);
+        const trending: TrendingHashtag[] = ranked
+          .filter((entry) => entry.count >= minPosts)
+          .map((entry) => ({ hashtag: entry.key, postCount: entry.count }));
+        this.trendingCache = { data: trending, timestamp: Date.now() };
+        return trending.slice(0, limit);
+      } catch (error) {
+        logger.error('Error fetching proved trending hashtags:', error);
+        return [];
+      }
+    }
+
     // v4: trending rode the postHashtag doctype, which no longer exists, and a
     // PROVED tag ranking is not servable (it would need prefix-level groupBy on
-    // `like.byHashtagPost` — the creator-leaderboard gap). Until the upstream
-    // aggregation ask lands, trending is derived client-side from recent post
-    // activity: an unproven sample, labeled as such in the UI.
+    // `like.byHashtagPost` — which only the v5 contract's at-form declares).
+    // Trending is derived client-side from recent post activity: an unproven
+    // sample, labeled as such in the UI.
     if (hashtagsAreInline()) {
       try {
         const trending = await this.deriveTrendingFromRecentPosts(minPosts);
