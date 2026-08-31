@@ -4,7 +4,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
-import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind } from '../contract-topology';
+import { hashtagIsOptional, indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -21,12 +21,16 @@ export interface LikeDocument {
 }
 
 /**
- * What the UI knows about a like's target, forwarded so the v4 (indexOnly)
+ * What the UI knows about a like's target, forwarded so the v4/v5 (indexOnly)
  * write paths can fill the agreement-bound fields without a fetch. Both values
  * are consensus-checked against the target document (40127), so they must be
  * the TARGET's own values: `author` its `author` property (== its `$ownerId`)
- * and `hashtag` its `post.hashtag` (`''` when untagged; irrelevant for replies).
- * Anything missing is fetched from the target document instead.
+ * and `hashtag` its `post.hashtag` (`''` when untagged — the CLIENT convention
+ * on v4 and v5 alike; on v5 the chain stores untagged as an absent property
+ * and `indexOnlyLikeData` translates at the boundary. Irrelevant for replies).
+ * `undefined` means "unknown" and is fetched from the target document instead
+ * — it must NEVER be used to mean "untagged", or a like of a tagged post
+ * sourced from a hashtag-less UI object would fail the agreement.
  */
 export interface LikeTargetInfo {
   author?: string;
@@ -239,7 +243,19 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     return { author, hashtag: shape.hashtagField !== null ? hashtag ?? '' : null };
   }
 
-  /** Build an indexOnly like/likeReply's content properties. */
+  /**
+   * Build an indexOnly like/likeReply's content properties — the create's data
+   * AND the delete-by-values tuple, so like and unlike can never disagree on
+   * how a value (or its absence) is spelled.
+   *
+   * The hashtag translation happens here, once: the client-side '' sentinel
+   * ("known untagged") becomes an OMITTED property on v5, where `hashtag` is
+   * optional and the propertyAgreement is absence-aware (both absent = agree;
+   * writing '' against an absent `post.hashtag` is a 40127 mismatch, and ''
+   * fails the v5 pattern anyway). v4 keeps writing '' verbatim. Because the
+   * unlike path rebuilds its tuple through this same method, the delete
+   * reproduces the create's absence exactly.
+   */
   private indexOnlyLikeData(
     targetId: string,
     shape: IndexOnlyLikeShape,
@@ -247,10 +263,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     info: { author: string; hashtag: string | null }
   ): Record<string, unknown> {
     const { field } = likeIndexFor(kind);
+    const tag = info.hashtag ?? '';
+    const writesHashtag = shape.hashtagField !== null && !(hashtagIsOptional() && tag === '');
     return {
       [field]: identifierStringToDocumentBytes(targetId),
       [shape.authorField]: identifierStringToDocumentBytes(info.author),
-      ...(shape.hashtagField !== null ? { [shape.hashtagField]: info.hashtag ?? '' } : {}),
+      ...(writesHashtag && shape.hashtagField !== null ? { [shape.hashtagField]: tag } : {}),
     };
   }
 

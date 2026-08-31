@@ -5,7 +5,7 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { authorFieldIsRequired, groupByInteractionSurface, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { authorFieldIsRequired, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstHashtag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
@@ -260,9 +260,15 @@ class PostService extends BaseDocumentService<Post> {
       quotedReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
-      // v4 only: the single indexed hashtag ('' = untagged). Absent on v2/v3
-      // documents; the like path reads it for the consensus-checked agreement.
-      hashtag: typeof (data.hashtag ?? doc.hashtag) === 'string' ? (data.hashtag ?? doc.hashtag) as string : undefined,
+      // v4/v5 only: the single indexed hashtag ('' = untagged in memory).
+      // Absent on v2/v3 documents; the like path reads it for the
+      // consensus-checked agreement. On v5 the chain spells "untagged" as an
+      // ABSENT property — normalized back to the client's '' sentinel here, so
+      // downstream consumers (like path, caches) keep one convention:
+      // '' = known untagged, undefined = unknown/not-a-v4+ document.
+      hashtag: typeof (data.hashtag ?? doc.hashtag) === 'string'
+        ? (data.hashtag ?? doc.hashtag) as string
+        : hashtagIsOptional() ? '' : undefined,
       ...embed,
       // Private feed fields
       encryptedContent,
@@ -345,6 +351,11 @@ class PostService extends BaseDocumentService<Post> {
    * like sourced from a stale UI object would be rejected with 40127). The
    * tombstone therefore stays in its tag's `tagAndTime` listing, rendered as a
    * deleted card — same treatment `language` timelines already get.
+   *
+   * On v5 an UNTAGGED post has no `hashtag` property at all;
+   * `tombstoneDocument` skips absent preserveScalars, so the tombstone
+   * reproduces the absence verbatim (writing `''` instead would both fail the
+   * pattern and break the likes' absence agreement).
    */
   async tombstonePost(postId: string, ownerId: string): Promise<boolean> {
     const ok = await tombstoneDocument({
@@ -443,7 +454,14 @@ class PostService extends BaseDocumentService<Post> {
       data.author = identifierStringToDocumentBytes(ownerId);
     }
     if (hashtagsAreInline()) {
-      data.hashtag = firstHashtag(data.content as string);
+      const tag = firstHashtag(data.content as string, hashtagMaxLength());
+      // v5: an untagged post OMITS the optional property — likes mirror the
+      // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
+      // keeps untagged likes out of byHashtagPost entirely. v4 has no optional
+      // hashtag and writes the '' sentinel.
+      if (tag !== '' || !hashtagIsOptional()) {
+        data.hashtag = tag;
+      }
     }
 
     // Add optional fields (use contract field names)
