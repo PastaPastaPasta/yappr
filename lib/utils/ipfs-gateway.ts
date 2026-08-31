@@ -6,6 +6,8 @@
  */
 
 import { getContractTopology } from '../constants'
+import { SESSION_STORAGE_KEY } from '../storage-scope'
+import { getPinataGateway } from '../upload/providers/pinata/credential-storage'
 
 /**
  * IPFS Gateway Configuration
@@ -28,12 +30,38 @@ export const IPFS_GATEWAYS: IpfsGateway[] = [
   { domain: 'ipfs.io', format: 'path' },
   // dweb.link subdomain gateway (IPFS Foundation)
   { domain: 'ipfs.dweb.link', format: 'subdomain' },
+  // w3s.link is Storacha's gateway — serves freshly uploaded Storacha
+  // content before it propagates to other public gateways
+  { domain: 'ipfs.w3s.link', format: 'subdomain' },
   // nftstorage.link (NFT.storage gateway)
   { domain: 'nftstorage.link', format: 'path' },
-  // Note: w3s.link not functional
   // Note: cloudflare-ipfs.com deprecated Aug 2024
   // Note: gateway.pinata.cloud has CORS restrictions
 ]
+
+/**
+ * Dedicated Pinata gateway domains for the currently logged-in identity only —
+ * other identities' gateways must not receive requests for content this user
+ * views. A dedicated gateway serves the account's own pinned content
+ * immediately, long before public gateways can resolve a fresh CID; for
+ * foreign content it 404s quickly, so it is cheap to try first.
+ */
+function getDedicatedGatewayDomains(): string[] {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
+    if (!savedSession) return []
+    const identityId = (JSON.parse(savedSession) as { user?: { identityId?: unknown } }).user?.identityId
+    if (typeof identityId !== 'string' || !identityId) return []
+
+    const gateway = getPinataGateway(identityId)
+    return gateway && /^[a-z0-9.-]+$/i.test(gateway) ? [gateway] : []
+  } catch {
+    // Storage unavailable or malformed session — fall back to public gateways.
+    return []
+  }
+}
 
 /**
  * Check if a URL uses the ipfs:// protocol.
@@ -48,7 +76,7 @@ export function isIpfsProtocol(url: string): boolean {
  * - ipfs://CID
  * - ipfs://CID/path/to/file
  */
-function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | null {
+export function extractCidFromIpfsUrl(url: string): { cid: string; path: string } | null {
   if (!isIpfsProtocol(url)) return null
 
   // Remove ipfs:// prefix
@@ -131,11 +159,23 @@ export function mediaUrlForContract(url: string): string {
 }
 
 /**
+ * Build the gateway URL for a CID, or null when the gateway can't serve it
+ * (CIDv0 is case-sensitive base58btc — incompatible with DNS subdomains).
+ */
+function gatewayUrlFor(gateway: IpfsGateway, cid: string, path: string): string | null {
+  if (gateway.format === 'subdomain') {
+    // Subdomain format: https://CID.ipfs.dweb.link/path
+    return isCidV0(cid) ? null : `https://${cid}.${gateway.domain}${path}`
+  }
+  // Path format: https://ipfs.io/ipfs/CID/path
+  return `https://${gateway.domain}/ipfs/${cid}${path}`
+}
+
+/**
  * Convert an ipfs:// URL to an HTTP gateway URL.
- * Uses the first compatible gateway from the configured list.
- *
- * Note: CIDv0 (Qm...) is incompatible with subdomain gateways because
- * base58btc is case-sensitive but DNS is not. Falls back to path gateways.
+ * Uses the first compatible public gateway from the configured list
+ * (deliberately excludes per-user dedicated gateways — this form is also
+ * written into contract documents and must be stable across users).
  *
  * @param ipfsUrl - The ipfs:// URL to convert
  * @returns HTTP gateway URL, or the original URL if not a valid ipfs:// URL
@@ -144,19 +184,9 @@ export function ipfsToGatewayUrl(ipfsUrl: string): string {
   const parsed = extractCidFromIpfsUrl(ipfsUrl)
   if (!parsed) return ipfsUrl
 
-  // Try each gateway in order
   for (const gateway of IPFS_GATEWAYS) {
-    if (gateway.format === 'subdomain') {
-      // CIDv0 is case-sensitive (base58btc) - incompatible with DNS subdomains
-      if (isCidV0(parsed.cid)) {
-        continue // Skip this gateway, try next one
-      }
-      // Subdomain format: https://CID.ipfs.dweb.link/path
-      return `https://${parsed.cid}.${gateway.domain}${parsed.path}`
-    } else {
-      // Path format: https://ipfs.io/ipfs/CID/path
-      return `https://${gateway.domain}/ipfs/${parsed.cid}${parsed.path}`
-    }
+    const url = gatewayUrlFor(gateway, parsed.cid, parsed.path)
+    if (url) return url
   }
 
   // Fallback: use last gateway in path format
@@ -165,7 +195,8 @@ export function ipfsToGatewayUrl(ipfsUrl: string): string {
 }
 
 /**
- * Get all possible gateway URLs for an ipfs:// URL.
+ * Get all possible gateway URLs for an ipfs:// URL, the logged-in user's
+ * dedicated gateway (if any) first.
  * Used for fallback when primary gateway fails (e.g., content not propagated yet).
  *
  * @param ipfsUrl - The ipfs:// URL to convert
@@ -175,19 +206,14 @@ export function getAllGatewayUrls(ipfsUrl: string): string[] {
   const parsed = extractCidFromIpfsUrl(ipfsUrl)
   if (!parsed) return [ipfsUrl]
 
-  const urls: string[] = []
+  const gateways: IpfsGateway[] = [
+    ...getDedicatedGatewayDomains().map((domain) => ({ domain, format: 'path' as const })),
+    ...IPFS_GATEWAYS,
+  ]
 
-  for (const gateway of IPFS_GATEWAYS) {
-    if (gateway.format === 'subdomain') {
-      // CIDv0 is case-sensitive (base58btc) - incompatible with DNS subdomains
-      if (isCidV0(parsed.cid)) {
-        continue
-      }
-      urls.push(`https://${parsed.cid}.${gateway.domain}${parsed.path}`)
-    } else {
-      urls.push(`https://${gateway.domain}/ipfs/${parsed.cid}${parsed.path}`)
-    }
-  }
+  const urls = gateways
+    .map((gateway) => gatewayUrlFor(gateway, parsed.cid, parsed.path))
+    .filter((url): url is string => url !== null)
 
   return urls.length > 0 ? urls : [ipfsUrl]
 }

@@ -8,6 +8,7 @@
 export * from './types'
 export * from './errors'
 export { providerRegistry } from './provider-registry'
+export { cacheLocalImage, getLocalImageUrl } from './local-image-cache'
 
 // Storacha provider
 export { getStorachaProvider, StorachaProvider } from './providers/storacha/storacha-provider'

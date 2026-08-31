@@ -679,6 +679,20 @@ const footnoteBlock = createReactBlockSpec(
   }
 )
 
+const imageLoadingFallback = (
+  <div className="flex aspect-video w-full animate-pulse items-center justify-center rounded-lg bg-gray-800/40">
+    <span className="text-xs text-gray-500">Loading image from IPFS...</span>
+  </div>
+)
+
+const imageUnavailableFallback = (
+  <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-900/30 px-4 text-center">
+    <span className="text-xs text-gray-500">
+      Image not yet available on IPFS gateways. It may still be propagating — try reloading in a minute.
+    </span>
+  </div>
+)
+
 const imageBlock = createReactBlockSpec(
   {
     type: 'image' as const,
@@ -698,6 +712,7 @@ const imageBlock = createReactBlockSpec(
       const url = String(block.props.url || '')
       const caption = String(block.props.caption || '')
       const width = Number(block.props.previewWidth || 512)
+      const altText = caption || block.props.name || 'Blog image'
 
       if (!url) {
         return (
@@ -713,14 +728,16 @@ const imageBlock = createReactBlockSpec(
             {isIpfsProtocol(url) ? (
               <IpfsImage
                 src={url}
-                alt={caption || block.props.name || 'Blog image'}
+                alt={altText}
                 className="w-full rounded-lg"
+                loadingFallback={imageLoadingFallback}
+                fallback={imageUnavailableFallback}
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={url}
-                alt={caption || block.props.name || 'Blog image'}
+                alt={altText}
                 className="w-full rounded-lg"
               />
             )}
