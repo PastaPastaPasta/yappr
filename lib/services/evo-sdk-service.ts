@@ -125,14 +125,15 @@ class EvoSdkService {
       await this.sdk.connect();
       logger.info('EvoSdkService: Connected successfully');
 
-      // PROTOCOL-VERSION RATCHET (v4 arm): rs-sdk starts devnet connections at
-      // PV12 and only ratchets up from verified response metadata. The v4
-      // contract uses PV14 ranked-index grammar, so the FIRST proved query that
-      // touches it fails deserialization ("value wrong type error: unexpected
-      // property name") — and a failed verification bans the address without
-      // ever ratcheting. One proved warm-up query that does NOT touch the v4
-      // contract (DPNS is on every chain) ratchets the connection to the
-      // chain's real protocol version before any v4 read can race it.
+      // PROTOCOL-VERSION RATCHET: rs-sdk starts devnet connections at PV12 and
+      // only ratchets up from verified response metadata. The v4+ contracts use
+      // PV14 ranked-index grammar (`rankedCountable` et al.), so the FIRST
+      // proved query that touches one fails deserialization ("value wrong type
+      // error: unexpected property name") — and a failed verification bans the
+      // address without ever ratcheting. One proved warm-up query that does NOT
+      // touch the social contract (DPNS is on every chain) ratchets the
+      // connection to the chain's real protocol version before any social-
+      // contract read can race it.
       await this._warmUpProtocolVersion();
 
       // Resolve the configured contracts once, before _isInitialized flips, so a
@@ -157,13 +158,15 @@ class EvoSdkService {
 
   /**
    * See the call site: ratchet the SDK's negotiated protocol version with a
-   * proved query that cannot touch the v4 contract, so the parallel preload
-   * below never races a PV14 contract fetch against a PV12 connection. Only
-   * needed on the v4 topology; failures are non-fatal (the preload's own
-   * fetches would then surface the real problem).
+   * proved query that cannot touch the social contract, so the parallel preload
+   * below never races a PV14 contract fetch against a PV12 connection. Needed
+   * on every topology whose contract uses the ranked-index grammar (v4 and
+   * everything after it — only v2/v3 predate it); failures are non-fatal (the
+   * preload's own fetches would then surface the real problem).
    */
   private async _warmUpProtocolVersion(): Promise<void> {
-    if (getContractTopology() !== 'v4' || !this.sdk) return;
+    const topology = getContractTopology();
+    if (topology === 'v2' || topology === 'v3' || !this.sdk) return;
     try {
       await this.sdk.contracts.fetch(DPNS_CONTRACT_ID);
       logger.info('EvoSdkService: protocol-version warm-up query completed');
