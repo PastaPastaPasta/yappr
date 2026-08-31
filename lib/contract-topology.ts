@@ -177,7 +177,9 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 }
 
 /**
- * v3 — `contracts/yappr-social-contract-v3-topology.json`.
+ * v3 — the flat-thread interaction topology. Never promoted beyond devnet and
+ * superseded on-chain by v4; its contract JSON was dropped from the repo (see
+ * git history for `contracts/yappr-social-contract-v3-topology.json`).
  *
  * Reply likes move to `likeReply.replyId`; repost and bookmark keep only their
  * post surfaces (consensus rejects a reply id outright now, so the nulls here

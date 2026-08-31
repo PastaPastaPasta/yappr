@@ -1,29 +1,24 @@
 /**
- * One-time, manual registration of a yappr social **v3** contract on a devnet
- * (moutai by default).
+ * Manual registration of a yappr social contract on a devnet (moutai by
+ * default).
  *
- * Publishes a contract JSON from `contracts/` as a brand-new contract. Two files
- * are in play, selected with `--contract-file`:
- *
- *   `yappr-social-contract-v3-draft.json`    (default)
- *      The staging chain's canonical schemas plus exactly two additions —
- *      `follow.followingId` and `postMention.mentionedUserId` both gain
- *      `"refersTo": { "type": "identity" }` — so consensus refuses a follow or
- *      a mention that points at an identity which does not exist.
- *
- *   `yappr-social-contract-v3-topology.json`
- *      The full interaction topology from PLAN_CONTRACT_V3_TOPOLOGY.md: flat
- *      threads (`reply.rootPostId` + `replyToReplyId`), the new `likeReply`
- *      doctype, posts-only repost/bookmark, dual quote fields with the
- *      uniqueness dropped, `canBeDeleted:false` on post+reply, and
- *      `permanentDocument` refersTo on every same-contract reference.
+ * The name is historical — the script is file-agnostic. It publishes any
+ * contract JSON from `contracts/` as a brand-new contract; pick the file with
+ * `--contract-file` (default `yappr-social-contract-v5.json`, the shape the
+ * /devnet build runs). The v3-era inputs it was written for
+ * (`yappr-social-contract-v3-draft.json`, `-v3-topology.json`) were removed
+ * from the repo 2026-08-31; see git history if an old shape is ever needed.
  *
  * ## Registered devnet contracts
+ *
+ * Every id below predates the 2026-08-31 platform wipe and no longer resolves
+ * on the current chain; see `.env.devnet` for the live ids and for which of
+ * these ids have since been recycled onto other contracts.
  *
  *   v3-draft    3414JJ3xGXK3Cgpy7NAdDXwAjvyoeD4bcBTX6nSh7ysg  (moutai, 2026-08-27)
  *   v3-topology GwGV4Gkb5Vb6VE2m45DnSpKQEha41amSxiopK9eo9WnG  (moutai, 2026-08-27)
  *               owner = devnet maker DuqE3zgXprS5zU51YaB4GuGxTRzzukW59XAYKeM6gKGA (seed index 9);
- *               `verify-topology.mjs` passed all 31 checks against it.
+ *               the v3 battery passed all 31 checks against it.
  *
  *   v3-topology 4UW9im1ytErbtstoNoFzdWbCHXk8qYaJvM9gkZQ86wbb  (moutai, 2026-08-29)
  *               same file with post/reply.mediaUrl relaxed to
@@ -32,7 +27,7 @@
  *               existing property's pattern, which is why this is a fresh
  *               registration rather than an update of the id above. Battery
  *               passed; ipfs:// and https:// mediaUrl writes both verified
- *               accepted on chain. This is the id in .env.devnet.
+ *               accepted on chain.
  *
  * Devnet is disposable; iterate freely.
  *
@@ -50,7 +45,7 @@
  *
  * ## The `tokens` block
  *
- * The v3-draft carries the YAPP token configuration (`post` costs 10 YAPP,
+ * The social contract carries the YAPP token configuration (`post` costs 10 YAPP,
  * `reply` 3, `like`/`repost` 1). `new DataContract({ownerId, identityNonce,
  * schemas})` — the shape `register-pollr-contract.mjs` uses — cannot express it:
  * its optional `tokens` field is typed `Record<number, TokenConfiguration>` and
@@ -96,7 +91,7 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
-const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v3-draft.json';
+const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v5.json';
 /** YAPP is defined at token position 0 of every yappr social contract. */
 const YAPP_TOKEN_POSITION = 0;
 /** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */
@@ -408,7 +403,7 @@ try {
 
   console.log('');
   console.log(`.env.devnet → NEXT_PUBLIC_YAPPR_CONTRACT_ID=${contractId}`);
-  console.log(`battery     → node scripts/verify-topology.mjs --contract ${contractId} …`);
+  console.log(`battery     → node scripts/verify-v5.mjs --contract ${contractId} …`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);

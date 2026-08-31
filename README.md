@@ -250,8 +250,9 @@ yappr/
 │   └── sdk.ts             # Dash SDK type definitions
 │
 ├── contracts/             # Dash Platform data contracts
-│   ├── yappr-social-contract-v2.json      # Main social contract (deployed)
-│   ├── yappr-social-contract-actual.json  # Legacy v1 social contract (history)
+│   ├── yappr-social-contract-v2.json      # Main social contract (staging/prod)
+│   ├── yappr-social-contract-v5.json      # Devnet social contract (v5 topology)
+│   ├── yappr-social-contract-v4.json      # Superseded devnet shape; input to build-v5-contract.py
 │   ├── yappr-storefront-contract.json     # Stores, items, orders, reviews
 │   ├── yappr-dm-contract.json             # Direct messages
 │   ├── yappr-hashtag-contract.json        # Legacy - merged into the social contract

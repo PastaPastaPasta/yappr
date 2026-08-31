@@ -4,7 +4,8 @@
  * plus the new indexOnly like/likeReply surfaces, run live against the
  * registered moutai draft (default `Aux325ifCRkYUteevirCv7ptHm3YB2g7PbMo8UjQwoz`).
  *
- * Structure follows `verify-topology.mjs` (readback-decided outcomes, strict
+ * Structure follows the since-removed v3 battery `verify-topology.mjs`
+ * (readback-decided outcomes, strict
  * wrong-reason-fails rejections) with the indexOnly plumbing lifted from
  * `experiment-indexonly.mjs` (entry-existence reads, count-probe duplicate
  * detection, delete-by-values, ranked shapes).
