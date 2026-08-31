@@ -21,6 +21,7 @@ import {
   LockClosedIcon,
   CloudArrowUpIcon,
   NoSymbolIcon,
+  CommandLineIcon,
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -43,6 +44,7 @@ import { SavedAddressesSettings } from '@/components/settings/saved-addresses-se
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
+import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
@@ -50,8 +52,8 @@ import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
 import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
-type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'about' | 'moderation'
-const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'about', 'moderation']
+type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
+const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'developer', 'about', 'moderation']
 
 const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Freeze or slash YAPP balances (token authority only)' }
 
@@ -63,6 +65,7 @@ const settingsSections = [
   { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Manage approved followers and private feed access' },
   { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Connect storage for image uploads' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
+  { id: 'developer', label: 'Developer', icon: CommandLineIcon, description: 'Inspect Dash Platform queries and proofs' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
 
@@ -783,6 +786,8 @@ function SettingsPage() {
         return renderStorageSettings()
       case 'appearance':
         return renderAppearanceSettings()
+      case 'developer':
+        return <DeveloperSettings />
       case 'about':
         return renderAboutSettings()
       case 'moderation':

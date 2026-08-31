@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
 import { EvoSDK } from '@dashevo/evo-sdk';
+import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL, getContractTopology } from '../constants';
 import type { AppNetwork } from '../constants';
 
@@ -120,6 +121,10 @@ class EvoSdkService {
           }
         });
       }
+
+      // Shadow the facade methods so the query inspector can observe every
+      // DAPI call (pass-through no-op while the inspector is disabled).
+      instrumentSdk(this.sdk);
 
       logger.info('EvoSdkService: Connecting to network...');
       await this.sdk.connect();
