@@ -1481,7 +1481,6 @@ export function ComposeModal() {
                                   onImageClick: handleImageButtonClick,
                                   canAttachImage,
                                   imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
-                                  ...(post.id === unpostedPosts[0]?.id ? { fileInputRef, onFileSelect: handleFileSelect } : {}),
                                   ...(canAttachPoll && index === 0 ? {
                                     onPollClick: handlePollToggle,
                                     pollAttached: !!pollDraft,
@@ -1503,6 +1502,16 @@ export function ComposeModal() {
                               locked={!!createdPollId}
                             />
                           )}
+
+                          {/* Hidden file input - lives at modal level so the attach
+                              button works from any thread post's toolbar */}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFileSelect}
+                            className="hidden"
+                          />
 
                           {/* Image attachment preview */}
                           {attachedImage && (
