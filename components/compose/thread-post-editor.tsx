@@ -22,12 +22,10 @@ interface ThreadPostEditorProps {
   onContentChange: (content: string) => void
   textareaRef?: React.RefObject<HTMLTextAreaElement>
   extraCharacters?: number
-  /** Image attachment controls - only shown on the first unposted post */
+  /** Image attachment controls - shown on unposted posts */
   onImageClick?: () => void
   canAttachImage?: boolean
   imageTitle?: string
-  fileInputRef?: React.RefObject<HTMLInputElement>
-  onFileSelect?: (e: React.ChangeEvent<HTMLInputElement>) => void
   /** Poll attachment toggle - only shown on a single, unposted, public post */
   onPollClick?: () => void
   pollAttached?: boolean
@@ -52,8 +50,6 @@ export function ThreadPostEditor({
   onImageClick,
   canAttachImage,
   imageTitle,
-  fileInputRef,
-  onFileSelect,
   onPollClick,
   pollAttached = false,
   locked = false,
@@ -281,15 +277,6 @@ export function ThreadPostEditor({
                   >
                     <PhotoIcon className="w-4 h-4" />
                   </FormatButton>
-                  {fileInputRef && onFileSelect && (
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={onFileSelect}
-                      className="hidden"
-                    />
-                  )}
                 </>
               )}
 

@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [master]
+  # No base-branch filter: every PR gets lint/typecheck/build regardless of its
+  # target (previously PRs into staging or feature branches ran no CI at all).
   pull_request:
-    branches: [master]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -72,6 +73,10 @@ jobs:
     name: End-to-End
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Only for master-bound changes: the suite runs against the test contracts
+    # registered from master's schemas (.env.testing), so a PR into staging or
+    # another branch could pair diverged app code with mismatched contracts.
+    if: github.event_name != 'pull_request' || github.base_ref == 'master'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

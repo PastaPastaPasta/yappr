@@ -297,7 +297,7 @@ export function withAuth<P extends object>(
 
     const skipDPNS = typeof window !== 'undefined'
       && sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true'
-    const needsDPNS = !options?.allowWithoutDPNS && user && !user.dpnsUsername && !skipDPNS
+    const needsDPNS = !options?.optional && !options?.allowWithoutDPNS && user && !user.dpnsUsername && !skipDPNS
 
     useEffect(() => {
       if (isAuthRestoring) return

@@ -8,7 +8,6 @@ import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
-import { ComposeModal } from '@/components/compose/compose-modal'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { hashtagService } from '@/lib/services/hashtag-service'
@@ -293,7 +292,6 @@ function HashtagPageContent() {
       </div>
 
       <RightSidebar />
-      <ComposeModal />
     </div>
   )
 }

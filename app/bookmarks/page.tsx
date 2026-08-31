@@ -13,7 +13,6 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { PostCard } from '@/components/post/post-card'
-import { ComposeModal } from '@/components/compose/compose-modal'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -313,7 +312,6 @@ function BookmarksPage() {
       </div>
 
       <RightSidebar />
-      <ComposeModal />
     </div>
   )
 }

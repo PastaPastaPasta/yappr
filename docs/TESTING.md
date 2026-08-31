@@ -298,12 +298,17 @@ through it, so a seeded profile-less identity is *not* bounced to
 `/profile/create` — except on the own-profile page (`app/user/page.tsx`), which
 redirects on its own. Do not rely on the redirect to prove a profile exists.
 
-### The DPNS gate fires on optional-auth pages too
+### The DPNS gate respects `optional`
 
-In `withAuth`, the `needsDPNS` branch runs even when `options.optional` is set:
-if a user object exists without a DPNS username, the effect pushes to
-`/dpns/register`. Always seed `testing:yappr_skip_dpns = "true"` for identities
-without a DPNS name.
+In `withAuth`, the `needsDPNS` branch used to run even when `options.optional`
+was set, so a user object without a DPNS username got pushed to
+`/dpns/register` on optional-auth pages (`/feed`, `/post`, `/blog`,
+`/followers`, `/following`). That is fixed: the gate no longer fires when
+`options.optional` is true.
+
+Non-optional pages still redirect, so keep seeding
+`testing:yappr_skip_dpns = "true"` for identities without a DPNS name whenever a
+test touches one of those pages.
 
 ### Playwright `baseURL` drops the base path
 
