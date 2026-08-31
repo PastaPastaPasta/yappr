@@ -43,26 +43,26 @@ export const IPFS_GATEWAYS: IpfsGateway[] = [
 ]
 
 /**
- * Dedicated Pinata gateway domains for the currently logged-in identity only —
+ * Dedicated Pinata gateway domain for the currently logged-in identity only —
  * other identities' gateways must not receive requests for content this user
  * views. A dedicated gateway serves the account's own pinned content
  * immediately, long before public gateways can resolve a fresh CID; for
  * foreign content it 404s quickly, so it is cheap to try first.
  */
-function getDedicatedGatewayDomains(): string[] {
-  if (typeof window === 'undefined') return []
+function getDedicatedGatewayDomain(): string | null {
+  if (typeof window === 'undefined') return null
 
   try {
     const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
-    if (!savedSession) return []
+    if (!savedSession) return null
     const identityId = (JSON.parse(savedSession) as { user?: { identityId?: unknown } }).user?.identityId
-    if (typeof identityId !== 'string' || !identityId) return []
+    if (typeof identityId !== 'string' || !identityId) return null
 
     const gateway = getPinataGateway(identityId)
-    return gateway && /^[a-z0-9.-]+$/i.test(gateway) ? [gateway] : []
+    return gateway && /^[a-z0-9.-]+$/i.test(gateway) ? gateway : null
   } catch {
     // Storage unavailable or malformed session — fall back to public gateways.
-    return []
+    return null
   }
 }
 
@@ -209,10 +209,10 @@ export function getAllGatewayUrls(ipfsUrl: string): string[] {
   const parsed = extractCidFromIpfsUrl(ipfsUrl)
   if (!parsed) return [ipfsUrl]
 
-  const gateways: IpfsGateway[] = [
-    ...getDedicatedGatewayDomains().map((domain) => ({ domain, format: 'path' as const })),
-    ...IPFS_GATEWAYS,
-  ]
+  const dedicatedDomain = getDedicatedGatewayDomain()
+  const gateways: IpfsGateway[] = dedicatedDomain
+    ? [{ domain: dedicatedDomain, format: 'path' }, ...IPFS_GATEWAYS]
+    : IPFS_GATEWAYS
 
   const urls = gateways
     .map((gateway) => gatewayUrlFor(gateway, parsed.cid, parsed.path))
