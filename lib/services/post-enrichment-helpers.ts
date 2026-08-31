@@ -148,3 +148,59 @@ export async function resolvePostAuthor(post: Post): Promise<void> {
     logger.error('Error resolving post author:', error);
   }
 }
+
+/**
+ * Resolve authors for many posts with three batch queries (DPNS + profiles +
+ * avatars) instead of `resolvePostAuthor`'s two queries PER post. Mutates
+ * `post.author` in place.
+ *
+ * Like the other batch author passes (enrichPostsBatch above, reply-service's
+ * resolveAuthors), this only carries the fields feed surfaces render —
+ * username, displayName, bio, avatar, hasDpns. The extended profile fields
+ * (location, website, bannerUri, paymentUris, pronouns, nsfw, socialLinks)
+ * are intentionally NOT populated; anything that needs them must fetch the
+ * full profile itself rather than read them off `post.author`.
+ */
+export async function resolvePostAuthorsBatch(posts: Post[]): Promise<void> {
+  const authorIds = Array.from(
+    new Set(posts.map((post) => post.author?.id).filter((id): id is string => Boolean(id) && id !== 'unknown'))
+  );
+  if (authorIds.length === 0) return;
+
+  try {
+    const [usernameMap, profiles, avatarUrls] = await Promise.all([
+      dpnsService.resolveUsernamesBatch(authorIds),
+      unifiedProfileService.getProfilesByIdentityIds(authorIds),
+      unifiedProfileService.getAvatarUrlsBatch(authorIds),
+    ]);
+
+    const profileMap = new Map<string, Record<string, unknown>>();
+    profiles.forEach((profile) => {
+      const profileRecord = profile as unknown as Record<string, unknown>;
+      if (profileRecord.$ownerId) {
+        profileMap.set(profileRecord.$ownerId as string, profileRecord);
+      }
+    });
+
+    for (const post of posts) {
+      const authorId = post.author?.id;
+      if (!authorId || authorId === 'unknown') continue;
+
+      const username = usernameMap.get(authorId);
+      const profile = profileMap.get(authorId);
+      const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+      const avatarUrl = avatarUrls.get(authorId);
+
+      post.author = {
+        ...post.author,
+        username: username || post.author.username,
+        displayName: (profileData?.displayName as string) || post.author.displayName,
+        bio: (profileData?.bio as string | undefined) ?? post.author.bio,
+        avatar: avatarUrl || post.author.avatar,
+        hasDpns: Boolean(username),
+      };
+    }
+  } catch (error) {
+    logger.error('Error batch resolving post authors:', error);
+  }
+}

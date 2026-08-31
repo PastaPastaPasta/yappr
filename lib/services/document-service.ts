@@ -3,6 +3,7 @@ import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -163,6 +164,68 @@ export abstract class BaseDocumentService<T> {
     } catch (error) {
       logger.error(`Error getting ${this.documentType} document:`, error);
       return null;
+    }
+  }
+
+  /**
+   * Get several documents by ID in one `$id in [...]` query per 100 ids,
+   * instead of a `get()` round trip each. Fresh cache entries are served
+   * without a query; fetched documents are cached like `get()` caches them.
+   * Missing ids are simply absent from the result (order not guaranteed).
+   */
+  async getMany(documentIds: string[]): Promise<T[]> {
+    const uniqueIds = Array.from(new Set(documentIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+
+    const results: T[] = [];
+    const uncachedIds: string[] = [];
+    for (const id of uniqueIds) {
+      const cached = this.cache.get(id);
+      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+        results.push(cached.data);
+      } else {
+        uncachedIds.push(id);
+      }
+    }
+    if (uncachedIds.length === 0) return results;
+
+    try {
+      const sdk = await getEvoSdk();
+
+      await mapLimit(chunk(uncachedIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
+        try {
+          const rawDocuments = await queryDocuments(sdk, {
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [['$id', 'in', batch]],
+            orderBy: [['$id', 'asc']],
+            limit: batch.length,
+          });
+
+          for (const doc of rawDocuments) {
+            const transformed = this.transformDocument(doc);
+            const id = (doc.$id || doc.id) as string | undefined;
+            if (id) {
+              this.cache.set(id, { data: transformed, timestamp: Date.now() });
+            }
+            results.push(transformed);
+          }
+        } catch (error) {
+          // Transport blip: degrade to per-id fetches for just this chunk (same
+          // shape as getPostsByIds' fallback) rather than dropping up to 100
+          // documents from the result on one failed query.
+          logger.warn(`getMany: batched $id-in ${this.documentType} query failed, falling back to per-id fetches:`, error);
+          const fetched = await mapLimit(batch, 5, (id) => this.get(id));
+          for (const doc of fetched) {
+            if (doc !== null) results.push(doc);
+          }
+        }
+      });
+
+      return results;
+    } catch (error) {
+      logger.error(`Error batch getting ${this.documentType} documents:`, error);
+      return results;
     }
   }
 

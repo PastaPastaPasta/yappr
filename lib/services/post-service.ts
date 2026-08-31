@@ -8,7 +8,7 @@ import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchU
 import { authorFieldIsRequired, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstHashtag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
-import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper } from './post-enrichment-helpers';
+import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
@@ -982,7 +982,9 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Resolve authors for a batch of posts, one profile lookup per unique author.
+   * Resolve authors for a batch of posts: three batch queries (DPNS +
+   * profiles + avatars) shared across every unique author, instead of a
+   * DPNS + profile lookup per author.
    */
   private async resolveAuthorsForPosts(posts: Post[]): Promise<void> {
     const byAuthor = new Map<string, Post[]>();
@@ -997,14 +999,13 @@ class PostService extends BaseDocumentService<Post> {
       }
     }
 
-    await Promise.all(
-      Array.from(byAuthor.values()).map(async (group) => {
-        await this.resolvePostAuthor(group[0]);
-        for (let i = 1; i < group.length; i++) {
-          group[i].author = group[0].author;
-        }
-      })
-    );
+    const groups = Array.from(byAuthor.values());
+    await resolvePostAuthorsBatchHelper(groups.map((group) => group[0]));
+    for (const group of groups) {
+      for (let i = 1; i < group.length; i++) {
+        group[i].author = group[0].author;
+      }
+    }
   }
 }
 
