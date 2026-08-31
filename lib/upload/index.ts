@@ -8,6 +8,10 @@
 export * from './types'
 export * from './errors'
 export { providerRegistry } from './provider-registry'
+// getLocalImageUrl is deliberately not re-exported: its consumers are display
+// components, which import ./local-image-cache directly to avoid pulling the
+// provider SDKs in through this barrel.
+export { cacheLocalImage } from './local-image-cache'
 
 // Storacha provider
 export { getStorachaProvider, StorachaProvider } from './providers/storacha/storacha-provider'
