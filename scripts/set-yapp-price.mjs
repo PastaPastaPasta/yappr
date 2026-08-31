@@ -108,6 +108,11 @@ if (args.ownerIndex !== null) {
 const sdk = await connectSdk({ timeoutMs: 30000 });
 const wasm = sdk.wasm;
 
+// PROTOCOL-VERSION RATCHET (load-bearing on devnet): one proved non-contract
+// query teaches the SDK the chain's real protocol version — without it the
+// first proved read of a v14-grammar contract fails inside proof verification.
+await sdk.epoch.current();
+
 // Cache the contract so the trusted SDK can verify the result proof at
 // waitForResponse (otherwise: "unknown contract ... in token verification").
 await sdk.contracts.fetch(CONTRACT_ID);
