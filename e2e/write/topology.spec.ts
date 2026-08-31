@@ -26,7 +26,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Locator } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { appUrl } from '../fixtures/app'
 import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
@@ -67,14 +67,15 @@ function compiledTopology(): string {
 }
 const SPEC_TOPOLOGY = compiledTopology()
 
-// Everything in the first describe holds on v3 AND v4: the v4 contract keeps
-// v3's document graph (flat threads, likeReply, posts-only repost/bookmark,
-// dual quote fields, tombstones) and changes only how likes are stored — which
-// makes the reply-like test double as live coverage of the v4 indexOnly
-// likeReply path (agreement-bound create + delete-by-values unlike).
+// Everything in the first describe holds on v3, v4 AND v5: the v4/v5 contracts
+// keep v3's document graph (flat threads, likeReply, posts-only
+// repost/bookmark, dual quote fields, tombstones) and change only how likes
+// and hashtags are stored — which makes the reply-like test double as live
+// coverage of the v4/v5 indexOnly likeReply path (agreement-bound create +
+// delete-by-values unlike).
 test.describe('v3+ interaction topology on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!['v3', 'v4'].includes(SPEC_TOPOLOGY), 'the compiled topology predates the v3 document graph')
+  test.skip(!['v3', 'v4', 'v5'].includes(SPEC_TOPOLOGY), 'the compiled topology predates the v3 document graph')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -102,7 +103,7 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
     // topology outside the v3 family here means the devnet env file lost its
     // flag — which would make every assertion below fail against the UI instead
     // of naming the real problem.
-    expect(['v3', 'v4'], 'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3 or v4').toContain(topology)
+    expect(['v3', 'v4', 'v5'], 'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3, v4 or v5').toContain(topology)
     expect(topology, 'sync and async topology reads must agree').toBe(SPEC_TOPOLOGY)
 
     await page.goto(appUrl('/about/'))
@@ -467,5 +468,210 @@ test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
       p.getByText(`#${hashtag}`, { exact: true })
     )
     await expect(page.getByTestId('trending-activity-note')).toBeVisible()
+  })
+})
+
+/**
+ * The v5-only surfaces: OPTIONAL hashtags and the proved prefix rankings.
+ *
+ * What each step proves on-chain:
+ * - a tagged post carries its `hashtag` (maxLength 61 now) and lists on the
+ *   tag page via `post.tagAndTime`, exactly as on v4;
+ * - an UNTAGGED post omits the property entirely — consensus would reject the
+ *   v4 `''` sentinel outright (`minLength: 1`), so the post existing at all is
+ *   the assertion;
+ * - a like of the untagged post MIRRORS the absence: the absence-aware
+ *   propertyAgreement only accepts both-absent (a client still writing `''`
+ *   would get 40127), and `skipIfAbsent` keeps the like out of byHashtagPost
+ *   entirely; the persisted toggle after reload is the byLiker readback;
+ * - unlike of the untagged post is a delete-by-values whose tuple reproduces
+ *   the same absence (a tuple carrying `''` would name a different — absent —
+ *   document and fail); re-like proves the entries really left the trees;
+ * - the tagged like/unlike pair covers the value-carrying twin of the same
+ *   agreement;
+ * - trending is now a PROVED prefix ranked page (groupBy at `hashtag` on
+ *   `byHashtagPost {at: hashtag}`) counting likes per tag — so the liked tag
+ *   must appear WITH its count, and the v4 "Based on recent activity"
+ *   disclaimer must be gone;
+ * - the Creators tab renders the proved leaderboard (groupBy at `postAuthor`
+ *   on `byAuthorPost {at: [postAuthor, postId]}`) and must list the bot, who
+ *   just received a like;
+ * - the profile Top tab still rides the same index's TERMINAL ranking, proving
+ *   the at-form serves both levels at once.
+ */
+test.describe('v5 optional-hashtag topology and prefix rankings on the devnet contract', () => {
+  test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
+  test.skip(SPEC_TOPOLOGY !== 'v5', 'the compiled topology predates optional hashtags and prefix rankings')
+  test.skip(!hasSeedPhrase, NO_SEED_REASON)
+
+  let runTag = ''
+  let hashtag = ''
+  let taggedPostId = ''
+  let untaggedPostId = ''
+
+  /** Compose a top-level post from the feed and return its document id. */
+  const composePost = async (page: Page, identityId: string, text: string): Promise<string> => {
+    await page.goto(appUrl('/feed/'))
+    await page.getByTestId('open-compose-btn').click()
+    const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
+    await expect(composeDialog).toBeVisible()
+    await composeDialog.getByTestId('compose-textarea').first().fill(text)
+    await composeDialog.getByTestId('compose-submit-btn').click()
+    await expect(composeDialog).toBeHidden({ timeout: COMPOSE_TIMEOUT })
+
+    const card = await reloadUntilVisible(page, appUrl(`/user?id=${identityId}`), (p) =>
+      p.locator('[data-testid^="post-card-"]').filter({ hasText: text })
+    )
+    const id = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
+    expect(id, 'the post card should expose the document id').not.toBe('')
+    return id
+  }
+
+  /** Toggle a like and wait for the pressed state to persist across a reload. */
+  const likeAndVerify = async (page: Page, postId: string) => {
+    await page.goto(appUrl(`/post?id=${postId}`))
+    const likeButton = page.getByTestId(`like-btn-${postId}`)
+    await expect(likeButton).toBeVisible({ timeout: 60_000 })
+    await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
+
+    await likeButton.click()
+    await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(likeButton).toBeEnabled({ timeout: 60_000 })
+    await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
+
+    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
+      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="true"]'))
+    )
+  }
+
+  /** Unlike (delete-by-values), verify the absence persists, then re-like. */
+  const unlikeAndRelike = async (page: Page, postId: string) => {
+    await page.goto(appUrl(`/post?id=${postId}`))
+    const likeButton = page.getByTestId(`like-btn-${postId}`)
+    await expect(likeButton).toBeVisible({ timeout: 60_000 })
+    await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
+
+    await likeButton.click()
+    await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(likeButton).toBeEnabled({ timeout: 120_000 })
+    await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
+
+    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
+      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="false"]'))
+    )
+
+    // Re-like: only possible if the delete really removed the index entries
+    // (a leftover would reject the duplicate structurally).
+    const again = page.getByTestId(`like-btn-${postId}`)
+    await again.click()
+    await expect(again).toHaveAttribute('aria-pressed', 'true')
+    await expect(again).toBeEnabled({ timeout: 60_000 })
+    await expect(again).toHaveAttribute('aria-pressed', 'true')
+
+    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
+      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="true"]'))
+    )
+  }
+
+  test('a tagged post is created and listed on its tag page', async ({ page, bot }) => {
+    test.setTimeout(420_000)
+
+    runTag = uniqueTag(bot.index)
+    // Run-unique tag, capped at the v5 ranked-key ceiling of 61 (was 63).
+    hashtag = `v5${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
+
+    taggedPostId = await composePost(page, bot.identityId, `${runTag} v5 tagged target #${hashtag}`)
+
+    // Inline hashtag: the tag page lists the post straight off post.tagAndTime.
+    await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
+      p.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
+    )
+  })
+
+  test('an untagged post is created with the hashtag property absent', async ({ page, bot }) => {
+    test.setTimeout(420_000)
+
+    // No '#' anywhere: the client must OMIT `hashtag` (v4 wrote ''), and v5
+    // consensus would reject '' against `minLength: 1` — so the post landing
+    // and rendering at all proves the omission happened.
+    untaggedPostId = await composePost(page, bot.identityId, `${runTag} v5 untagged target`)
+  })
+
+  test('liking and unliking the TAGGED post round-trips the agreement value', async ({ page }) => {
+    test.setTimeout(420_000)
+
+    await likeAndVerify(page, taggedPostId)
+  })
+
+  test('liking the UNTAGGED post mirrors the absence and persists', async ({ page }) => {
+    test.setTimeout(300_000)
+
+    // The create must omit like.hashtag — both-absent is the only agreeing
+    // combination — and skipIfAbsent keeps it out of byHashtagPost entirely.
+    await likeAndVerify(page, untaggedPostId)
+  })
+
+  test('unliking the UNTAGGED post reproduces the absence in the delete tuple', async ({ page }) => {
+    test.setTimeout(420_000)
+
+    // Delete-by-values rebuilds the tuple through the same boundary translation
+    // the create used; a tuple carrying '' would address a like that does not
+    // exist. The re-like inside proves the entries really left the trees.
+    await unlikeAndRelike(page, untaggedPostId)
+  })
+
+  test('unliking the TAGGED post still round-trips with the value present', async ({ page }) => {
+    test.setTimeout(420_000)
+
+    await unlikeAndRelike(page, taggedPostId)
+  })
+
+  test('trending lists the tag with a PROVED like count and no activity disclaimer', async ({ page }) => {
+    test.setTimeout(180_000)
+
+    // v5 trending is a proved prefix ranked page on byHashtagPost {at: hashtag}
+    // counting likes per tag. The tagged post holds a like, so its run-unique
+    // tag must rank — and the v4 "Based on recent activity" label must be gone,
+    // because this ranking is proved, not derived.
+    await reloadUntilVisible(page, appUrl('/explore/'), (p) =>
+      p.getByText(`#${hashtag}`, { exact: true })
+    )
+    await expect(page.getByTestId('trending-activity-note')).toHaveCount(0)
+    // The proved metric is likes-per-tag: exactly one like on this run's tag.
+    const trendRow = page
+      .locator('div')
+      .filter({ has: page.getByText(`#${hashtag}`, { exact: true }) })
+      .filter({ hasText: /1 like/ })
+    await expect(trendRow.first()).toBeVisible()
+  })
+
+  test('the Creators tab lists the liked author on the proved leaderboard', async ({ page, bot }) => {
+    test.setTimeout(180_000)
+
+    // The bot just received likes on its posts, so the prefix ranked page on
+    // byAuthorPost {at: [postAuthor, postId]} must include its identity.
+    await page.goto(appUrl('/explore/'))
+    const creatorsTab = page.getByTestId('explore-creators-tab')
+    await expect(creatorsTab).toBeVisible({ timeout: 60_000 })
+    await creatorsTab.click()
+
+    await expect(page.getByTestId(`explore-top-creators-${bot.identityId}`)).toBeVisible({
+      timeout: 60_000,
+    })
+  })
+
+  test('the profile Top tab still serves the terminal ranking of the same index', async ({ page, bot }) => {
+    test.setTimeout(180_000)
+
+    // The at-form covers [postAuthor, postId]: the leaderboard groups at the
+    // prefix, the profile Top tab at the terminal. Both must answer.
+    await page.goto(appUrl(`/user?id=${bot.identityId}`))
+    const topFilter = page.getByTestId('profile-top-filter')
+    await expect(topFilter).toBeVisible({ timeout: 60_000 })
+    await topFilter.click()
+
+    await expect(
+      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
+    ).toBeVisible({ timeout: 60_000 })
   })
 })
