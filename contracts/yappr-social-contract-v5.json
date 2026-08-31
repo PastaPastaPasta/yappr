@@ -359,7 +359,10 @@
           "countable": "countable",
           "rangeCountable": true,
           "rankedCountable": {
-            "at": "hashtag"
+            "at": [
+              "hashtag",
+              "postId"
+            ]
           },
           "skipIfAbsent": true
         },

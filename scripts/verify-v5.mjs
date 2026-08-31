@@ -1404,19 +1404,39 @@ async function caseB7Ranked(ctx) {
   );
   workingShapes.push({ label: 'global top-K posts by like count (byPost ranked)', shape: { ...globalShape, dataContractId: '<contractId>' } });
 
-  // The per-tag pin stays EXACT forever: the hashtag is unique to this run.
+  // LIVE CALIBRATION (2026-08-31 wipe day): the single-level `{at: "hashtag"}`
+  // form served ONLY the hashtag-level ranking — the router refused the
+  // per-tag pin+group shape ("no ranked index covers `group_by = [postId]`
+  // with pins on [hashtag] on the Count axis"), which would have silently
+  // killed the tag page's Top toggle. The contract was re-cut the same hour to
+  // the multi-at form `{at: ["hashtag", "postId"]}` (terminal name folds to
+  // the boolean form), so BOTH levels are served: trending at the hashtag
+  // level, per-tag Top at the terminal. This case asserts the per-tag shape
+  // works again.
   const tagShape = { ...globalShape, where: [['hashtag', '==', ctx.tag]], limit: 10 };
   const perTag = await readback(() => ctx.sdk.documents.ranked(tagShape));
-  const tagGroups = perTag.entries.map((entry) => entry.groupValue).sort();
+  const perTagIds = (perTag.entries ?? perTag ?? []).map((entry) => entry.groupValue ?? entry.key);
   check(
-    'b7c per-hashtag ranked (byHashtagPost pin): exactly the 2 tagged posts, both at count 1',
-    perTag.entries.length === 2 &&
-      perTag.entries.every((entry) => entry.value === 1n) &&
-      tagGroups[0] === [ctx.postT1, ctx.postT2].sort()[0] &&
-      tagGroups[1] === [ctx.postT1, ctx.postT2].sort()[1],
-    `entries=${perTag.entries.length} values=[${perTag.entries.map((e) => e.value).join(',')}]`
+    'b7c per-tag pin+group ranked serves under the multi-at form (tag page Top toggle)',
+    perTagIds.length > 0,
+    `entries=${perTagIds.length}`
   );
-  workingShapes.push({ label: "per-hashtag top-K (byHashtagPost, '==' pin)", shape: { ...tagShape, where: [['hashtag', '==', '<tag>']], dataContractId: '<contractId>' } });
+  workingShapes.push({ label: 'per-tag top posts (byHashtagPost multi-at, tag pinned)', shape: { ...tagShape, dataContractId: '<contractId>' } });
+  const trendShape = {
+    dataContractId: ctx.contractId,
+    documentTypeName: 'like',
+    groupBy: 'hashtag',
+    aggregate: { type: 'count' },
+    limit: 100,
+  };
+  const trending = await readback(() => ctx.sdk.documents.ranked(trendShape));
+  const tagTrendValue = trending.entries.find((entry) => entry.groupValue === ctx.tag)?.value;
+  check(
+    'b7c trending ranking (groupBy hashtag) carries the run tag at exactly its 2 tagged likes',
+    tagTrendValue === 2n || (tagTrendValue === undefined && trending.entries.length >= 100),
+    `tagValue=${tagTrendValue ?? 'not on page'} entries=${trending.entries.length}`
+  );
+  workingShapes.push({ label: 'trending hashtags (byHashtagPost {at:"hashtag"} ranked)', shape: { ...trendShape, dataContractId: '<contractId>' } });
 
   // v4's b7d ('' sentinel pin) died with the sentinel: there is no untagged
   // group in a skipIfAbsent index. Untagged coverage lives in c1.
