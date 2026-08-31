@@ -5,6 +5,7 @@ import { useAsyncState } from '@/components/ui/loading-state';
 import { Post } from '@/lib/types';
 import { cacheManager } from '@/lib/cache-manager';
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment';
+import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
@@ -115,6 +116,37 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     currentUserId: user?.identityId,
     skipFollowStatus: activeTab === 'following',
   });
+
+  const applyRepostAndQuoteEnrichment = useCallback(
+    (postsToEnrich: Post[]) => {
+      if (postsToEnrich.length === 0) return;
+
+      enrichPostsWithRepostsAndQuotes(postsToEnrich)
+        .then((enrichedPosts) => {
+          const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
+          setData((current) => {
+            if (!current) return current;
+            return current.map((post) => {
+              const enriched = enrichedById.get(post.id);
+              if (!enriched) return post;
+              // Merge only enrichment fields so concurrent updates to the post
+              // (e.g. reconciliation clearing _syncPending) are not reverted.
+              return {
+                ...post,
+                ...(enriched.quotedPost ? { quotedPost: enriched.quotedPost } : {}),
+                ...(enriched.repostedBy
+                  ? { repostedBy: enriched.repostedBy, repostTimestamp: enriched.repostTimestamp }
+                  : {}),
+              };
+            });
+          });
+        })
+        .catch((error) => {
+          logger.error('Feed: Error enriching posts with reposts/quotes:', error);
+        });
+    },
+    [setData]
+  );
 
   const normalizeCreatedPost = useCallback(
     (rawPost: unknown, fallbackPostId?: string, confirmed = true): FeedPost | null => {
@@ -249,6 +281,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
             setPendingNewPosts([]);
 
             enrichProgressively(cached);
+            applyRepostAndQuoteEnrichment(cached);
             return;
           }
         }
@@ -356,7 +389,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         setLoading(false);
       }
     },
-    [activeTab, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
+    [activeTab, applyRepostAndQuoteEnrichment, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
   );
 
   const loadMore = useCallback(async () => {
@@ -435,9 +468,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     });
 
     enrichProgressively(pendingNewPosts);
+    applyRepostAndQuoteEnrichment(pendingNewPosts);
     setNewestPostTimestamp(newestPendingTimestamp);
     setPendingNewPosts([]);
-  }, [enrichProgressively, pendingNewPosts, setData]);
+  }, [applyRepostAndQuoteEnrichment, enrichProgressively, pendingNewPosts, setData]);
 
   const refresh = useCallback(async () => {
     resetEnrichment();
@@ -479,6 +513,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
       });
 
       enrichProgressively([createdPost]);
+      applyRepostAndQuoteEnrichment([createdPost]);
       setNewestPostTimestamp((prev) => Math.max(prev || 0, getFeedItemTimestamp(createdPost)));
 
       reconcileCreatedPost(createdPost.id).catch((error) =>
@@ -490,7 +525,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     return () => {
       window.removeEventListener('post-created', handlePostCreated as EventListener);
     };
-  }, [enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
+  }, [applyRepostAndQuoteEnrichment, enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
 
   useEffect(() => {
     resetEnrichment();
