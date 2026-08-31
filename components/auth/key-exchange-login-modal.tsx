@@ -135,7 +135,7 @@ export function KeyExchangeLoginModal() {
             )}
             <div className="text-center">
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Open Dash Evo Tool and scan this QR code to log in
+                Approve this login request with your Dash wallet
               </p>
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                 Key index: auto (managed by wallet)
