@@ -4,8 +4,9 @@ import { queryRawDocuments } from './document-service';
 import type { Post } from '../types';
 import type { PostStats } from './post-service';
 import { type DocumentWhereClause } from './sdk-helpers';
+import { rangeDistinctCount } from './pagination-utils';
 import { retryAsync } from '../retry-utils';
-import { quoteFieldFor, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
+import { quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -154,7 +155,38 @@ export async function fetchFollowingFeed(
   }
 }
 
+/**
+ * Per-author post counts from the `byOwner` count tree, in ONE grouped count
+ * query — or null when the contract can't answer it (the RangeDistinct
+ * grouped-count mode needs `rangeCountable: true` on that index, which older
+ * contract cuts don't declare), letting callers fall back to the legacy scan.
+ *
+ * Counts posts in EVERY language — consistent with `countAllPosts`, unlike the
+ * fallback scans below, which walk the `languageTimeline` index and so only see
+ * `language == 'en'`.
+ */
+let authorCountTreeUnsupported = false;
+
+async function fetchAuthorPostCountsViaCountTree(contractId: string): Promise<Map<string, number> | null> {
+  // Sticky per session: a contract without the flag refuses every time, so
+  // don't pay a doomed query on each call once the first one is rejected.
+  if (authorCountTreeUnsupported) return null;
+
+  const { getEvoSdk } = await import('./evo-sdk-service');
+  const sdk = await getEvoSdk();
+  const result = await rangeDistinctCount(sdk, {
+    dataContractId: contractId,
+    documentTypeName: 'post',
+    groupField: '$ownerId',
+  });
+  if (result === null) authorCountTreeUnsupported = true;
+  return result;
+}
+
 export async function fetchUniqueAuthorCount(contractId: string): Promise<number> {
+  const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
+  if (grouped) return grouped.size;
+
   const result = await retryAsync(
     async () => {
       const uniqueAuthors = new Set<string>();
@@ -235,6 +267,9 @@ export async function fetchTopPostsByLikes(
 }
 
 export async function fetchAuthorPostCounts(contractId: string): Promise<Map<string, number>> {
+  const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
+  if (grouped) return grouped;
+
   const authorCounts = new Map<string, number>();
 
   try {

@@ -9,6 +9,7 @@
  * for both counting and fetching complete lists.
  */
 
+import bs58 from 'bs58';
 import { logger } from '@/lib/logger';
 import { normalizeSDKResponse, identifierToHex } from './sdk-helpers';
 
@@ -184,6 +185,71 @@ export async function groupedDocumentCount(
   });
 
   return result;
+}
+
+/**
+ * Base58 of 32 zero bytes — sorts below every real identifier, so
+ * `[field, '>', MIN_IDENTIFIER]` is a full range over an identifier field.
+ */
+export const MIN_IDENTIFIER = '1'.repeat(32);
+
+/** Decode a 64-char hex grouped-count key to base58. Hex ONLY — some hex strings
+ * are also valid base58, so the permissive `identifierToBase58` cannot be used. */
+function hexKeyToBase58(key: string): string | null {
+  if (!/^[0-9a-fA-F]{64}$/.test(key)) return null;
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = parseInt(key.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bs58.encode(bytes);
+}
+
+/**
+ * Count documents per DISTINCT value of an identifier field, in one round trip —
+ * a full-range count query grouped by the same field (Drive's "RangeDistinct"
+ * grouped-count mode). The returned map is keyed by base58 identifier; its size
+ * is the number of distinct values.
+ *
+ * Requires the document type to declare a `rangeCountable: true` index whose
+ * last property is `groupField` (protocol v14+); Drive rejects the query with
+ * InvalidArgument otherwise. Returns null on ANY error so callers can fall back
+ * to a scan — unlike `groupedDocumentCount` there is no per-id fallback,
+ * because the caller does not know the value set in advance.
+ */
+export async function rangeDistinctCount(
+  sdk: SDK,
+  query: { dataContractId: unknown; documentTypeName: string; groupField: string }
+): Promise<Map<string, number> | null> {
+  try {
+    const raw: unknown = await sdk.documents.count({
+      dataContractId: query.dataContractId,
+      documentTypeName: query.documentTypeName,
+      where: [[query.groupField, '>', MIN_IDENTIFIER]],
+      orderBy: [[query.groupField, 'asc']],
+      groupBy: [query.groupField],
+    });
+
+    const entries: [string, unknown][] =
+      raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
+
+    const result = new Map<string, number>();
+    for (const [key, value] of entries) {
+      if (key === '') continue; // aggregate-mode key; shouldn't appear once groupBy is set
+      const id = hexKeyToBase58(key);
+      if (!id) {
+        throw new Error(`rangeDistinctCount: group key is not a hex identifier: ${key.slice(0, 16)}…`);
+      }
+      result.set(id, Number(value as bigint | number));
+    }
+    return result;
+  } catch (error) {
+    logger.warn('rangeDistinctCount: query failed (caller falls back to scan)', {
+      documentTypeName: query.documentTypeName,
+      groupField: query.groupField,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 /**

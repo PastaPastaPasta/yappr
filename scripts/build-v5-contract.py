@@ -56,6 +56,19 @@ def build():
     post['required'] = [r for r in post['required'] if r != 'hashtag']
     post['properties']['hashtag'] = dict(HASHTAG, position=post['properties']['hashtag']['position'])
 
+    # ---- post.byOwner: ranked chain on [$ownerId] -------------------------------
+    # One RangeDistinct grouped count ($ownerId > MIN, groupBy [$ownerId]) then
+    # answers per-author post counts and the distinct-author total in a single
+    # query, replacing the client's full-timeline scans (fetchUniqueAuthorCount /
+    # fetchAuthorPostCounts). Upgraded in place with the exact flag set already
+    # validated on follow.followerCount — rankedCountable rides along both to stay
+    # on that proven shape and because a provable most-prolific-authors ranking is
+    # free once the chain exists.
+    by_owner = [i for i in post['indices'] if i['name'] == 'byOwner']
+    assert len(by_owner) == 1 and by_owner[0]['properties'] == [{'$ownerId': 'asc'}] \
+        and by_owner[0].get('countable') is True, 'unexpected v4 post.byOwner shape'
+    by_owner[0].update({**RANKED_CHAIN, 'rankedCountable': True})
+
     # ---- reply: carries NO hashtag in v4 — nothing to mirror --------------------
     assert 'hashtag' not in d['reply']['properties'], 'reply gained a hashtag since v4? mirror the post treatment'
 
@@ -227,12 +240,21 @@ def self_test(built):
     for name in PASSTHROUGH_DOCTYPES:
         check(f'{name} passes through byte-identical to v4',
               d[name] == src['documentSchemas'][name])
+    pidx = {i['name']: i for i in d['post']['indices']}
+    check('post.byOwner = [$ownerId] countable+rangeCountable+rankedCountable:true (follow.followerCount shape)',
+          pidx.get('byOwner') == {
+              'name': 'byOwner', 'properties': [{'$ownerId': 'asc'}],
+              'countable': 'countable', 'rangeCountable': True, 'rankedCountable': True,
+          }, json.dumps(pidx.get('byOwner')))
     src_post = copy.deepcopy(src['documentSchemas']['post'])
     src_post['required'] = [r for r in src_post['required'] if r != 'hashtag']
     del src_post['properties']['hashtag']
+    for i in src_post['indices']:
+        if i['name'] == 'byOwner':
+            i.update({'countable': 'countable', 'rangeCountable': True, 'rankedCountable': True})
     v5_post = copy.deepcopy(d['post'])
     del v5_post['properties']['hashtag']
-    check('post is untouched apart from the hashtag property/required change', v5_post == src_post)
+    check('post is untouched apart from the hashtag and byOwner ranked-chain changes', v5_post == src_post)
     check('reply passes through byte-identical to v4', d['reply'] == src['documentSchemas']['reply'])
     src_like = src['documentSchemas']['like']
     check('like tokenCost/flags unchanged from v4',

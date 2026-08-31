@@ -1,6 +1,7 @@
 import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
 import { unifiedProfileService } from '@/lib/services';
+import { dpnsService } from '@/lib/services/dpns-service';
 import { repostService } from '@/lib/services/repost-service';
 import { attachQuotedPosts } from './resolve-quoted-posts';
 
@@ -28,21 +29,35 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
       const reposterIds = Array.from(new Set(Array.from(repostMap.values()).map((repost) => repost.$ownerId)));
       const reposterProfiles = new Map<string, { displayName?: string; username?: string }>();
 
-      await Promise.all(
-        reposterIds.map(async (id) => {
-          try {
-            const profile = await unifiedProfileService.getProfileWithUsername(id);
-            if (profile) {
-              reposterProfiles.set(id, {
-                displayName: profile.displayName,
-                username: profile.username,
-              });
-            }
-          } catch {
-            // Ignore profile fetch errors to keep feed loading resilient.
+      // Two batch queries across all reposters instead of a DPNS + profile
+      // lookup per reposter; failures leave names blank rather than failing
+      // the feed load.
+      try {
+        const [usernameMap, profiles] = await Promise.all([
+          dpnsService.resolveUsernamesBatch(reposterIds),
+          unifiedProfileService.getProfilesByIdentityIds(reposterIds),
+        ]);
+
+        const profileMap = new Map<string, Record<string, unknown>>();
+        profiles.forEach((profile) => {
+          const profileRecord = profile as unknown as Record<string, unknown>;
+          if (profileRecord.$ownerId) {
+            profileMap.set(profileRecord.$ownerId as string, profileRecord);
           }
-        })
-      );
+        });
+
+        for (const id of reposterIds) {
+          const profile = profileMap.get(id);
+          const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+          const username = usernameMap.get(id);
+          reposterProfiles.set(id, {
+            displayName: profileData?.displayName as string | undefined,
+            username: username || undefined,
+          });
+        }
+      } catch {
+        // Ignore profile fetch errors to keep feed loading resilient.
+      }
 
       for (const post of enrichedPosts) {
         const repost = repostMap.get(post.id);

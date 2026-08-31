@@ -628,7 +628,9 @@
               "$ownerId": "asc"
             }
           ],
-          "countable": true
+          "countable": "countable",
+          "rangeCountable": true,
+          "rankedCountable": true
         },
         {
           "name": "tagAndTime",

@@ -523,17 +523,10 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (replyIds.length === 0) return [];
 
     try {
-      const BATCH_SIZE = 5;
-      const replies: Reply[] = [];
-
-      for (let i = 0; i < replyIds.length; i += BATCH_SIZE) {
-        const batch = replyIds.slice(i, i + BATCH_SIZE);
-        const batchReplies = await Promise.all(
-          batch.map(id => this.getReplyById(id))
-        );
-        replies.push(...batchReplies.filter((r): r is Reply => r !== null));
-      }
-
+      // One `$id in` query per 100 ids plus one batched author pass, instead
+      // of a fetch + author resolution round trip per reply.
+      const replies = await this.getMany(replyIds);
+      await this.resolveAuthors(replies);
       return replies;
     } catch (error) {
       logger.error('Error getting replies by IDs:', error);
