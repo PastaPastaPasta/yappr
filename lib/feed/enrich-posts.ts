@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
-import { unifiedProfileService } from '@/lib/services';
-import { dpnsService } from '@/lib/services/dpns-service';
+import { dpnsService, unifiedProfileService } from '@/lib/services';
+import { profileDataByOwnerId } from '@/lib/services/post-enrichment-helpers';
 import { repostService } from '@/lib/services/repost-service';
 import { attachQuotedPosts } from './resolve-quoted-posts';
 
@@ -38,17 +38,10 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
           unifiedProfileService.getProfilesByIdentityIds(reposterIds),
         ]);
 
-        const profileMap = new Map<string, Record<string, unknown>>();
-        profiles.forEach((profile) => {
-          const profileRecord = profile as unknown as Record<string, unknown>;
-          if (profileRecord.$ownerId) {
-            profileMap.set(profileRecord.$ownerId as string, profileRecord);
-          }
-        });
+        const profileMap = profileDataByOwnerId(profiles);
 
         for (const id of reposterIds) {
-          const profile = profileMap.get(id);
-          const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+          const profileData = profileMap.get(id);
           const username = usernameMap.get(id);
           reposterProfiles.set(id, {
             displayName: profileData?.displayName as string | undefined,

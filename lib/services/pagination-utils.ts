@@ -158,8 +158,7 @@ export async function groupedDocumentCount(
         groupBy: [query.groupField],
       });
 
-      const entries: [string, unknown][] =
-        raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
+      const entries = groupedCountEntries(raw);
 
       let matched = 0;
       for (const [key, value] of entries) {
@@ -191,7 +190,12 @@ export async function groupedDocumentCount(
  * Base58 of 32 zero bytes — sorts below every real identifier, so
  * `[field, '>', MIN_IDENTIFIER]` is a full range over an identifier field.
  */
-export const MIN_IDENTIFIER = '1'.repeat(32);
+const MIN_IDENTIFIER = '1'.repeat(32);
+
+/** The SDK returns grouped counts as a Map or (older shapes) a plain object. */
+function groupedCountEntries(raw: unknown): [string, unknown][] {
+  return raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
+}
 
 /** Decode a 64-char hex grouped-count key to base58. Hex ONLY — some hex strings
  * are also valid base58, so the permissive `identifierToBase58` cannot be used. */
@@ -211,45 +215,52 @@ function hexKeyToBase58(key: string): string | null {
  * is the number of distinct values.
  *
  * Requires the document type to declare a `rangeCountable: true` index whose
- * last property is `groupField` (protocol v14+); Drive rejects the query with
- * InvalidArgument otherwise. Returns null on ANY error so callers can fall back
- * to a scan — unlike `groupedDocumentCount` there is no per-id fallback,
- * because the caller does not know the value set in advance.
+ * last property is `groupField` (protocol v14+). When Drive rejects the query
+ * as unanswerable by the contract's indexes, this returns null so callers can
+ * fall back to a scan AND remember not to retry; any other failure (transport
+ * blip, unexpected response shape) is thrown, because it says nothing about
+ * whether the contract supports the query. Unlike `groupedDocumentCount` there
+ * is no per-id fallback — the caller does not know the value set in advance.
  */
 export async function rangeDistinctCount(
   sdk: SDK,
   query: { dataContractId: unknown; documentTypeName: string; groupField: string }
 ): Promise<Map<string, number> | null> {
+  let raw: unknown;
   try {
-    const raw: unknown = await sdk.documents.count({
+    raw = await sdk.documents.count({
       dataContractId: query.dataContractId,
       documentTypeName: query.documentTypeName,
       where: [[query.groupField, '>', MIN_IDENTIFIER]],
       orderBy: [[query.groupField, 'asc']],
       groupBy: [query.groupField],
     });
-
-    const entries: [string, unknown][] =
-      raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
-
-    const result = new Map<string, number>();
-    for (const [key, value] of entries) {
-      if (key === '') continue; // aggregate-mode key; shouldn't appear once groupBy is set
-      const id = hexKeyToBase58(key);
-      if (!id) {
-        throw new Error(`rangeDistinctCount: group key is not a hex identifier: ${key.slice(0, 16)}…`);
-      }
-      result.set(id, Number(value as bigint | number));
-    }
-    return result;
   } catch (error) {
-    logger.warn('rangeDistinctCount: query failed (caller falls back to scan)', {
-      documentTypeName: query.documentTypeName,
-      groupField: query.groupField,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+    // The index-grammar rejection a contract without the flag produces every
+    // time, e.g. "range count requires a `range_countable: true` index whose
+    // last property matches the range field" (InvalidArgument).
+    const message = error instanceof Error ? error.message : String(error);
+    if (/range_countable|non indexed property|invalid argument/i.test(message)) {
+      logger.warn('rangeDistinctCount: contract cannot answer this query (caller falls back to scan)', {
+        documentTypeName: query.documentTypeName,
+        groupField: query.groupField,
+        error: message,
+      });
+      return null;
+    }
+    throw error;
   }
+
+  const result = new Map<string, number>();
+  for (const [key, value] of groupedCountEntries(raw)) {
+    if (key === '') continue; // aggregate-mode key; shouldn't appear once groupBy is set
+    const id = hexKeyToBase58(key);
+    if (!id) {
+      throw new Error(`rangeDistinctCount: group key is not a hex identifier: ${key.slice(0, 16)}…`);
+    }
+    result.set(id, Number(value as bigint | number));
+  }
+  return result;
 }
 
 /**

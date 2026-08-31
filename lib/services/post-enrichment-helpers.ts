@@ -9,6 +9,22 @@ import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
 
+/**
+ * Owner-keyed profile data from a `getProfilesByIdentityIds` result, with the
+ * SDK's optional `data` nesting already unwrapped.
+ */
+export function profileDataByOwnerId(profiles: readonly unknown[]): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const profile of profiles) {
+    const record = profile as Record<string, unknown> | undefined;
+    const ownerId = record?.$ownerId as string | undefined;
+    if (record && ownerId) {
+      map.set(ownerId, (record.data || record) as Record<string, unknown>);
+    }
+  }
+  return map;
+}
+
 export async function enrichPostFull(
   post: Post,
   getPostStats: (target: KindedTarget) => Promise<PostStats>,
@@ -87,20 +103,13 @@ export async function enrichPostsBatch(
       seedFollowStatusCache(currentUserId, followStatusMap);
     }
 
-    const profileMap = new Map<string, Record<string, unknown>>();
-    profiles.forEach((profile) => {
-      const profileRecord = profile as unknown as Record<string, unknown>;
-      if (profileRecord.$ownerId) {
-        profileMap.set(profileRecord.$ownerId as string, profileRecord);
-      }
-    });
+    const profileMap = profileDataByOwnerId(profiles);
 
     return posts.map((post) => {
       const stats = statsMap.get(post.id);
       const interactions = interactionsMap.get(post.id);
       const username = usernameMap.get(post.author.id);
-      const profile = profileMap.get(post.author.id);
-      const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+      const profileData = profileMap.get(post.author.id);
 
       const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
       const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
@@ -174,21 +183,14 @@ export async function resolvePostAuthorsBatch(posts: Post[]): Promise<void> {
       unifiedProfileService.getAvatarUrlsBatch(authorIds),
     ]);
 
-    const profileMap = new Map<string, Record<string, unknown>>();
-    profiles.forEach((profile) => {
-      const profileRecord = profile as unknown as Record<string, unknown>;
-      if (profileRecord.$ownerId) {
-        profileMap.set(profileRecord.$ownerId as string, profileRecord);
-      }
-    });
+    const profileMap = profileDataByOwnerId(profiles);
 
     for (const post of posts) {
       const authorId = post.author?.id;
       if (!authorId || authorId === 'unknown') continue;
 
       const username = usernameMap.get(authorId);
-      const profile = profileMap.get(authorId);
-      const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+      const profileData = profileMap.get(authorId);
       const avatarUrl = avatarUrls.get(authorId);
 
       post.author = {

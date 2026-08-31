@@ -5,6 +5,7 @@ import type { Post } from '../types';
 import type { PostStats } from './post-service';
 import { type DocumentWhereClause } from './sdk-helpers';
 import { rangeDistinctCount } from './pagination-utils';
+import { getEvoSdk } from './evo-sdk-service';
 import { retryAsync } from '../retry-utils';
 import { quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
@@ -155,37 +156,45 @@ export async function fetchFollowingFeed(
   }
 }
 
+let authorCountTreeUnsupported = false;
+
 /**
  * Per-author post counts from the `byOwner` count tree, in ONE grouped count
- * query — or null when the contract can't answer it (the RangeDistinct
- * grouped-count mode needs `rangeCountable: true` on that index, which older
- * contract cuts don't declare), letting callers fall back to the legacy scan.
+ * query — or null when it can't be answered, letting callers fall back to the
+ * legacy scan. Two distinct null cases:
+ *
+ * - The contract doesn't declare `rangeCountable: true` on that index (older
+ *   cuts): rangeDistinctCount reports this as null and it is remembered for
+ *   the session — the rejection is deterministic, so don't pay a doomed query
+ *   per call.
+ * - A transient failure (transport blip etc.): fall back this once, WITHOUT
+ *   latching — the next call should try the count tree again.
  *
  * Counts posts in EVERY language — consistent with `countAllPosts`, unlike the
  * fallback scans below, which walk the `languageTimeline` index and so only see
  * `language == 'en'`.
  */
-let authorCountTreeUnsupported = false;
-
 async function fetchAuthorPostCountsViaCountTree(contractId: string): Promise<Map<string, number> | null> {
-  // Sticky per session: a contract without the flag refuses every time, so
-  // don't pay a doomed query on each call once the first one is rejected.
   if (authorCountTreeUnsupported) return null;
 
-  const { getEvoSdk } = await import('./evo-sdk-service');
-  const sdk = await getEvoSdk();
-  const result = await rangeDistinctCount(sdk, {
-    dataContractId: contractId,
-    documentTypeName: 'post',
-    groupField: '$ownerId',
-  });
-  if (result === null) authorCountTreeUnsupported = true;
-  return result;
+  try {
+    const sdk = await getEvoSdk();
+    const result = await rangeDistinctCount(sdk, {
+      dataContractId: contractId,
+      documentTypeName: 'post',
+      groupField: '$ownerId',
+    });
+    if (result === null) authorCountTreeUnsupported = true;
+    return result;
+  } catch (error) {
+    logger.warn('fetchAuthorPostCountsViaCountTree: transient failure, falling back to scan for this call:', error);
+    return null;
+  }
 }
 
 export async function fetchUniqueAuthorCount(contractId: string): Promise<number> {
   const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
-  if (grouped) return grouped.size;
+  if (grouped && grouped.size > 0) return grouped.size;
 
   const result = await retryAsync(
     async () => {
@@ -268,7 +277,7 @@ export async function fetchTopPostsByLikes(
 
 export async function fetchAuthorPostCounts(contractId: string): Promise<Map<string, number>> {
   const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
-  if (grouped) return grouped;
+  if (grouped && grouped.size > 0) return grouped;
 
   const authorCounts = new Map<string, number>();
 

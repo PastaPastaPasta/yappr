@@ -8,6 +8,7 @@ import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 import { documentCount, groupedDocumentCount } from './pagination-utils';
+import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import {
   authorFieldIsRequired,
@@ -548,18 +549,11 @@ class ReplyService extends BaseDocumentService<Reply> {
         unifiedProfileService.getAvatarUrlsBatch(authorIds)
       ]);
 
-      const profileMap = new Map<string, Record<string, unknown>>();
-      profiles.forEach((profile) => {
-        const profileRec = profile as unknown as Record<string, unknown>;
-        if (profileRec.$ownerId) {
-          profileMap.set(profileRec.$ownerId as string, profileRec);
-        }
-      });
+      const profileMap = profileDataByOwnerId(profiles);
 
       for (const reply of replies) {
         const username = usernameMap.get(reply.author.id);
-        const profile = profileMap.get(reply.author.id);
-        const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+        const profileData = profileMap.get(reply.author.id);
         const avatarUrl = avatarUrls.get(reply.author.id);
 
         reply.author = {

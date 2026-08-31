@@ -194,17 +194,19 @@ export abstract class BaseDocumentService<T> {
 
       await mapLimit(chunk(uncachedIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
         try {
+          // Primary-key in-query: returns exactly the existing documents among
+          // `batch` (results arrive in $id byte order; orderBy is optional and
+          // omitted). Goes through the same transformDocument path as query().
           const rawDocuments = await queryDocuments(sdk, {
             dataContractId: this.contractId,
             documentTypeName: this.documentType,
             where: [['$id', 'in', batch]],
-            orderBy: [['$id', 'asc']],
             limit: batch.length,
           });
 
           for (const doc of rawDocuments) {
             const transformed = this.transformDocument(doc);
-            const id = (doc.$id || doc.id) as string | undefined;
+            const id = doc.$id as string | undefined;
             if (id) {
               this.cache.set(id, { data: transformed, timestamp: Date.now() });
             }

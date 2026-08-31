@@ -914,98 +914,21 @@ class PostService extends BaseDocumentService<Post> {
   async getPostsByIds(postIds: string[], options: PostQueryOptions = {}): Promise<Post[]> {
     if (postIds.length === 0) return [];
 
-    // The platform rejects duplicate in-clause members; duplicates in the
-    // input collapse to one result anyway.
-    const uniqueIds = Array.from(new Set(postIds));
-
-    const byId = new Map<string, Post>();
-    const toFetch: string[] = [];
-    for (const id of uniqueIds) {
-      const cached = this.cache.get(id);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        byId.set(id, cached.data);
-      } else {
-        toFetch.push(id);
-      }
-    }
-
-    // Platform caps `in` clauses at 100 members per query.
-    const CHUNK_SIZE = 100;
-    let loggedFallback = false;
-
-    for (let i = 0; i < toFetch.length; i += CHUNK_SIZE) {
-      const chunk = toFetch.slice(i, i + CHUNK_SIZE);
-      try {
-        // Primary-key in-query: returns exactly the existing documents among
-        // `chunk` (results arrive in $id byte order; orderBy is optional and
-        // omitted). Goes through the same transformDocument path as get().
-        const result = await this.query({
-          where: [['$id', 'in', chunk]],
-          limit: chunk.length,
-        });
-        for (const post of result.documents) {
-          byId.set(post.id, post);
-          this.cache.set(post.id, { data: post, timestamp: Date.now() });
-        }
-      } catch (error) {
-        // Transport blip: degrade to the old per-id path for this chunk
-        // rather than dropping the whole batch.
-        if (!loggedFallback) {
-          logger.warn('getPostsByIds: batched $id-in query failed, falling back to per-id fetches:', error);
-          loggedFallback = true;
-        }
-        const FALLBACK_BATCH_SIZE = 5;
-        for (let j = 0; j < chunk.length; j += FALLBACK_BATCH_SIZE) {
-          const batch = chunk.slice(j, j + FALLBACK_BATCH_SIZE);
-          const batchPosts = await Promise.all(
-            // Authors resolve in the shared deduped pass below.
-            batch.map(id => this.getPostById(id, { ...options, skipEnrichment: true }))
-          );
-          for (const post of batchPosts) {
-            if (post) byId.set(post.id, post);
-          }
-        }
-      }
-    }
-
-    const posts = uniqueIds
-      .map(id => byId.get(id))
+    // getMany handles cache reuse, in-clause chunking and the per-id fallback
+    // for a failed chunk; it dedupes ids internally.
+    const byId = new Map((await this.getMany(postIds)).map((post) => [post.id, post]));
+    const posts = Array.from(new Set(postIds))
+      .map((id) => byId.get(id))
       .filter((p): p is Post => p !== undefined);
 
-    // Authors resolve by default, deduped by author; callers that batch-enrich
-    // afterwards pass skipEnrichment to avoid paying for them twice.
+    // Authors resolve by default, deduped by author inside the batch helper;
+    // callers that batch-enrich afterwards pass skipEnrichment to avoid
+    // paying for them twice.
     if (!options.skipEnrichment) {
-      await this.resolveAuthorsForPosts(posts);
+      await resolvePostAuthorsBatchHelper(posts);
     }
 
     return posts;
-  }
-
-  /**
-   * Resolve authors for a batch of posts: three batch queries (DPNS +
-   * profiles + avatars) shared across every unique author, instead of a
-   * DPNS + profile lookup per author.
-   */
-  private async resolveAuthorsForPosts(posts: Post[]): Promise<void> {
-    const byAuthor = new Map<string, Post[]>();
-    for (const post of posts) {
-      const authorId = post.author?.id;
-      if (!authorId || authorId === 'unknown') continue;
-      const group = byAuthor.get(authorId);
-      if (group) {
-        group.push(post);
-      } else {
-        byAuthor.set(authorId, [post]);
-      }
-    }
-
-    const groups = Array.from(byAuthor.values());
-    await resolvePostAuthorsBatchHelper(groups.map((group) => group[0]));
-    for (const group of groups) {
-      for (let i = 1; i < group.length; i++) {
-        group[i].author = group[0].author;
-      }
-    }
   }
 }
 
