@@ -1,7 +1,13 @@
 /**
  * Corpus executor: replays a `corpus.<name>.jsonl` op stream (see
- * CORPUS_FORMAT.md) against the devnet v4 social contract as the seed
+ * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
+ *
+ * `--topology v4|v5` selects the hashtag semantics of the target contract
+ * (default: NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else v4): the corpus
+ * `''` convention still means "untagged", but v4 writes the `''` sentinel
+ * while v5 OMITS the hashtag property on post/quote/like docs entirely
+ * (writing `''` under v5 is propertyAgreement consensus error 40127).
  *
  * Execution model:
  *  - per-author ops run STRICTLY SEQUENTIALLY in corpus line order (one
@@ -32,10 +38,12 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file> \
- *     [--concurrency 10] [--max-ops N]
+ *     [--concurrency 10] [--max-ops N] [--topology v4|v5]
  *   node scripts/seed/run-seeder.mjs --self-test
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import {
@@ -46,6 +54,7 @@ import {
   REPORT_FILE,
   RETRYABLE,
   TOKEN_COST,
+  TOPOLOGIES,
   TRANSPORT_COLLAPSE,
   WAIT_MAYBE_LANDED,
   YAPP_TOKEN_POSITION,
@@ -53,9 +62,12 @@ import {
   buildDocument,
   corpusYappCost,
   createSdkHandle,
+  defaultTopology,
   describeErr,
   expandedContentLength,
+  hashtagProps,
   ledgerEntry,
+  likeValueTuple,
   loadLedger,
   loadPersonas,
   loadProgress,
@@ -82,21 +94,26 @@ const DEP_WAIT_TIMEOUT_MS = 15 * 60_000;
 // ---- CLI ------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, selfTest: false };
+  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, topology: null, selfTest: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--personas': args.personas = argv[++i]; break;
       case '--corpus': args.corpus = argv[++i]; break;
       case '--concurrency': args.concurrency = Number(argv[++i]); break;
       case '--max-ops': args.maxOps = Number(argv[++i]); break;
+      case '--topology': args.topology = argv[++i]; break;
       case '--self-test': args.selfTest = true; break;
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
+  }
+  if (args.topology !== null && !TOPOLOGIES.includes(args.topology)) {
+    throw new Error(`--topology must be one of ${TOPOLOGIES.join('|')}`);
   }
   if (!args.selfTest) {
     if (!args.personas || !args.corpus) throw new Error('--personas and --corpus are required');
     if (!Number.isInteger(args.concurrency) || args.concurrency < 1) throw new Error('--concurrency must be a positive integer');
     if (args.maxOps !== Infinity && (!Number.isInteger(args.maxOps) || args.maxOps < 1)) throw new Error('--max-ops must be a positive integer');
+    args.topology ??= defaultTopology();
   }
   return args;
 }
@@ -271,105 +288,114 @@ async function entryExists(handle, contractId, docType, keyField, keyValue, owne
 /** Duplicate-tolerant op kinds: a 40105 means the end state already holds. */
 const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark', 'repost']);
 
-function buildExecutor({ handle, contractId, actors, progressRefs }) {
+/**
+ * Maps one corpus op to {docType, data, tokenCost, indexOnly, refRecord,
+ * existenceKey}. Pure (exported for the self-test): the acceptance query for
+ * indexOnly types is described by `existenceKey` and bound to the network in
+ * buildExecutor. `topology` drives the hashtag shape — under v5 an untagged
+ * post/quote/like OMITS the property (the corpus '' convention and an absent
+ * checkpoint hashtag are equivalent); under v4 the '' sentinel is written.
+ */
+export function planOp(op, { actors, resolveRef, topology }) {
   const bytes = (base58) => bs58.decode(base58);
+  const actor = actors.get(op.author);
+  if (!actor) throw new Error(`author ${op.author} has no provisioned identity`);
+  const ownerBytes = bytes(actor.ownerId);
+  const finalContent = typeof op.content === 'string'
+    ? substituteLinks(op.content, (ref) => resolveRef(ref).id)
+    : undefined;
+  if (finalContent !== undefined && finalContent.length > 500) {
+    throw new Error(`line ${op.line}: content is ${finalContent.length} chars after link substitution (max 500)`);
+  }
+
+  switch (op.type) {
+    case 'post':
+    case 'quote': {
+      const quoted = op.type === 'quote' ? resolveRef(op.quotedRef) : null;
+      return {
+        docType: 'post',
+        tokenCost: TOKEN_COST.post,
+        data: {
+          content: finalContent ?? '',
+          language: 'en',
+          author: ownerBytes,
+          ...hashtagProps(op.hashtag, topology),
+          ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
+          ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
+          ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
+        },
+        refRecord: (id) => ({ kind: 'post', id, ownerId: actor.ownerId, hashtag: op.hashtag ?? '' }),
+      };
+    }
+    case 'reply': {
+      const root = resolveRef(op.rootRef);
+      const parent = resolveRef(op.parentRef);
+      return {
+        docType: 'reply',
+        tokenCost: TOKEN_COST.reply,
+        data: {
+          content: finalContent ?? '',
+          rootPostId: bytes(root.id),
+          parentOwnerId: bytes(parent.ownerId),
+          author: ownerBytes,
+          ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
+          ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
+        },
+        refRecord: (id) => ({ kind: 'reply', id, ownerId: actor.ownerId, hashtag: '' }),
+      };
+    }
+    case 'like': {
+      const target = resolveRef(op.targetRef);
+      return {
+        docType: 'like',
+        tokenCost: TOKEN_COST.like,
+        indexOnly: true,
+        // propertyAgreement: hashtag and postAuthor MUST mirror the post —
+        // including hashtag ABSENCE under v5 (both-absent = agreement; '' on
+        // a like of an untagged v5 post is consensus error 40127). The same
+        // tuple is what a delete-by-values would have to carry.
+        data: likeValueTuple(target, topology),
+        existenceKey: { keyField: 'postId', keyValue: target.id },
+      };
+    }
+    case 'likeReply': {
+      const target = resolveRef(op.targetRef);
+      return {
+        docType: 'likeReply',
+        tokenCost: TOKEN_COST.likeReply,
+        indexOnly: true,
+        data: { replyId: bytes(target.id), replyAuthor: bytes(target.ownerId) },
+        existenceKey: { keyField: 'replyId', keyValue: target.id },
+      };
+    }
+    case 'repost': {
+      const target = resolveRef(op.targetRef);
+      return {
+        docType: 'repost',
+        tokenCost: TOKEN_COST.repost,
+        data: { postId: bytes(target.id), postOwnerId: bytes(target.ownerId) },
+      };
+    }
+    case 'follow': {
+      const target = actors.get(op.target);
+      if (!target) throw new Error(`follow target ${op.target} has no provisioned identity`);
+      return { docType: 'follow', data: { followingId: bytes(target.ownerId) } };
+    }
+    case 'bookmark': {
+      const target = resolveRef(op.targetRef);
+      return { docType: 'bookmark', data: { postId: bytes(target.id) } };
+    }
+    default:
+      throw new Error(`unhandled op type ${op.type}`);
+  }
+}
+
+function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
     return record;
   };
-
-  /** Maps one corpus op to {docType, data, tokenCost, refRecord, accepted}. */
-  function planOp(op) {
-    const actor = actors.get(op.author);
-    if (!actor) throw new Error(`author ${op.author} has no provisioned identity`);
-    const ownerBytes = bytes(actor.ownerId);
-    const finalContent = typeof op.content === 'string'
-      ? substituteLinks(op.content, (ref) => resolveRef(ref).id)
-      : undefined;
-    if (finalContent !== undefined && finalContent.length > 500) {
-      throw new Error(`line ${op.line}: content is ${finalContent.length} chars after link substitution (max 500)`);
-    }
-
-    switch (op.type) {
-      case 'post':
-      case 'quote': {
-        const quoted = op.type === 'quote' ? resolveRef(op.quotedRef) : null;
-        return {
-          docType: 'post',
-          tokenCost: TOKEN_COST.post,
-          data: {
-            content: finalContent ?? '',
-            language: 'en',
-            author: ownerBytes,
-            hashtag: op.hashtag ?? '',
-            ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
-            ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
-            ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
-          },
-          refRecord: (id) => ({ kind: 'post', id, ownerId: actor.ownerId, hashtag: op.hashtag ?? '' }),
-        };
-      }
-      case 'reply': {
-        const root = resolveRef(op.rootRef);
-        const parent = resolveRef(op.parentRef);
-        return {
-          docType: 'reply',
-          tokenCost: TOKEN_COST.reply,
-          data: {
-            content: finalContent ?? '',
-            rootPostId: bytes(root.id),
-            parentOwnerId: bytes(parent.ownerId),
-            author: ownerBytes,
-            ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
-            ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
-          },
-          refRecord: (id) => ({ kind: 'reply', id, ownerId: actor.ownerId, hashtag: '' }),
-        };
-      }
-      case 'like': {
-        const target = resolveRef(op.targetRef);
-        return {
-          docType: 'like',
-          tokenCost: TOKEN_COST.like,
-          indexOnly: true,
-          // propertyAgreement: hashtag and postAuthor MUST equal the post's
-          // values or the create dies with consensus error 40127.
-          data: { postId: bytes(target.id), hashtag: target.hashtag ?? '', postAuthor: bytes(target.ownerId) },
-          accepted: () => entryExists(handle, contractId, 'like', 'postId', target.id, actor.ownerId),
-        };
-      }
-      case 'likeReply': {
-        const target = resolveRef(op.targetRef);
-        return {
-          docType: 'likeReply',
-          tokenCost: TOKEN_COST.likeReply,
-          indexOnly: true,
-          data: { replyId: bytes(target.id), replyAuthor: bytes(target.ownerId) },
-          accepted: () => entryExists(handle, contractId, 'likeReply', 'replyId', target.id, actor.ownerId),
-        };
-      }
-      case 'repost': {
-        const target = resolveRef(op.targetRef);
-        return {
-          docType: 'repost',
-          tokenCost: TOKEN_COST.repost,
-          data: { postId: bytes(target.id), postOwnerId: bytes(target.ownerId) },
-        };
-      }
-      case 'follow': {
-        const target = actors.get(op.target);
-        if (!target) throw new Error(`follow target ${op.target} has no provisioned identity`);
-        return { docType: 'follow', data: { followingId: bytes(target.ownerId) } };
-      }
-      case 'bookmark': {
-        const target = resolveRef(op.targetRef);
-        return { docType: 'bookmark', data: { postId: bytes(target.id) } };
-      }
-      default:
-        throw new Error(`unhandled op type ${op.type}`);
-    }
-  }
 
   /**
    * One op, end to end. The document is built ONCE (stable entropy → stable
@@ -379,7 +405,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
    */
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op);
+    const plan = planOp(op, { actors, resolveRef, topology });
     const { document, id } = buildDocument({
       contractId,
       docType: plan.docType,
@@ -387,8 +413,10 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
       data: plan.data,
       entropy: randomEntropy(),
     });
-    const accepted = plan.accepted ?? (async () =>
-      (await readback(handle, () => handle.sdk.documents.get(contractId, plan.docType, id))) != null);
+    const accepted = plan.existenceKey
+      ? () => entryExists(handle, contractId, plan.docType, plan.existenceKey.keyField, plan.existenceKey.keyValue, actor.ownerId)
+      : (async () =>
+        (await readback(handle, () => handle.sdk.documents.get(contractId, plan.docType, id))) != null);
 
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -509,6 +537,7 @@ function buildReport({ args, ops, stats, results, before, after, actors, wallClo
   return {
     network: network(),
     contractId: socialContractId(),
+    topology: args.topology,
     corpus: args.corpus,
     startedAt: new Date(Date.now() - wallClockMs).toISOString(),
     finishedAt: new Date().toISOString(),
@@ -699,6 +728,72 @@ async function selfTest() {
   });
   check('max-ops: executes exactly the cap', results4.done === 3 && journal4.length === 3, `done=${results4.done}`);
 
+  // ---- Topology: v5 hashtag ABSENCE vs the v4 '' sentinel --------------------
+  const owner = bs58.encode(new Uint8Array(32).fill(1));
+  const targetId = bs58.encode(new Uint8Array(32).fill(2));
+  const planCtx = (topology, refHashtag) => ({
+    actors: new Map([[0, { ownerId: owner }], [1, { ownerId: owner }]]),
+    resolveRef: () => ({ kind: 'post', id: targetId, ownerId: owner, hashtag: refHashtag }),
+    topology,
+  });
+  const postOp = { type: 'post', ref: 'p1', author: 0, content: 'x', hashtag: '', line: 1 };
+  const quoteOp = { type: 'quote', ref: 'p2', author: 0, content: 'q', quotedRef: 'p1', hashtag: '', line: 2 };
+  const likeOp = { type: 'like', author: 1, targetRef: 'p1', line: 3 };
+
+  check('v5: untagged post OMITS hashtag', !('hashtag' in planOp(postOp, planCtx('v5', '')).data));
+  check('v5: tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('v5', '')).data.hashtag === 'dash');
+  const v5Quote = planOp(quoteOp, planCtx('v5', '')).data;
+  check('v5: untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in v5Quote) && v5Quote.quotedPostId instanceof Uint8Array);
+  const v5Like = planOp(likeOp, planCtx('v5', ''));
+  check(
+    'v5: like of an untagged post OMITS like.hashtag',
+    !('hashtag' in v5Like.data) && v5Like.data.postAuthor instanceof Uint8Array && v5Like.existenceKey.keyValue === targetId
+  );
+  check('v5: like of a tagged post copies the hashtag', planOp(likeOp, planCtx('v5', 'dash')).data.hashtag === 'dash');
+  // The delete-by-values tuple is the same value tuple — it must reproduce the absence.
+  const deleteTupleAbsent = likeValueTuple({ id: targetId, ownerId: owner }, 'v5'); // ref with no hashtag key at all
+  const deleteTupleEmpty = likeValueTuple({ id: targetId, ownerId: owner, hashtag: '' }, 'v5');
+  check(
+    'v5: like delete tuple OMITS hashtag, for \'\' and absent refs alike',
+    !('hashtag' in deleteTupleAbsent) && JSON.stringify(Object.keys(deleteTupleAbsent)) === JSON.stringify(Object.keys(deleteTupleEmpty))
+  );
+  check("v4: untagged post writes the '' sentinel (unchanged)", planOp(postOp, planCtx('v4', '')).data.hashtag === '');
+  check("v4: like of an untagged post writes hashtag '' (unchanged)", planOp(likeOp, planCtx('v4', '')).data.hashtag === '');
+  check(
+    'v4: tagged shapes unchanged',
+    planOp({ ...postOp, hashtag: 'dash' }, planCtx('v4', '')).data.hashtag === 'dash' &&
+      planOp(likeOp, planCtx('v4', 'dash')).data.hashtag === 'dash'
+  );
+
+  // Parse-time tag length: v5 tightens the hashtag maxLength to 61
+  const longTag = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
+  const rejectsV5 = (line, why) => {
+    try {
+      parseCorpus(line, personas, { topology: 'v5' });
+      return false;
+    } catch (e) {
+      return e.message.includes(why);
+    }
+  };
+  check('parse: 61-char tag accepted under v5', parseCorpus(longTag(61), personas, { topology: 'v5' }).ops.length === 1);
+  check('parse: 62-char tag rejected under v5', rejectsV5(longTag(62), 'maxLength 61'));
+  check('parse: 62-char tag still accepted under v4', parseCorpus(longTag(62), personas).ops.length === 1);
+
+  // Journal round-trip: a ref recorded with hashtag '' and one recorded with
+  // NO hashtag key must fold and replay to identical documents.
+  const tmpJournal = join(mkdtempSync(join(tmpdir(), 'seed-selftest-')), 'progress.jsonl');
+  appendProgress({ line: 1, status: 'done', type: 'post', ref: 'pA', kind: 'post', id: targetId, ownerId: owner }, tmpJournal);
+  appendProgress({ line: 2, status: 'done', type: 'post', ref: 'pB', kind: 'post', id: targetId, ownerId: owner, hashtag: '' }, tmpJournal);
+  const folded = loadProgress(tmpJournal);
+  const likeFromRef = (ref, topology) => likeValueTuple(folded.refs.get(ref), topology);
+  check(
+    "journal: absent-hashtag ref replays identically to a '' ref (v5 omits, v4 writes '')",
+    folded.refs.size === 2 &&
+      JSON.stringify(Object.keys(likeFromRef('pA', 'v5'))) === JSON.stringify(Object.keys(likeFromRef('pB', 'v5'))) &&
+      !('hashtag' in likeFromRef('pA', 'v5')) &&
+      likeFromRef('pA', 'v4').hashtag === '' && likeFromRef('pB', 'v4').hashtag === ''
+  );
+
   console.log(failures === 0 ? '\nSELF-TEST PASSED (no network calls)' : `\n${failures} SELF-TEST CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 }
@@ -711,7 +806,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file>');
-  console.error('         [--concurrency 10] [--max-ops N]');
+  console.error('         [--concurrency 10] [--max-ops N] [--topology v4|v5]');
   console.error('       node scripts/seed/run-seeder.mjs --self-test');
   process.exit(1);
 }
@@ -728,8 +823,9 @@ if (network() !== 'devnet') {
 try {
   await ensureInitialized();
   const personas = loadPersonas(args.personas);
-  const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas);
+  const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas, { topology: args.topology });
   const { total: yappNeeded, perAuthor } = corpusYappCost(ops);
+  console.log(`topology: ${args.topology} (untagged posts/likes ${args.topology === 'v5' ? 'OMIT the hashtag property' : "write the '' sentinel"})`);
   console.log(`corpus: ${ops.length} ops (${Object.entries(stats).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ')})`);
   console.log(`YAPP required if run from scratch: ${yappNeeded} total, max ${Math.max(0, ...perAuthor.values())} for one author`);
 
@@ -749,7 +845,7 @@ try {
   const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const before = await snapshotBalances(handle, actors, tokenId);
 
-  const executor = buildExecutor({ handle, contractId, actors, progressRefs: progress.refs });
+  const executor = buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, topology: args.topology });
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.
   const journal = (record) => {

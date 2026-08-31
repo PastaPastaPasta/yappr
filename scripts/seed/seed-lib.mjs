@@ -56,7 +56,7 @@ function envValue(name) {
   return readEnvFile(join(REPO_ROOT, '.env.devnet'))[name] || undefined;
 }
 
-/** The v4 social contract under seed (post/reply/like/… doctypes). */
+/** The social contract under seed (post/reply/like/… doctypes). */
 export function socialContractId() {
   const id = envValue('NEXT_PUBLIC_YAPPR_CONTRACT_ID');
   if (!id) throw new Error('NEXT_PUBLIC_YAPPR_CONTRACT_ID missing from the environment and .env.devnet');
@@ -68,6 +68,53 @@ export function profileContractId() {
   const id = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID');
   if (!id) throw new Error('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID missing from the environment and .env.devnet');
   return id;
+}
+
+// ---- Contract topology (hashtag semantics) -------------------------------------
+//
+// The corpus format is topology-agnostic: `"hashtag": ""` always means
+// "untagged". What that maps to on chain differs:
+//   v4 — `hashtag` is REQUIRED on post/like; untagged writes the `''` sentinel.
+//   v5 — `hashtag` is OPTIONAL (pattern ^[a-z0-9_]{1,61}$, maxLength 61,
+//        contracts/yappr-social-contract-v5.json); an untagged post OMITS the
+//        property entirely, and a like of an untagged post OMITS like.hashtag
+//        too: propertyAgreement treats both-absent as agreement, while sending
+//        `''` is consensus mismatch 40127. The like's delete-by-values tuple
+//        must reproduce the same absence (it is the same value tuple). The v5
+//        like `byHashtagPost` index is skipIfAbsent — absence simply writes no
+//        entry, which needs no seeder action beyond the correct doc shape.
+
+export const TOPOLOGIES = ['v4', 'v5'];
+export const HASHTAG_MAX = { v4: 63, v5: 61 };
+
+/** Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file), else v4. */
+export function defaultTopology() {
+  return envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v5' ? 'v5' : 'v4';
+}
+
+/**
+ * The `hashtag` property (or its absence) for a post/quote/like document.
+ * `''` and absent inputs are equivalent ("untagged") so a checkpoint ref
+ * recorded either way replays to an identical document.
+ */
+export function hashtagProps(hashtag, topology) {
+  const tag = hashtag ?? '';
+  if (topology === 'v5') return tag === '' ? {} : { hashtag: tag };
+  return { hashtag: tag };
+}
+
+/**
+ * The like doc's data value tuple for a target post ref record. Used for the
+ * create AND for delete-by-values (indexOnly deletes carry the whole value
+ * tuple) — both must mirror the post's propertyAgreement values exactly,
+ * including hashtag ABSENCE under v5.
+ */
+export function likeValueTuple(target, topology) {
+  return {
+    postId: bs58.decode(target.id),
+    ...hashtagProps(target.hashtag, topology),
+    postAuthor: bs58.decode(target.ownerId),
+  };
 }
 
 // ---- Key material -------------------------------------------------------------
@@ -260,7 +307,6 @@ export function loadPersonas(file) {
 // ---- Corpus (JSONL) -----------------------------------------------------------
 
 export const OP_TYPES = ['post', 'quote', 'reply', 'like', 'likeReply', 'repost', 'follow', 'bookmark'];
-const HASHTAG_PATTERN = /^$|^[a-z0-9_]{1,63}$/;
 const MEDIA_URL_PATTERN = /^(https?|ipfs):\/\/.+$/;
 const LINK_PLACEHOLDER = /\{\{link:([A-Za-z0-9_-]+)\}\}/g;
 export const CONTENT_MAX = 500;
@@ -293,9 +339,16 @@ export function substituteLinks(content, resolve) {
  *    liking/reposting/bookmarking/following the same target twice) are
  *    rejected up front as generator bugs.
  *
+ * The `topology` option tightens the hashtag length to the target contract's
+ * maxLength (63 under v4, 61 under v5) — an over-long tag is a generator bug
+ * and is rejected, never rewritten.
+ *
  * Returns `{ ops, stats }`; each op carries its 1-based `line`.
  */
-export function parseCorpus(text, personas) {
+export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
+  if (!TOPOLOGIES.includes(topology)) throw new Error(`unknown topology "${topology}" (expected ${TOPOLOGIES.join('/')})`);
+  const hashtagMax = HASHTAG_MAX[topology];
+  const hashtagPattern = new RegExp(`^$|^[a-z0-9_]{1,${hashtagMax}}$`);
   const personaIdxSet = new Set(personas.map((p) => p.idx));
   const refs = new Map(); // ref -> 'post' | 'reply'
   const dedupe = new Set();
@@ -368,8 +421,8 @@ export function parseCorpus(text, personas) {
         defineRef(op.ref, 'post');
         checkContent(op.content);
         checkMediaUrl(op.mediaUrl);
-        if (typeof op.hashtag !== 'string' || !HASHTAG_PATTERN.test(op.hashtag)) {
-          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,63}$ ('' = untagged)`);
+        if (typeof op.hashtag !== 'string' || !hashtagPattern.test(op.hashtag)) {
+          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$ ('' = untagged; ${topology} maxLength ${hashtagMax})`);
         }
         if (op.sensitive !== undefined && typeof op.sensitive !== 'boolean') fail(line, 'sensitive must be a boolean');
         break;
@@ -378,8 +431,8 @@ export function parseCorpus(text, personas) {
         defineRef(op.ref, 'post');
         checkContent(op.content);
         checkMediaUrl(op.mediaUrl);
-        if (typeof op.hashtag !== 'string' || !HASHTAG_PATTERN.test(op.hashtag)) {
-          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,63}$`);
+        if (typeof op.hashtag !== 'string' || !hashtagPattern.test(op.hashtag)) {
+          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$`);
         }
         break;
       case 'reply':
@@ -445,6 +498,12 @@ export function corpusYappCost(ops) {
 // Later lines win (a retried failure appends a fresh record).
 //   {"line":12,"status":"done","type":"post","ref":"p001","id":"…","ownerId":"…","hashtag":"","at":"…"}
 //   {"line":31,"status":"failed","type":"like","error":"…","at":"…"}
+//
+// A ref's `hashtag` may be recorded as '' OR be absent from the record — both
+// mean "untagged" and MUST replay identically: the fold normalizes to '' here,
+// and the doc builders (`hashtagProps`) map '' to the topology's shape (''
+// sentinel under v4, property absence under v5). Never treat the journal's
+// hashtag as always-a-meaningful-string.
 
 export function loadProgress(file = PROGRESS_FILE) {
   const completed = new Map(); // line -> record
