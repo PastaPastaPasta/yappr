@@ -58,9 +58,14 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
         <span>·</span>
         <span>{createdAtLabel}</span>
       </div>
-      <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
-        <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed mediaGate={mediaGate} />
-      </SensitiveContentGate>
+      {post.deleted ? (
+        // A tombstone has no content left, so say so instead of rendering a blank box.
+        <p className="mt-1 text-sm italic text-gray-500 dark:text-gray-400">This post was deleted.</p>
+      ) : (
+        <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
+          <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed mediaGate={mediaGate} />
+        </SensitiveContentGate>
+      )}
     </Link>
   )
 }

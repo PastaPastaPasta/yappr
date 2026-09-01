@@ -41,6 +41,7 @@ import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
+import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
 import { replyToPost } from '@/lib/services/post-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
@@ -216,6 +217,10 @@ function UserProfileContent() {
   const [userReplies, setUserReplies] = useState<Post[]>([])
   const [repliesLoading, setRepliesLoading] = useState(false)
   const [repliesLoaded, setRepliesLoaded] = useState(false)
+  // What each of those replies answers, keyed by reply id — loaded after the
+  // replies themselves so the list isn't held back by the extra lookups.
+  const [replyParents, setReplyParents] = useState<Map<string, Post>>(new Map())
+  const [replyParentsLoading, setReplyParentsLoading] = useState(false)
 
   // Top posts state (v4 only — server-ranked by like count via byAuthorPost)
   const [topPosts, setTopPosts] = useState<Post[]>([])
@@ -783,6 +788,14 @@ function UserProfileContent() {
 
       // Enrich with progressive data (author info, etc.)
       enrichProgressively(replyPosts)
+
+      // Resolve what each reply answers in the background: the cards render
+      // immediately and fill their context in, the way enrichment does.
+      setReplyParentsLoading(true)
+      fetchReplyParents(replyPosts)
+        .then(parents => setReplyParents(parents))
+        .catch(err => logger.error('Failed to load reply parents:', err))
+        .finally(() => setReplyParentsLoading(false))
     } catch (error) {
       logger.error('Failed to load user replies:', error)
       setUserReplies([])
@@ -860,6 +873,7 @@ function UserProfileContent() {
     setMentionsLoaded(false)
     setUserReplies([])
     setRepliesLoaded(false)
+    setReplyParents(new Map())
     setTopPosts([])
     setTopLoaded(false)
     setActiveTab('posts')
@@ -1687,6 +1701,8 @@ function UserProfileContent() {
                           key={post.id}
                           post={post}
                           enrichment={getPostEnrichment(post)}
+                          parentPost={activeTab === 'replies' ? replyParents.get(post.id) : undefined}
+                          parentPostLoading={activeTab === 'replies' && replyParentsLoading}
                         />
                       ))}
 
