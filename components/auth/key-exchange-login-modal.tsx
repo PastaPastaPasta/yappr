@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, CheckCircle, AlertCircle, RefreshCw, KeyRound } from 'lucide-react'
 import { useYapprKeyExchangeLogin } from 'platform-auth'
@@ -72,29 +72,50 @@ export function KeyExchangeLoginModal() {
   const [isAddingPasskey, setIsAddingPasskey] = useState(false)
   const [passkeyError, setPasskeyError] = useState<string | null>(null)
 
+  // loginWithKeyExchange can't be aborted, so each attempt carries a generation.
+  // Abandoning an attempt bumps it, and stale continuations bail out instead of
+  // acting on a session the user has already moved on from.
+  const attemptGenerationRef = useRef(0)
+  const abandonAttempt = useCallback(() => {
+    attemptGenerationRef.current += 1
+  }, [])
+
   // cancel() zeros key material in result state via clearResult
   const finishLogin = useCallback(() => {
+    abandonAttempt()
     cancel()
     closeLoginModal()
     close()
-  }, [cancel, closeLoginModal, close])
+  }, [abandonAttempt, cancel, closeLoginModal, close])
 
   // Attempt login and handle success/failure
   const attemptLogin = useCallback((identityId: string, loginKey: Uint8Array, keyIndex: number) => {
+    attemptGenerationRef.current += 1
+    const generation = attemptGenerationRef.current
+    const isCurrent = () => attemptGenerationRef.current === generation
+
     setLoginError(null)
     setIsCompleting(true)
     loginWithKeyExchange(identityId, loginKey, keyIndex)
       .then(async () => {
+        if (!isCurrent()) return
+
+        const offerPasskey = await shouldOfferPasskeyEnrollment(identityId)
+        if (!isCurrent()) return
+
         // Offer enrollment as a step inside this modal instead of closing straight away.
         // isCompleting stays true so the completion effect does not re-run the login.
-        if (await shouldOfferPasskeyEnrollment(identityId)) {
+        if (offerPasskey) {
           setPasskeyOffer(true)
           return
         }
 
-        setTimeout(finishLogin, 1500)
+        setTimeout(() => {
+          if (isCurrent()) finishLogin()
+        }, 1500)
       })
       .catch((err) => {
+        if (!isCurrent()) return
         logger.error('Key exchange login failed:', err)
         setLoginError(err instanceof Error ? err.message : 'Login failed')
         setIsCompleting(false)
@@ -126,6 +147,9 @@ export function KeyExchangeLoginModal() {
     if (isOpen && state === 'idle') {
       setLoginError(null)
       setIsCompleting(false)
+      setPasskeyOffer(false)
+      setIsAddingPasskey(false)
+      setPasskeyError(null)
       start()
     }
   }, [isOpen, state, start])
@@ -148,11 +172,12 @@ export function KeyExchangeLoginModal() {
       return
     }
 
+    abandonAttempt()
     setLoginError(null)
     setIsCompleting(false)
     cancel()
     close()
-  }, [cancel, close, finishPasskeyStep, isAddingPasskey, passkeyOffer])
+  }, [abandonAttempt, cancel, close, finishPasskeyStep, isAddingPasskey, passkeyOffer])
 
   // Render content based on state
   const renderContent = () => {
