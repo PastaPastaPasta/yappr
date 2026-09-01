@@ -1,19 +1,22 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
+import { buildYapprStateTransitionUri } from 'platform-auth'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
+import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purchase-builder'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
-import { YAPP_TOKEN_COSTS } from '@/lib/constants'
+import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
 
 // Preset purchase amounts in whole YAPP (must be >= the on-chain minimum of 100).
 const PRESETS = [100, 500, 1000, 5000]
@@ -36,7 +39,21 @@ function formatCreditsAsDash(credits: bigint): string {
   return `${whole.toString()}.${frac.toString().padStart(4, '0')} DASH`
 }
 
-type ModalState = 'input' | 'confirming' | 'needKey' | 'processing' | 'success' | 'error'
+type ModalState = 'input' | 'confirming' | 'needKey' | 'walletSign' | 'processing' | 'success' | 'error'
+
+const MODAL_TITLES: Record<ModalState, string> = {
+  input: 'Buy YAPP',
+  confirming: 'Buy YAPP',
+  needKey: 'Authorize Purchase',
+  walletSign: 'Authorize Purchase',
+  processing: 'Buy YAPP',
+  success: 'YAPP Purchased!',
+  error: 'Purchase Failed',
+}
+
+// How long the dash-st: QR stays valid before the flow gives up waiting for
+// the wallet (matches the key-registration flow's 5-minute window).
+const WALLET_SIGN_TIMEOUT_S = 300
 
 export function BuyYappModal() {
   const { isOpen, reason, close } = useBuyYappModal()
@@ -53,6 +70,16 @@ export function BuyYappModal() {
   // CRITICAL key the user pastes when their login key is HIGH — kept in
   // component state only for the purchase, never persisted.
   const [criticalKeyWif, setCriticalKeyWif] = useState('')
+  // Remote wallet signing (dash-st: QR): the unsigned purchase URI, the QR
+  // countdown, and the YAPP balance right before the QR was shown — success is
+  // detected by the balance growing by the purchased amount.
+  const [walletUri, setWalletUri] = useState<string | null>(null)
+  const [walletRemaining, setWalletRemaining] = useState<number | null>(null)
+  const walletBaselineRef = useRef<bigint | null>(null)
+  // Generation counter guarding handleWalletSign's async steps: bumped on every
+  // start/back/close so a superseded invocation can't overwrite a fresh QR or
+  // baseline after its awaits resolve.
+  const walletSessionRef = useRef(0)
 
   useEffect(() => {
     if (isOpen && user) {
@@ -72,6 +99,10 @@ export function BuyYappModal() {
       setError(null)
       setShowCosts(false)
       setCriticalKeyWif('')
+      setWalletUri(null)
+      setWalletRemaining(null)
+      walletBaselineRef.current = null
+      walletSessionRef.current++
     }
   }, [isOpen])
 
@@ -105,6 +136,15 @@ export function BuyYappModal() {
     setError(null)
   }
 
+  // Shared tail of both purchase paths (local signing and remote wallet
+  // signing): refresh the credit balance, tell other YAPP balance views (e.g.
+  // the sidebar dropdown) to refresh, and show the success screen.
+  const finishPurchase = useCallback(() => {
+    refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
+    setState('success')
+  }, [refreshBalance])
+
   const handleBuy = async () => {
     if (!user || costCredits === null) return
     setState('processing')
@@ -115,10 +155,7 @@ export function BuyYappModal() {
     if (result.success) {
       setCriticalKeyWif('')
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
-      refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
-      // Notify other YAPP balance views (e.g. the sidebar dropdown) to refresh.
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
-      setState('success')
+      finishPurchase()
     } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
       // Login key is HIGH but purchases must be signed with CRITICAL — ask for
       // it. If a key was already entered, it didn't match a CRITICAL key.
@@ -132,6 +169,90 @@ export function BuyYappModal() {
       setError(result.error || 'Purchase failed')
     }
   }
+
+  // Leave the dash-st: QR screen and fall back to pasting the CRITICAL key,
+  // optionally with a message. Bumping the generation counter discards any
+  // in-flight build so a late resolve can't put a stale QR back on screen.
+  const exitWalletSign = useCallback((message: string | null) => {
+    walletSessionRef.current++
+    setWalletUri(null)
+    setWalletRemaining(null)
+    setError(message)
+    setState('needKey')
+  }, [])
+
+  /**
+   * Alternative to pasting the CRITICAL key: build the unsigned purchase
+   * transition and show it as a dash-st: QR for a remote wallet (e.g. Dash Evo
+   * Tool) to sign and broadcast — the same channel key registration uses.
+   */
+  const handleWalletSign = async () => {
+    if (!user || costCredits === null) return
+    const session = ++walletSessionRef.current
+    setState('walletSign')
+    setError(null)
+    setWalletUri(null)
+    setWalletRemaining(null)
+    try {
+      // Baseline balance fetched fresh so the success check ("balance grew by
+      // the purchased amount") can't trip on a stale value from modal open.
+      const baseline = await tokenService.getBalance(user.identityId)
+      if (walletSessionRef.current !== session) return
+      walletBaselineRef.current = baseline
+      const bytes = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
+      if (walletSessionRef.current !== session) return
+      setWalletUri(buildYapprStateTransitionUri(bytes, getConfiguredNetwork()))
+    } catch (err) {
+      if (walletSessionRef.current !== session) return
+      logger.error('Failed to build wallet signing request:', err)
+      exitWalletSign('Could not prepare the wallet signing request — please try again')
+    }
+  }
+
+  // While the dash-st: QR is up, poll the YAPP balance until the wallet's
+  // broadcast lands (balance grew by at least the purchased amount), and run
+  // the QR expiry countdown. The transition embeds the current contract nonce,
+  // so it expires naturally if the user posts or likes in the meantime.
+  useEffect(() => {
+    if (state !== 'walletSign' || !walletUri || !user) return
+    const identityId = user.identityId
+    const startedAt = Date.now()
+    setWalletRemaining(WALLET_SIGN_TIMEOUT_S)
+
+    const countdown = setInterval(() => {
+      const remaining = Math.max(0, WALLET_SIGN_TIMEOUT_S - Math.floor((Date.now() - startedAt) / 1000))
+      setWalletRemaining(remaining)
+      if (remaining === 0) {
+        exitWalletSign('Didn\'t detect the purchase in time — if your wallet did broadcast it, your balance will update shortly')
+      }
+    }, 1000)
+
+    let finished = false
+    const poll = setInterval(() => {
+      tokenService.getBalance(identityId).then(balance => {
+        const baseline = walletBaselineRef.current
+        if (finished || baseline === null) return
+        if (balance < baseline) {
+          // The user spent YAPP mid-flow (e.g. posted from another tab).
+          // Re-baseline to the running minimum so the wallet's purchase still
+          // registers as "+amount over the low-water mark" when it lands.
+          walletBaselineRef.current = balance
+          return
+        }
+        if (balance < baseline + amountBig) return
+        finished = true
+        setYappBalance(balance)
+        finishPurchase()
+      }).catch(() => {
+        // Transient balance-fetch failures — keep polling.
+      })
+    }, 5000)
+
+    return () => {
+      clearInterval(countdown)
+      clearInterval(poll)
+    }
+  }, [state, walletUri, user, amountBig, finishPurchase, exitWalletSign])
 
   const handleClose = () => {
     if (state === 'processing') return
@@ -160,7 +281,7 @@ export function BuyYappModal() {
                   >
                     <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
                       <SparklesIcon className="h-6 w-6 text-yappr-500" />
-                      {state === 'success' ? 'YAPP Purchased!' : state === 'error' ? 'Purchase Failed' : state === 'needKey' ? 'Authorize Purchase' : 'Buy YAPP'}
+                      {MODAL_TITLES[state]}
                     </Dialog.Title>
                     <Dialog.Description className="sr-only">
                       Buy YAPP tokens to post, comment, and like on Yappr.
@@ -327,6 +448,51 @@ export function BuyYappModal() {
                             Authorize &amp; Buy
                           </Button>
                         </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
+                          <span className="text-xs text-gray-500">or</span>
+                          <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
+                        </div>
+                        <Button
+                          onClick={() => { handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err)) }}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          Sign with Dash wallet
+                        </Button>
+                        <p className="text-xs text-gray-500 text-center">
+                          Approve the purchase in a wallet that holds your CRITICAL key — no key ever touches this browser.
+                        </p>
+                      </div>
+                    )}
+
+                    {state === 'walletSign' && (
+                      <div className="space-y-4">
+                        <div className="flex justify-between text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2">
+                          <span className="text-gray-600 dark:text-gray-400">Buying {amountBig.toString()} YAPP</span>
+                          <span className="font-medium">{costDashLabel}</span>
+                        </div>
+                        {walletUri ? (
+                          <>
+                            <KeyExchangeQR uri={walletUri} size={200} remainingTime={walletRemaining} />
+                            <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
+                              <Spinner size="sm" className="border-yappr-500" />
+                              Waiting for the wallet to sign &amp; broadcast…
+                            </div>
+                          </>
+                        ) : (
+                          <div className="py-8 text-center space-y-4">
+                            <Spinner size="lg" className="mx-auto border-yappr-500" />
+                            <p className="text-gray-600 dark:text-gray-400">Preparing signing request…</p>
+                          </div>
+                        )}
+                        <Button
+                          onClick={() => exitWalletSign(null)}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          Back
+                        </Button>
                       </div>
                     )}
 
