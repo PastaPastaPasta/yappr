@@ -9,6 +9,7 @@ import { PostContent } from './post-content'
 import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
+import { targetKindOf } from '@/lib/contract-topology'
 import { useSettingsStore } from '@/lib/store'
 import { useMediaGate } from '@/hooks/use-media-gate'
 
@@ -58,9 +59,16 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
         <span>·</span>
         <span>{createdAtLabel}</span>
       </div>
-      <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
-        <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed mediaGate={mediaGate} />
-      </SensitiveContentGate>
+      {post.deleted ? (
+        // A tombstone has no content left, so say so instead of rendering a blank box.
+        <p className="mt-1 text-sm italic text-gray-500 dark:text-gray-400">
+          {targetKindOf(post) === 'reply' ? 'This reply was deleted.' : 'This post was deleted.'}
+        </p>
+      ) : (
+        <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
+          <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed mediaGate={mediaGate} />
+        </SensitiveContentGate>
+      )}
     </Link>
   )
 }

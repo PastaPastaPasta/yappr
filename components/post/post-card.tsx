@@ -96,6 +96,17 @@ function hasRealProfile(displayName: string | undefined, identityId: string): bo
 }
 
 /**
+ * How to address the author of a reply's parent in the "Replying to" label:
+ * their DPNS handle when they have one, their profile name when they don't, and
+ * a truncated identity when they have neither.
+ */
+function parentHandleOf(parent: Post): string {
+  const { username, displayName, id } = parent.author
+  if (username && !username.startsWith('user_')) return `@${username}`
+  return hasRealProfile(displayName, id) ? displayName : `${id.slice(0, 8)}...`
+}
+
+/**
  * Reusable tooltip wrapper for action buttons.
  * Reduces boilerplate for the repetitive Tooltip.Root/Trigger/Portal/Content pattern.
  */
@@ -144,11 +155,19 @@ interface PostCardProps {
   enrichment?: ProgressiveEnrichment
   /** For replies to private posts, the root post owner ID to check access against */
   rootPostOwnerId?: string
+  /**
+   * When this card is a reply shown outside its thread (the profile Replies
+   * tab), the document it answers — embedded under the reply so the card reads
+   * on its own.
+   */
+  parentPost?: Post
+  /** True while `parentPost` is still being fetched, so the embed slot is held with a skeleton. */
+  parentPostLoading?: boolean
   /** Callback when post is successfully deleted - parent component should remove post from list */
   onDelete?: (postId: string) => void
 }
 
-export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, rootPostOwnerId, onDelete }: PostCardProps) {
+export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, enrichment: progressiveEnrichment, rootPostOwnerId, parentPost, parentPostLoading = false, onDelete }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
@@ -907,6 +926,23 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     <GatedPostMedia media={media} gate={mediaGate} />
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Reply context: what this reply answers, for cards rendered outside
+                their thread. Last, so the reply's own content and media stay
+                together, and labelled so the embed doesn't read as a quote. */}
+            {!isTombstoned && (parentPost || parentPostLoading) && (
+              <div className="mt-3">
+                <span className="flex items-center gap-1.5 text-sm text-gray-500">
+                  <ChatBubbleOvalLeftIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">
+                    Replying to{parentPost ? ` ${parentHandleOf(parentPost)}` : ''}
+                  </span>
+                </span>
+                {parentPost
+                  ? <EmbeddedPostCard post={parentPost} className="mt-1" />
+                  : <EmbeddedPostSkeleton className="mt-1" />}
               </div>
             )}
           </SensitiveContentGate>
