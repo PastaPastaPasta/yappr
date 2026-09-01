@@ -115,7 +115,7 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
   if (pending.length === 0) return;
 
   try {
-    const stillNeeded: Post[] = [];
+    const stillNeeded: Array<{ post: Post; targetId: string }> = [];
     const joins: Promise<void>[] = [];
 
     for (const post of pending) {
@@ -138,20 +138,16 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
         continue;
       }
 
-      stillNeeded.push(post);
+      stillNeeded.push({ post, targetId: target.id });
     }
 
     if (stillNeeded.length > 0) {
-      const batch = fetchQuoteTargets(stillNeeded)
+      const batch = fetchQuoteTargets(stillNeeded.map((entry) => entry.post))
         .then((resolved) => new Map(resolved.map((target) => [target.id, target])));
 
       // Register every target of this batch so concurrent passes (another
       // surface, or a card's fallback fetch) join it instead of refetching.
-      const ids = Array.from(new Set(
-        stillNeeded
-          .map((post) => quoteTargetOf(post)?.id)
-          .filter((id): id is string => id !== undefined)
-      ));
+      const ids = Array.from(new Set(stillNeeded.map((entry) => entry.targetId)));
       for (const id of ids) {
         // Failures resolve to null (never reject): a joiner treats that as a
         // miss, and an unjoined entry can't become an unhandled rejection.
@@ -163,9 +159,8 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
 
       try {
         const byId = await batch;
-        for (const post of stillNeeded) {
-          const target = quoteTargetOf(post);
-          const found = target ? byId.get(target.id) : undefined;
+        for (const { post, targetId } of stillNeeded) {
+          const found = byId.get(targetId);
           if (found) {
             post.quotedPost = found;
             resolvedQuoteCache.set(found.id, found);
@@ -232,6 +227,8 @@ export async function resolveQuotedPost(post: Post): Promise<Post | null> {
     }
   })();
 
+  // Unlike the batch path's entries, this one CAN reject (a second failed
+  // attempt propagates) — anyone awaiting a pending entry must attach a catch.
   pendingQuoteResolutions.set(target.id, request);
   return request;
 }

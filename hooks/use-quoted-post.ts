@@ -77,9 +77,11 @@ export function useQuotedPost(post: Post): UseQuotedPostResult {
   }, [attached, targetId])
 
   const quotedPost = attached ?? fetched
+  // A target we don't have yet is either still resolving or known-missing.
+  const unresolved = !!targetId && !quotedPost
   return {
     quotedPost,
-    loading: !!targetId && !quotedPost && !settled,
-    unavailable: !!targetId && !quotedPost && settled,
+    loading: unresolved && !settled,
+    unavailable: unresolved && settled,
   }
 }
