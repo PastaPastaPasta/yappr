@@ -128,13 +128,15 @@ export interface AvatarConfig {
 
 class UnifiedProfileService extends BaseDocumentService<User> {
   private readonly PROFILE_CACHE = 'unified_profiles';
+  private readonly RAW_PROFILE_CACHE = 'unified_profiles_raw';
+  private readonly MISSING_PROFILE_CACHE = 'unified_profiles_missing';
   private readonly USERNAME_CACHE = 'usernames';
   private readonly AVATAR_CACHE = 'avatars';
 
-  // DataLoader-style batching for avatar URLs
-  private pendingAvatarRequests = new Map<string, {
-    resolvers: Array<(url: string) => void>;
-  }>();
+  // DataLoader-style batching for raw profile documents: every profile
+  // lookup (getProfile, getProfilesByIdentityIds, avatar URLs) funnels
+  // through loadProfileDoc so concurrent requests share one 'in' query.
+  private pendingProfileRequests = new Map<string, Array<(doc: UnifiedProfileDocument | null) => void>>();
   private batchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -209,7 +211,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
   }
 
-  // ==================== Batching for Avatar URLs ====================
+  // ==================== Batching for Profile Documents ====================
 
   /**
    * Schedule batch processing with debounce
@@ -220,39 +222,134 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.batchTimeout = setTimeout(() => {
       this.batchTimeout = null;
-      this.processBatch().catch(err => logger.error('Failed to process avatar batch:', err));
+      this.processProfileBatch().catch(err => logger.error('Failed to process profile batch:', err));
     }, 5);
   }
 
   /**
-   * Process all pending avatar requests in a single batch query
+   * Load a raw profile document with DataLoader-style batching.
+   * Concurrent requests within the batch window share a single 'in' query.
+   * Found profiles are cached; misses are negative-cached briefly so users
+   * without a profile document don't trigger a fresh query on every render.
    */
-  private async processBatch() {
-    const batch = new Map(this.pendingAvatarRequests);
-    this.pendingAvatarRequests.clear();
+  private loadProfileDoc(ownerId: string): Promise<UnifiedProfileDocument | null> {
+    const cached = cacheManager.get<UnifiedProfileDocument>(this.RAW_PROFILE_CACHE, ownerId);
+    if (cached) {
+      return Promise.resolve(cached);
+    }
+    if (cacheManager.get<boolean>(this.MISSING_PROFILE_CACHE, ownerId)) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise((resolve) => {
+      const existing = this.pendingProfileRequests.get(ownerId);
+      if (existing) {
+        existing.push(resolve);
+      } else {
+        this.pendingProfileRequests.set(ownerId, [resolve]);
+      }
+      this.scheduleBatch();
+    });
+  }
+
+  /**
+   * Process all pending profile requests in batched 'in' queries
+   *
+   * TODO: The 'in' clause doesn't support reliable pagination.
+   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
+   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
+   * implement pagination here to handle cases where results exceed the limit.
+   */
+  private async processProfileBatch() {
+    const batch = new Map(this.pendingProfileRequests);
+    this.pendingProfileRequests.clear();
 
     if (batch.size === 0) return;
 
-    const userIds = Array.from(batch.keys());
+    const resolveId = (ownerId: string, doc: UnifiedProfileDocument | null) => {
+      batch.get(ownerId)?.forEach(resolve => resolve(doc));
+      batch.delete(ownerId);
+    };
 
     try {
-      const results = await this.fetchAvatarUrlsBatch(userIds);
+      // Filter out placeholder values like 'unknown' — only valid base58
+      // identity IDs (32 bytes when decoded) can go into the query.
+      const bs58 = (await import('bs58')).default;
+      const validIds: string[] = [];
+      for (const ownerId of Array.from(batch.keys())) {
+        let valid = false;
+        if (ownerId && ownerId !== 'unknown') {
+          try {
+            valid = bs58.decode(ownerId).length === 32;
+          } catch {
+            valid = false;
+          }
+        }
+        if (valid) {
+          validIds.push(ownerId);
+        } else {
+          // Invalid ids can never resolve — cache the miss so repeat
+          // lookups don't re-enter the batch loop on every render
+          cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
+            ttl: 300000,
+            tags: ['profile', `user:${ownerId}`]
+          });
+          resolveId(ownerId, null);
+        }
+      }
+      if (validIds.length === 0) return;
 
-      Array.from(batch.entries()).forEach(([userId, { resolvers }]) => {
-        const url = results.get(userId) || this.getDefaultAvatarUrl(userId);
-        resolvers.forEach(resolve => resolve(url));
-      });
-    } catch (error) {
-      // On error, resolve with defaults
-      Array.from(batch.entries()).forEach(([userId, { resolvers }]) => {
-        const url = this.getDefaultAvatarUrl(userId);
-        resolvers.forEach(resolve => resolve(url));
-      });
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+
+      // DAPI caps 'in' clauses at 100 values per query
+      for (let i = 0; i < validIds.length; i += 100) {
+        const chunk = validIds.slice(i, i + 100);
+        const found = new Map<string, UnifiedProfileDocument>();
+        try {
+          const response = await sdk.documents.query({
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [['$ownerId', 'in', chunk]],
+            orderBy: [['$ownerId', 'asc']],
+            limit: chunk.length
+          });
+
+          for (const doc of this.normalizeDocumentResponse(response)) {
+            const profileDoc = this.extractDocumentData(doc);
+            found.set(profileDoc.$ownerId, profileDoc);
+            cacheManager.set(this.RAW_PROFILE_CACHE, profileDoc.$ownerId, profileDoc, {
+              ttl: 300000, // 5 minutes
+              tags: ['profile', `user:${profileDoc.$ownerId}`]
+            });
+          }
+
+          for (const ownerId of chunk) {
+            if (!found.has(ownerId)) {
+              cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
+                ttl: 60000, // 1 minute — new profiles show up quickly
+                tags: ['profile', `user:${ownerId}`]
+              });
+            }
+          }
+        } catch (error) {
+          // Resolve this chunk with null (matching single-fetch error
+          // behavior) but skip negative caching so the next request retries.
+          logger.error('UnifiedProfileService: Error batch-fetching profiles:', error);
+        }
+
+        for (const ownerId of chunk) {
+          resolveId(ownerId, found.get(ownerId) || null);
+        }
+      }
+    } finally {
+      // Safety net: never leave a caller hanging on an unexpected failure
+      batch.forEach(resolvers => resolvers.forEach(resolve => resolve(null)));
     }
   }
 
   /**
-   * Get avatar URL for a user with DataLoader-style batching
+   * Get avatar URL for a user, batched with all other profile lookups
    */
   async getAvatarUrl(ownerId: string): Promise<string> {
     if (!ownerId) {
@@ -266,73 +363,17 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       return cached;
     }
 
-    // Add to pending batch and return promise
-    return new Promise((resolve) => {
-      const existing = this.pendingAvatarRequests.get(ownerId);
-      if (existing) {
-        existing.resolvers.push(resolve);
-      } else {
-        this.pendingAvatarRequests.set(ownerId, { resolvers: [resolve] });
-      }
-      this.scheduleBatch();
+    const doc = await this.loadProfileDoc(ownerId);
+    const url = doc
+      ? this.parseAvatarField(doc.avatar, ownerId)
+      : this.getDefaultAvatarUrl(ownerId);
+
+    cacheManager.set(this.AVATAR_CACHE, ownerId, url, {
+      ttl: 300000, // 5 minutes
+      tags: ['avatar', `user:${ownerId}`],
     });
-  }
 
-  /**
-   * Batch fetch avatar URLs for multiple users
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  private async fetchAvatarUrlsBatch(userIds: string[]): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'profile',
-        where: [['$ownerId', 'in', userIds]],
-        orderBy: [['$ownerId', 'asc']],
-        limit: userIds.length
-      });
-
-      const documents = this.normalizeDocumentResponse(response);
-      const foundUserIds = new Set<string>();
-      for (const doc of documents) {
-        const profileDoc = this.extractDocumentData(doc);
-        const avatarUrl = this.parseAvatarField(profileDoc.avatar, profileDoc.$ownerId);
-
-        result.set(profileDoc.$ownerId, avatarUrl);
-        foundUserIds.add(profileDoc.$ownerId);
-
-        // Cache for future use
-        cacheManager.set(this.AVATAR_CACHE, profileDoc.$ownerId, avatarUrl, {
-          ttl: 300000, // 5 minutes
-          tags: ['avatar', `user:${profileDoc.$ownerId}`],
-        });
-      }
-
-      // For users without profiles, use default
-      for (const userId of userIds) {
-        if (!foundUserIds.has(userId)) {
-          result.set(userId, this.getDefaultAvatarUrl(userId));
-        }
-      }
-    } catch (error) {
-      logger.error('UnifiedProfileService: Error getting batch avatar URLs:', error);
-      for (const userId of userIds) {
-        if (!result.has(userId)) {
-          result.set(userId, this.getDefaultAvatarUrl(userId));
-        }
-      }
-    }
-
-    return result;
+    return url;
   }
 
   // ==================== Payment URI Helpers ====================
@@ -558,26 +599,22 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         return cached;
       }
 
-      const result = await this.query({
-        where: [['$ownerId', '==', ownerId]],
-        limit: 1
-      });
-
-      if (result.documents.length > 0) {
-        const profile = result.documents[0];
-        if (cachedUsername) {
-          profile.username = cachedUsername;
-        }
-
-        cacheManager.set(this.PROFILE_CACHE, ownerId, profile, {
-          ttl: 300000,
-          tags: ['profile', `user:${ownerId}`]
-        });
-
-        return profile;
+      const doc = await this.loadProfileDoc(ownerId);
+      if (!doc) {
+        return null;
       }
 
-      return null;
+      const profile = this.transformDocument(
+        doc as unknown as Record<string, unknown>,
+        cachedUsername ? { cachedUsername } : undefined
+      );
+
+      cacheManager.set(this.PROFILE_CACHE, ownerId, profile, {
+        ttl: 300000,
+        tags: ['profile', `user:${ownerId}`]
+      });
+
+      return profile;
     } catch (error) {
       logger.error('UnifiedProfileService: Error getting profile:', error);
       return null;
@@ -750,38 +787,19 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
   /**
-   * Get profiles by array of identity IDs (batch)
+   * Get profiles by array of identity IDs (batch).
+   * Rides the shared profile-document loader, so cached profiles are
+   * reused and concurrent callers coalesce into a single 'in' query.
+   * Result order follows the (deduplicated) input, NOT $ownerId order —
+   * key results by $ownerId rather than relying on position.
    */
   async getProfilesByIdentityIds(identityIds: string[]): Promise<UnifiedProfileDocument[]> {
     try {
       if (identityIds.length === 0) return [];
 
-      const bs58 = (await import('bs58')).default;
-      const validIds = identityIds.filter(id => {
-        if (!id || id === 'unknown') return false;
-        try {
-          const decoded = bs58.decode(id);
-          return decoded.length === 32;
-        } catch {
-          return false;
-        }
-      });
-
-      if (validIds.length === 0) return [];
-
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [['$ownerId', 'in', validIds]],
-        orderBy: [['$ownerId', 'asc']],
-        limit: 100
-      });
-
-      const documents = this.normalizeDocumentResponse(response);
-      return documents.map(doc => this.extractDocumentData(doc));
+      const uniqueIds = Array.from(new Set(identityIds));
+      const docs = await Promise.all(uniqueIds.map(id => this.loadProfileDoc(id)));
+      return docs.filter((doc): doc is UnifiedProfileDocument => doc !== null);
     } catch (error) {
       logger.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
       return [];
