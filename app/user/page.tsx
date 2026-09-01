@@ -822,6 +822,8 @@ function UserProfileContent() {
         .map(r => byId.get(r.postId))
         .filter((p): p is Post => p !== undefined)
 
+      await attachQuotedPosts(ordered)
+
       setTopPosts(ordered)
       enrichProgressively(ordered)
     } catch (error) {

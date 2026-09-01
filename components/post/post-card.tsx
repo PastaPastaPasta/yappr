@@ -35,7 +35,7 @@ import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
-import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
+import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { PollCard } from '@/components/poll/poll-card'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
@@ -46,6 +46,7 @@ import { categorizeError, isFrozenBalanceError } from '@/lib/error-utils'
 import { useBlock } from '@/hooks/use-block'
 import { useFollow } from '@/hooks/use-follow'
 import { useMediaGate } from '@/hooks/use-media-gate'
+import { useQuotedPost } from '@/hooks/use-quoted-post'
 import { GatedPostMedia } from './gated-media'
 import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
 import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
@@ -346,6 +347,10 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
 
   // Follow-gates this card's media/previews.
   const mediaGate = useMediaGate(post.author.id, authorIsFollowing)
+
+  // Quote embed: batch-resolved when the loader attached one, otherwise
+  // fetched here so a missed batch pass can't strand the card on a skeleton.
+  const { quotedPost, loading: quotedPostLoading, unavailable: quotedPostUnavailable } = useQuotedPost(post)
 
   // Check if user can reply to private posts (PRD §5.5)
   // For replies, check access against root post owner, not the reply author
@@ -876,16 +881,20 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
               />
             )}
 
-            {/* Quoted post - show skeleton while loading, then actual content.
-                Either quote field may hold the reference (v3 splits them). */}
-            {!isTombstoned && (post.quotedPostId || post.quotedReplyId) && !post.quotedPost && (
+            {/* Quoted post - skeleton while resolving, an explicit
+                "unavailable" state when resolution comes back empty. */}
+            {!isTombstoned && quotedPostLoading && (
               <EmbeddedPostSkeleton />
             )}
 
-            {!isTombstoned && post.quotedPost && (
-              isEmbeddedBlogPostLike(post.quotedPost)
-                ? <EmbeddedBlogPostCard post={post.quotedPost} />
-                : <EmbeddedPostCard post={post.quotedPost} />
+            {!isTombstoned && quotedPostUnavailable && (
+              <EmbeddedPostUnavailable />
+            )}
+
+            {!isTombstoned && quotedPost && (
+              isEmbeddedBlogPostLike(quotedPost)
+                ? <EmbeddedBlogPostCard post={quotedPost} />
+                : <EmbeddedPostCard post={quotedPost} />
             )}
 
             {!isTombstoned && post.media && post.media.length > 0 && (

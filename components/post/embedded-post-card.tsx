@@ -65,6 +65,19 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
   )
 }
 
+/**
+ * Shown when a quote's target could not be loaded (deleted, or the lookup
+ * failed) — an explicit terminal state instead of a skeleton that never
+ * resolves.
+ */
+export function EmbeddedPostUnavailable({ className = '' }: EmbeddedPostSkeletonProps) {
+  return (
+    <div className={cn('mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm text-gray-500', className)}>
+      This post is unavailable
+    </div>
+  )
+}
+
 export function EmbeddedPostSkeleton({ className = '' }: EmbeddedPostSkeletonProps) {
   return (
     <div className={cn('mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 animate-pulse', className)}>

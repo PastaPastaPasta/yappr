@@ -60,7 +60,6 @@ function BookmarksPage() {
       try {
         const { bookmarkService } = await import('@/lib/services/bookmark-service')
         const { postService } = await import('@/lib/services/post-service')
-        const { attachQuotedPosts } = await import('@/lib/feed/resolve-quoted-posts')
 
         // Get bookmark documents
         const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
@@ -84,11 +83,9 @@ function BookmarksPage() {
 
         // Batch enrich all posts at once (efficient DPNS resolution)
         const postsToEnrich = validPostsWithData.map(item => item.post)
+        // enrichPostsBatch also resolves quote targets, so bookmarked quotes
+        // render their embed instead of a permanent skeleton
         const enrichedPosts = await postService.enrichPostsBatch(postsToEnrich)
-
-        // Resolve quoted posts so bookmarked quotes render their embed
-        // instead of a permanent skeleton
-        await attachQuotedPosts(enrichedPosts)
 
         // Combine enriched posts with bookmark data
         const postsWithBookmarkData = validPostsWithData.map((item, index) => ({

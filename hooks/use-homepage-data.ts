@@ -4,7 +4,6 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post, User } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
-import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { useSdk } from '@/contexts/sdk-context'
@@ -131,10 +130,9 @@ export function useHomepageData(): HomepageData {
     setFeaturedPosts(prev => ({ ...prev, loading: true, error: null }))
 
     try {
+      // getTopPostsByLikes enriches via enrichPostsBatch, which also resolves
+      // whatever each post quotes (post, reply, or blog-post embed).
       const posts = await postService.getTopPostsByLikes(5)
-
-      // Resolve whatever each post quotes (post, reply, or blog-post embed).
-      await attachQuotedPosts(posts)
 
       cache.featuredPosts = { data: posts, timestamp: Date.now() }
 

@@ -72,7 +72,7 @@ export function resolveQuoteReference(quotingPost: Post | null | undefined): Quo
  * The quote target a post references, or null when it references nothing.
  * Exactly one of the three fields is ever set on a document.
  */
-function quoteTargetOf(post: Post): { id: string; where: 'post' | 'reply' | 'blogPost' } | null {
+export function quoteTargetOf(post: Post): { id: string; where: 'post' | 'reply' | 'blogPost' } | null {
   if (post.quotedPostId) return { id: post.quotedPostId, where: 'post' };
   if (post.quotedReplyId) return { id: post.quotedReplyId, where: 'reply' };
   if (post.embedDocType === BLOG_POST_EMBED_DOC_TYPE && post.embedId) {
@@ -86,31 +86,154 @@ function needsQuoteResolution(post: Post): boolean {
   return !post.quotedPost && quoteTargetOf(post) !== null;
 }
 
+// Shared between the batch pass and the per-card fallback so the two paths
+// never fetch the same target twice: successes land in the cache, and every
+// lookup in flight — batch or single — is joinable by target id.
+const resolvedQuoteCache = new Map<string, Post>();
+const pendingQuoteResolutions = new Map<string, Promise<Post | null>>();
+
+/** One network pass over the given posts' targets, per topology. */
+function fetchQuoteTargets(pending: Post[]): Promise<Post[]> {
+  return quoteFieldsAreSplit() ? resolveByField(pending) : resolveByProbe(pending);
+}
+
+/** Cache peek for the per-card fallback's synchronous fast path. */
+export function getCachedQuotedPost(targetId: string): Post | null {
+  return resolvedQuoteCache.get(targetId) ?? null;
+}
+
 /**
  * Populate `quotedPost` on every post in `posts` that references one.
  *
  * Mutates in place (every existing call site did) and never throws: a failed
  * quote lookup leaves the referencing post rendering without its embed rather
- * than failing the whole feed load.
+ * than failing the whole feed load. Targets already cached or in flight are
+ * reused instead of refetched.
  */
 export async function attachQuotedPosts(posts: Post[]): Promise<void> {
   const pending = posts.filter(needsQuoteResolution);
   if (pending.length === 0) return;
 
   try {
-    const resolved = quoteFieldsAreSplit()
-      ? await resolveByField(pending)
-      : await resolveByProbe(pending);
+    const stillNeeded: Post[] = [];
+    const joins: Promise<void>[] = [];
 
-    const byId = new Map(resolved.map((target) => [target.id, target]));
     for (const post of pending) {
       const target = quoteTargetOf(post);
-      const found = target ? byId.get(target.id) : undefined;
-      if (found) post.quotedPost = found;
+      if (!target) continue;
+
+      const cached = resolvedQuoteCache.get(target.id);
+      if (cached) {
+        post.quotedPost = cached;
+        continue;
+      }
+
+      const inflight = pendingQuoteResolutions.get(target.id);
+      if (inflight) {
+        joins.push(
+          inflight
+            .then((found) => { if (found) post.quotedPost = found; })
+            .catch(() => { /* the owning lookup already logged it */ })
+        );
+        continue;
+      }
+
+      stillNeeded.push(post);
     }
+
+    if (stillNeeded.length > 0) {
+      const batch = fetchQuoteTargets(stillNeeded)
+        .then((resolved) => new Map(resolved.map((target) => [target.id, target])));
+
+      // Register every target of this batch so concurrent passes (another
+      // surface, or a card's fallback fetch) join it instead of refetching.
+      const ids = Array.from(new Set(
+        stillNeeded
+          .map((post) => quoteTargetOf(post)?.id)
+          .filter((id): id is string => id !== undefined)
+      ));
+      for (const id of ids) {
+        // Failures resolve to null (never reject): a joiner treats that as a
+        // miss, and an unjoined entry can't become an unhandled rejection.
+        pendingQuoteResolutions.set(
+          id,
+          batch.then((byId) => byId.get(id) ?? null).catch(() => null)
+        );
+      }
+
+      try {
+        const byId = await batch;
+        for (const post of stillNeeded) {
+          const target = quoteTargetOf(post);
+          const found = target ? byId.get(target.id) : undefined;
+          if (found) {
+            post.quotedPost = found;
+            resolvedQuoteCache.set(found.id, found);
+          }
+        }
+      } finally {
+        for (const id of ids) pendingQuoteResolutions.delete(id);
+      }
+    }
+
+    await Promise.all(joins);
   } catch (error) {
     logger.error('Failed to resolve quoted posts:', error);
   }
+}
+
+/**
+ * Resolve a single post's quote target on demand — the per-card fallback for
+ * quotes the batch pass missed (a surface that never called
+ * `attachQuotedPosts`, or a transient DAPI failure on a flaky gateway).
+ *
+ * Successes are cached and concurrent lookups deduped; a first miss is retried
+ * once after a short delay (DAPI gateways time out routinely — see CLAUDE.md).
+ * Misses are NOT cached, because a swallowed network error is
+ * indistinguishable from genuine absence here, and caching it would pin the
+ * failure for the whole session.
+ */
+export async function resolveQuotedPost(post: Post): Promise<Post | null> {
+  const target = quoteTargetOf(post);
+  if (!target) return null;
+  if (post.quotedPost) return post.quotedPost;
+
+  const cached = resolvedQuoteCache.get(target.id);
+  if (cached) return cached;
+
+  const pending = pendingQuoteResolutions.get(target.id);
+  if (pending) return pending;
+
+  const request = (async () => {
+    try {
+      // A shallow probe keeps the caller's (React state) object unmutated.
+      const probe: Post = { ...post, quotedPost: undefined };
+
+      const attempt = async (): Promise<Post | null> => {
+        const resolved = await fetchQuoteTargets([probe]);
+        return resolved.find((candidate) => candidate.id === target.id) ?? null;
+      };
+
+      let found: Post | null = null;
+      try {
+        found = await attempt();
+      } catch (error) {
+        logger.error('resolveQuotedPost: first attempt failed:', error);
+      }
+      if (!found) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        found = await attempt();
+      }
+
+      if (found) resolvedQuoteCache.set(target.id, found);
+      return found;
+    } finally {
+      pendingQuoteResolutions.delete(target.id);
+    }
+  })();
+
+  pendingQuoteResolutions.set(target.id, request);
+  return request;
 }
 
 /**

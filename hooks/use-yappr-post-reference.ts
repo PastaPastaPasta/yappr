@@ -42,7 +42,11 @@ async function fetchReferencedPost(postId: string): Promise<Post | null> {
       const { replyService } = await import('@/lib/services/reply-service')
       const reply = await replyService.getReplyById(postId)
       const convertedReply = reply ? replyToPost(reply) : null
-      referenceCache.set(postId, convertedReply)
+      // Only cache hits: the services swallow network errors into null, so a
+      // cached miss would pin a transient DAPI failure for the whole session.
+      if (convertedReply) {
+        referenceCache.set(postId, convertedReply)
+      }
       return convertedReply
     } catch (error) {
       logger.error('useYapprPostReference: Failed to resolve linked post:', error)
