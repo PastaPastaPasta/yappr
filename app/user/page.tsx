@@ -874,6 +874,7 @@ function UserProfileContent() {
     setUserReplies([])
     setRepliesLoaded(false)
     setReplyParents(new Map())
+    setReplyParentsLoading(false)
     setTopPosts([])
     setTopLoaded(false)
     setActiveTab('posts')

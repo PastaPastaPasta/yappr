@@ -9,7 +9,6 @@
  * probe.
  */
 
-import { logger } from '@/lib/logger';
 import type { Post } from '@/lib/types';
 import { postService } from '@/lib/services/post-service';
 import { hasFlatThreads } from '@/lib/contract-topology';
@@ -34,39 +33,41 @@ function parentTargetOf(reply: Post): ParentTarget | null {
 /**
  * Resolve the parent of every reply in `replies`, keyed by the reply's own id.
  *
- * Never throws: a failed lookup leaves those cards rendering without their
- * context rather than failing the whole tab.
+ * Replies whose parent cannot be found are simply absent from the result. A
+ * failed lookup rejects; the caller logs it and leaves those cards rendering
+ * without their context rather than failing the whole tab.
  */
 export async function fetchReplyParents(replies: Post[]): Promise<Map<string, Post>> {
   const parents = new Map<string, Post>();
 
-  const targets: Array<{ replyId: string; target: ParentTarget }> = [];
+  const parentIdByReply = new Map<string, string>();
+  const ids: Record<ParentTarget['where'], Set<string>> = {
+    post: new Set(),
+    reply: new Set(),
+    unknown: new Set(),
+  };
+
   replies.forEach((reply) => {
     const target = parentTargetOf(reply);
-    if (target) targets.push({ replyId: reply.id, target });
+    if (!target) return;
+    parentIdByReply.set(reply.id, target.id);
+    ids[target.where].add(target.id);
   });
-  if (targets.length === 0) return parents;
+  if (parentIdByReply.size === 0) return parents;
 
-  try {
-    const idsWhere = (where: ParentTarget['where']): string[] =>
-      Array.from(new Set(targets.filter((t) => t.target.where === where).map((t) => t.target.id)));
+  const resolved = hasFlatThreads()
+    ? await postService.fetchQuotedTargets({
+        postIds: Array.from(ids.post),
+        replyIds: Array.from(ids.reply),
+        blogPostIds: [],
+      })
+    : await postService.fetchPostsOrReplies(Array.from(ids.unknown));
 
-    const resolved = hasFlatThreads()
-      ? await postService.fetchQuotedTargets({
-          postIds: idsWhere('post'),
-          replyIds: idsWhere('reply'),
-          blogPostIds: [],
-        })
-      : await postService.fetchPostsOrReplies(idsWhere('unknown'));
-
-    const byId = new Map(resolved.map((post) => [post.id, post]));
-    targets.forEach(({ replyId, target }) => {
-      const found = byId.get(target.id);
-      if (found) parents.set(replyId, found);
-    });
-  } catch (error) {
-    logger.error('Failed to resolve reply parents:', error);
-  }
+  const byId = new Map(resolved.map((post) => [post.id, post]));
+  parentIdByReply.forEach((parentId, replyId) => {
+    const found = byId.get(parentId);
+    if (found) parents.set(replyId, found);
+  });
 
   return parents;
 }

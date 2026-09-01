@@ -907,22 +907,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                 : <EmbeddedPostCard post={post.quotedPost} />
             )}
 
-            {/* Reply context: what this reply answers, for cards rendered outside
-                their thread. Labelled so the embed doesn't read as a quote. */}
-            {!isTombstoned && (parentPost || parentPostLoading) && (
-              <div className="mt-3">
-                <span className="flex items-center gap-1.5 text-sm text-gray-500">
-                  <ChatBubbleOvalLeftIcon className="h-3.5 w-3.5 flex-shrink-0" />
-                  <span className="truncate">
-                    Replying to{parentPost ? ` ${parentHandleOf(parentPost)}` : ''}
-                  </span>
-                </span>
-                {parentPost
-                  ? <EmbeddedPostCard post={parentPost} className="mt-1" />
-                  : <EmbeddedPostSkeleton className="mt-1" />}
-              </div>
-            )}
-
             {!isTombstoned && post.media && post.media.length > 0 && (
               <div className={cn(
                 'mt-3 grid gap-1 rounded-xl overflow-hidden',
@@ -942,6 +926,23 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
                     <GatedPostMedia media={media} gate={mediaGate} />
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Reply context: what this reply answers, for cards rendered outside
+                their thread. Last, so the reply's own content and media stay
+                together, and labelled so the embed doesn't read as a quote. */}
+            {!isTombstoned && (parentPost || parentPostLoading) && (
+              <div className="mt-3">
+                <span className="flex items-center gap-1.5 text-sm text-gray-500">
+                  <ChatBubbleOvalLeftIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">
+                    Replying to{parentPost ? ` ${parentHandleOf(parentPost)}` : ''}
+                  </span>
+                </span>
+                {parentPost
+                  ? <EmbeddedPostCard post={parentPost} className="mt-1" />
+                  : <EmbeddedPostSkeleton className="mt-1" />}
               </div>
             )}
           </SensitiveContentGate>
