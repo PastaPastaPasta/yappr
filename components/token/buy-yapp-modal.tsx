@@ -66,6 +66,10 @@ export function BuyYappModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletRemaining, setWalletRemaining] = useState<number | null>(null)
   const walletBaselineRef = useRef<bigint | null>(null)
+  // Generation counter guarding handleWalletSign's async steps: bumped on every
+  // start/back/close so a superseded invocation can't overwrite a fresh QR or
+  // baseline after its awaits resolve.
+  const walletSessionRef = useRef(0)
 
   useEffect(() => {
     if (isOpen && user) {
@@ -88,6 +92,7 @@ export function BuyYappModal() {
       setWalletUri(null)
       setWalletRemaining(null)
       walletBaselineRef.current = null
+      walletSessionRef.current++
     }
   }, [isOpen])
 
@@ -156,6 +161,7 @@ export function BuyYappModal() {
    */
   const handleWalletSign = async () => {
     if (!user || costCredits === null) return
+    const session = ++walletSessionRef.current
     setState('walletSign')
     setError(null)
     setWalletUri(null)
@@ -163,10 +169,14 @@ export function BuyYappModal() {
     try {
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
-      walletBaselineRef.current = await tokenService.getBalance(user.identityId)
+      const baseline = await tokenService.getBalance(user.identityId)
+      if (walletSessionRef.current !== session) return
+      walletBaselineRef.current = baseline
       const bytes = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
+      if (walletSessionRef.current !== session) return
       setWalletUri(buildYapprStateTransitionUri(bytes, getConfiguredNetwork()))
     } catch (err) {
+      if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)
       setError('Could not prepare the wallet signing request — please try again')
       setState('needKey')
@@ -188,7 +198,8 @@ export function BuyYappModal() {
       setWalletRemaining(remaining)
       if (remaining === 0) {
         setWalletUri(null)
-        setError('Timed out waiting for the wallet signature — please try again')
+        walletSessionRef.current++
+        setError('Didn\'t detect the purchase in time — if your wallet did broadcast it, your balance will update shortly')
         setState('needKey')
       }
     }, 1000)
@@ -197,7 +208,15 @@ export function BuyYappModal() {
     const poll = setInterval(() => {
       tokenService.getBalance(identityId).then(balance => {
         const baseline = walletBaselineRef.current
-        if (finished || baseline === null || balance < baseline + amountBig) return
+        if (finished || baseline === null) return
+        if (balance < baseline) {
+          // The user spent YAPP mid-flow (e.g. posted from another tab).
+          // Re-baseline to the running minimum so the wallet's purchase still
+          // registers as "+amount over the low-water mark" when it lands.
+          walletBaselineRef.current = balance
+          return
+        }
+        if (balance < baseline + amountBig) return
         finished = true
         setYappBalance(balance)
         refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
@@ -447,7 +466,7 @@ export function BuyYappModal() {
                           </div>
                         )}
                         <Button
-                          onClick={() => { setState('needKey'); setWalletUri(null); setWalletRemaining(null); setError(null) }}
+                          onClick={() => { walletSessionRef.current++; setState('needKey'); setWalletUri(null); setWalletRemaining(null); setError(null) }}
                           variant="outline"
                           className="w-full"
                         >
