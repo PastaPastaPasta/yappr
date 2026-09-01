@@ -297,12 +297,18 @@ class PostService extends BaseDocumentService<Post> {
    * Returns new Post objects with enriched data including _enrichment for N+1 avoidance.
    */
   async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
-    return enrichPostsBatchHelper(
+    const enriched = await enrichPostsBatchHelper(
       posts,
       (targets) => this.getBatchPostStats(targets),
       (targets) => this.getBatchUserInteractions(targets),
       this.getCurrentUserId()
     );
+    // Quote targets ride along here so every enrichment surface gets them in
+    // one batch — a no-op when the loader already attached them. Dynamic
+    // import: resolve-quoted-posts imports this service back.
+    const { attachQuotedPosts } = await import('@/lib/feed/resolve-quoted-posts');
+    await attachQuotedPosts(enriched);
+    return enriched;
   }
 
   /**
