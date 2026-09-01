@@ -369,35 +369,52 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   // BLOCK FOLLOW MANAGEMENT
   // ============================================================
 
+  // In-flight dedup: on a cold session, auth initialization and feed
+  // enrichment all request the block follow document concurrently —
+  // share one query instead of firing identical ones.
+  private blockFollowInFlight = new Map<string, Promise<BlockFollowData | null>>()
+
   /**
    * Get the block follow document for a user.
+   * Concurrent calls for the same user share a single query.
    */
-  async getBlockFollow(userId: string): Promise<BlockFollowData | null> {
-    try {
-      const sdk = await getEvoSdk()
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: DOCUMENT_TYPES.BLOCK_FOLLOW,
-        where: [['$ownerId', '==', userId]],
-        limit: 1
-      })
+  getBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    const existing = this.blockFollowInFlight.get(userId)
+    if (existing) return existing
 
-      const documents = normalizeSDKResponse(response)
-      if (documents.length === 0) return null
+    const promise = this.fetchBlockFollow(userId).finally(() => {
+      this.blockFollowInFlight.delete(userId)
+    })
+    this.blockFollowInFlight.set(userId, promise)
+    return promise
+  }
 
-      const doc = documents[0]
-      const data = (doc.data || doc) as Record<string, unknown>
-      const followedUserIds = this.decodeUserIdArray(data.followedBlockers)
+  /**
+   * Query the block follow document. Returns null only when the document
+   * genuinely doesn't exist; query failures throw so callers don't
+   * mistake a transient error for "no document".
+   */
+  private async fetchBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    const sdk = await getEvoSdk()
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: DOCUMENT_TYPES.BLOCK_FOLLOW,
+      where: [['$ownerId', '==', userId]],
+      limit: 1
+    })
 
-      return {
-        $id: (doc.$id || doc.id) as string,
-        $ownerId: (doc.$ownerId || doc.ownerId) as string,
-        $revision: (doc.$revision || doc.revision) as number | undefined,
-        followedUserIds
-      }
-    } catch (error) {
-      logger.error('Error getting block follow:', error)
-      return null
+    const documents = normalizeSDKResponse(response)
+    if (documents.length === 0) return null
+
+    const doc = documents[0]
+    const data = (doc.data || doc) as Record<string, unknown>
+    const followedUserIds = this.decodeUserIdArray(data.followedBlockers)
+
+    return {
+      $id: (doc.$id || doc.id) as string,
+      $ownerId: (doc.$ownerId || doc.ownerId) as string,
+      $revision: (doc.$revision || doc.revision) as number | undefined,
+      followedUserIds
     }
   }
 
@@ -561,18 +578,25 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get list of users whose blocks are being followed.
    */
   async getBlockFollows(userId: string): Promise<string[]> {
-    // Check cache first
+    // Check cache first — null means "never cached", while an empty
+    // array is a valid cached result (the common case) and must not
+    // trigger a refetch.
     const cached = getBlockFollowsFromCache(userId)
-    if (cached.length > 0) {
+    if (cached !== null) {
       return cached
     }
 
-    const data = await this.getBlockFollow(userId)
-    if (data) {
-      setBlockFollows(userId, data.followedUserIds)
-      return data.followedUserIds
+    try {
+      const data = await this.getBlockFollow(userId)
+      const followedUserIds = data?.followedUserIds ?? []
+      // Cache the result even when empty — only a confirmed answer
+      // reaches here, since query failures throw
+      setBlockFollows(userId, followedUserIds)
+      return followedUserIds
+    } catch (error) {
+      logger.error('Error getting block follows:', error)
+      return []
     }
-    return []
   }
 
   // ============================================================
