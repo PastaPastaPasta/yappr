@@ -1,9 +1,9 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
+import { X, CheckCircle, AlertCircle, RefreshCw, KeyRound } from 'lucide-react'
 import { useYapprKeyExchangeLogin } from 'platform-auth'
 import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -14,6 +14,28 @@ import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+
+/**
+ * A passkey is only worth offering when the vault exists, has no passkey yet,
+ * and the browser can actually run a PRF-capable ceremony.
+ */
+async function shouldOfferPasskeyEnrollment(identityId: string): Promise<boolean> {
+  try {
+    if (!authVaultService.isConfigured()) return false
+    const status = await authVaultService.getStatus(identityId)
+    const support = await getPasskeyPrfSupport()
+    return (
+      status.hasVault &&
+      status.passkeyCount === 0 &&
+      support.webauthnAvailable &&
+      support.likelyPrfCapable
+    )
+  } catch (supportError) {
+    logger.warn('Key exchange login completed, but passkey support check failed:', supportError)
+    return false
+  }
+}
 
 /**
  * Modal for key exchange login flow.
@@ -23,6 +45,7 @@ import { Button } from '@/components/ui/button'
  * - waiting: QR code + countdown timer + "Scan with Dash wallet"
  * - decrypting/checking: brief spinner
  * - registering: first-login prompt
+ * - passkey offer: post-login prompt to enrol a passkey (vault has none yet)
  * - complete: success checkmark, auto-close
  * - timeout/error: retry button
  */
@@ -45,72 +68,168 @@ export function KeyExchangeLoginModal() {
 
   const [loginError, setLoginError] = useState<string | null>(null)
   const [isCompleting, setIsCompleting] = useState(false)
+  const [passkeyOffer, setPasskeyOffer] = useState(false)
+  const [isAddingPasskey, setIsAddingPasskey] = useState(false)
+  const [passkeyError, setPasskeyError] = useState<string | null>(null)
+
+  // loginWithKeyExchange can't be aborted, so each attempt carries a generation.
+  // Abandoning an attempt bumps it, and stale continuations bail out instead of
+  // acting on a session the user has already moved on from.
+  const attemptGenerationRef = useRef(0)
+  const abandonAttempt = useCallback(() => {
+    attemptGenerationRef.current += 1
+  }, [])
+
+  // cancel() zeros key material in result state via clearResult
+  const finishLogin = useCallback(() => {
+    abandonAttempt()
+    cancel()
+    closeLoginModal()
+    close()
+  }, [abandonAttempt, cancel, closeLoginModal, close])
 
   // Attempt login and handle success/failure
   const attemptLogin = useCallback((identityId: string, loginKey: Uint8Array, keyIndex: number) => {
+    attemptGenerationRef.current += 1
+    const generation = attemptGenerationRef.current
+    const isCurrent = () => attemptGenerationRef.current === generation
+
     setLoginError(null)
     setIsCompleting(true)
     loginWithKeyExchange(identityId, loginKey, keyIndex)
       .then(async () => {
-        try {
-          if (authVaultService.isConfigured()) {
-            const status = await authVaultService.getStatus(identityId)
-            const support = await getPasskeyPrfSupport()
-            if (
-              status.hasVault &&
-              status.passkeyCount === 0 &&
-              support.webauthnAvailable &&
-              support.likelyPrfCapable &&
-              typeof window !== 'undefined' &&
-              window.confirm('Add a passkey for future sign-ins on this account?')
-            ) {
-              await addPasskeyWrapper('Wallet login passkey')
-            }
-          }
-        } catch (passkeyError) {
-          logger.warn('Key exchange login completed, but passkey enrollment prompt failed:', passkeyError)
+        if (!isCurrent()) return
+
+        const offerPasskey = await shouldOfferPasskeyEnrollment(identityId)
+        if (!isCurrent()) return
+
+        // Offer enrollment as a step inside this modal instead of closing straight away.
+        // isCompleting stays true so the completion effect does not re-run the login.
+        if (offerPasskey) {
+          setPasskeyOffer(true)
+          return
         }
 
-        // cancel() zeros key material in result state via clearResult
         setTimeout(() => {
-          cancel()
-          closeLoginModal()
-          close()
+          if (isCurrent()) finishLogin()
         }, 1500)
       })
       .catch((err) => {
+        if (!isCurrent()) return
         logger.error('Key exchange login failed:', err)
         setLoginError(err instanceof Error ? err.message : 'Login failed')
         setIsCompleting(false)
       })
-  }, [addPasskeyWrapper, loginWithKeyExchange, cancel, closeLoginModal, close])
+  }, [loginWithKeyExchange, finishLogin])
+
+  // Leaves the passkey step, whether the user enrolled or skipped
+  const finishPasskeyStep = useCallback(() => {
+    setIsAddingPasskey(false)
+    setPasskeyError(null)
+    setPasskeyOffer(false)
+    finishLogin()
+  }, [finishLogin])
+
+  const handleAddPasskey = useCallback(() => {
+    setPasskeyError(null)
+    setIsAddingPasskey(true)
+    addPasskeyWrapper('Wallet login passkey')
+      .then(finishPasskeyStep)
+      .catch((err) => {
+        logger.error('Passkey enrollment failed:', err)
+        setPasskeyError(err instanceof Error ? err.message : 'Could not add a passkey')
+        setIsAddingPasskey(false)
+      })
+  }, [addPasskeyWrapper, finishPasskeyStep])
 
   // Start the login flow when modal opens (no identity needed)
   useEffect(() => {
     if (isOpen && state === 'idle') {
       setLoginError(null)
       setIsCompleting(false)
+      setPasskeyOffer(false)
+      setIsAddingPasskey(false)
+      setPasskeyError(null)
       start()
     }
   }, [isOpen, state, start])
 
   // Handle successful login (when state becomes 'complete')
   useEffect(() => {
-    if (state === 'complete' && result && !isCompleting && !loginError) {
+    if (state === 'complete' && result && !isCompleting && !passkeyOffer && !loginError) {
       attemptLogin(result.identityId, result.loginKey, result.keyIndex)
     }
-  }, [state, result, isCompleting, loginError, attemptLogin])
+  }, [state, result, isCompleting, passkeyOffer, loginError, attemptLogin])
 
   // Handle close
   const handleClose = useCallback(() => {
+    // Don't tear the modal down mid-WebAuthn ceremony
+    if (isAddingPasskey) return
+
+    // Login already succeeded when the passkey offer is showing; dismissing it just skips enrollment
+    if (passkeyOffer) {
+      finishPasskeyStep()
+      return
+    }
+
+    abandonAttempt()
     setLoginError(null)
     setIsCompleting(false)
     cancel()
     close()
-  }, [cancel, close])
+  }, [abandonAttempt, cancel, close, finishPasskeyStep, isAddingPasskey, passkeyOffer])
 
   // Render content based on state
   const renderContent = () => {
+    if (passkeyOffer) {
+      return (
+        <div className="flex flex-col items-center gap-4 py-2">
+          <div className="w-16 h-16 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center">
+            <KeyRound className="w-8 h-8 text-yappr-600 dark:text-yappr-400" />
+          </div>
+          <div className="text-center">
+            <h3 className="font-semibold text-lg">Add a passkey?</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+              You&apos;re signed in. Add a passkey to unlock this account on future sign-ins
+              without scanning a QR code.
+            </p>
+          </div>
+          {passkeyError && (
+            <p className="text-sm text-red-600 dark:text-red-400 text-center">
+              {passkeyError}
+            </p>
+          )}
+          <div className="w-full space-y-2">
+            <Button
+              className="w-full"
+              onClick={handleAddPasskey}
+              disabled={isAddingPasskey}
+            >
+              {isAddingPasskey ? (
+                <>
+                  <Spinner size="xs" className="mr-2" />
+                  Adding passkey...
+                </>
+              ) : (
+                <>
+                  <KeyRound className="w-4 h-4 mr-2" />
+                  Add Passkey
+                </>
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={finishPasskeyStep}
+              disabled={isAddingPasskey}
+            >
+              Not now
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
     switch (state) {
       case 'idle':
       case 'generating':
