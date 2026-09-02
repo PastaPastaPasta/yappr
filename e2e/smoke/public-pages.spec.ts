@@ -44,10 +44,18 @@ test('explore page loads', async ({ page }) => {
 test('login page shows the login affordance', async ({ page }) => {
   await page.goto(appUrl('/login/'))
 
-  // /login auto-opens the global login modal after hydration.
-  await expect(page.locator('#loginIdentityInput')).toBeVisible()
-  await expect(page.locator('#loginCredential')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
+  // /login auto-opens the global login modal after hydration. Wallet sign-in
+  // is the primary path, so the dialog leads with a QR code; password and
+  // private-key entry sit behind a disclosure.
+  const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible()
+  await expect(dialog.locator('#loginIdentityInput')).toHaveCount(0)
+
+  await dialog.getByRole('button', { name: 'Sign in with a password or private key' }).click()
+  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+  await expect(dialog.locator('#loginCredential')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
 })
 
 test('primary navigation moves between sections', async ({ page }) => {

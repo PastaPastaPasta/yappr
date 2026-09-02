@@ -41,7 +41,6 @@ export interface StartYapprKeyExchangeOptions {
 export interface UseYapprKeyExchangeLoginReturn {
   state: YapprKeyExchangeState
   uri: string | null
-  remainingTime: number | null
   keyIndex: number
   needsKeyRegistration: boolean
   error: string | null
@@ -67,7 +66,6 @@ export interface YapprKeyRegistrationResult {
 export interface UseYapprKeyRegistrationReturn {
   state: YapprKeyRegistrationState
   uri: string | null
-  remainingTime: number | null
   error: string | null
   result: YapprKeyRegistrationResult | null
   start: (identityId: string, authKey: Uint8Array, encryptionKey: Uint8Array) => void
@@ -87,17 +85,33 @@ export function useYapprKeyExchangeLogin(
 ): UseYapprKeyExchangeLoginReturn {
   const [state, setState] = useState<YapprKeyExchangeState>('idle')
   const [uri, setUri] = useState<string | null>(null)
-  const [remainingTime, setRemainingTime] = useState<number | null>(null)
   const [keyIndex, setKeyIndex] = useState(0)
   const [needsKeyRegistration, setNeedsKeyRegistration] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<YapprKeyExchangeLoginResult | null>(null)
+  const [result, setResultState] = useState<YapprKeyExchangeLoginResult | null>(null)
 
   const abortControllerRef = useRef<AbortController | null>(null)
   const ephemeralKeyRef = useRef<Uint8Array | null>(null)
-  const startTimeRef = useRef<number | null>(null)
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const lastOptionsRef = useRef<StartYapprKeyExchangeOptions>({})
+  // Mirrors `result` so the unmount cleanup can zero the decrypted keys even
+  // though state updaters no longer run once the component is gone.
+  const resultRef = useRef<YapprKeyExchangeLoginResult | null>(null)
+
+  const clearResult = useCallback((value: YapprKeyExchangeLoginResult | null) => {
+    if (!value) return
+    clearSensitiveBytes(value.loginKey)
+    clearSensitiveBytes(value.authKey)
+    clearSensitiveBytes(value.encryptionKey)
+  }, [])
+
+  // Zeroes whatever result is currently held, then stores the new one.
+  const setResult = useCallback((value: YapprKeyExchangeLoginResult | null) => {
+    if (resultRef.current !== value) {
+      clearResult(resultRef.current)
+    }
+    resultRef.current = value
+    setResultState(value)
+  }, [clearResult])
 
   const cleanup = useCallback(() => {
     abortControllerRef.current?.abort()
@@ -107,28 +121,25 @@ export function useYapprKeyExchangeLogin(
       clearSensitiveBytes(ephemeralKeyRef.current)
       ephemeralKeyRef.current = null
     }
-
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current)
-      timerIntervalRef.current = null
-    }
-
-    startTimeRef.current = null
   }, [])
 
-  useEffect(() => cleanup, [cleanup])
-
-  const clearResult = useCallback((value: YapprKeyExchangeLoginResult | null) => {
-    if (!value) return
-    clearSensitiveBytes(value.loginKey)
-    clearSensitiveBytes(value.authKey)
-    clearSensitiveBytes(value.encryptionKey)
-  }, [])
+  // On unmount: abort any in-flight request and zero decrypted key material,
+  // whether or not the caller got around to cancel().
+  useEffect(() => () => {
+    cleanup()
+    clearResult(resultRef.current)
+    resultRef.current = null
+  }, [cleanup, clearResult])
 
   const start = useCallback(async (startOptions: StartYapprKeyExchangeOptions = {}) => {
     lastOptionsRef.current = startOptions
     cleanup()
-    abortControllerRef.current = new AbortController()
+    const runController = new AbortController()
+    abortControllerRef.current = runController
+    // A later start()/cancel()/unmount supersedes this run by swapping the
+    // controller. Once superseded, this run must not touch shared refs or
+    // state: they now belong to the newer run (or to nothing, after unmount).
+    const isCurrentRun = () => abortControllerRef.current === runController
 
     try {
       const resolvedConfig = controller.getYapprKeyExchangeConfig({
@@ -138,10 +149,7 @@ export function useYapprKeyExchangeLogin(
 
       setState('generating')
       setError(null)
-      setResult((previous) => {
-        clearResult(previous)
-        return null
-      })
+      setResult(null)
       setNeedsKeyRegistration(false)
 
       const contractIdBytes = decodeYapprContractId(resolvedConfig.appContractId)
@@ -156,33 +164,17 @@ export function useYapprKeyExchangeLogin(
       }, resolvedConfig.network))
 
       setState('waiting')
-      startTimeRef.current = Date.now()
-
-      timerIntervalRef.current = setInterval(() => {
-        if (!startTimeRef.current) {
-          return
-        }
-
-        const elapsed = Date.now() - startTimeRef.current
-        const remaining = Math.max(0, Math.ceil((resolvedConfig.timeoutMs - elapsed) / 1000))
-        setRemainingTime(remaining)
-
-        if (remaining === 0 && timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current)
-          timerIntervalRef.current = null
-        }
-      }, 1000)
 
       const decrypted = await controller.pollYapprKeyExchangeResponse(
         ephemeralPubKeyHash,
         ephemeral.privateKey,
         options.config,
-        { signal: abortControllerRef.current.signal },
+        { signal: runController.signal },
       )
 
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current)
-        timerIntervalRef.current = null
+      if (!isCurrentRun()) {
+        clearSensitiveBytes(decrypted.loginKey)
+        return
       }
 
       clearSensitiveBytes(ephemeral.privateKey)
@@ -207,6 +199,13 @@ export function useYapprKeyExchangeLogin(
         options.config,
       )
 
+      if (!isCurrentRun()) {
+        clearSensitiveBytes(decrypted.loginKey)
+        clearSensitiveBytes(authKey)
+        clearSensitiveBytes(encryptionKey)
+        return
+      }
+
       const loginResult: YapprKeyExchangeLoginResult = {
         loginKey: decrypted.loginKey,
         authKey,
@@ -226,14 +225,15 @@ export function useYapprKeyExchangeLogin(
 
       setState('complete')
     } catch (err) {
+      // Superseded runs were already cleaned up (key zeroed, timer cleared,
+      // state owned by the successor) by the cleanup() that superseded them.
+      if (!isCurrentRun()) {
+        return
+      }
+
       if (ephemeralKeyRef.current) {
         clearSensitiveBytes(ephemeralKeyRef.current)
         ephemeralKeyRef.current = null
-      }
-
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current)
-        timerIntervalRef.current = null
       }
 
       if (err instanceof Error) {
@@ -253,20 +253,16 @@ export function useYapprKeyExchangeLogin(
 
       setState('error')
     }
-  }, [cleanup, clearResult, controller, options.config])
+  }, [cleanup, setResult, controller, options.config])
 
   const cancel = useCallback(() => {
     cleanup()
-    setResult((previous) => {
-      clearResult(previous)
-      return null
-    })
+    setResult(null)
     setState('idle')
     setUri(null)
-    setRemainingTime(null)
     setError(null)
     setNeedsKeyRegistration(false)
-  }, [cleanup, clearResult])
+  }, [cleanup, setResult])
 
   const retry = useCallback(() => {
     start(lastOptionsRef.current)
@@ -275,7 +271,6 @@ export function useYapprKeyExchangeLogin(
   return {
     state,
     uri,
-    remainingTime,
     keyIndex,
     needsKeyRegistration,
     error,
@@ -293,7 +288,6 @@ export function useYapprKeyRegistration(
 ): UseYapprKeyRegistrationReturn {
   const [state, setState] = useState<YapprKeyRegistrationState>('idle')
   const [uri, setUri] = useState<string | null>(null)
-  const [remainingTime, setRemainingTime] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<YapprKeyRegistrationResult | null>(null)
 
@@ -301,8 +295,7 @@ export function useYapprKeyRegistration(
   const identityIdRef = useRef<string | null>(null)
   const authKeyRef = useRef<Uint8Array | null>(null)
   const encryptionKeyRef = useRef<Uint8Array | null>(null)
-  const startTimeRef = useRef<number | null>(null)
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelledRef = useRef(false)
 
@@ -310,16 +303,14 @@ export function useYapprKeyRegistration(
     abortControllerRef.current?.abort()
     abortControllerRef.current = null
 
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current)
-      timerIntervalRef.current = null
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
     }
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current)
       pollIntervalRef.current = null
     }
-
-    startTimeRef.current = null
   }, [])
 
   const cleanup = useCallback(() => {
@@ -345,8 +336,12 @@ export function useYapprKeyRegistration(
     identityIdRef.current = identityId
     authKeyRef.current = new Uint8Array(authKey)
     encryptionKeyRef.current = new Uint8Array(encryptionKey)
-    abortControllerRef.current = new AbortController()
+    const runController = new AbortController()
+    abortControllerRef.current = runController
     cancelledRef.current = false
+    // See useYapprKeyExchangeLogin: a superseded run must leave shared refs
+    // and state alone.
+    const isCurrentRun = () => abortControllerRef.current === runController
 
     try {
       const resolvedConfig = controller.getYapprKeyExchangeConfig(options.config)
@@ -366,32 +361,24 @@ export function useYapprKeyRegistration(
         encryptionPublicKey,
       }, options.config)
 
-      if (abortControllerRef.current?.signal.aborted) {
+      if (!isCurrentRun()) {
         return
       }
 
       setUri(buildYapprStateTransitionUri(transition.transitionBytes, resolvedConfig.network))
       setState('waiting')
-      startTimeRef.current = Date.now()
 
-      timerIntervalRef.current = setInterval(() => {
-        if (!startTimeRef.current) {
-          return
-        }
-
-        const elapsed = Date.now() - startTimeRef.current
-        const remaining = Math.max(0, Math.ceil((DEFAULT_REGISTRATION_TIMEOUT_MS - elapsed) / 1000))
-        setRemainingTime(remaining)
-
-        if (remaining === 0) {
-          cleanupTimers()
-          setError('Request timed out. Please try again.')
-          setState('error')
-        }
-      }, 1000)
+      // Silent budget for the wallet to broadcast. When it runs out the caller
+      // shows a retry prompt; there is deliberately no visible countdown.
+      timeoutRef.current = setTimeout(() => {
+        if (!isCurrentRun()) return
+        cleanupTimers()
+        setError('No response from your wallet yet. Check again to send a fresh request.')
+        setState('error')
+      }, DEFAULT_REGISTRATION_TIMEOUT_MS)
 
       const checkKeys = async (pendingTransition: YapprUnsignedKeyRegistrationResult) => {
-        if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
+        if (!isCurrentRun() || runController.signal.aborted) {
           return
         }
 
@@ -403,7 +390,7 @@ export function useYapprKeyRegistration(
             options.config,
           )
 
-          if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
+          if (!isCurrentRun() || runController.signal.aborted) {
             return
           }
 
@@ -432,12 +419,16 @@ export function useYapprKeyRegistration(
 
       await checkKeys(transition)
 
-      if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+      if (isCurrentRun() && !runController.signal.aborted) {
         pollIntervalRef.current = setInterval(() => {
           void checkKeys(transition)
         }, 5000)
       }
     } catch (err) {
+      if (!isCurrentRun()) {
+        return
+      }
+
       cleanupTimers()
 
       if (err instanceof Error) {
@@ -459,7 +450,6 @@ export function useYapprKeyRegistration(
     cleanup()
     setState('idle')
     setUri(null)
-    setRemainingTime(null)
     setError(null)
     setResult(null)
   }, [cleanup])
@@ -477,7 +467,6 @@ export function useYapprKeyRegistration(
   return {
     state,
     uri,
-    remainingTime,
     error,
     result,
     start,
