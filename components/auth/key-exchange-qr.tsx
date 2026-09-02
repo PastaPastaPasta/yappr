@@ -74,7 +74,7 @@ export function KeyExchangeQR({ uri, size = 200 }: KeyExchangeQRProps) {
       <p className="text-sm text-center text-gray-600 dark:text-gray-400 max-w-xs">
         {isTouchDevice
           ? 'Open in a wallet on this device, or scan with a wallet on another device'
-          : 'Scan with a Dash wallet such as Dash Evo Tool'}
+          : 'Scan with your Dash wallet'}
       </p>
 
       {/* Copy button */}
