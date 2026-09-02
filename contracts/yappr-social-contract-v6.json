@@ -422,39 +422,9 @@
             }
           ],
           "terminal": "$ownerId",
-          "preallocated": true,
           "countable": "countable",
           "rangeCountable": true,
           "rankedCountable": true,
-          "timeRange": {
-            "on": "$createdAt",
-            "range": 86400,
-            "step": 86400
-          }
-        },
-        {
-          "name": "byDayHashtagPost",
-          "properties": [
-            {
-              "$createdAt": "asc"
-            },
-            {
-              "hashtag": "asc"
-            },
-            {
-              "postId": "asc"
-            }
-          ],
-          "terminal": "$ownerId",
-          "preallocated": true,
-          "countable": "countable",
-          "rangeCountable": true,
-          "rankedCountable": {
-            "at": [
-              "hashtag",
-              "postId"
-            ]
-          },
           "timeRange": {
             "on": "$createdAt",
             "range": 86400,
@@ -475,7 +445,6 @@
             }
           ],
           "terminal": "$ownerId",
-          "preallocated": true,
           "countable": "countable",
           "rangeCountable": true,
           "rankedCountable": {
@@ -488,35 +457,6 @@
             "on": "$createdAt",
             "range": 86400,
             "step": 86400
-          }
-        },
-        {
-          "name": "byRollingHashtagPost",
-          "properties": [
-            {
-              "$createdAt": "asc"
-            },
-            {
-              "hashtag": "asc"
-            },
-            {
-              "postId": "asc"
-            }
-          ],
-          "terminal": "$ownerId",
-          "preallocated": true,
-          "countable": "countable",
-          "rangeCountable": true,
-          "rankedCountable": {
-            "at": [
-              "hashtag",
-              "postId"
-            ]
-          },
-          "timeRange": {
-            "on": "$createdAt",
-            "range": 86400,
-            "step": 21600
           }
         }
       ],
@@ -1465,6 +1405,111 @@
       },
       "description": "A pure repost (boost) of a post",
       "additionalProperties": false
+    },
+    "beat": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "canBeDeleted": true,
+      "properties": {
+        "postId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "ID of the liked (tagged) post",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "post",
+            "propertyAgreement": {
+              "hashtag": "hashtag"
+            }
+          }
+        },
+        "hashtag": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,61}$",
+          "minLength": 1,
+          "maxLength": 61,
+          "description": "The liked post's hashtag; consensus-checked against it",
+          "position": 1
+        }
+      },
+      "required": [
+        "$createdAt",
+        "postId",
+        "hashtag"
+      ],
+      "additionalProperties": false,
+      "indices": [
+        {
+          "name": "byDayHashtagPost",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "hashtag": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "countable": "countable",
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": [
+              "hashtag",
+              "postId"
+            ]
+          },
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 86400,
+            "step": 86400
+          }
+        },
+        {
+          "name": "byRollingHashtagPost",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "hashtag": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "countable": "countable",
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": [
+              "hashtag",
+              "postId"
+            ]
+          },
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 86400,
+            "step": 21600
+          }
+        },
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId"
+        }
+      ]
     }
   },
   "tokens": {

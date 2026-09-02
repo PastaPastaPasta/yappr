@@ -62,6 +62,13 @@ def windowed(source_index, name, time_range):
     index['name'] = name
     index['properties'] = [{'$createdAt': 'asc'}] + index['properties']
     index['timeRange'] = dict(time_range)
+    # preallocated cannot survive it either: a bucketed level is keyed by
+    # bucket starts computed from the like's own $createdAt at write time, so
+    # its path cannot be created ahead of time from the referenced post the
+    # way the all-time twins' paths are (validated on upstream HEAD after
+    # #4578: "declares `preallocated` together with `timeRange` ... cannot be
+    # preallocated from a referenced document").
+    index.pop('preallocated', None)
     # skipIfAbsent cannot survive the prepend: its trigger has to be the FIRST
     # index property, which the timeRange source now occupies. Untagged likes
     # therefore write a null entry in the windowed hashtag index — see the
@@ -86,20 +93,62 @@ def build():
     # rank at the terminal postId level. Twin of the all-time byPost.
     like['indices'].append(windowed(by_name['byPost'], 'byDayPost', DAY))
 
-    # Trending hashtags today + top posts per tag today: pin the newest bucket
-    # and rank at hashtag; pin bucket + hashtag and rank at postId. Twin of the
-    # all-time byHashtagPost, which is what /explore and the tag pages use now.
-    like['indices'].append(windowed(by_name['byHashtagPost'], 'byDayHashtagPost', DAY))
+    # Trending hashtags today + top posts per tag today CANNOT live on `like`:
+    # like.hashtag is optional (v5 killed the '' sentinel), and upstream HEAD
+    # rejects an optional property anywhere but the FIRST position of a
+    # skipIfAbsent index — under a timeRange the first position is the
+    # timestamp, so the windowed hashtag index is rejected with "appears in
+    # index below its first position: ... absence would strand the prefix
+    # levels above it". Both escape hatches were probed on HEAD and rejected
+    # too (skipIfAbsent with $createdAt first: "system properties are always
+    # present"; making hashtag required: v5's own byHashtagPost then "could
+    # never skip"). So the windowed hashtag rankings move to a separate
+    # tagged-only doctype — see `beat` below.
 
     # Top creators today + top posts by one author today, and — with an `In`
     # pin set over postAuthor — "most liked recent posts by people I follow".
     # Twin of the all-time byAuthorPost.
     like['indices'].append(windowed(by_name['byAuthorPost'], 'byDayAuthorPost', DAY))
 
-    # Overlapping-grid probe, test material rather than a shape we would ship.
-    like['indices'].append(windowed(by_name['byHashtagPost'], 'byRollingHashtagPost', ROLLING))
-
     assert len(like['indices']) <= 10, 'document meta-schema caps indices at 10 per doctype'
+
+    # ---- beat: the windowed hashtag rankings, written ONLY for tagged likes ----
+    # An indexOnly doctype with hashtag REQUIRED, so the windowed hashtag index
+    # is legal. The client writes one `beat` beside every like of a tagged post
+    # (same batch transition), and the `postId` refersTo carries the same
+    # propertyAgreement as `like.postId` — consensus enforces beat.hashtag ==
+    # post.hashtag exactly as it does for like.hashtag. Untagged likes write no
+    # beat at all, which is the skipIfAbsent economy by other means.
+    like_post_id = copy.deepcopy(like['properties']['postId'])
+    like_post_id['refersTo'] = copy.deepcopy(like_post_id['refersTo'])
+    like_post_id['refersTo']['propertyAgreement'] = {'hashtag': 'hashtag'}
+    beat = {
+        'type': 'object',
+        'indexOnly': True,
+        'documentsMutable': False,
+        'canBeDeleted': True,
+        'properties': {
+            'postId': dict(like_post_id, position=0, description='ID of the liked (tagged) post'),
+            'hashtag': dict(copy.deepcopy(like['properties']['hashtag']), position=1,
+                            description='The liked post\'s hashtag; consensus-checked against it'),
+        },
+        'required': ['$createdAt', 'postId', 'hashtag'],
+        'additionalProperties': False,
+        'indices': [
+            # Trending hashtags today (pin bucket, rank at hashtag) + top posts
+            # for #tag today (pin bucket + hashtag, rank at postId): the
+            # windowed twin of like.byHashtagPost.
+            windowed(by_name['byHashtagPost'], 'byDayHashtagPost', DAY),
+            # Overlapping-grid probe, test material rather than a shape we
+            # would ship.
+            windowed(by_name['byHashtagPost'], 'byRollingHashtagPost', ROLLING),
+            # Unlike needs the beat's index entry found by post: indexOnly
+            # delete-by-values resolves through this plain index.
+            {'name': 'byPost', 'properties': [{'postId': 'asc'}], 'terminal': '$ownerId'},
+        ],
+    }
+    assert 'beat' not in schemas, 'v5 must not already carry a beat doctype'
+    schemas['beat'] = beat
     return contract
 
 
@@ -118,18 +167,26 @@ def self_test():
     v5 = json.load(open(SRC))['documentSchemas']
     v6 = committed['documentSchemas']
 
-    check('only `like` differs from v5',
-          [t for t in v6 if json.dumps(v6[t]) != json.dumps(v5.get(t))] == ['like'])
+    check('only `like` differs from v5, plus the new `beat` doctype',
+          sorted(t for t in v6 if json.dumps(v6[t]) != json.dumps(v5.get(t))) == ['beat', 'like'])
 
     like = {index['name']: index for index in v6['like']['indices']}
     check('all five v5 like indexes survive unchanged',
           all(index in like and like[index] == {i['name']: i for i in v5['like']['indices']}[index]
               for index in ['byPost', 'byHashtagPost', 'byAuthorPost', 'byAuthorTimePost', 'byLiker']))
 
-    for name, at in [('byDayPost', True),
-                     ('byDayHashtagPost', {'at': ['hashtag', 'postId']}),
-                     ('byDayAuthorPost', {'at': ['postAuthor', 'postId']})]:
-        index = like[name]
+    beat = {index['name']: index for index in v6['beat']['indices']}
+    check('beat is indexOnly with hashtag REQUIRED (so the windowed hashtag index is legal)',
+          v6['beat'].get('indexOnly') is True and 'hashtag' in v6['beat']['required'])
+    check('beat.postId refersTo post with propertyAgreement on hashtag',
+          v6['beat']['properties']['postId']['refersTo']['propertyAgreement'] == {'hashtag': 'hashtag'})
+    check('like carries NO windowed hashtag index (optional hashtag cannot sit below the bucket)',
+          not any('timeRange' in i and any('hashtag' in p for p in i['properties'])
+                  for i in v6['like']['indices']))
+
+    for name, at, index in [('byDayPost', True, like['byDayPost']),
+                            ('byDayAuthorPost', {'at': ['postAuthor', 'postId']}, like['byDayAuthorPost']),
+                            ('beat.byDayHashtagPost', {'at': ['hashtag', 'postId']}, beat['byDayHashtagPost'])]:
         check(name + ' buckets $createdAt on a daily NON-overlapping grid',
               index['timeRange'] == DAY)
         check(name + ' leads with the timeRange source',
@@ -142,8 +199,10 @@ def self_test():
               index['terminal'] == '$ownerId')
         check(name + ' drops skipIfAbsent (trigger must be the first property)',
               'skipIfAbsent' not in index)
+        check(name + ' drops preallocated (bucket paths derive from the write timestamp)',
+              'preallocated' not in index)
 
-    rolling = like['byRollingHashtagPost']
+    rolling = beat['byRollingHashtagPost']
     check('byRollingHashtagPost declares an overlapping grid (factor 4)',
           rolling['timeRange']['range'] // rolling['timeRange']['step'] == 4)
     check('the overlap factor stays under the versioned cap of 24',
@@ -152,7 +211,7 @@ def self_test():
     check('like stays within the 10-index ceiling', len(v6['like']['indices']) <= 10)
     check('every windowed index names $createdAt as its source',
           all(i['timeRange']['on'] == '$createdAt'
-              for i in v6['like']['indices'] if 'timeRange' in i))
+              for t in ('like', 'beat') for i in v6[t]['indices'] if 'timeRange' in i))
 
     print()
     print('SELF-TEST PASSED' if not failures else f'{len(failures)} CHECK(S) FAILED')
