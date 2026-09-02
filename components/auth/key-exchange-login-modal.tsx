@@ -9,12 +9,30 @@ import { useKeyExchangeModal } from '@/hooks/use-key-exchange-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { authVaultService } from '@/lib/services/auth-vault-service'
+import { tokenService } from '@/lib/services/token-service'
 import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
+import { YAPP_TOKEN_COSTS } from '@/lib/constants'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { KeyRegistrationFlow } from './key-registration-flow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+
+/**
+ * After a wallet login lands on a ready account, decide whether to prompt for
+ * YAPP right away: true when the balance can't cover a single post. A failed
+ * balance fetch is "unknown", not zero, so it never triggers the prompt.
+ */
+async function needsYappPrompt(identityId: string): Promise<boolean> {
+  try {
+    const balance = await tokenService.getBalance(identityId)
+    return balance < BigInt(YAPP_TOKEN_COSTS.post)
+  } catch (err) {
+    logger.warn('Skipping post-login YAPP prompt: balance check failed', err)
+    return false
+  }
+}
 
 /**
  * A passkey is only worth offering when the vault exists, has no passkey yet,
@@ -80,12 +98,26 @@ export function KeyExchangeLoginModal() {
     attemptGenerationRef.current += 1
   }, [])
 
+  // Set once login succeeds on a ready account that can't afford a post. A
+  // wallet login yields a HIGH key, which can post but not buy YAPP — only the
+  // wallet holds the CRITICAL key — so rather than let the first post fail and
+  // bounce the user through a purchase, finishLogin opens the Buy-YAPP modal
+  // straight into the dash-st: wallet-signing path while the wallet is in hand.
+  const promptForYappRef = useRef(false)
+
   // cancel() zeros key material in result state via clearResult
   const finishLogin = useCallback(() => {
     abandonAttempt()
     cancel()
     closeLoginModal()
     close()
+    if (promptForYappRef.current) {
+      promptForYappRef.current = false
+      useBuyYappModal.getState().open(
+        'You\'re signed in! Posting, replying, and liking cost YAPP — grab some now and approve it in your wallet.',
+        'wallet',
+      )
+    }
   }, [abandonAttempt, cancel, closeLoginModal, close])
 
   // Attempt login and handle success/failure
@@ -96,12 +128,19 @@ export function KeyExchangeLoginModal() {
 
     setLoginError(null)
     setIsCompleting(true)
+    promptForYappRef.current = false
     loginWithKeyExchange(identityId, loginKey, keyIndex)
-      .then(async () => {
+      .then(async (intent) => {
         if (!isCurrent()) return
 
-        const offerPasskey = await shouldOfferPasskeyEnrollment(identityId)
+        // Accounts still needing a username or profile go through those steps
+        // first; the YAPP prompt only makes sense once the account is ready.
+        const [offerPasskey, promptForYapp] = await Promise.all([
+          shouldOfferPasskeyEnrollment(identityId),
+          intent.kind === 'ready' ? needsYappPrompt(identityId) : Promise.resolve(false),
+        ])
         if (!isCurrent()) return
+        promptForYappRef.current = promptForYapp
 
         // Offer enrollment as a step inside this modal instead of closing straight away.
         // isCompleting stays true so the completion effect does not re-run the login.
@@ -172,12 +211,19 @@ export function KeyExchangeLoginModal() {
       return
     }
 
+    // Login already succeeded and a YAPP prompt was decided; closing during
+    // the brief auto-close wait just skips the wait, it shouldn't drop the prompt.
+    if (promptForYappRef.current) {
+      finishLogin()
+      return
+    }
+
     abandonAttempt()
     setLoginError(null)
     setIsCompleting(false)
     cancel()
     close()
-  }, [abandonAttempt, cancel, close, finishPasskeyStep, isAddingPasskey, passkeyOffer])
+  }, [abandonAttempt, cancel, close, finishLogin, finishPasskeyStep, isAddingPasskey, passkeyOffer])
 
   // Render content based on state
   const renderContent = () => {

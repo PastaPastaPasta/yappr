@@ -34,7 +34,8 @@ interface AuthContextType {
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string) => Promise<void>
   loginWithPasskey: (identityOrUsername?: string) => Promise<void>
-  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<void>
+  /** Resolves with the post-login intent so the caller can tell a fully set-up account from one still needing a username/profile. */
+  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<PlatformAuthIntent>
   createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
   createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
   addPasskeyWrapper: (label?: string) => Promise<void>
@@ -160,6 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithKeyExchange = useCallback(async (identityId: string, loginKey: Uint8Array, keyIndex: number) => {
     const result = await controller.loginWithLoginKey(identityId, loginKey, keyIndex)
     await applyIntent(result.intent)
+    return result.intent
   }, [applyIntent, controller])
 
   const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
