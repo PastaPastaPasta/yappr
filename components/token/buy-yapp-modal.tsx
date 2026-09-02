@@ -56,7 +56,11 @@ const MODAL_TITLES: Record<ModalState, string> = {
 const WALLET_SIGN_TIMEOUT_S = 300
 
 export function BuyYappModal() {
-  const { isOpen, reason, close } = useBuyYappModal()
+  const { isOpen, reason, signing, close } = useBuyYappModal()
+  // Opened for a wallet-login user: skip local signing (their login key is
+  // HIGH and can't spend) and the paste-a-CRITICAL-key screen, and go straight
+  // to the dash-st: QR the wallet that just logged them in can approve.
+  const preferWallet = signing === 'wallet'
   const { user, refreshBalance } = useAuth()
 
   const [amount, setAmount] = useState('100')
@@ -170,16 +174,18 @@ export function BuyYappModal() {
     }
   }
 
-  // Leave the dash-st: QR screen and fall back to pasting the CRITICAL key,
-  // optionally with a message. Bumping the generation counter discards any
-  // in-flight build so a late resolve can't put a stale QR back on screen.
+  // Leave the dash-st: QR screen, optionally with a message. Falls back to
+  // pasting the CRITICAL key — or, for a wallet-login user who has no key to
+  // paste, back to the confirmation so they can retry in the wallet. Bumping
+  // the generation counter discards any in-flight build so a late resolve
+  // can't put a stale QR back on screen.
   const exitWalletSign = useCallback((message: string | null) => {
     walletSessionRef.current++
     setWalletUri(null)
     setWalletRemaining(null)
     setError(message)
-    setState('needKey')
-  }, [])
+    setState(preferWallet ? 'confirming' : 'needKey')
+  }, [preferWallet])
 
   /**
    * Alternative to pasting the CRITICAL key: build the unsigned purchase
@@ -401,10 +407,25 @@ export function BuyYappModal() {
                           </div>
                           <p className="text-xs text-gray-500">{formatCoverage(amountBig)}</p>
                         </div>
+                        {error && <p className="text-red-500 text-sm">{error}</p>}
                         <div className="flex gap-3">
-                          <Button onClick={() => { setState('input'); setCriticalKeyWif('') }} variant="outline" className="flex-1">Back</Button>
-                          <Button onClick={handleBuy} className="flex-1">Confirm &amp; Buy</Button>
+                          <Button onClick={() => { setState('input'); setError(null); setCriticalKeyWif('') }} variant="outline" className="flex-1">Back</Button>
+                          {preferWallet ? (
+                            <Button
+                              onClick={() => { handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err)) }}
+                              className="flex-1"
+                            >
+                              Approve in wallet
+                            </Button>
+                          ) : (
+                            <Button onClick={handleBuy} className="flex-1">Confirm &amp; Buy</Button>
+                          )}
                         </div>
+                        {preferWallet && (
+                          <p className="text-xs text-gray-500 text-center">
+                            You&apos;ll approve this purchase in the Dash wallet you just logged in with — no key ever touches this browser.
+                          </p>
+                        )}
                       </div>
                     )}
 
