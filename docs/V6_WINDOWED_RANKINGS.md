@@ -1,25 +1,48 @@
 # Contract v6 — windowed rankings (what yappr needs next)
 
-`contracts/yappr-social-contract-v6.json` is a **design fixture, not a
-deployable contract**. It is v5 (live on moutai, `verify-v5.mjs` 91/91) plus
-four time-bucketed indexes on `like`, written in the grammar we expect
-time-bucketed rankings to use. Regenerate with
+`contracts/yappr-social-contract-v6.json` is v5 (live on moutai, `verify-v5.mjs`
+91/91) plus server-ordered **time-bounded** rankings, written in the grammar
+that landed upstream on 2026-09-01. Regenerate with
 `python3 scripts/build-v6-contract.py`; `--self-test` asserts the committed
-JSON (28 checks).
+JSON.
 
-On protocol v14 it is rejected at contract validation:
+## Status (2026-09-02)
 
-```
-invalid contract structure: a timeRange index cannot be ranked
-(rankedCountable / rankedSummable / rankedAverageable): ranked queries have no
-time-bucket semantics, so the ranked secondaries would be maintained but never
-servable
-```
+| Layer | State |
+|---|---|
+| Platform code | **Shipped on `v4.2-dev`** — dashpay/platform#4578 (ranked indexes below timeRange buckets, merged 2026-09-01) on top of #4574 (typed `IN_TIME_RANGE` operand with `byStart` historic windows) |
+| Release | **Not yet cut.** Latest tag/npm is 4.2.0-dev.7 (2026-08-31); both PRs merged after it. Needs dev.8 |
+| Devnet (moutai) | Runs dev.7 → this contract is **rejected there today** (`a timeRange index cannot be ranked`). Registers after the devnet upgrades to dev.8 |
+| This contract vs upstream HEAD | Both new doctype shapes **parse with full validation** against rs-dpp at v4.2-dev HEAD (7105bc4ae7) — probed with `try_from_schema_generation_3`, every index present |
+| TTL / cheaper windowed bytes | dashpay/platform#4581 open (drafted, review required) — not assumed here; the cost figures below are at today's perpetual-storage pricing |
 
-That is the only rule it breaks — every other index, property and limit
-(≤10 indexes per doctype, overlap factor ≤24, `$createdAt` in `required`,
-`timeRange.on` leading the property list, ranked axes over a `terminal`
-index with `countable` + `rangeCountable`) already validates today.
+## Two validation rules the dev.7 blanket rejection had been hiding
+
+Probing the original fixture against HEAD surfaced two rules that only
+become reachable once ranked-under-timeRange is admitted:
+
+1. **`preallocated` is illegal on a bucketed index** — bucket paths derive
+   from the like's own `$createdAt` at write time, so they cannot be created
+   ahead of time from the referenced post. The windowed twins drop the flag
+   (their all-time twins keep it).
+2. **An optional property may only be the FIRST property of a `skipIfAbsent`
+   index.** `like.hashtag` is optional since v5 (that is what killed the `''`
+   sentinel), and under a timeRange the first position is the timestamp, so
+   a windowed hashtag index on `like` is rejected: *"absence would strand the
+   prefix levels above it"*. Both escape hatches were probed and are also
+   rejected — `skipIfAbsent` with `$createdAt` first (*"system properties are
+   always present"*), and making `hashtag` required again (then v5's own
+   `byHashtagPost` *"could never skip"*).
+
+So the windowed hashtag rankings cannot live on `like`. They live on a new
+tagged-only doctype instead — **`beat`**: indexOnly, `hashtag` **required**,
+`postId` refersTo `post` with `propertyAgreement {hashtag: hashtag}` (so
+consensus enforces `beat.hashtag == post.hashtag`, exactly as it does for
+`like.hashtag`). The client writes one `beat` beside each like of a tagged
+post, in the same batch transition; untagged likes write no beat — the
+`skipIfAbsent` economy by other means. This is the shape upstream's own
+`yappr-likes` fixture uses for its windowed hashtag index (its `beat`
+doctype), which is reassuring.
 
 ## Why yappr cannot use the documented workaround
 
@@ -44,38 +67,25 @@ one answers the same question inside a time bound.
 | Index | Grid | Query it must serve | All-time twin (works today) |
 |---|---|---|---|
 | `byDayPost` | day, k=1 | Most-liked posts **today** — pin newest bucket, rank at terminal `postId`, top 20 | `byPost` → Explore "Top" tab |
-| `byDayHashtagPost` | day, k=1 | **Trending hashtags today** — pin newest bucket, rank at `hashtag`, top 20 | `byHashtagPost` → trending widget |
-| `byDayHashtagPost` | day, k=1 | **Top posts for #tag today** — pin newest bucket **and** `hashtag`, rank at `postId` | `byHashtagPost` → tag page "Top" toggle |
+| `beat.byDayHashtagPost` | day, k=1 | **Trending hashtags today** — pin newest bucket, rank at `hashtag`, top 20 | `byHashtagPost` → trending widget |
+| `beat.byDayHashtagPost` | day, k=1 | **Top posts for #tag today** — pin newest bucket **and** `hashtag`, rank at `postId` | `byHashtagPost` → tag page "Top" toggle |
 | `byDayAuthorPost` | day, k=1 | **Top creators today** — pin newest bucket, rank at `postAuthor` | `byAuthorPost` → Explore "Creators" |
 | `byDayAuthorPost` | day, k=1 | **Top posts by one author today** — pin bucket + `postAuthor`, rank at `postId` | `byAuthorPost` → profile "Top" tab |
 | `byDayAuthorPost` | day, k=1 | **Most-liked recent posts by people I follow** — pin bucket + `postAuthor` **In** (my follows), rank at `postId` | *no equivalent — see below* |
-| `byRollingHashtagPost` | 24h/6h, k=4 | Same as `byDayHashtagPost`, on an **overlapping** grid | — (test material only) |
+| `beat.byRollingHashtagPost` | 24h/6h, k=4 | Same as `byDayHashtagPost`, on an **overlapping** grid | — (test material only) |
 
 `likeReply` would take the same treatment symmetrically; it is left out of the
 fixture to keep the diff readable.
 
-## On the two objections in the rejection message
+## The two objections in the old rejection message — resolved upstream
 
-Both concerns recorded in the validation comment are about rankings *keyed by*
-bucket. Every query above **pins** the bucket instead:
-
-1. *"the ranked secondaries would be maintained but never servable"* — true
-   while ranked queries accept no where clauses. All seven queries need the
-   bucket selected the way `IN_TIME_RANGE(..., "newest")` already selects it
-   for grouped counts, i.e. resolved from committed block time server-side and
-   re-derived by the verifier. The ranking is then read at a level *below* the
-   pinned bucket, which is the shape prefix at-level rankings already serve.
-2. *"ranking groups keyed by bucket starts would score each document
-   `overlap_factor` times"* — that double count only arises if a ranking spans
-   buckets. Within one pinned bucket a document appears exactly once, whatever
-   the overlap factor, because overlap replicates a document *across* buckets
-   and never *within* one. `byRollingHashtagPost` is in the fixture so this can
-   be tested rather than argued: its per-bucket rankings should be identical to
-   what a k=1 grid over the same window produces.
-
-If pinned-bucket ranked reads are the tractable subset, `range == step`
-(non-overlapping) alone would already unblock everything yappr ships — the
-three `byDay*` indexes. The overlapping index is separable.
+#4578 replaced the blanket ban with the one real rule: ranked levels sit
+strictly **below** the bucketed level. Its rationale is the argument this
+document originally made: a bucket start is just another prefix value, a
+document appears exactly once inside any single bucket's subtree, so
+per-window rankings are exact regardless of grid overlap. Still rejected, on
+purpose: ranking the windows *themselves* ("busiest days") — a single-property
+bucketed ranked index, or an `at` chain naming the timestamp.
 
 ## The pin-set case (`postAuthor In [...]`)
 
@@ -92,18 +102,45 @@ Worth designing the predicate surface once — single pin, `In` pin set, and
 time bucket — rather than special-casing the windowed form, since yappr needs
 all three and they compose (the query above uses two of them at once).
 
-## Secondary ask: `skipIfAbsent` under a timeRange
+## Cost
 
-`skipIfAbsent` requires its trigger to be the **first** index property, which
-the timeRange source now occupies, so the windowed hashtag indexes lose it —
-untagged likes (the majority) write a null entry they do not write in the
-all-time `byHashtagPost`. Relaxing the rule to "first property after the
-timeRange source" would restore parity. Not a blocker; a cost item.
+Measured, not modelled: a least-squares fit of per-op credit cost over the
+2026-09-01 devnet re-seed (426 ops across 10 identities on the live v5
+contract, per-identity balance deltas from `.seed-report.local.json`,
+residual 0.1%):
 
-## Cost note
+| Op (v5, live) | Credits | DASH |
+|---|---|---|
+| post / quote | ~188 M | 0.0019 |
+| reply | ~175 M | 0.0018 |
+| **like** | **~59 M** | **0.0006** |
+| likeReply | ~54 M | 0.0005 |
+| repost | ~66 M | 0.0007 |
+| follow | ~46 M | 0.0005 |
 
-All three shipping indexes use `range == step` (overlap factor 1), where a
-document lands in exactly one bucket and the index is priced like an ordinary
-one. Rolling-window UX, if wanted, is better assembled client-side from
-consecutive daily buckets than bought with a k>1 grid, which multiplies that
-index's write cost by k.
+(A like was ~228 M on v4; #4528's re-key-as-replaced-bytes and the indexOnly
+shape cut it ~4×. Old plan-doc figures are stale.)
+
+A like on v5 pays for five index entries, three of them ranked chains
+(`byPost` terminal, `byHashtagPost` and `byAuthorPost` multi-at). v6 adds:
+
+| Write | Adds | Estimated like cost | vs v5 |
+|---|---|---|---|
+| untagged like | `byDayPost` (2 levels, ranked terminal) + `byDayAuthorPost` (3 levels, ranked at 2) — the structural twins of `byPost` + `byAuthorPost` plus one bucket level each | **~85–95 M** | +45–60% |
+| tagged like | the above **plus a `beat` entry**: its own indexOnly row + `byDayHashtagPost` (3 levels, ranked at 2) + plain `byPost` | **~125–140 M** | +110–140% |
+
+Estimate basis: each new windowed twin costs about what its all-time twin
+does plus one bucket level (~12–15 M per ranked twin at 27,000 cr/byte
+storage + 400 cr/byte processing, ~500 B per entry chain). `range == step`
+everywhere, so one bucket per write; the k=4 `byRollingHashtagPost` on `beat`
+would multiply that index by 4 and is **not** in the shipping shape (it stays
+in the fixture as overlap test material for platform).
+
+At the YAPP layer nothing changes (1 YAPP/like); the credit cost is what the
+identity pays. Even the tagged case stays under the cost of a reply today.
+
+**If #4581 (TTL + ephemeral-bytes pricing) lands**, every byte under the
+windowed indexes bills to processing at 270 cr/byte instead of 27,000 —
+roughly a 100× cut on the *added* cost, pulling v6 likes back to within
+~5% of v5. The devnet would then also stop accumulating dead daily windows.
+Not required for v6; it makes v6 nearly free.
