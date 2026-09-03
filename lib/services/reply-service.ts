@@ -187,7 +187,9 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
-    return this.create(ownerId, data);
+    // Create with a pre-generated document ID so ambiguous broadcast failures
+    // can be recovered by exact-ID lookup instead of rebroadcasting.
+    return this.createWithAmbiguityRecovery(ownerId, data);
   }
 
   /**

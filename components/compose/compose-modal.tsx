@@ -44,6 +44,7 @@ import { ImageAttachment } from './image-attachment'
 import { StorageProviderModal } from './storage-provider-modal'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
+import { POST_DUPLICATE_LOOKBACK_MS } from '@/lib/constants'
 
 export function ComposeModal() {
   const {
@@ -73,6 +74,7 @@ export function ComposeModal() {
   const [showPreview, setShowPreview] = useState(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
   const teaserTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const duplicateOverrideRef = useRef<Map<string, number>>(new Map())
 
   // Private feed state
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
@@ -484,6 +486,91 @@ export function ComposeModal() {
       })
   }, [attachedImage, isProviderConnected, upload])
 
+  const isDuplicateOverrideActive = (signature: string): boolean => {
+    const lastOverride = duplicateOverrideRef.current.get(signature)
+    if (!lastOverride) return false
+    if (Date.now() - lastOverride > POST_DUPLICATE_LOOKBACK_MS) {
+      duplicateOverrideRef.current.delete(signature)
+      return false
+    }
+    return true
+  }
+
+  const setDuplicateOverride = (signature: string): void => {
+    duplicateOverrideRef.current.set(signature, Date.now())
+  }
+
+  const buildDuplicateSignature = (data: {
+    type: 'post' | 'reply'
+    content: string
+    quotedPostId?: string
+    quotedPostOwnerId?: string
+    parentId?: string | null
+    parentOwnerId?: string | null
+  }): string => {
+    const quoteId = data.quotedPostId ?? ''
+    const quoteOwnerId = data.quotedPostOwnerId ?? ''
+    const parentId = data.parentId ?? ''
+    const parentOwnerId = data.parentOwnerId ?? ''
+    return `${data.type}:${data.content}::${quoteId}:${quoteOwnerId}::${parentId}:${parentOwnerId}`
+  }
+
+  const checkRecentDuplicate = async (params: {
+    ownerId: string
+    type: 'post' | 'reply'
+    content: string
+    quotedPostId?: string
+    quotedPostOwnerId?: string
+    parentId?: string | null
+    parentOwnerId?: string | null
+  }): Promise<boolean> => {
+    const minCreatedAt = Date.now() - POST_DUPLICATE_LOOKBACK_MS
+    try {
+      if (params.type === 'reply') {
+        const { replyService } = await import('@/lib/services/reply-service')
+        const result = await replyService.getUserReplies(params.ownerId, {
+          where: [
+            ['$ownerId', '==', params.ownerId],
+            ['$createdAt', '>', minCreatedAt]
+          ],
+          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+          limit: 20,
+          skipEnrichment: true
+        })
+
+        return result.documents.some((reply) =>
+          !reply.encryptedContent &&
+          reply.content === params.content &&
+          reply.parentId === params.parentId &&
+          reply.parentOwnerId === params.parentOwnerId
+        )
+      }
+
+      const { postService } = await import('@/lib/services')
+      const result = await postService.getUserPosts(params.ownerId, {
+        where: [
+          ['$ownerId', '==', params.ownerId],
+          ['$createdAt', '>', minCreatedAt]
+        ],
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+        limit: 20
+      })
+
+      const expectedQuotedId = params.quotedPostId ?? null
+      const expectedQuotedOwnerId = params.quotedPostOwnerId ?? null
+
+      return result.documents.some((post) =>
+        !post.encryptedContent &&
+        post.content === params.content &&
+        (post.quotedPostId ?? null) === expectedQuotedId &&
+        (post.quotedPostOwnerId ?? null) === expectedQuotedOwnerId
+      )
+    } catch (error) {
+      logger.warn('Duplicate pre-check failed; continuing without block:', error)
+      return false
+    }
+  }
+
   const handlePost = async () => {
     const authedUser = requireAuth('post')
     if (!authedUser || !canPost) return
@@ -502,6 +589,9 @@ export function ComposeModal() {
     const timeoutPosts: { index: number; threadPostId: string }[] = [] // Posts that timed out (may have succeeded)
     let failedAtIndex: number | null = null
     let failureError: Error | null = null
+    let duplicateDetectedAtIndex: number | null = null
+    let duplicateDetectedThreadPostId: string | null = null
+    let duplicateDetectedIsReply = false
 
     // Upload image first if attached (and not already uploaded)
     let imageUrl: string | undefined
@@ -523,7 +613,7 @@ export function ComposeModal() {
     }
 
     try {
-      const { retryPostCreation } = await import('@/lib/retry-utils')
+      const { retryPostCreation, isPostCreationIndeterminateError } = await import('@/lib/retry-utils')
 
       // Check if this is a private post (explicit or inherited)
       const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
@@ -602,11 +692,45 @@ export function ComposeModal() {
         // Determine if this is a reply (to existing post/reply) or a top-level post
         // - If replyingTo is set: all posts in thread are replies
         // - If replyingTo is not set: first post is a top-level post, subsequent are replies
-        const isReply = (i === 0 && replyingTo) || (i > 0 && previousPostId)
+        // - If resuming an interrupted thread: the first pending post replies to lastPostedId
+        const isReply = Boolean(replyingTo || previousPostId)
         const parentId = i === 0 && replyingTo ? replyingTo.id : previousPostId
         const parentOwnerId = i === 0 && replyingTo
           ? replyingTo.author.id
           : previousPostId ? authedUser.identityId : undefined
+
+        const shouldCheckDuplicate = !isThisPostPrivate && !isThisReplyInherited
+        const duplicateSignature = buildDuplicateSignature({
+          type: isReply ? 'reply' : 'post',
+          content: postContent,
+          quotedPostId: i === 0 ? quotingPost?.id : undefined,
+          quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
+          parentId,
+          parentOwnerId,
+        })
+        const hasOverride = isDuplicateOverrideActive(duplicateSignature)
+
+        if (shouldCheckDuplicate && !hasOverride) {
+          const isDuplicate = await checkRecentDuplicate({
+            ownerId: authedUser.identityId,
+            type: isReply ? 'reply' : 'post',
+            content: postContent,
+            quotedPostId: i === 0 ? quotingPost?.id : undefined,
+            quotedPostOwnerId: i === 0 ? quotingPost?.author.id : undefined,
+            parentId,
+            parentOwnerId,
+          })
+
+          if (isDuplicate) {
+            setDuplicateOverride(duplicateSignature)
+            duplicateDetectedAtIndex = i
+            duplicateDetectedThreadPostId = threadPostId
+            duplicateDetectedIsReply = isReply
+            break
+          }
+        } else if (hasOverride) {
+          duplicateOverrideRef.current.delete(duplicateSignature)
+        }
 
         const result = await retryPostCreation(async () => {
           // Check for sync required errors before they get wrapped by retry
@@ -778,11 +902,22 @@ export function ComposeModal() {
             break
           }
         } else {
-          // Check if this is a timeout error - the state-transition-service already
-          // tried to verify on Platform. If we still get here, it couldn't confirm.
-          // Retrying is safe — idempotency checks will prevent double-posting.
+          // Ambiguous outcome: the broadcast may have committed, and the
+          // service already polled Platform for the exact document ID without
+          // finding it. Do NOT retry — a new attempt would broadcast a fresh
+          // document (new entropy/ID) and could duplicate this one. Stop the
+          // thread here and let the user check their profile first.
+          if (isPostCreationIndeterminateError(result.error)) {
+            logger.warn(`Post ${i + 1} outcome indeterminate (document ${result.error.documentId}) — it may have been created.`)
+            timeoutPosts.push({ index: i, threadPostId })
+            break
+          }
+
+          // Remaining timeout errors are pre-broadcast failures (post-broadcast
+          // ambiguity surfaces as PostCreationIndeterminateError above), so the
+          // document was not created and pressing Post again is safe.
           if (isTimeoutError(result.error)) {
-            logger.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
+            logger.warn(`Post ${i + 1} timed out before it could be broadcast.`)
             timeoutPosts.push({ index: i, threadPostId })
             continue
           }
@@ -795,6 +930,26 @@ export function ComposeModal() {
       }
 
       // Handle results based on success/failure/timeout state
+      if (duplicateDetectedAtIndex !== null) {
+        // Mark confirmed successful posts as posted
+        successfulPosts.forEach(({ threadPostId, postId }) => {
+          markThreadPostAsPosted(threadPostId, postId)
+        })
+
+        const duplicateLabel = duplicateDetectedIsReply ? 'reply' : 'post'
+        toast(
+          `A very recent ${duplicateLabel} with the same content was found. ` +
+          `Press Post again to send anyway.`,
+          { duration: 6000, icon: '⚠️' }
+        )
+
+        if (duplicateDetectedThreadPostId) {
+          setActiveThreadPost(duplicateDetectedThreadPostId)
+        }
+
+        return
+      }
+
       const allSuccessful = failedAtIndex === null && timeoutPosts.length === 0
       const hasTimeouts = timeoutPosts.length > 0
       const successfulThreadPostIds = new Set(successfulPosts.map(p => p.threadPostId))
@@ -836,19 +991,20 @@ export function ComposeModal() {
         if (confirmedCount > 0 && timeoutCount > 0) {
           toast(
             `${confirmedCount} post${confirmedCount > 1 ? 's' : ''} confirmed. ` +
-            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out - press Post to retry.`,
-            { duration: 5000, icon: '⚠️' }
+            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} could not be confirmed and may have been created — ` +
+            `check your profile before pressing Post again.`,
+            { duration: 6000, icon: '⚠️' }
           )
-          // Keep modal open for retry - set active to first timed-out post
+          // Keep modal open for retry - set active to first unconfirmed post
           const firstTimeout = timeoutPosts[0]
           if (firstTimeout) {
             setActiveThreadPost(firstTimeout.threadPostId)
           }
         } else if (timeoutCount > 0) {
           toast(
-            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out. ` +
-            `Press Post to retry, or check your profile.`,
-            { duration: 5000, icon: '⚠️' }
+            `Your post${timeoutCount > 1 ? 's' : ''} could not be confirmed and may have been created — ` +
+            `check your profile before pressing Post again.`,
+            { duration: 6000, icon: '⚠️' }
           )
           // Keep modal open for retry
         } else {

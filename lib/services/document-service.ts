@@ -1,8 +1,31 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
-import { YAPPR_CONTRACT_ID } from '../constants';
+import { documentBuilderService } from './document-builder-service';
+import { YAPPR_CONTRACT_ID, POST_RECOVERY_POLL_ATTEMPTS, POST_RECOVERY_POLL_ATTEMPTS_ENCRYPTED, POST_RECOVERY_POLL_DELAY_MS } from '../constants';
+import { isDefiniteRejectionError, PostCreationIndeterminateError } from '../retry-utils';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+
+/**
+ * Error thrown when a document create fails, preserving whether the
+ * broadcast stage was reached so callers can classify the failure:
+ * - `broadcastAttempted === false`: definite failure, safe to retry.
+ * - `broadcastAttempted === true`: ambiguous — the state transition may
+ *   still commit on Platform; retrying with fresh entropy risks duplicates.
+ */
+export class DocumentCreateError extends Error {
+  readonly documentId?: string;
+  readonly broadcastAttempted: boolean;
+
+  constructor(message: string, options: { documentId?: string; broadcastAttempted?: boolean } = {}) {
+    super(message);
+    this.name = 'DocumentCreateError';
+    this.documentId = options.documentId;
+    this.broadcastAttempted = options.broadcastAttempted ?? false;
+    // Restore prototype chain for environments that transpile class extends
+    Object.setPrototypeOf(this, DocumentCreateError.prototype);
+  }
+}
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -194,7 +217,10 @@ export abstract class BaseDocumentService<T> {
       );
 
       if (!result.success || !result.document) {
-        throw new Error(result.error || 'Failed to create document');
+        throw new DocumentCreateError(result.error || 'Failed to create document', {
+          documentId: result.documentId ?? options?.documentId,
+          broadcastAttempted: result.broadcastAttempted,
+        });
       }
 
       // Clear relevant caches
@@ -212,6 +238,83 @@ export abstract class BaseDocumentService<T> {
       logger.error(`Error creating ${this.documentType} document:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Create a document with recovery from ambiguous broadcast failures.
+   *
+   * The document ID is generated deterministically BEFORE broadcasting
+   * (from ownerId + contractId + documentType + entropy). If the create
+   * fails after the broadcast stage with an ambiguous error (timeout,
+   * gateway 5xx, "tenderdash not available", ...), the transition may still
+   * have committed — so we poll Platform for that exact document ID instead
+   * of rebroadcasting a new document.
+   *
+   * Outcomes:
+   * - Success: the created (or recovered) document.
+   * - Definite failure (pre-broadcast, or a hard rejection): original error
+   *   is rethrown; retrying is safe.
+   * - Ambiguous failure with no recovery: PostCreationIndeterminateError is
+   *   thrown. It is non-retryable — rebroadcasting would create a NEW
+   *   document with fresh entropy (and a fresh nonce for encrypted content),
+   *   risking duplicates if the original transition later commits.
+   */
+  protected async createWithAmbiguityRecovery(ownerId: string, data: Record<string, unknown>): Promise<T> {
+    const { id: documentId, entropy } = await documentBuilderService.generateDocumentIdentity(
+      this.contractId,
+      this.documentType,
+      ownerId
+    );
+
+    try {
+      return await this.createWithOptions(ownerId, data, { documentId, entropy });
+    } catch (error) {
+      const broadcastAttempted = error instanceof DocumentCreateError && error.broadcastAttempted;
+      // Once a broadcast has been attempted, DEFAULT to treating the failure
+      // as ambiguous: only errors that prove Platform rejected the transition
+      // (validation/consensus rejections) are definite. An unrecognized error
+      // message must not be allowed to invite a retry — a rebroadcast with
+      // fresh entropy would duplicate the document if the original commits.
+      if (broadcastAttempted && !isDefiniteRejectionError(error)) {
+        logger.warn(`${this.documentType} create failed ambiguously — polling for document ${documentId}`);
+        // Encrypted documents get a longer recovery window: their ciphertext
+        // is not queryable, so the compose duplicate pre-check cannot protect
+        // against a manual re-post. If the user retries anyway, the content is
+        // re-encrypted with a fresh nonce and the duplicate cannot be detected
+        // at all — finding the original here is the only safety net.
+        const attempts = data.encryptedContent
+          ? POST_RECOVERY_POLL_ATTEMPTS_ENCRYPTED
+          : POST_RECOVERY_POLL_ATTEMPTS;
+        const recovered = await this.pollForCreatedDocument(documentId, attempts);
+        if (recovered) {
+          logger.info(`Recovered ${this.documentType} ${documentId} after ambiguous create error`);
+          this.clearCache();
+          return recovered;
+        }
+        logger.warn(`Could not confirm ${this.documentType} ${documentId} — surfacing indeterminate outcome`);
+        throw new PostCreationIndeterminateError(this.documentType, documentId, error);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Poll Platform for a document by its exact ID after an ambiguous
+   * create failure. Returns null if it never becomes visible.
+   */
+  private async pollForCreatedDocument(documentId: string, maxAttempts: number): Promise<T | null> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, POST_RECOVERY_POLL_DELAY_MS));
+      }
+      // get() returns null on lookup errors, so a flaky network during
+      // recovery degrades to the indeterminate outcome rather than throwing.
+      const document = await this.get(documentId);
+      if (document) {
+        return document;
+      }
+    }
+    return null;
   }
 
   /**
