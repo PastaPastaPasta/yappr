@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '@/lib/logger';
 import { useAuth } from '@/contexts/auth-context';
 import { filterBlockedAuthors } from '@/hooks/use-block';
@@ -36,11 +36,19 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   const userId = user?.identityId;
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Following Top fans out one ranked read per followed author and can settle
+  // well after a For You Top read issued later; only the newest request may
+  // touch state, so a superseded response never overwrites the current view.
+  const requestIdRef = useRef(0);
 
   const load = useCallback(
     async (force = false) => {
-      if (!likesAreIndexOnly()) {
+      const requestId = ++requestIdRef.current;
+      const isCurrent = () => requestIdRef.current === requestId;
+
+      if (!likesAreIndexOnly() || (activeTab === 'following' && !userId)) {
         setPosts([]);
+        setIsLoading(false);
         return;
       }
 
@@ -48,23 +56,19 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
       try {
         const { topLikedPostsHydrated, topLikedPostsByAuthorsHydrated } = await import('@/lib/services/ranked-likes');
         let ranked: Post[];
-        if (activeTab === 'following') {
-          if (!userId) {
-            setPosts([]);
-            return;
-          }
+        if (activeTab === 'following' && userId) {
           const authorIds = await followService.getFollowingIds(userId);
           ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit: 20, window, force });
         } else {
           ranked = await topLikedPostsHydrated({ limit: 20, window, force });
         }
-
-        setPosts(await filterBlockedAuthors(userId, ranked));
+        const visible = await filterBlockedAuthors(userId, ranked);
+        if (isCurrent()) setPosts(visible);
       } catch (error) {
         logger.error('Feed: Failed to load top posts:', error);
-        setPosts([]);
+        if (isCurrent()) setPosts([]);
       } finally {
-        setIsLoading(false);
+        if (isCurrent()) setIsLoading(false);
       }
     },
     [activeTab, userId, window]
