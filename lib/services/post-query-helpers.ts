@@ -6,7 +6,6 @@ import type { PostStats } from './post-service';
 import { type DocumentWhereClause } from './sdk-helpers';
 import { rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { retryAsync } from '../retry-utils';
 import { quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
@@ -171,8 +170,14 @@ let authorCountTreeUnsupported = false;
  *   latching — the next call should try the count tree again.
  *
  * Counts posts in EVERY language — consistent with `countAllPosts`, unlike the
- * fallback scans below, which walk the `languageTimeline` index and so only see
+ * fallback scan below, which walks the `languageTimeline` index and so only sees
  * `language == 'en'`.
+ *
+ * Returns AT MOST 100 authors — Drive caps a grouped range-distinct count at
+ * `DEFAULT_QUERY_LIMIT` and this query is not paginated (see
+ * `rangeDistinctCount`). Fine for "top N contributors", which only reads the
+ * head of the distribution; NOT usable as a distinct-author total, which is why
+ * the homepage no longer shows one.
  */
 async function fetchAuthorPostCountsViaCountTree(contractId: string): Promise<Map<string, number> | null> {
   if (authorCountTreeUnsupported) return null;
@@ -190,60 +195,6 @@ async function fetchAuthorPostCountsViaCountTree(contractId: string): Promise<Ma
     logger.warn('fetchAuthorPostCountsViaCountTree: transient failure, falling back to scan for this call:', error);
     return null;
   }
-}
-
-export async function fetchUniqueAuthorCount(contractId: string): Promise<number> {
-  const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
-  if (grouped && grouped.size > 0) return grouped.size;
-
-  const result = await retryAsync(
-    async () => {
-      const uniqueAuthors = new Set<string>();
-      let startAfter: string | undefined = undefined;
-      const PAGE_SIZE = 100;
-
-      while (true) {
-        const documents = await queryRawDocuments({
-          dataContractId: contractId,
-          documentTypeName: 'post',
-          where: [
-            ['language', '==', 'en'],
-            ['$createdAt', '>', 0],
-          ],
-          orderBy: [['language', 'asc'], ['$createdAt', 'asc']],
-          limit: PAGE_SIZE,
-          startAfter,
-        });
-
-        for (const doc of documents) {
-          if (doc.$ownerId) {
-            uniqueAuthors.add(doc.$ownerId as string);
-          }
-        }
-
-        if (documents.length < PAGE_SIZE) break;
-
-        const lastDoc = documents[documents.length - 1];
-        if (!lastDoc.$id) break;
-        startAfter = lastDoc.$id as string;
-      }
-
-      return uniqueAuthors.size;
-    },
-    {
-      maxAttempts: 3,
-      initialDelayMs: 1000,
-      maxDelayMs: 5000,
-      backoffMultiplier: 2,
-    }
-  );
-
-  if (!result.success || result.data === undefined) {
-    logger.error('Error counting unique authors after retries:', result.error);
-    throw result.error || new Error('Failed to count unique authors');
-  }
-
-  return result.data;
 }
 
 export async function fetchTopPostsByLikes(

@@ -78,7 +78,6 @@ export function WelcomePageContent() {
         {/* Platform Stats Section */}
         <PlatformStats
           totalPosts={platformStats.totalPosts}
-          totalUsers={platformStats.totalUsers}
           loading={platformStats.loading}
           error={platformStats.error}
           onRetry={refresh}

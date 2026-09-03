@@ -17,7 +17,6 @@ export interface TopUser {
 
 export interface PlatformStats {
   totalPosts: number
-  totalUsers: number
   loading: boolean
   error: string | null
 }
@@ -43,7 +42,7 @@ export interface HomepageData {
 
 // Cache for homepage data
 const cache = {
-  platformStats: null as { data: { totalPosts: number; totalUsers: number }; timestamp: number } | null,
+  platformStats: null as { data: { totalPosts: number }; timestamp: number } | null,
   featuredPosts: null as { data: Post[]; timestamp: number } | null,
   topUsers: null as { data: TopUser[]; timestamp: number } | null,
 }
@@ -57,7 +56,6 @@ export function useHomepageData(): HomepageData {
 
   const [platformStats, setPlatformStats] = useState<PlatformStats>({
     totalPosts: 0,
-    totalUsers: 0,
     loading: true,
     error: null
   })
@@ -92,12 +90,9 @@ export function useHomepageData(): HomepageData {
     setPlatformStats(prev => ({ ...prev, loading: true, error: null }))
 
     try {
-      const [totalPosts, totalUsers] = await Promise.all([
-        postService.countAllPosts(),
-        postService.countUniqueAuthors()
-      ])
+      const totalPosts = await postService.countAllPosts()
 
-      const data = { totalPosts, totalUsers }
+      const data = { totalPosts }
       cache.platformStats = { data, timestamp: Date.now() }
 
       setPlatformStats({

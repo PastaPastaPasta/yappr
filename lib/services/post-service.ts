@@ -9,7 +9,7 @@ import { authorFieldIsRequired, groupByInteractionSurface, hashtagIsOptional, ha
 import { firstHashtag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
-import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes, fetchUniqueAuthorCount } from './post-query-helpers';
+import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 
@@ -181,7 +181,6 @@ class PostService extends BaseDocumentService<Post> {
   private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>>();
   private countUserPostsDeduplicator = new RequestDeduplicator<string, number>();
   private countAllPostsDeduplicator = new RequestDeduplicator<string, number>();
-  private countUniqueAuthorsDeduplicator = new RequestDeduplicator<string, number>();
 
   constructor() {
     super('post');
@@ -696,19 +695,6 @@ class PostService extends BaseDocumentService<Post> {
     }
 
     return this.statsDeduplicator.dedupe(batchDedupeKey(targets), () => fetchBatchPostStats(targets));
-  }
-
-  /**
-   * Count unique authors across all posts
-   * Paginates through all posts and counts unique $ownerId values.
-   * Uses the languageTimeline index [language, $createdAt] to scan posts.
-   * Note: Currently only counts authors of English posts (language='en').
-   */
-  async countUniqueAuthors(): Promise<number> {
-    // Use a constant key since this counts all unique authors
-    return this.countUniqueAuthorsDeduplicator.dedupe('all', () =>
-      fetchUniqueAuthorCount(this.contractId)
-    );
   }
 
   /**

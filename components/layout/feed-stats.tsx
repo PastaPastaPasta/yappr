@@ -16,7 +16,6 @@ interface UserStats {
 
 interface GlobalStats {
   totalPosts: number
-  activeUsers: number
 }
 
 // Skeleton placeholder for stats section
@@ -150,12 +149,9 @@ export function FeedStats() {
         setGlobalLoading(true)
       }
       try {
-        const [totalPosts, activeUsers] = await Promise.all([
-          postService.countAllPosts(),
-          postService.countUniqueAuthors()
-        ])
+        const totalPosts = await postService.countAllPosts()
         if (!cancelled) {
-          const newGlobalStats = { totalPosts, activeUsers }
+          const newGlobalStats = { totalPosts }
           setGlobalStats(newGlobalStats)
           // Cache for 5 minutes since global stats change slowly
           cacheManager.set('sidebar', cacheKey, newGlobalStats, { ttl: 300000 })
@@ -163,7 +159,7 @@ export function FeedStats() {
       } catch (error) {
         logger.error('Error fetching global stats:', error)
         if (!cancelled) {
-          setGlobalStats({ totalPosts: 0, activeUsers: 0 })
+          setGlobalStats({ totalPosts: 0 })
         }
       } finally {
         if (!cancelled) {
@@ -188,18 +184,12 @@ export function FeedStats() {
       <div className="px-4 py-3 space-y-2">
         {!shouldLoad || globalLoading || !globalStats ? (
           // Show placeholder until global stats are loaded
-          <StatsPlaceholder rows={2} />
+          <StatsPlaceholder rows={1} />
         ) : (
-          <>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
-              <span className="font-medium">{formatNumber(globalStats.totalPosts)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Active Users</span>
-              <span className="font-medium">{formatNumber(globalStats.activeUsers)}</span>
-            </div>
-          </>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600 dark:text-gray-400">Total Posts</span>
+            <span className="font-medium">{formatNumber(globalStats.totalPosts)}</span>
+          </div>
         )}
         {user && (
           <>

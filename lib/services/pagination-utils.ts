@@ -215,12 +215,21 @@ function hexKeyToBase58(key: string): string | null {
  * is the number of distinct values.
  *
  * Requires the document type to declare a `rangeCountable: true` index whose
- * last property is `groupField` (protocol v14+). When Drive rejects the query
- * as unanswerable by the contract's indexes, this returns null so callers can
- * fall back to a scan AND remember not to retry; any other failure (transport
- * blip, unexpected response shape) is thrown, because it says nothing about
- * whether the contract supports the query. Unlike `groupedDocumentCount` there
- * is no per-id fallback — the caller does not know the value set in advance.
+ * last property is `groupField` (protocol v14+).
+ *
+ * CAPPED AT 100 GROUPS. Drive's range-distinct prove path applies
+ * `DEFAULT_QUERY_LIMIT` (100) when the request carries no limit, and
+ * `max_query_limit` (also 100) rejects anything larger — so a single call can
+ * never see more distinct values than that, and `.size` saturates silently.
+ * Callers wanting the full set must walk disjoint windows (`groupField > last`).
+ * Only use this where the head of the distribution is enough.
+ *
+ * When Drive rejects the query as unanswerable by the contract's indexes, this
+ * returns null so callers can fall back to a scan AND remember not to retry; any
+ * other failure (transport blip, unexpected response shape) is thrown, because
+ * it says nothing about whether the contract supports the query. Unlike
+ * `groupedDocumentCount` there is no per-id fallback — the caller does not know
+ * the value set in advance.
  */
 export async function rangeDistinctCount(
   sdk: SDK,
