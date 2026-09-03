@@ -45,8 +45,9 @@ import {
 const SEQUENCE_MASK = (1n << 40n) - 1n;
 /** In-flight transitions per identity; the chain tolerates a 24-deep nonce gap, stay well inside it. */
 export const DEFAULT_WINDOW = 8;
-const RECONCILE_MS = 2_500;
-const RECONCILE_POLLS = 12; // ~30 s: several blocks
+/** Readback poll cadence; SEED_RECONCILE_MS raises it to shed DAPI read load on big runs. */
+const RECONCILE_MS = Number(process.env.SEED_RECONCILE_MS ?? 2_500);
+const RECONCILE_POLLS = Math.max(6, Math.ceil(45_000 / RECONCILE_MS)); // ≥ ~45 s: several blocks
 const BROADCAST_ATTEMPTS = 6;
 
 /** Per-actor nonce state: fetched once, incremented locally, re-synced on any nonce error. */
