@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { logger } from '@/lib/logger';
 import { useAuth } from '@/contexts/auth-context';
-import { checkBlockedForAuthors } from '@/hooks/use-block';
+import { filterBlockedAuthors } from '@/hooks/use-block';
 import { followService } from '@/lib/services';
 import type { Post } from '@/lib/types';
 import type { RankingWindow } from '@/lib/services/ranked-likes';
@@ -43,29 +43,23 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         setPosts([]);
         return;
       }
-      if (activeTab === 'following' && !userId) {
-        setPosts([]);
-        return;
-      }
 
       setIsLoading(true);
       try {
         const { topLikedPostsHydrated, topLikedPostsByAuthorsHydrated } = await import('@/lib/services/ranked-likes');
         let ranked: Post[];
-        if (activeTab === 'following' && userId) {
+        if (activeTab === 'following') {
+          if (!userId) {
+            setPosts([]);
+            return;
+          }
           const authorIds = await followService.getFollowingIds(userId);
           ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit: 20, window, force });
         } else {
           ranked = await topLikedPostsHydrated({ limit: 20, window, force });
         }
 
-        if (userId && ranked.length > 0) {
-          const authorIds = Array.from(new Set(ranked.map((post) => post.author.id)));
-          const blockedMap = await checkBlockedForAuthors(userId, authorIds);
-          ranked = ranked.filter((post) => !blockedMap.get(post.author.id));
-        }
-
-        setPosts(ranked);
+        setPosts(await filterBlockedAuthors(userId, ranked));
       } catch (error) {
         logger.error('Feed: Failed to load top posts:', error);
         setPosts([]);

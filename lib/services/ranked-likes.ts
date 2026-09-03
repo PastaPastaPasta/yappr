@@ -265,15 +265,9 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
   );
 }
 
-export interface HydratedTopPostsByAuthorsOptions {
-  /** Base58 identity ids whose per-author rankings are merged. */
+export interface HydratedTopPostsByAuthorsOptions extends Omit<HydratedTopPostsOptions, 'hashtag'> {
+  /** Base58 identity ids whose per-author rankings are merged; `limit` sizes the merged page. */
   authorIds: string[];
-  /** Size of the merged page, 1..100, default 20. */
-  limit?: number;
-  /** `'today'` reads the v6 daily-windowed twin; default `'all'`. */
-  window?: RankingWindow;
-  /** Skip the 60-second hydrated cache (an explicit user refresh). */
-  force?: boolean;
 }
 
 /**
