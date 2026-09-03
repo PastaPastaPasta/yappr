@@ -754,6 +754,7 @@ async function ensureBeat(ctx, postKey, hashtag) {
     accepted: () => entryExists(ctx.sdk, ctx.contractId, 'beat', 'postId', ctx[postKey], ctx.botA.ownerId),
   });
   if (outcome.ok) ctx.beats[postKey] = true;
+  else console.log(`     (could not create beat for ${postKey}: ${(outcome.error ?? '').slice(0, 220)})`);
   return outcome.ok;
 }
 
@@ -2249,10 +2250,17 @@ async function caseD1WindowedLike(ctx) {
   const todayPosts = { ...likeRankedShape(ctx, 'postId'), ...todayWindow() };
   const page = await readback(() => ctx.sdk.documents.ranked(todayPosts));
   const ids = nonZeroGroups(page);
+  // b9 leaves bot B's own (standing) like on postT1, so T1 counts 2 in a
+  // full run and 1 under --only; T2/U carry bot A's like alone. This is the
+  // GLOBAL today page on a populated (and concurrently seeded) network: a
+  // single-like fixture can legitimately fall off a full 100-entry page, so
+  // presence is demanded only while the page has room (onRankedPage); the
+  // exact per-fixture counts are pinned by d1c on the author-pinned level.
+  const expectT1 = 1n + (ctx.bLikesT1 ? 1n : 0n);
   check(
-    'd1a today\'s top posts (like.byDayPost, newest bucket) ranks every liked fixture post with count 1',
-    [ctx.postT1, ctx.postT2, ctx.postU].every((id) => groupValueOf(page, id) === 1n),
-    `page=${ids.length} T1=${groupValueOf(page, ctx.postT1)} T2=${groupValueOf(page, ctx.postT2)} U=${groupValueOf(page, ctx.postU)}`
+    'd1a today\'s top posts (like.byDayPost, newest bucket) is served and ranks the fixtures with their standing counts (or the page is full)',
+    onRankedPage(page, ctx.postT1, expectT1, 100) && onRankedPage(page, ctx.postT2, 1n, 100) && onRankedPage(page, ctx.postU, 1n, 100),
+    `page=${ids.length} T1=${groupValueOf(page, ctx.postT1)} (expected ${expectT1}) T2=${groupValueOf(page, ctx.postT2)} U=${groupValueOf(page, ctx.postU)}`
   );
   workingShapes.push({ label: "today's top posts (like.byDayPost, newest)", shape: { ...todayPosts, dataContractId: '<contractId>' } });
 
@@ -2272,17 +2280,17 @@ async function caseD1WindowedLike(ctx) {
   const byAuthor = await readback(() => ctx.sdk.documents.ranked(todayByAuthor));
   check(
     'd1c today\'s top posts by one author (bucket + postAuthor pinned, rank postId) lists the fixtures',
-    [ctx.postT1, ctx.postT2, ctx.postU].every((id) => groupValueOf(byAuthor, id) === 1n),
-    `entries=${byAuthor.entries.length}`
+    groupValueOf(byAuthor, ctx.postT1) === expectT1 && groupValueOf(byAuthor, ctx.postT2) === 1n && groupValueOf(byAuthor, ctx.postU) === 1n,
+    `entries=${byAuthor.entries.length} T1=${groupValueOf(byAuthor, ctx.postT1)} T2=${groupValueOf(byAuthor, ctx.postT2)} U=${groupValueOf(byAuthor, ctx.postU)}`
   );
   workingShapes.push({ label: "today's top posts by author (byDayAuthorPost terminal, newest)", shape: { ...todayByAuthor, dataContractId: '<contractId>', where: [['postAuthor', '==', '<authorId>']] } });
 
   // Cross-check: the all-time twin agrees on today's counts (the run is minutes old).
   const allTime = await readback(() => ctx.sdk.documents.ranked(likeRankedShape(ctx, 'postId')));
   check(
-    'd1d all-time byPost and today\'s byDayPost agree on the fixtures (both 1)',
+    'd1d all-time byPost and today\'s byDayPost agree on every fixture (both pages are top-100 of a populated network, so absent-on-both also agrees)',
     [ctx.postT1, ctx.postT2, ctx.postU].every((id) => groupValueOf(allTime, id) === groupValueOf(page, id)),
-    'counts diverged between the all-time and windowed twins'
+    [ctx.postT1, ctx.postT2, ctx.postU].map((id) => `${id.slice(0, 6)}: all=${groupValueOf(allTime, id)} today=${groupValueOf(page, id)}`).join(' ')
   );
 }
 
