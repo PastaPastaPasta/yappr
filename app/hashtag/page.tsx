@@ -18,6 +18,8 @@ import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
+import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
+import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link'
 
 function HashtagPageContent() {
@@ -35,6 +37,8 @@ function HashtagPageContent() {
   // Latest|Top sort (v4 only — Top is a proved ranked page on the tag-pinned
   // `like.byHashtagPost` axis). Latest stays the existing tagAndTime path.
   const [sortMode, setSortMode] = useState<'latest' | 'top'>('latest')
+  /** v6: Top can show today's ranking (beat.byDayHashtagPost) or all-time. */
+  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [topLoading, setTopLoading] = useState(false)
   const [topLoaded, setTopLoaded] = useState(false)
@@ -134,6 +138,11 @@ function HashtagPageContent() {
     setTopLoaded(false)
   }, [tag])
 
+  // A window change reads a different index: drop the loaded Top list.
+  useEffect(() => {
+    setTopLoaded(false)
+  }, [rankingWindow])
+
   // The block filter depends on the viewer, so a Top list loaded under one
   // identity is stale after login/logout — force a refetch.
   useEffect(() => {
@@ -150,7 +159,7 @@ function HashtagPageContent() {
       setTopLoading(true)
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20 })
+        let fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20, window: rankingWindow })
 
         // Filter out posts from blocked users, matching the Latest path.
         if (user?.identityId && fetched.length > 0) {
@@ -170,7 +179,7 @@ function HashtagPageContent() {
     }
 
     loadTopPosts().catch(err => logger.error('Failed to load top posts for hashtag:', err))
-  }, [sortMode, topLoaded, tag, user?.identityId])
+  }, [sortMode, topLoaded, tag, user?.identityId, rankingWindow])
 
   if (!tag) {
     return (
@@ -245,6 +254,9 @@ function HashtagPageContent() {
                 Top
               </button>
             </div>
+          )}
+          {sortMode === 'top' && (
+            <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="hashtag-top" />
           )}
 
           {/* Content */}

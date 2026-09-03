@@ -270,6 +270,30 @@ const V5_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v5',
 }
 
+/**
+ * v6 — `contracts/yappr-social-contract-v6.json` (the dev.8 cut,
+ * docs/V6_WINDOWED_RANKINGS.md).
+ *
+ * v5's graph and fields, plus TIME-BOUNDED rankings — the same three ranked
+ * axes v5 already serves, each twinned under a daily `timeRange` bucket so the
+ * node returns the top-K of TODAY, ordered and proved, in one query:
+ *
+ * - `like.byDayPost` / `like.byDayAuthorPost` — today's most-liked posts,
+ *   today's top creators, today's top posts per author
+ *   ({@link windowedRankingsAvailable}).
+ * - a tagged-only indexOnly `beat` doctype carrying `byDayHashtagPost` —
+ *   today's trending hashtags and today's top posts per tag. `like.hashtag`
+ *   is optional (v5), and an optional property may only lead a
+ *   `skipIfAbsent` index, so the windowed hashtag axis cannot live on `like`;
+ *   the client writes one `beat` beside every like of a TAGGED post, in the
+ *   same batch transition, and deletes it beside the unlike
+ *   ({@link beatCompanionFor}).
+ */
+const V6_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V4_DESCRIPTOR,
+  topology: 'v6',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -286,9 +310,11 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
   if (!resolved) {
     const topology = getContractTopology()
     resolved = deepFreeze(
-      topology === 'v5'
-        ? V5_DESCRIPTOR
-        : topology === 'v4'
+      topology === 'v6'
+        ? V6_DESCRIPTOR
+        : topology === 'v5'
+          ? V5_DESCRIPTOR
+          : topology === 'v4'
           ? V4_DESCRIPTOR
           : topology === 'v3'
             ? V3_DESCRIPTOR
@@ -418,7 +444,7 @@ export function likesAreIndexOnly(): boolean {
  */
 export function hashtagsAreInline(): boolean {
   const topology = topologyDescriptor().topology
-  return topology === 'v4' || topology === 'v5'
+  return topology === 'v4' || topology === 'v5' || topology === 'v6'
 }
 
 /**
@@ -428,7 +454,7 @@ export function hashtagsAreInline(): boolean {
  */
 export function authorFieldIsRequired(): boolean {
   const topology = topologyDescriptor().topology
-  return topology === 'v4' || topology === 'v5'
+  return topology === 'v4' || topology === 'v5' || topology === 'v6'
 }
 
 /**
@@ -448,7 +474,8 @@ export function authorFieldIsRequired(): boolean {
  * create, unlike delete-by-values, post transform).
  */
 export function hashtagIsOptional(): boolean {
-  return topologyDescriptor().topology === 'v5'
+  const topology = topologyDescriptor().topology
+  return topology === 'v5' || topology === 'v6'
 }
 
 /**
@@ -470,7 +497,8 @@ export function hashtagMaxLength(): number {
  * by the node.
  */
 export function prefixRankingsAvailable(): boolean {
-  return topologyDescriptor().topology === 'v5'
+  const topology = topologyDescriptor().topology
+  return topology === 'v5' || topology === 'v6'
 }
 
 /**
@@ -480,7 +508,38 @@ export function prefixRankingsAvailable(): boolean {
  * not gated here.
  */
 export function followRankingsAvailable(): boolean {
-  return topologyDescriptor().topology === 'v5'
+  const topology = topologyDescriptor().topology
+  return topology === 'v5' || topology === 'v6'
+}
+
+/**
+ * True when the like axes have DAILY-WINDOWED ranked twins (v6):
+ * `like.byDayPost` (today's top posts), `like.byDayAuthorPost` (today's top
+ * creators / per-author top) and `beat.byDayHashtagPost` (today's trending
+ * tags / per-tag top). A `timeRange: [{ field: '$createdAt', selector }]`
+ * entry on `documents.ranked()` pins the bucket; `newest` is today (UTC day,
+ * `range == step == 86400`).
+ */
+export function windowedRankingsAvailable(): boolean {
+  return topologyDescriptor().topology === 'v6'
+}
+
+/** The daily grid every v6 windowed index shares (seconds, as the contract declares them). */
+export const WINDOWED_DAY_GRID = { range: 86400, step: 86400 } as const
+
+/**
+ * The `beat` companion a like must carry on v6: the tagged-only indexOnly
+ * doctype whose `byDayHashtagPost` serves the windowed hashtag rankings.
+ * `null` when no companion is written — pre-v6 topologies, reply likes (no
+ * hashtag axis), and likes of UNTAGGED posts (`beat.hashtag` is required, so
+ * an untagged like writes no beat, which is the skipIfAbsent economy by other
+ * means). Consensus checks `beat.hashtag` against the post through the same
+ * propertyAgreement `like.hashtag` uses.
+ */
+export function beatCompanionFor(kind: TargetKind, hashtag: string | null | undefined): { docType: 'beat' } | null {
+  if (!windowedRankingsAvailable() || kind !== 'post') return null
+  if (!hashtag) return null
+  return { docType: 'beat' }
 }
 
 export function canRepost(kind: TargetKind): boolean {

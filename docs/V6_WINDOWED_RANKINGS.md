@@ -6,15 +6,17 @@ that landed upstream on 2026-09-01. Regenerate with
 `python3 scripts/build-v6-contract.py`; `--self-test` asserts the committed
 JSON.
 
-## Status (2026-09-02)
+## Status (2026-09-03) — LIVE on moutai
 
 | Layer | State |
 |---|---|
-| Platform code | **Shipped on `v4.2-dev`** — dashpay/platform#4578 (ranked indexes below timeRange buckets, merged 2026-09-01) on top of #4574 (typed `IN_TIME_RANGE` operand with `byStart` historic windows) |
-| Release | **Not yet cut.** Latest tag/npm is 4.2.0-dev.7 (2026-08-31); both PRs merged after it. Needs dev.8 |
-| Devnet (moutai) | Runs dev.7 → this contract is **rejected there today** (`a timeRange index cannot be ranked`). Registers after the devnet upgrades to dev.8 |
-| This contract vs upstream HEAD | Both new doctype shapes **parse with full validation** against rs-dpp at v4.2-dev HEAD (7105bc4ae7) — probed with `try_from_schema_generation_3`, every index present |
-| TTL / cheaper windowed bytes | dashpay/platform#4581 open (drafted, review required) — not assumed here; the cost figures below are at today's perpetual-storage pricing |
+| Platform | **4.2.0-dev.8** (cut by us 2026-09-02: dashpay/platform#4591 → tag `v4.2.0-dev.8`), carrying #4578 (ranked below timeRange) + #4574 (`byStart`). moutai: 13/13 masternodes on dev.8, no wipe |
+| Contract | **Registered**: `DNNibJtgEEkQkLfDZXh9xkbfdVHWu6CtJcgcpicMAuHZ` (this file's shape, verbatim). YAPP token `AwyQ6rGrrZviBoYfqykyQ8Nhau5xjsxFQsQCj8vrV9pW` |
+| Client | `.env.devnet` → v6; `windowedRankingsAvailable()`; like of a tagged post writes its `beat` in the **same batch transition** (`createDocumentPair`); Today \| All time switch on Explore Top / trending / Creators, tag page Top, profile Top |
+| Battery | `scripts/verify-v5.mjs` gains d1–d3 (windowed like axes, beat + propertyAgreement + grid disambiguation, cold bucket) |
+| Seeder | `--topology v6`: a beat companion beside every tagged like |
+| Known dev.8 edge | a proved ranked read on a **never-populated** bucket fails proof generation instead of proving empty → **dashpay/platform#4592**. Client maps that error to an empty ranking until fixed |
+| TTL / cheaper bytes | dashpay/platform#4581 still open — not assumed |
 
 ## Two validation rules the dev.7 blanket rejection had been hiding
 

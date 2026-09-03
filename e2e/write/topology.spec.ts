@@ -75,7 +75,7 @@ const SPEC_TOPOLOGY = compiledTopology()
 // delete-by-values unlike).
 test.describe('v3+ interaction topology on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!['v3', 'v4', 'v5'].includes(SPEC_TOPOLOGY), 'the compiled topology predates the v3 document graph')
+  test.skip(!['v3', 'v4', 'v5', 'v6'].includes(SPEC_TOPOLOGY), 'the compiled topology predates the v3 document graph')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -103,7 +103,7 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
     // topology outside the v3 family here means the devnet env file lost its
     // flag — which would make every assertion below fail against the UI instead
     // of naming the real problem.
-    expect(['v3', 'v4', 'v5'], 'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3, v4 or v5').toContain(topology)
+    expect(['v3', 'v4', 'v5', 'v6'], 'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3, v4, v5 or v6').toContain(topology)
     expect(topology, 'sync and async topology reads must agree').toBe(SPEC_TOPOLOGY)
 
     await page.goto(appUrl('/about/'))
@@ -507,7 +507,7 @@ test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
  */
 test.describe('v5 optional-hashtag topology and prefix rankings on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(SPEC_TOPOLOGY !== 'v5', 'the compiled topology predates optional hashtags and prefix rankings')
+  test.skip(!['v5', 'v6'].includes(SPEC_TOPOLOGY), 'the compiled topology predates optional hashtags and prefix rankings')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -706,5 +706,108 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
     await expect(
       page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
     ).toBeVisible({ timeout: 60_000 })
+  })
+})
+
+// The v6 block: the same optional-hashtag graph as v5, plus DAILY-WINDOWED
+// rankings (dev.8, contract v6). A like of a TAGGED post writes a `beat`
+// companion in the same batch transition, and every ranked surface gains a
+// Today | All time switch. The assertions pin the run's own writes on the
+// TODAY window: unlike the all-time top-K (which seeded content dominates),
+// "today" on a devnet is small enough that the run's like ranks — and the
+// tag/author pins make inclusion structural regardless.
+test.describe('v6 daily-windowed rankings on the devnet contract', () => {
+  test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
+  test.skip(SPEC_TOPOLOGY !== 'v6', 'the compiled topology has no daily-windowed ranked twins')
+  test.skip(!hasSeedPhrase, NO_SEED_REASON)
+
+  let runTag = ''
+  let hashtag = ''
+  let taggedPostId = ''
+
+  test.beforeAll(async ({ browser, bot }) => {
+    test.setTimeout(420_000)
+    runTag = uniqueTag(bot.index)
+    hashtag = `v6${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
+
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    try {
+      await page.goto(appUrl('/feed/'))
+      await page.getByTestId('open-compose-btn').click()
+      const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
+      await expect(composeDialog).toBeVisible()
+      await composeDialog.getByTestId('compose-textarea').first().fill(`${runTag} v6 windowed target #${hashtag}`)
+      await composeDialog.getByTestId('compose-submit-btn').click()
+      await expect(composeDialog).toBeHidden({ timeout: COMPOSE_TIMEOUT })
+      const card = await reloadUntilVisible(page, appUrl(`/user?id=${bot.identityId}`), (p) =>
+        p.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
+      )
+      taggedPostId = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
+      expect(taggedPostId).not.toBe('')
+
+      // Like it: on v6 this writes like + beat in ONE batch transition.
+      await page.goto(appUrl(`/post?id=${taggedPostId}`))
+      const likeButton = page.getByTestId(`like-btn-${taggedPostId}`)
+      await expect(likeButton).toBeVisible({ timeout: 60_000 })
+      await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
+      await likeButton.click()
+      await expect(likeButton).toBeEnabled({ timeout: 60_000 })
+      await reloadUntilVisible(page, appUrl(`/post?id=${taggedPostId}`), (p) =>
+        p.getByTestId(`like-btn-${taggedPostId}`).and(p.locator('[aria-pressed="true"]'))
+      )
+    } finally {
+      await context.close()
+    }
+  })
+
+  test("the tag page's Top → Today lists the liked post (beat.byDayHashtagPost, tag + bucket pinned)", async ({ page }) => {
+    test.setTimeout(180_000)
+    await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) => p.getByTestId('hashtag-sort-top'))
+    await page.getByTestId('hashtag-sort-top').click()
+    const today = page.getByTestId('hashtag-top-today')
+    await expect(today, 'the v6 window toggle must render on the tag page').toBeVisible({ timeout: 30_000 })
+    await today.click()
+    await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
+  })
+
+  test("the profile Top → Today lists the liked post (like.byDayAuthorPost, author + bucket pinned)", async ({ page, bot }) => {
+    test.setTimeout(180_000)
+    await page.goto(appUrl(`/user?id=${bot.identityId}`), { waitUntil: 'domcontentloaded' })
+    const topFilter = page.getByTestId('profile-top-filter')
+    await expect(topFilter).toBeVisible({ timeout: 60_000 })
+    await topFilter.click()
+    const today = page.getByTestId('profile-top-today')
+    await expect(today).toBeVisible({ timeout: 30_000 })
+    await today.click()
+    await expect(
+      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
+    ).toBeVisible({ timeout: 60_000 })
+  })
+
+  test("Explore's trending → Today ranks the run tag (beat.byDayHashtagPost at hashtag)", async ({ page }) => {
+    test.setTimeout(180_000)
+    await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+    const today = page.getByTestId('explore-trending-today')
+    await expect(today).toBeVisible({ timeout: 60_000 })
+    await today.click()
+    // The beat written beside the like is the only vote for this run-unique
+    // tag, so it appears with a count of exactly 1 like.
+    const row = page.getByText(`#${hashtag}`, { exact: false }).first()
+    await expect(row).toBeVisible({ timeout: 60_000 })
+  })
+
+  test("Explore's Top → Today renders today's ranking (like.byDayPost)", async ({ page }) => {
+    test.setTimeout(180_000)
+    await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+    const topTab = page.getByTestId('explore-top-tab')
+    await expect(topTab).toBeVisible({ timeout: 60_000 })
+    await topTab.click()
+    const today = page.getByTestId('explore-top-today')
+    await expect(today).toBeVisible({ timeout: 30_000 })
+    await today.click()
+    // Today's global top-20 on the devnet is small; the run's liked post is
+    // asserted by its like button (proved order + count on the card).
+    await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
   })
 })

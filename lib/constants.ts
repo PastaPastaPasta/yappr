@@ -156,14 +156,14 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export type ContractTopology = 'v2' | 'v3' | 'v4' | 'v5'
+export type ContractTopology = 'v2' | 'v3' | 'v4' | 'v5' | 'v6'
 
 export const DEFAULT_CONTRACT_TOPOLOGY: ContractTopology = 'v2'
 
 /** The interaction topology of the configured contract, from `NEXT_PUBLIC_CONTRACT_TOPOLOGY`. */
 export function getContractTopology(): ContractTopology {
   const configured = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
-  if (configured === 'v2' || configured === 'v3' || configured === 'v4' || configured === 'v5') {
+  if (configured === 'v2' || configured === 'v3' || configured === 'v4' || configured === 'v5' || configured === 'v6') {
     return configured
   }
   return DEFAULT_CONTRACT_TOPOLOGY

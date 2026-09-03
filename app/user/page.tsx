@@ -31,6 +31,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { PostCard } from '@/components/post/post-card'
 import { formatNumber } from '@/lib/utils'
 import { likesAreIndexOnly } from '@/lib/contract-topology'
+import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
+import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
 import { BannerImage, invalidateBannerCache } from '@/components/ui/banner-image'
 import { AvatarCustomization } from '@/components/settings/avatar-customization'
@@ -226,6 +228,8 @@ function UserProfileContent() {
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [topLoading, setTopLoading] = useState(false)
   const [topLoaded, setTopLoaded] = useState(false)
+  /** v6: today's top posts by this author (like.byDayAuthorPost) or all-time. */
+  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
 
   // Private feed state
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
@@ -822,7 +826,7 @@ function UserProfileContent() {
         import('@/lib/services/post-service'),
       ])
 
-      const ranked = await topLikedPosts({ postAuthor: userId, limit: 10 })
+      const ranked = await topLikedPosts({ postAuthor: userId, limit: 10, window: rankingWindow })
       if (ranked.length === 0) {
         setTopPosts([])
         return
@@ -846,7 +850,12 @@ function UserProfileContent() {
       setTopLoading(false)
       setTopLoaded(true)
     }
-  }, [userId, topLoaded, enrichProgressively])
+  }, [userId, topLoaded, enrichProgressively, rankingWindow])
+
+  // A window change reads a different index: drop the loaded Top list.
+  useEffect(() => {
+    setTopLoaded(false)
+  }, [rankingWindow])
 
   // Load mentions when tab is activated
   useEffect(() => {
@@ -1680,6 +1689,9 @@ function UserProfileContent() {
               </div>
 
               {/* Tab Content */}
+              {activeTab === 'top' && (
+                <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="profile-top" />
+              )}
               {activeTab === 'posts' || activeTab === 'replies' || activeTab === 'top' ? (
                 <>
                   {(activeTab === 'replies' && repliesLoading) || (activeTab === 'top' && topLoading) ? (

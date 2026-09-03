@@ -23,6 +23,8 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     data: TrendingHashtag[];
     timestamp: number;
   } | null = null;
+  /** v6: the all-time and today rankings are different indexes, cached separately. */
+  private trendingCacheByWindow = new Map<'all' | 'today', { data: TrendingHashtag[]; timestamp: number }>();
   private readonly TRENDING_CACHE_TTL = 300000; // 5 minutes
 
   constructor() {
@@ -93,6 +95,8 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       // Invalidate trending cache when new hashtag is created
       this.trendingCache = null;
+    this.trendingCacheByWindow.clear();
+      this.trendingCacheByWindow.clear();
 
       return result.success;
     } catch (error) {
@@ -277,17 +281,20 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     timeWindowHours?: number;
     minPosts?: number;
     limit?: number;
+    /** v6: `'today'` reads the daily-windowed ranking (`beat.byDayHashtagPost`); default all-time. */
+    window?: 'all' | 'today';
   } = {}): Promise<TrendingHashtag[]> {
     const {
       timeWindowHours = 24,
       minPosts = 1,
-      limit = 12
+      limit = 12,
+      window = 'all',
     } = options;
 
-    // Check cache
-    if (this.trendingCache &&
-        Date.now() - this.trendingCache.timestamp < this.TRENDING_CACHE_TTL) {
-      return this.trendingCache.data.slice(0, limit);
+    // Check cache (per window)
+    const cached = this.trendingCacheByWindow.get(window);
+    if (cached && Date.now() - cached.timestamp < this.TRENDING_CACHE_TTL) {
+      return cached.data.slice(0, limit);
     }
 
     // v5: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
@@ -302,11 +309,11 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     if (prefixRankingsAvailable()) {
       try {
         const { topHashtagsByLikes } = await import('./ranked-likes');
-        const ranked = await topHashtagsByLikes(limit);
+        const ranked = await topHashtagsByLikes(limit, window);
         const trending: TrendingHashtag[] = ranked
           .filter((entry) => entry.count >= minPosts)
           .map((entry) => ({ hashtag: entry.key, postCount: entry.count }));
-        this.trendingCache = { data: trending, timestamp: Date.now() };
+        this.trendingCacheByWindow.set(window, { data: trending, timestamp: Date.now() });
         return trending.slice(0, limit);
       } catch (error) {
         logger.error('Error fetching proved trending hashtags:', error);

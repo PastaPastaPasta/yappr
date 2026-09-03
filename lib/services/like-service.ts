@@ -4,7 +4,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
-import { hashtagIsOptional, indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind } from '../contract-topology';
+import { hashtagIsOptional, indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -273,6 +273,19 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
+   * v6 `beat` tuple for a like of a tagged post: `{ postId, hashtag }`. The
+   * same tuple serves the create AND the delete-by-values, and its `postId`
+   * refersTo the post with propertyAgreement on `hashtag`, so consensus
+   * rejects a beat whose tag disagrees with the post.
+   */
+  private beatData(targetId: string, hashtag: string): Record<string, unknown> {
+    return {
+      postId: identifierStringToDocumentBytes(targetId),
+      hashtag,
+    };
+  }
+
+  /**
    * v4 like: create an indexOnly document.
    *
    * The create carries the target's agreement-bound values and confirms via
@@ -291,14 +304,25 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   ): Promise<boolean> {
     const info = await this.resolveTargetInfo(targetId, kind, shape, target);
     const { docType } = likeIndexFor(kind);
+    const likeData = this.indexOnlyLikeData(targetId, shape, kind, info);
 
-    const result = await stateTransitionService.createDocument(
-      this.contractId,
-      docType,
-      ownerId,
-      this.indexOnlyLikeData(targetId, shape, kind, info),
-      { confirmation: 'affectedState' }
-    );
+    // v6: a like of a TAGGED post carries its `beat` companion in the SAME
+    // batch transition (today's trending rides beat.byDayHashtagPost), so the
+    // pair lands atomically. Untagged targets, reply likes and pre-v6
+    // topologies write the like alone.
+    const companion = beatCompanionFor(kind, info.hashtag);
+    const result = companion
+      ? await stateTransitionService.createDocumentPair(this.contractId, ownerId, [
+          { documentType: docType, data: likeData },
+          { documentType: companion.docType, data: this.beatData(targetId, info.hashtag ?? '') },
+        ])
+      : await stateTransitionService.createDocument(
+          this.contractId,
+          docType,
+          ownerId,
+          likeData,
+          { confirmation: 'affectedState' }
+        );
 
     if (!result.success) {
       // Definitive, user-actionable failures propagate to the UI untouched.
@@ -412,6 +436,16 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       }
     );
 
+    // v6: remove the beat companion too, so today's trending stops counting
+    // the withdrawn like. Its tuple is recovered from `beat.byPost` (postId →
+    // $ownerId terminal). Best effort after a successful unlike: a stale beat
+    // only over-counts one tag for the rest of the UTC day.
+    if (result.success && beatCompanionFor(kind, info.hashtag)) {
+      this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '').catch((error) => {
+        logger.warn('Unlike landed but the beat companion could not be removed:', error);
+      });
+    }
+
     if (result.success) {
       this.likeTupleCache.delete(cacheKey);
       return true;
@@ -453,6 +487,30 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * consensus `$createdAt`. Pinned on the target's author, newest first, so a
    * recent like is on the first page; bounded rather than exhaustive.
    */
+  /** v6: delete the `beat` written beside a like of a tagged post. */
+  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string): Promise<void> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: 'beat',
+      where: [['postId', '==', targetId], ['$ownerId', '==', ownerId]],
+      limit: 1,
+    });
+    const doc = normalizeSDKResponse(response)[0];
+    if (!doc) return; // nothing to remove (untagged at like time, or already gone)
+    const documentId = typeof doc.$id === 'string' ? doc.$id : null;
+    const createdAt = doc.$createdAt !== undefined ? Number(doc.$createdAt) : null;
+    if (!documentId || createdAt === null) {
+      logger.warn('beat companion found but its delete tuple is incomplete', { targetId });
+      return;
+    }
+    await stateTransitionService.deleteDocumentByValues(this.contractId, 'beat', ownerId, {
+      documentId,
+      createdAtMs: createdAt,
+      data: this.beatData(targetId, hashtag),
+    });
+  }
+
   private async recoverLikeTuple(
     targetId: string,
     ownerId: string,
