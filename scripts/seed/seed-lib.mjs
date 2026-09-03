@@ -609,7 +609,7 @@ export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum 
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
 export const WAIT_MAYBE_LANDED = /504|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
 /** Retry-worthy transient transport noise. */
-export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|503|502|429|unavailable/i;
+export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|503|502|429|unavailable|rate limited|resource has been exhausted/i;
 /** Identity (contract) nonce desync — cured by a reconnect (fresh nonce cache). */
 export const NONCE_DESYNC = /nonce/i;
 /** Structural duplicate (unique index) — the end state already holds. */

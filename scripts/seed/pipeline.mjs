@@ -47,7 +47,7 @@ const SEQUENCE_MASK = (1n << 40n) - 1n;
 export const DEFAULT_WINDOW = 8;
 const RECONCILE_MS = 2_500;
 const RECONCILE_POLLS = 12; // ~30 s: several blocks
-const BROADCAST_ATTEMPTS = 3;
+const BROADCAST_ATTEMPTS = 6;
 
 /** Per-actor nonce state: fetched once, incremented locally, re-synced on any nonce error. */
 class NonceTrack {
@@ -126,7 +126,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
         if (DUPLICATE_UNIQUE.test(text) && duplicateIsSuccess) return { id, duplicate: true };
         if (NONCE_DESYNC.test(text)) { await track.sync(); continue; }
         if (TRANSPORT_COLLAPSE.test(text)) { try { await handle.reconnect(text); } catch { /* retry rebuilds */ } await track.sync(); continue; }
-        if (RETRYABLE.test(text)) { await sleep(1_500 * attempt); await track.sync(); continue; }
+        if (RETRYABLE.test(text)) { await sleep(2_000 * attempt + Math.random() * 1_000); await track.sync(); continue; }
         if (/code=4\d{4}/.test(text) || /consensus/i.test(text)) throw e; // Platform said no
         await sleep(1_000 * attempt); await track.sync(); continue;
       }
