@@ -225,6 +225,8 @@ export interface HydratedTopPostsOptions {
   limit?: number;
   /** `'today'` reads the v6 daily-windowed twin; default `'all'`. */
   window?: RankingWindow;
+  /** Skip the 60-second hydrated cache (an explicit user refresh). */
+  force?: boolean;
 }
 
 /**
@@ -250,7 +252,7 @@ const hydratedCache = new Map<string, { posts: Post[]; timestamp: number }>();
  * `likesAreIndexOnly()`. Returns `[]` on failure.
  */
 export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {}): Promise<Post[]> {
-  const { hashtag, limit = 20, window = 'all' } = options;
+  const { hashtag, limit = 20, window = 'all', force = false } = options;
   if (hashtag === '') {
     // The '' group is the untagged bucket, not a tag — nothing should ask for it.
     logger.warn('topLikedPostsHydrated: refusing the empty hashtag group');
@@ -258,56 +260,122 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
   }
 
   const cacheKey = `${window}:${hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
+  return hydrateRankedCached(cacheKey, force, () =>
+    topLikedPosts(hashtag === undefined ? { limit, window } : { hashtag, limit, window })
+  );
+}
+
+export interface HydratedTopPostsByAuthorsOptions {
+  /** Base58 identity ids whose per-author rankings are merged. */
+  authorIds: string[];
+  /** Size of the merged page, 1..100, default 20. */
+  limit?: number;
+  /** `'today'` reads the v6 daily-windowed twin; default `'all'`. */
+  window?: RankingWindow;
+  /** Skip the 60-second hydrated cache (an explicit user refresh). */
+  force?: boolean;
+}
+
+/**
+ * At most this many authors are ranked for one merged page. No contract axis
+ * ranks "posts by any of these authors" in one read, so the merge costs one
+ * proved ranked read per author; the cap bounds that fan-out for accounts
+ * that follow hundreds of people.
+ */
+export const TOP_BY_AUTHORS_MAX_AUTHORS = 100;
+const TOP_BY_AUTHORS_CONCURRENCY = 8;
+
+/**
+ * The most-liked posts across a set of authors (the Following feed's Top
+ * view): one proved `byAuthorPost` ranked read per author, merged and sorted
+ * by proved like count, then hydrated like {@link topLikedPostsHydrated}.
+ * Each author contributes at most `limit` candidates, so the merged page is
+ * exact for the authors that were read. Authors beyond
+ * {@link TOP_BY_AUTHORS_MAX_AUTHORS} are skipped.
+ */
+export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsByAuthorsOptions): Promise<Post[]> {
+  const { limit = 20, window = 'all', force = false } = options;
+  const authorIds = Array.from(new Set(options.authorIds)).sort().slice(0, TOP_BY_AUTHORS_MAX_AUTHORS);
+  if (authorIds.length === 0) return [];
+
+  const cacheKey = `${window}:authors:${authorIds.join(',')}`;
+  return hydrateRankedCached(cacheKey, force, async () => {
+    const { mapLimit } = await import('./pagination-utils');
+    const perAuthor = await mapLimit(authorIds, TOP_BY_AUTHORS_CONCURRENCY, (postAuthor) =>
+      topLikedPosts({ postAuthor, limit, window })
+    );
+    return perAuthor
+      .flat()
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, limit);
+  });
+}
+
+/**
+ * Serve a hydrated ranking from the 60-second cache, or run `rank` and
+ * hydrate its result. `force` bypasses the cache read but still refills it.
+ */
+async function hydrateRankedCached(
+  cacheKey: string,
+  force: boolean,
+  rank: () => Promise<RankedLikedPost[]>
+): Promise<Post[]> {
   const cached = hydratedCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < HYDRATED_CACHE_TTL_MS) {
+  if (!force && cached && Date.now() - cached.timestamp < HYDRATED_CACHE_TTL_MS) {
     return cached.posts;
   }
 
   try {
-    const ranked = await topLikedPosts(hashtag === undefined ? { limit, window } : { hashtag, limit, window });
-
-    let posts: Post[] = [];
-    if (ranked.length > 0) {
-      const { postService } = await import('./post-service');
-      // skipEnrichment: enrichPostsBatch below resolves authors in batch —
-      // per-post DPNS/profile lookups here would be thrown-away duplicates.
-      const fetched = await postService.getPostsByIds(
-        ranked.map((entry) => entry.postId),
-        { skipEnrichment: true }
-      );
-      const byId = new Map(fetched.map((post) => [post.id, post]));
-
-      // getPostsByIds hydrates via one proved $id-in query, so an id missing
-      // from the batch is authoritatively absent, not a suspected transient
-      // failure (query errors degrade to per-id fetches inside getPostsByIds
-      // rather than silently shrinking the page). Posts are tombstoned by
-      // edit, never removed, so a genuinely missing ranked id is an anomaly
-      // worth noting — but not a reason to withhold the page from the
-      // 60-second cache.
-      const missing = ranked.filter((entry) => !byId.has(entry.postId));
-      if (missing.length > 0) {
-        logger.warn(
-          'topLikedPostsHydrated: ranked ids proved absent (posts should be tombstoned, never removed):',
-          missing.map((entry) => entry.postId)
-        );
-      }
-
-      // Preserve the proved ranking order; carry the proved count onto the
-      // card; drop absent ids and tombstones.
-      const ordered = ranked
-        .map((entry) => {
-          const post = byId.get(entry.postId);
-          return post ? { ...post, likes: entry.likes } : undefined;
-        })
-        .filter((post): post is Post => post !== undefined && post.deleted !== true);
-
-      posts = await postService.enrichPostsBatch(ordered);
-    }
-
+    const ranked = await rank();
+    const posts = await hydrateRankedPosts(ranked);
     hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);
     return [];
   }
+}
+
+/**
+ * Turn a proved ranking into renderable posts: fetch by id, re-order to the
+ * proved order with each post's `likes` set to the proved count, drop absent
+ * ids and tombstones, then batch-enrich (authors, stats, viewer interactions).
+ */
+async function hydrateRankedPosts(ranked: RankedLikedPost[]): Promise<Post[]> {
+  if (ranked.length === 0) return [];
+
+  const { postService } = await import('./post-service');
+  // skipEnrichment: enrichPostsBatch below resolves authors in batch —
+  // per-post DPNS/profile lookups here would be thrown-away duplicates.
+  const fetched = await postService.getPostsByIds(
+    ranked.map((entry) => entry.postId),
+    { skipEnrichment: true }
+  );
+  const byId = new Map(fetched.map((post) => [post.id, post]));
+
+  // getPostsByIds hydrates via one proved $id-in query, so an id missing
+  // from the batch is authoritatively absent, not a suspected transient
+  // failure (query errors degrade to per-id fetches inside getPostsByIds
+  // rather than silently shrinking the page). Posts are tombstoned by
+  // edit, never removed, so a genuinely missing ranked id is an anomaly
+  // worth noting — but not a reason to withhold the page from the
+  // 60-second cache.
+  const missing = ranked.filter((entry) => !byId.has(entry.postId));
+  if (missing.length > 0) {
+    logger.warn(
+      'topLikedPostsHydrated: ranked ids proved absent (posts should be tombstoned, never removed):',
+      missing.map((entry) => entry.postId)
+    );
+  }
+
+  // Preserve the proved ranking order; carry the proved count onto the
+  // card; drop absent ids and tombstones.
+  const ordered = ranked
+    .map((entry) => {
+      const post = byId.get(entry.postId);
+      return post ? { ...post, likes: entry.likes } : undefined;
+    })
+    .filter((post): post is Post => post !== undefined && post.deleted !== true);
+
+  return postService.enrichPostsBatch(ordered);
 }

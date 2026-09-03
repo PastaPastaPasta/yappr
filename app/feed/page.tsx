@@ -7,30 +7,54 @@ import { Sidebar } from '@/components/layout/sidebar';
 import { RightSidebar } from '@/components/layout/right-sidebar';
 import { withAuth, useAuth } from '@/contexts/auth-context';
 import { useSettingsStore } from '@/lib/store';
+import { likesAreIndexOnly } from '@/lib/contract-topology';
+import type { RankingWindow } from '@/lib/services/ranked-likes';
 import { FeedHeader } from '@/components/feed/feed-header';
 import { FeedComposeBox } from '@/components/feed/feed-compose-box';
 import { FeedLoginPrompt } from '@/components/feed/feed-login-prompt';
 import { FeedPostList } from '@/components/feed/feed-post-list';
+import { FeedSortToggle, type FeedSortMode } from '@/components/feed/feed-sort-toggle';
+import { FeedTopList } from '@/components/feed/feed-top-list';
 import { useFeedData, type FeedTab } from '@/hooks/use-feed-data';
+import { useTopFeed } from '@/hooks/use-top-feed';
+
+function readSavedTab(): FeedTab {
+  try {
+    if (typeof window !== 'undefined') {
+      const savedTab = localStorage.getItem(scopedKey('feed-tab'));
+      if (savedTab === 'forYou' || savedTab === 'following') {
+        return savedTab;
+      }
+    }
+  } catch {
+    return 'forYou';
+  }
+  return 'forYou';
+}
+
+function readSavedSortMode(): FeedSortMode {
+  try {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(scopedKey('feed-sort'));
+      if (saved === 'top' && likesAreIndexOnly()) return 'top';
+    }
+  } catch {
+    return 'recent';
+  }
+  return 'recent';
+}
 
 function FeedPage() {
   const { user } = useAuth();
   const potatoMode = useSettingsStore((state) => state.potatoMode);
   const feedLanguage = useSettingsStore((state) => state.feedLanguage);
 
-  const [activeTab, setActiveTab] = useState<FeedTab>(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const savedTab = localStorage.getItem(scopedKey('feed-tab'));
-        if (savedTab === 'forYou' || savedTab === 'following') {
-          return savedTab;
-        }
-      }
-    } catch {
-      return 'forYou';
-    }
-    return 'forYou';
-  });
+  const [activeTab, setActiveTab] = useState<FeedTab>(readSavedTab);
+  const [sortMode, setSortMode] = useState<FeedSortMode>(readSavedSortMode);
+  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all');
+  // Top rides the v4+ ranked like axes; older topologies only have Recent.
+  const topAvailable = likesAreIndexOnly();
+  const showTop = topAvailable && sortMode === 'top';
 
   const {
     filteredPosts,
@@ -46,6 +70,8 @@ function FeedPage() {
     getPostEnrichment,
   } = useFeedData({ activeTab, feedLanguage });
 
+  const topFeed = useTopFeed({ activeTab, window: rankingWindow, enabled: showTop });
+
   const handleTabChange = (tab: FeedTab) => {
     setActiveTab(tab);
     try {
@@ -53,6 +79,20 @@ function FeedPage() {
     } catch {
       // Ignore storage write failures (privacy mode/blocked storage).
     }
+  };
+
+  const handleSortModeChange = (mode: FeedSortMode) => {
+    setSortMode(mode);
+    try {
+      localStorage.setItem(scopedKey('feed-sort'), mode);
+    } catch {
+      // Ignore storage write failures (privacy mode/blocked storage).
+    }
+  };
+
+  const handleRefresh = () => {
+    const pending = showTop ? topFeed.refresh() : refresh();
+    pending.catch((error) => logger.error('Feed refresh failed', error));
   };
 
   return (
@@ -64,17 +104,31 @@ function FeedPage() {
           <FeedHeader
             activeTab={activeTab}
             onTabChange={handleTabChange}
-            onRefresh={() => {
-              refresh().catch((error) => logger.error('Feed refresh failed', error));
-            }}
-            isLoading={isLoading}
+            onRefresh={handleRefresh}
+            isLoading={showTop ? topFeed.isLoading : isLoading}
             potatoMode={potatoMode}
           />
+
+          {topAvailable && (
+            <FeedSortToggle
+              sortMode={sortMode}
+              onSortModeChange={handleSortModeChange}
+              rankingWindow={rankingWindow}
+              onRankingWindowChange={setRankingWindow}
+            />
+          )}
 
           <FeedComposeBox />
 
           {activeTab === 'following' && !user ? (
             <FeedLoginPrompt />
+          ) : showTop ? (
+            <FeedTopList
+              posts={topFeed.posts}
+              isLoading={topFeed.isLoading}
+              activeTab={activeTab}
+              onPostDelete={topFeed.handlePostDelete}
+            />
           ) : (
             <FeedPostList
               posts={filteredPosts}
