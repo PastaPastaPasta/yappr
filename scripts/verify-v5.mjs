@@ -739,6 +739,25 @@ async function ensureLike(ctx, postKey, hashtag) {
   return outcome.ok;
 }
 
+/**
+ * v6: bot A's `beat` beside its like of a TAGGED fixture post. `beat.hashtag`
+ * is required and its postId refersTo the post with propertyAgreement on
+ * hashtag, so a mismatching tag is a consensus rejection (d2 asserts it).
+ */
+async function ensureBeat(ctx, postKey, hashtag) {
+  if (ctx.beats[postKey]) return true;
+  if (!(await ensureLike(ctx, postKey, hashtag))) return false;
+  const outcome = await attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
+    contractId: ctx.contractId,
+    docType: 'beat',
+    data: { postId: bs58.decode(ctx[postKey]), hashtag },
+    accepted: () => entryExists(ctx.sdk, ctx.contractId, 'beat', 'postId', ctx[postKey], ctx.botA.ownerId),
+  });
+  if (outcome.ok) ctx.beats[postKey] = true;
+  else console.log(`     (could not create beat for ${postKey}: ${(outcome.error ?? '').slice(0, 220)})`);
+  return outcome.ok;
+}
+
 // ---- A-cases: the interaction topology, unchanged in v5 ---------------------
 
 async function caseA1ReplyLinkage(ctx) {
@@ -1845,6 +1864,10 @@ const onRankedPage = (page, id, expected, limit) => {
 };
 
 /** `documents.ranked` shape for a like index level (`groupBy` names the level). */
+/** The daily grid every v6 windowed index shares (seconds, as the contract declares). */
+const DAY_GRID = { range: 86400, step: 86400 };
+/** `timeRange` member pinning the current UTC day on a v6 windowed index. */
+const todayWindow = () => ({ timeRange: [{ field: '$createdAt', selector: 'newest', grid: DAY_GRID }] });
 const likeRankedShape = (ctx, groupBy, where = undefined, limit = 100) => ({
   dataContractId: ctx.contractId,
   documentTypeName: 'like',
@@ -2209,6 +2232,158 @@ async function caseC5FollowRanked(ctx) {
   await attemptDelete(ctx.sdk, ctx.botA, { contractId: ctx.contractId, docType: 'follow', id: follow.id });
 }
 
+// ---- D-cases: v6 daily-windowed rankings (dev.8, contract v6) ----------------
+
+async function caseD1WindowedLike(ctx) {
+  console.log('\n--- d1. like.byDayPost / byDayAuthorPost: today\'s ranking is served, ordered, proved ---');
+  const ready =
+    (await ensureLike(ctx, 'postT1', ctx.tag)) &&
+    (await ensureLike(ctx, 'postT2', ctx.tag)) &&
+    (await ensureLike(ctx, 'postU', undefined));
+  if (!ready) {
+    check('d1 windowed like', false, 'like fixtures unavailable');
+    return;
+  }
+  await settle();
+
+  // Today's top posts (terminal level of byDayPost, bucket pinned by the node).
+  const todayPosts = { ...likeRankedShape(ctx, 'postId'), ...todayWindow() };
+  const page = await readback(() => ctx.sdk.documents.ranked(todayPosts));
+  const ids = nonZeroGroups(page);
+  // b9 leaves bot B's own (standing) like on postT1, so T1 counts 2 in a
+  // full run and 1 under --only; T2/U carry bot A's like alone. This is the
+  // GLOBAL today page on a populated (and concurrently seeded) network: a
+  // single-like fixture can legitimately fall off a full 100-entry page, so
+  // presence is demanded only while the page has room (onRankedPage); the
+  // exact per-fixture counts are pinned by d1c on the author-pinned level.
+  const expectT1 = 1n + (ctx.bLikesT1 ? 1n : 0n);
+  check(
+    'd1a today\'s top posts (like.byDayPost, newest bucket) is served and ranks the fixtures with their standing counts (or the page is full)',
+    onRankedPage(page, ctx.postT1, expectT1, 100) && onRankedPage(page, ctx.postT2, 1n, 100) && onRankedPage(page, ctx.postU, 1n, 100),
+    `page=${ids.length} T1=${groupValueOf(page, ctx.postT1)} (expected ${expectT1}) T2=${groupValueOf(page, ctx.postT2)} U=${groupValueOf(page, ctx.postU)}`
+  );
+  workingShapes.push({ label: "today's top posts (like.byDayPost, newest)", shape: { ...todayPosts, dataContractId: '<contractId>' } });
+
+  // Today's top creators (prefix level of byDayAuthorPost).
+  const todayCreators = { ...likeRankedShape(ctx, 'postAuthor'), ...todayWindow() };
+  const creators = await readback(() => ctx.sdk.documents.ranked(todayCreators));
+  const bCount = groupValueOf(creators, ctx.botB.ownerId);
+  check(
+    'd1b today\'s top creators (like.byDayAuthorPost at postAuthor) credits bot B with >= 3 likes received today',
+    bCount !== undefined && bCount >= 3n,
+    `B=${bCount}`
+  );
+  workingShapes.push({ label: "today's top creators (like.byDayAuthorPost at postAuthor, newest)", shape: { ...todayCreators, dataContractId: '<contractId>' } });
+
+  // Today's top posts BY bot B (terminal level, author pinned + bucket pinned).
+  const todayByAuthor = { ...likeRankedShape(ctx, 'postId', [['postAuthor', '==', ctx.botB.ownerId]]), ...todayWindow() };
+  const byAuthor = await readback(() => ctx.sdk.documents.ranked(todayByAuthor));
+  check(
+    'd1c today\'s top posts by one author (bucket + postAuthor pinned, rank postId) lists the fixtures',
+    groupValueOf(byAuthor, ctx.postT1) === expectT1 && groupValueOf(byAuthor, ctx.postT2) === 1n && groupValueOf(byAuthor, ctx.postU) === 1n,
+    `entries=${byAuthor.entries.length} T1=${groupValueOf(byAuthor, ctx.postT1)} T2=${groupValueOf(byAuthor, ctx.postT2)} U=${groupValueOf(byAuthor, ctx.postU)}`
+  );
+  workingShapes.push({ label: "today's top posts by author (byDayAuthorPost terminal, newest)", shape: { ...todayByAuthor, dataContractId: '<contractId>', where: [['postAuthor', '==', '<authorId>']] } });
+
+  // Cross-check: the all-time twin agrees on today's counts (the run is minutes old).
+  const allTime = await readback(() => ctx.sdk.documents.ranked(likeRankedShape(ctx, 'postId')));
+  check(
+    'd1d all-time byPost and today\'s byDayPost agree on every fixture (both pages are top-100 of a populated network, so absent-on-both also agrees)',
+    [ctx.postT1, ctx.postT2, ctx.postU].every((id) => groupValueOf(allTime, id) === groupValueOf(page, id)),
+    [ctx.postT1, ctx.postT2, ctx.postU].map((id) => `${id.slice(0, 6)}: all=${groupValueOf(allTime, id)} today=${groupValueOf(page, id)}`).join(' ')
+  );
+}
+
+async function caseD2WindowedBeat(ctx) {
+  console.log('\n--- d2. beat: today\'s trending hashtags + per-tag top, propertyAgreement on hashtag ---');
+  const ready = (await ensureBeat(ctx, 'postT1', ctx.tag)) && (await ensureBeat(ctx, 'postT2', ctx.tag));
+  if (!ready) {
+    check('d2 windowed beat', false, 'beat fixtures unavailable');
+    return;
+  }
+  await settle();
+
+  const beatShape = (groupBy, where) => ({
+    dataContractId: ctx.contractId,
+    documentTypeName: 'beat',
+    groupBy,
+    aggregate: { type: 'count' },
+    ...(where ? { where } : {}),
+    limit: 100,
+    ...todayWindow(),
+  });
+  const trending = await readback(() => ctx.sdk.documents.ranked(beatShape('hashtag')));
+  check(
+    'd2a today\'s trending hashtags (beat.byDayHashtagPost at hashtag, newest) ranks the run tag at 2',
+    groupValueOf(trending, ctx.tag) === 2n,
+    `tag=${groupValueOf(trending, ctx.tag)} entries=${trending.entries.length}`
+  );
+  workingShapes.push({ label: "today's trending hashtags (beat.byDayHashtagPost at hashtag, newest)", shape: { ...beatShape('hashtag'), dataContractId: '<contractId>' } });
+
+  const perTag = await readback(() => ctx.sdk.documents.ranked(beatShape('postId', [['hashtag', '==', ctx.tag]])));
+  check(
+    'd2b today\'s top posts for #tag (bucket + hashtag pinned, rank postId) lists both tagged fixtures at 1',
+    groupValueOf(perTag, ctx.postT1) === 1n && groupValueOf(perTag, ctx.postT2) === 1n,
+    `T1=${groupValueOf(perTag, ctx.postT1)} T2=${groupValueOf(perTag, ctx.postT2)}`
+  );
+  workingShapes.push({ label: "today's top posts for #tag (beat.byDayHashtagPost terminal, newest)", shape: { ...beatShape('postId', [['hashtag', '==', '<tag>']]), dataContractId: '<contractId>' } });
+
+  // The rolling k=4 grid on the same doctype: the bare selector is ambiguous
+  // (two grids on $createdAt) and must be refused; naming the grid serves.
+  let ambiguous = null;
+  try {
+    await ctx.sdk.documents.ranked({ ...beatShape('hashtag'), timeRange: [{ field: '$createdAt', selector: 'newest' }] });
+  } catch (e) { ambiguous = describeErr(e); }
+  check(
+    'd2c a bare `newest` on beat is refused (two grids bucket $createdAt) — the grid must be named',
+    ambiguous !== null && /grid/i.test(ambiguous),
+    (ambiguous ?? 'served without a grid').slice(0, 160)
+  );
+  const rolling = await readback(() => ctx.sdk.documents.ranked({ ...beatShape('hashtag'), timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 21600 } }] }));
+  check(
+    'd2d the overlapping k=4 grid (byRollingHashtagPost) ranks the run tag at 2 in its newest window too',
+    groupValueOf(rolling, ctx.tag) === 2n,
+    `tag=${groupValueOf(rolling, ctx.tag)}`
+  );
+
+  // propertyAgreement: a beat whose hashtag disagrees with the post is refused.
+  const wrong = await attemptCreateIndexOnly(ctx.sdk, ctx.botB, {
+    contractId: ctx.contractId,
+    docType: 'beat',
+    data: { postId: bs58.decode(ctx.postT1), hashtag: 'wrong_tag' },
+    accepted: () => entryExists(ctx.sdk, ctx.contractId, 'beat', 'postId', ctx.postT1, ctx.botB.ownerId),
+  });
+  check(
+    'd2e a beat whose hashtag mismatches the post is rejected (40127 propertyAgreement)',
+    !wrong.ok && /40127|agreement|mismatch/i.test(wrong.error ?? ''),
+    (wrong.error ?? 'accepted').slice(0, 160)
+  );
+  if (!wrong.ok) capturedErrors.push({ label: 'd2e beat hashtag mismatch', message: wrong.error ?? '' });
+}
+
+async function caseD3ColdBucket(ctx) {
+  console.log('\n--- d3. cold bucket: yesterday has no entries (byStart) — the dev.8 proof edge ---');
+  const now = Date.now();
+  const todayStart = now - (now % 86_400_000);
+  const yesterdayStart = todayStart - 86_400_000;
+  let error = null;
+  let entries = null;
+  try {
+    const page = await ctx.sdk.documents.ranked({ ...likeRankedShape(ctx, 'postId', undefined, 10), timeRange: [{ field: '$createdAt', selector: 'byStart', startMs: yesterdayStart, grid: DAY_GRID }] });
+    entries = page.entries.length;
+  } catch (e) { error = describeErr(e); }
+  // Either outcome is recorded verbatim: an empty page is the ideal; the known
+  // dev.8 behaviour is a proof-generation refusal on a never-populated bucket,
+  // which the client maps to "empty". Anything else is a real failure.
+  const knownEdge = error !== null && /single-path axis read must produce exactly one axis descent/i.test(error);
+  check(
+    'd3a yesterday\'s bucket (byStart, no entries ever) is either a proved empty page or the known cold-bucket refusal',
+    entries === 0 || knownEdge,
+    error ? error.slice(0, 160) : `entries=${entries}`
+  );
+  if (knownEdge) capturedErrors.push({ label: 'd3a cold bucket (dev.8 edge, mapped to empty by the client)', message: error });
+}
+
 const CASES = new Map([
   ['a1', caseA1ReplyLinkage],
   ['a2', caseA2Quotes],
@@ -2234,6 +2409,9 @@ const CASES = new Map([
   ['c3', caseC3PrefixCounts],
   ['c4', caseC4TimeWindow],
   ['c5', caseC5FollowRanked],
+  ['d1', caseD1WindowedLike],
+  ['d2', caseD2WindowedBeat],
+  ['d3', caseD3ColdBucket],
 ]);
 
 // ---- CLI --------------------------------------------------------------------
@@ -2394,6 +2572,8 @@ try {
     postTZ: null,
     /** Which fixture posts bot A currently likes (drives lazy ensures). */
     likes: {},
+    /** Which tagged fixture posts bot A has written a v6 `beat` for. */
+    beats: {},
     /** Whether b9 left bot B's own (standing) like on postT1 — c3a counts it. */
     bLikesT1: false,
   };

@@ -18,6 +18,8 @@ import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { hashtagsAreInline, likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
+import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
+import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { TopCreators } from '@/components/explore/top-creators'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
@@ -48,6 +50,8 @@ export default function ExplorePage() {
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [isLoadingTop, setIsLoadingTop] = useState(false)
+  /** v6: which slice the ranked surfaces show (Top posts, trending, creators). */
+  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
 
   // Load the global most-liked posts when the Top tab is activated (v4 only —
@@ -60,7 +64,7 @@ export default function ExplorePage() {
       setIsLoadingTop(true)
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let posts = await topLikedPostsHydrated({ limit: 20 })
+        let posts = await topLikedPostsHydrated({ limit: 20, window: rankingWindow })
 
         // Filter out posts from blocked users, same as the search results above.
         if (user?.identityId && posts.length > 0) {
@@ -79,7 +83,7 @@ export default function ExplorePage() {
     }
 
     loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
-  }, [activeTab, user?.identityId])
+  }, [activeTab, user?.identityId, rankingWindow])
 
   // Load trending hashtags
   useEffect(() => {
@@ -89,7 +93,8 @@ export default function ExplorePage() {
         const trending = await hashtagService.getTrendingHashtags({
           timeWindowHours: 168, // 1 week
           minPosts: 1,
-          limit: 12
+          limit: 12,
+          window: rankingWindow,
         })
         setTrendingHashtags(trending)
       } catch (error) {
@@ -100,7 +105,7 @@ export default function ExplorePage() {
     }
 
     loadTrendingHashtags().catch(err => logger.error('Failed to load trending hashtags:', err))
-  }, [])
+  }, [rankingWindow])
 
   // Load recent blog posts for discovery
   useEffect(() => {
@@ -435,6 +440,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Trending Hashtags */}
+                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-trending" />
                       {/* v4 trending is derived from recent post activity, not a
                           proved count — label it so nobody reads it as one. On
                           v5 the ranking IS a proved prefix ranked page, so the
@@ -502,6 +508,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Global most-liked posts (proved ranking, top 20) */}
+                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-top" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTop ? (
                           <div className="p-8 text-center">
@@ -530,7 +537,8 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* v5 creator leaderboard (proved prefix rankings). */}
-                      <TopCreators />
+                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-creators" />
+                      <TopCreators window={rankingWindow} />
                     </motion.div>
                   ) : (
                     <motion.div

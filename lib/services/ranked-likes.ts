@@ -28,6 +28,39 @@ import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
+import { WINDOWED_DAY_GRID, windowedRankingsAvailable } from '../contract-topology';
+
+/**
+ * Which slice of time a ranking covers. `'all'` is the all-time axis every
+ * topology from v4 up serves; `'today'` pins the current UTC-day bucket of the
+ * v6 windowed twin ({@link windowedRankingsAvailable}) — the node resolves the
+ * bucket from block time and the proof verifier re-derives it, so nothing
+ * client-side chooses the window.
+ */
+export type RankingWindow = 'all' | 'today';
+
+/**
+ * The `timeRange` member for a windowed ranked query, or nothing for
+ * all-time. Every v6 windowed index buckets `$createdAt` on the same daily
+ * grid; naming it explicitly keeps the query unambiguous on doctypes that
+ * carry more than one grid (`beat` also declares the k=4 rolling grid).
+ */
+function windowClause(window: RankingWindow): { timeRange: { field: string; selector: 'newest'; grid: { range: number; step: number } }[] } | Record<string, never> {
+  if (window !== 'today') return {};
+  return { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { ...WINDOWED_DAY_GRID } }] };
+}
+
+/**
+ * A ranked read on a v6 bucket that no document has ever landed in (a cold
+ * UTC day) fails proof generation on dev.8 instead of proving an empty
+ * ranking: "a single-path axis read must produce exactly one axis descent …
+ * the walk produced 0". Until upstream proves absence, that error IS the
+ * empty answer.
+ */
+function isColdBucketError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /single-path axis read must produce exactly one axis descent/i.test(message);
+}
 
 export interface RankedLikedPost {
   /** The ranked group key — the liked post's id (base58). */
@@ -43,6 +76,8 @@ export interface TopLikedPostsOptions {
   postAuthor?: string;
   /** 1..100, default 10. */
   limit?: number;
+  /** `'today'` reads the v6 daily-windowed twin of the pinned axis; default `'all'`. */
+  window?: RankingWindow;
 }
 
 /**
@@ -52,10 +87,11 @@ export interface TopLikedPostsOptions {
  * filtered. Returns `[]` on failure — ranking surfaces degrade to empty.
  */
 export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise<RankedLikedPost[]> {
-  const { hashtag, postAuthor, limit = 10 } = options;
+  const { hashtag, postAuthor, limit = 10, window = 'all' } = options;
   if (hashtag !== undefined && postAuthor !== undefined) {
     throw new Error('topLikedPosts: hashtag and postAuthor pin different indexes — pass at most one');
   }
+  if (window === 'today' && !windowedRankingsAvailable()) return [];
 
   try {
     const sdk = await getEvoSdk();
@@ -66,14 +102,20 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
           ? [['postAuthor', '==', postAuthor] as [string, '==', unknown]]
           : undefined;
 
+    // Today's per-tag top lives on `beat.byDayHashtagPost` (like.hashtag is
+    // optional and cannot sit below a bucket); every other axis has its
+    // windowed twin on `like` itself.
+    const documentTypeName = window === 'today' && hashtag !== undefined ? 'beat' : 'like';
+
     const result = await sdk.documents.ranked({
       dataContractId: YAPPR_CONTRACT_ID,
-      documentTypeName: 'like',
+      documentTypeName,
       groupBy: 'postId',
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
       ...(where ? { where } : {}),
+      ...windowClause(window),
     });
 
     return result.entries
@@ -84,6 +126,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
       }))
       .filter((entry) => entry.postId !== '');
   } catch (error) {
+    if (window === 'today' && isColdBucketError(error)) return [];
     logger.error('topLikedPosts: ranked query failed:', error);
     return [];
   }
@@ -116,8 +159,10 @@ export interface RankedGroupCount {
 async function rankedGroupCounts(
   documentTypeName: string,
   groupBy: string,
-  limit: number
+  limit: number,
+  window: RankingWindow = 'all'
 ): Promise<RankedGroupCount[]> {
+  if (window === 'today' && !windowedRankingsAvailable()) return [];
   try {
     const sdk = await getEvoSdk();
     const result = await sdk.documents.ranked({
@@ -127,6 +172,7 @@ async function rankedGroupCounts(
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
+      ...windowClause(window),
     });
 
     return result.entries
@@ -137,6 +183,7 @@ async function rankedGroupCounts(
       }))
       .filter((entry) => entry.key !== '');
   } catch (error) {
+    if (window === 'today' && isColdBucketError(error)) return [];
     logger.error(`rankedGroupCounts(${documentTypeName}.${groupBy}): ranked query failed:`, error);
     return [];
   }
@@ -148,8 +195,9 @@ async function rankedGroupCounts(
  * `skipIfAbsent`, so untagged likes are structurally invisible here and no
  * "untagged bucket" group can appear.
  */
-export async function topHashtagsByLikes(limit: number = 12): Promise<RankedGroupCount[]> {
-  return rankedGroupCounts('like', 'hashtag', limit);
+export async function topHashtagsByLikes(limit: number = 12, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
+  // Today's trending rides the tagged-only `beat` doctype (see topLikedPosts).
+  return rankedGroupCounts(window === 'today' ? 'beat' : 'like', 'hashtag', limit, window);
 }
 
 /**
@@ -158,8 +206,8 @@ export async function topHashtagsByLikes(limit: number = 12): Promise<RankedGrou
  * (the same index whose terminal level serves the profile Top tab). Keys are
  * base58 identity ids.
  */
-export async function topCreatorsByLikes(limit: number = 10): Promise<RankedGroupCount[]> {
-  return rankedGroupCounts('like', 'postAuthor', limit);
+export async function topCreatorsByLikes(limit: number = 10, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
+  return rankedGroupCounts('like', 'postAuthor', limit, window);
 }
 
 /**
@@ -175,6 +223,8 @@ export interface HydratedTopPostsOptions {
   hashtag?: string;
   /** 1..100, default 20. */
   limit?: number;
+  /** `'today'` reads the v6 daily-windowed twin; default `'all'`. */
+  window?: RankingWindow;
 }
 
 /**
@@ -200,21 +250,21 @@ const hydratedCache = new Map<string, { posts: Post[]; timestamp: number }>();
  * `likesAreIndexOnly()`. Returns `[]` on failure.
  */
 export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {}): Promise<Post[]> {
-  const { hashtag, limit = 20 } = options;
+  const { hashtag, limit = 20, window = 'all' } = options;
   if (hashtag === '') {
     // The '' group is the untagged bucket, not a tag — nothing should ask for it.
     logger.warn('topLikedPostsHydrated: refusing the empty hashtag group');
     return [];
   }
 
-  const cacheKey = hashtag === undefined ? 'global' : `tag:${hashtag}`;
+  const cacheKey = `${window}:${hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
   const cached = hydratedCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < HYDRATED_CACHE_TTL_MS) {
     return cached.posts;
   }
 
   try {
-    const ranked = await topLikedPosts(hashtag === undefined ? { limit } : { hashtag, limit });
+    const ranked = await topLikedPosts(hashtag === undefined ? { limit, window } : { hashtag, limit, window });
 
     let posts: Post[] = [];
     if (ranked.length > 0) {

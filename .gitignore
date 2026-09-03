@@ -85,3 +85,9 @@ lib/wasm-sdk/
 # Keep only the necessary WASM files in dash-wasm
 # (the actual SDK files we need are in lib/dash-wasm/)
 .gitignore worktrees
+
+# devnet seeding ledgers (private keys + checkpoints) — never commit
+.seed-treasury.local.key
+.seed-identities.local*
+.seed-progress.local*
+.seed-report.local*

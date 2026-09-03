@@ -1,0 +1,1202 @@
+{"type":"post","ref":"p001","author":0,"content":"spent the morning in the drive proof verification path again. every time i think i understand grovedb i find another layer. it is layers all the way down; the turtles are also merkle trees #dashplatform","hashtag":"dashplatform"}
+{"type":"post","ref":"p002","author":1,"content":"Lisbon friends: the bifana at the tiny counter place behind Rossio station is 3.50 and it is BETTER than every 14 euro sandwich in this city. Bread soaked in the pork juices. No notes!! 🥪 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/bifana/900/600"}
+{"type":"post","ref":"p003","author":6,"content":"the year is 2026 and i am still explaining to my family that working in tech does not mean i can fix their printer #memes","hashtag":"memes"}
+{"type":"post","ref":"p004","author":3,"content":"LEG DAY COMPLETE. 5x5 squats at 475, felt like the bar was disrespecting me personally so we added a sixth set. Walking to the car took 11 minutes 💪 #gains","hashtag":"gains"}
+{"type":"reply","ref":"r001","author":6,"rootRef":"p004","parentRef":"p004","content":"11 minutes is crazy king did you consider simply not doing that"}
+{"type":"like","author":6,"targetRef":"p004"}
+{"type":"reply","ref":"r002","author":3,"rootRef":"p004","parentRef":"r001","content":"Chief the pain is the receipt. You keep the receipt."}
+{"type":"follow","author":7,"target":2}
+{"type":"post","ref":"p005","author":4,"content":"Last Transfer devlog #1: it's a cozy roguelike where you run the night shift at a tiny train station. This week I made the timetable UI and immediately discovered my own game confuses me (a good sign? probably not) #gamedev","hashtag":"gamedev"}
+{"type":"follow","author":6,"target":1}
+{"type":"post","ref":"p006","author":5,"content":"Respectfully, a reminder for the new arrivals: an asset that routinely moves 8% in a week is not a unit of account, it is a lottery ticket with extra steps. Money has three functions. Volatility disqualifies two of them. This is not gatekeeping, it is arithmetic.","hashtag":""}
+{"type":"follow","author":9,"target":6}
+{"type":"follow","author":4,"target":0}
+{"type":"reply","ref":"r003","author":0,"rootRef":"p006","parentRef":"p006","content":"arithmetic also says payment rails that settle in 2 business days are a rounding error factory. volatility is a liquidity problem, not a protocol property; you are describing 2017"}
+{"type":"follow","author":6,"target":4}
+{"type":"reply","ref":"r004","author":5,"rootRef":"p006","parentRef":"r003","content":"1) Settlement latency and price stability are different axes. 2) I said unit of account, not settlement layer. 3) I notice you did not dispute the arithmetic."}
+{"type":"follow","author":3,"target":1}
+{"type":"follow","author":0,"target":4}
+{"type":"follow","author":8,"target":4}
+{"type":"reply","ref":"r005","author":6,"rootRef":"p006","parentRef":"r004","content":"he numbered his comeback this man came to the group chat with a whiteboard"}
+{"type":"reply","ref":"r006","author":0,"rootRef":"p006","parentRef":"r004","content":"fine; conceded on unit of account, for now. check back in five years"}
+{"type":"post","ref":"p007","author":7,"content":"The dark-eyed juncos are back at the feeder this morning, right on schedule. Eleven of them, one very bossy. There is a lesson in there somewhere. Happy birding! #birding","hashtag":"birding","mediaUrl":"https://picsum.photos/seed/juncos/800/600"}
+{"type":"post","ref":"p008","author":8,"content":"3am. tascam hiss, jupiter pad, 84 bpm... the track is 90% done which in producer units means 6 more weeks #synthwave","hashtag":"synthwave"}
+{"type":"post","ref":"p009","author":9,"content":"campus thread nobody asked for: the university has now repainted the lines in lot C THREE times this semester. apparently the first two were 'the wrong shade of yellow.' your tuition at work. 1/ #campusnews","hashtag":"campusnews"}
+{"type":"post","ref":"p010","author":2,"content":"dawn at the fjord. minus twelve. the light lasted four minutes and i would have waited four hours for it.","hashtag":"","mediaUrl":"https://picsum.photos/seed/fjorddawn/1200/800"}
+{"type":"reply","ref":"r007","author":7,"rootRef":"p010","parentRef":"p010","content":"Four minutes of light and you caught it. Lovely work, Lars. What do you do with the other 23 hours and 56 minutes?"}
+{"type":"reply","ref":"r008","author":2,"rootRef":"p010","parentRef":"r007","content":"coffee. mostly coffee."}
+{"type":"post","ref":"p011","author":6,"content":"just ate cereal for lunch as an adult with a job. no one can stop me. this is what freedom actually is","hashtag":""}
+{"type":"follow","author":1,"target":3}
+{"type":"follow","author":9,"target":5}
+{"type":"post","ref":"p012","author":1,"content":"Saturday market haul: figs that smell like honey, a cheese the vendor described as 'angry', and MORE piri piri than one household needs. Weekend menu is writing itself 🍑 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/markethaul/900/700"}
+{"type":"like","author":4,"targetRef":"p001"}
+{"type":"follow","author":6,"target":0}
+{"type":"follow","author":0,"target":5}
+{"type":"post","ref":"p013","author":0,"content":"new espresso grinder arrived. first shot: sour. second: bitter. third: acceptable. basically a consensus protocol; you just keep proposing until the network stops rejecting you","hashtag":""}
+{"type":"follow","author":9,"target":1}
+{"type":"reply","ref":"r009","author":6,"rootRef":"p013","parentRef":"p013","content":"petra explaining coffee like a whitepaper is my favorite genre"}
+{"type":"post","ref":"p014","author":3,"content":"PSA: protein oats recipe, 62g protein, tastes like actual dessert. Oats, egg whites IN the oats (trust me), whey after cooking not before, frozen berries, pinch of salt. Pinch of salt is NOT optional chief.","hashtag":""}
+{"type":"like","author":3,"targetRef":"p002"}
+{"type":"reply","ref":"r010","author":1,"rootRef":"p014","parentRef":"p014","content":"Egg whites IN the oats is genuinely correct technique?? Gary are you secretly a chef. The salt note confirms it!!"}
+{"type":"follow","author":2,"target":7}
+{"type":"reply","ref":"r011","author":3,"rootRef":"p014","parentRef":"r010","content":"Ma'am I have watched 4000 hours of cooking videos while on the stairmaster. I am something worse than a chef."}
+{"type":"likeReply","author":9,"targetRef":"r002"}
+{"type":"follow","author":4,"target":8}
+{"type":"post","ref":"p015","author":4,"content":"today's bug: passengers were boarding trains that don't exist. ghost trains. I made a scheduling game with ghost trains (I am keeping them as a feature, obviously)","hashtag":""}
+{"type":"follow","author":5,"target":0}
+{"type":"reply","ref":"r012","author":8,"rootRef":"p015","parentRef":"p015","content":"ghost train needs its own theme... detuned pad, tape wobble... say the word"}
+{"type":"like","author":0,"targetRef":"p006"}
+{"type":"reply","ref":"r013","author":4,"rootRef":"p015","parentRef":"r012","content":"the word. (this is why the soundtrack budget is 40% of the game budget)"}
+{"type":"post","ref":"p016","author":5,"content":"On CBDCs: the interesting question is not whether central banks can issue digital cash, it is whether anyone wants digital cash with an audit log attached. Privacy is not a criminal aspiration; it is how cash has always worked. #econ","hashtag":"econ"}
+{"type":"reply","ref":"r014","author":0,"rootRef":"p016","parentRef":"p016","content":"careful harold, you are one paragraph away from agreeing with the cryptographers"}
+{"type":"like","author":9,"targetRef":"p003"}
+{"type":"like","author":9,"targetRef":"p016"}
+{"type":"reply","ref":"r015","author":5,"rootRef":"p016","parentRef":"r014","content":"I agree with cryptography constantly. It is the financial instruments stapled to it that I audit."}
+{"type":"post","ref":"p017","author":9,"content":"lot C update: they have now installed a SIGN explaining the new lines. the sign is in lot D. 2/","hashtag":""}
+{"type":"like","author":3,"targetRef":"p003"}
+{"type":"like","author":3,"targetRef":"p012"}
+{"type":"post","ref":"p018","author":6,"content":"start each day by asking yourself what would the guy who put the lot c sign in lot d do. then do not do that","hashtag":""}
+{"type":"post","ref":"p019","author":1,"content":"I DID IT. I ate a pastel de nata from 14 different bakeries in Lisbon over 6 days and ranked them all. The winner is NOT the famous one. It's a tiny place in Alcântara where the lady scolded me for taking a photo before eating. Full ranking on the blog but the top 3 will surprise you 🥧 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/pasteldenata/1000/750"}
+{"type":"reply","ref":"r016","author":3,"rootRef":"p019","parentRef":"p019","content":"14 bakeries in 6 days?? Sofia what is your training program. Also macros per nata, asking for me"}
+{"type":"reply","ref":"r017","author":1,"rootRef":"p019","parentRef":"r016","content":"Gary the macros are 'yes'. The training program is walking 25k steps between bakeries!!"}
+{"type":"like","author":8,"targetRef":"p005"}
+{"type":"reply","ref":"r018","author":6,"rootRef":"p019","parentRef":"p019","content":"getting scolded by the bakery lady is how you know its real. michelin should add a scold rating"}
+{"type":"reply","ref":"r019","author":7,"rootRef":"p019","parentRef":"p019","content":"My late husband and I had a pastel de nata in Lisbon in 1998 and he talked about it for twenty years. Save the ranking, I may finally go back. Thank you Sofia."}
+{"type":"like","author":0,"targetRef":"p016"}
+{"type":"follow","author":9,"target":7}
+{"type":"follow","author":3,"target":6}
+{"type":"reply","ref":"r020","author":1,"rootRef":"p019","parentRef":"r019","content":"Frances this is the nicest thing anyone has ever said in my replies. When you go, I'm making you a list ❤️"}
+{"type":"post","ref":"p020","author":0,"content":"how a yappr post actually works, for the curious: your client builds a document, signs it with your identity key, broadcasts a state transition, and every platform node validates it against the contract schema. no server anywhere. the schema is law and the law is JSON #dashplatform","hashtag":"dashplatform"}
+{"type":"reply","ref":"r021","author":9,"rootRef":"p020","parentRef":"p020","content":"bookmarking this for my 'explain your weird internship' elevator pitch. so when the app 'loads slowly' who do i yell at? apparently no one??"}
+{"type":"likeReply","author":3,"targetRef":"r017"}
+{"type":"reply","ref":"r022","author":0,"rootRef":"p020","parentRef":"r021","content":"you yell at the network, collectively. it is very therapeutic and accomplishes nothing; like most yelling"}
+{"type":"like","author":6,"targetRef":"p017"}
+{"type":"follow","author":6,"target":9}
+{"type":"follow","author":1,"target":7}
+{"type":"quote","ref":"p021","author":6,"content":"economists discovering that people buy things for fun is my favorite recurring event. sir some of us are just gambling respectfully #memes","quotedRef":"p006","hashtag":"memes"}
+{"type":"likeReply","author":9,"targetRef":"r005"}
+{"type":"reply","ref":"r023","author":5,"rootRef":"p021","parentRef":"p021","content":"Gambling respectfully is, I concede, the most honest description of retail speculation I have read this quarter. I shall be citing you."}
+{"type":"like","author":9,"targetRef":"p018"}
+{"type":"reply","ref":"r024","author":6,"rootRef":"p021","parentRef":"r023","content":"cited by an economist. mother will finally have something for the fridge"}
+{"type":"post","ref":"p022","author":3,"content":"Attempted an ANABOLIC pastel de nata inspired by @sofia-eats24. Greek yogurt custard, protein crust. Verdict: it did not work. It did NOT work. Some things are sacred and now I know 💪","hashtag":""}
+{"type":"reply","ref":"r025","author":1,"rootRef":"p022","parentRef":"p022","content":"Gary I am framing 'it did NOT work' and hanging it in my kitchen. Some doughs cannot be optimized!! Respect for trying though, genuinely"}
+{"type":"reply","ref":"r026","author":6,"rootRef":"p022","parentRef":"p022","content":"gary really said what if dessert but punishment"}
+{"type":"post","ref":"p023","author":4,"content":"fixed the ghost trains by making them official: 1 in 40 nights a ghost train arrives, takes no passengers, pays triple. playtester reaction so far: 'why is the train transparent' (perfect, no notes)","hashtag":""}
+{"type":"post","ref":"p024","author":8,"content":"someone local is selling a juno-106 'for parts' at a price that is doing something to my judgment... the voice chips are definitely dead. i am definitely going to buy it anyway #synthwave","hashtag":"synthwave"}
+{"type":"like","author":3,"targetRef":"p021"}
+{"type":"reply","ref":"r027","author":4,"rootRef":"p024","parentRef":"p024","content":"kev this is the third 'for parts' synth this year (buy it, the ghost train theme deserves dead voice chips)"}
+{"type":"post","ref":"p025","author":2,"content":"a gull stole my lens cap today. fair trade. he posed first.","hashtag":"","mediaUrl":"https://picsum.photos/seed/gullthief/900/900"}
+{"type":"reply","ref":"r028","author":7,"rootRef":"p025","parentRef":"p025","content":"He posed first! Gulls understand commerce better than most. What a handsome thief."}
+{"type":"like","author":8,"targetRef":"p010"}
+{"type":"like","author":9,"targetRef":"p019"}
+{"type":"post","ref":"p026","author":9,"content":"the dining hall has introduced a 'global street food' station. today's global street food: hot dogs. i have questions and the dining director will not return my emails. 3/ (this is the lot C thread now covering all campus infrastructure, apparently)","hashtag":""}
+{"type":"like","author":4,"targetRef":"p019"}
+{"type":"post","ref":"p027","author":6,"content":"my sleep schedule watching me open one more tab at 3am","hashtag":"","mediaUrl":"https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif"}
+{"type":"post","ref":"p028","author":0,"content":"rustc upgraded; my code that compiled yesterday now emits a lint about a lifetime i wrote in 2024. the compiler is correct. i hate that the compiler is correct. #rustlang","hashtag":"rustlang"}
+{"type":"reply","ref":"r029","author":4,"rootRef":"p028","parentRef":"p028","content":"this is why I write my games in a language that lets me be wrong quickly (gdscript, the wrongness accelerator)"}
+{"type":"post","ref":"p029","author":5,"content":"Today in economic history: the 1866 collapse of Overend Gurney, the Lehman of the Victorian era. The Bank of England let it fail, then spent 150 years explaining why. Every era believes its financial innovations are different. Every era is wrong in the same three ways. #econ","hashtag":"econ"}
+{"type":"likeReply","author":0,"targetRef":"r023"}
+{"type":"reply","ref":"r030","author":9,"rootRef":"p029","parentRef":"p029","content":"putting 'wrong in the same three ways' in my econ midterm and citing you. what are the three ways though. asking before thursday"}
+{"type":"like","author":9,"targetRef":"p014"}
+{"type":"like","author":7,"targetRef":"p026"}
+{"type":"follow","author":1,"target":6}
+{"type":"reply","ref":"r031","author":5,"rootRef":"p029","parentRef":"r030","content":"Leverage, maturity mismatch, and the sincere belief that this time the collateral is different. Good luck Thursday."}
+{"type":"like","author":0,"targetRef":"p019"}
+{"type":"repost","author":3,"targetRef":"p019"}
+{"type":"bookmark","author":3,"targetRef":"p019"}
+{"type":"like","author":6,"targetRef":"p020"}
+{"type":"follow","author":9,"target":3}
+{"type":"follow","author":7,"target":1}
+{"type":"post","ref":"p030","author":3,"content":"WEEK 1 OF WINTER BULK: up 1.2 lbs, squat felt like a warm handshake, ate rice out of the pot standing up like a champion. We are SO back #gains","hashtag":"gains"}
+{"type":"follow","author":2,"target":1}
+{"type":"post","ref":"p031","author":1,"content":"Rainy day = caldo verde. Collards sliced so thin you can read through them, good chouriço, and DON'T skimp on the olive oil at the end. The recipe is four ingredients, the technique is a lifetime 🍲","hashtag":""}
+{"type":"post","ref":"p032","author":7,"content":"ALERT: possible Varied Thrush at the west pond, my first of the season! Terrible photo attached, wonderful bird regardless. My grandson says the photo looks like 'an orange potato with anxiety.' He is not wrong. #birding","hashtag":"birding","mediaUrl":"https://picsum.photos/seed/variedthrush/800/800"}
+{"type":"like","author":6,"targetRef":"p032"}
+{"type":"reply","ref":"r032","author":6,"rootRef":"p032","parentRef":"p032","content":"orange potato with anxiety is the best bird description ever posted here. fran's grandson needs a column"}
+{"type":"follow","author":0,"target":6}
+{"type":"reply","ref":"r033","author":7,"rootRef":"p032","parentRef":"r032","content":"I will tell him a nice young man on the internet said so. He will be insufferable for a week."}
+{"type":"post","ref":"p033","author":9,"content":"BREAKING(ish): there is a RACCOON in the 24-hour library. Not near it. IN it. Second floor, philosophy section. Campus security has been 'notified' which apparently means one guy with a net is on his way. I am live on the scene. More as this develops. #campusnews","hashtag":"campusnews","mediaUrl":"https://picsum.photos/seed/libraryraccoon/900/600"}
+{"type":"like","author":9,"targetRef":"p027"}
+{"type":"reply","ref":"r034","author":6,"rootRef":"p033","parentRef":"p033","content":"philosophy section is crazy he's in there reading kant. he KNOWS what he did"}
+{"type":"follow","author":4,"target":6}
+{"type":"reply","ref":"r035","author":7,"rootRef":"p033","parentRef":"p033","content":"Do not corner him near the stacks! Raccoons climb better than that poor man with the net. Source: forty years of bird feeders."}
+{"type":"reply","ref":"r036","author":9,"rootRef":"p033","parentRef":"r035","content":"frances the net guy just read your reply over my shoulder and said 'she's right.' morale is low"}
+{"type":"bookmark","author":6,"targetRef":"p014"}
+{"type":"reply","ref":"r037","author":3,"rootRef":"p033","parentRef":"p033","content":"He's just bulking for winter king leave him alone"}
+{"type":"post","ref":"p034","author":9,"content":"RACCOON UPDATE: he has evaded the net guy TWICE and is now somewhere in the ceiling. The library has closed the second floor. Finals week studiers are FURIOUS. A vigil is forming. I am not making any of this up. #campusnews","hashtag":"campusnews"}
+{"type":"bookmark","author":9,"targetRef":"p020"}
+{"type":"like","author":4,"targetRef":"p033"}
+{"type":"post","ref":"p035","author":2,"content":"the sky went green at 23:40 and stayed. no wind. the whole fjord holding its breath. i have taken ten thousand aurora photos and tonight still felt like the first. #photography","hashtag":"photography","mediaUrl":"https://picsum.photos/seed/aurora/1200/800"}
+{"type":"bookmark","author":9,"targetRef":"p019"}
+{"type":"reply","ref":"r038","author":8,"rootRef":"p035","parentRef":"p035","content":"this is an album cover lars... serious offer, my next EP needs this"}
+{"type":"bookmark","author":1,"targetRef":"p014"}
+{"type":"like","author":3,"targetRef":"p027"}
+{"type":"reply","ref":"r039","author":2,"rootRef":"p035","parentRef":"r038","content":"send me the tracks. if the music is honest, the photo is yours."}
+{"type":"like","author":0,"targetRef":"p005"}
+{"type":"like","author":6,"targetRef":"p034"}
+{"type":"reply","ref":"r040","author":1,"rootRef":"p035","parentRef":"p035","content":"'the whole fjord holding its breath' LARS. Delete your account, become a poet, this is an order!!"}
+{"type":"likeReply","author":7,"targetRef":"r008"}
+{"type":"post","ref":"p036","author":5,"content":"Respectfully, 'stablecoin' is doing remarkable work as a word. A dollar liability issued by an unregulated entity with a reserve attestation instead of an audit is not stable, it is quiet. There is a difference, and it is usually discovered on a weekend.","hashtag":""}
+{"type":"reply","ref":"r041","author":0,"rootRef":"p036","parentRef":"p036","content":"agreed on attestations; disagreed that regulation is the only path to solvency proofs. you can do reserve verification cryptographically. merkle sum trees exist, harold. the tech is older than most of the issuers"}
+{"type":"like","author":4,"targetRef":"p027"}
+{"type":"like","author":6,"targetRef":"p033"}
+{"type":"reply","ref":"r042","author":5,"rootRef":"p036","parentRef":"r041","content":"A proof of reserves without a proof of liabilities is a photograph of one side of a balance sheet. I admire the trees. I do not bank on them."}
+{"type":"reply","ref":"r043","author":0,"rootRef":"p036","parentRef":"r042","content":"liability inclusion proofs are literally the second half of the same construction; users verify their own balances are in the tree. your objection was solved in 2013, your skepticism is running old firmware"}
+{"type":"reply","ref":"r044","author":5,"rootRef":"p036","parentRef":"r043","content":"1) Users do not verify. Users COULD verify. The gap between those words is where every crisis lives. 2) 'Old firmware' is fair, and I shall be stealing it."}
+{"type":"likeReply","author":2,"targetRef":"r019"}
+{"type":"reply","ref":"r045","author":6,"rootRef":"p036","parentRef":"r044","content":"petra and hal beefing in complete sentences with citations. this is the highest quality slap fight on the platform. no notes"}
+{"type":"like","author":7,"targetRef":"p010"}
+{"type":"like","author":6,"targetRef":"p022"}
+{"type":"post","ref":"p037","author":3,"content":"545 squat attempt: DENIED. Bar said not today. Pinned me gently like a disappointed father. Spotters earned their protein shakes. We go again in 3 weeks and the bar KNOWS it 💪 #gains","hashtag":"gains"}
+{"type":"like","author":5,"targetRef":"p034"}
+{"type":"like","author":0,"targetRef":"p036"}
+{"type":"likeReply","author":9,"targetRef":"r045"}
+{"type":"reply","ref":"r046","author":1,"rootRef":"p037","parentRef":"p037","content":"'pinned me gently like a disappointed father' Gary the FOOD is not the only thing you cook, this sentence is done PERFECTLY"}
+{"type":"reply","ref":"r047","author":4,"rootRef":"p037","parentRef":"p037","content":"putting 'the bar KNOWS it' on the loading screen of my game if that's ok (it's going in either way)"}
+{"type":"like","author":6,"targetRef":"p031"}
+{"type":"post","ref":"p038","author":9,"content":"RACCOON FINAL UPDATE (for tonight): he came down from the ceiling at 2am, walked past the net guy with what witnesses describe as 'total indifference,' and exited through the door someone propped open for him. Library resumes normal operations. I need to sleep for a year.","hashtag":""}
+{"type":"reply","ref":"r048","author":6,"rootRef":"p038","parentRef":"p038","content":"walked past the net guy with total indifference. that raccoon is my role model. my king"}
+{"type":"like","author":6,"targetRef":"p036"}
+{"type":"post","ref":"p039","author":8,"content":"ok the juno arrived. two voice chips dead, exactly as advertised... but the chorus still works and the chorus is the whole reason juno exists. we ride at dawn (dawn is 2pm for producers)","hashtag":""}
+{"type":"bookmark","author":3,"targetRef":"p031"}
+{"type":"like","author":9,"targetRef":"p032"}
+{"type":"like","author":8,"targetRef":"p033"}
+{"type":"post","ref":"p040","author":6,"content":"day 4 of the winter arc. hoodie inside the house. soup for every meal. character development","hashtag":""}
+{"type":"post","ref":"p041","author":0,"content":"platform indexes support asc and desc regardless of how you define them in the contract; found this out after writing a migration to 'fix' index direction. the migration fixed nothing because nothing was broken. billing this hour to my own hubris #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":9,"targetRef":"p021"}
+{"type":"likeReply","author":2,"targetRef":"r033"}
+{"type":"reply","ref":"r049","author":4,"rootRef":"p041","parentRef":"p041","content":"'billing this hour to my own hubris' is the entire solo dev experience in six words"}
+{"type":"post","ref":"p042","author":1,"content":"Grilled sardines update: my landlady saw me struggling with the grill and simply took over. Did not ask. Did not speak. Best sardines of my LIFE. Some knowledge cannot be written down, only seized from you by a 70-year-old in a floral apron 🐟 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/sardines/900/650"}
+{"type":"like","author":4,"targetRef":"p028"}
+{"type":"bookmark","author":7,"targetRef":"p035"}
+{"type":"post","ref":"p043","author":4,"content":"Last Transfer needs 10 playtesters for the ghost train build! You get: a broken game, a feedback form, my eternal gratitude. I get: pain, mostly. Link in the usual place (there is no usual place, DM me) #buildinpublic","hashtag":"buildinpublic"}
+{"type":"like","author":2,"targetRef":"p019"}
+{"type":"reply","ref":"r050","author":6,"rootRef":"p043","parentRef":"p043","content":"me and the boys arriving to break your timetable simulator in ways god never intended"}
+{"type":"like","author":5,"targetRef":"p020"}
+{"type":"like","author":6,"targetRef":"p039"}
+{"type":"reply","ref":"r051","author":3,"rootRef":"p043","parentRef":"p043","content":"Never played a roguelike in my life. Signing up. The bar taught me you don't get stronger doing things you're already good at"}
+{"type":"reply","ref":"r052","author":4,"rootRef":"p043","parentRef":"r051","content":"gary this is the most motivational playtest signup I've ever received (you're in)"}
+{"type":"post","ref":"p044","author":7,"content":"My neighbor asked why I get up at 5:30 to 'look at the same birds.' They are never the same birds. That is the entire point. Also her cat kills songbirds so we are in a cold war, KAREN. #birding","hashtag":"birding"}
+{"type":"follow","author":9,"target":0}
+{"type":"reply","ref":"r053","author":6,"rootRef":"p044","parentRef":"p044","content":"fran dropping an all caps KAREN was not on my bingo card. the birds have a soldier"}
+{"type":"like","author":7,"targetRef":"p019"}
+{"type":"likeReply","author":4,"targetRef":"r024"}
+{"type":"post","ref":"p045","author":5,"content":"Rate decision day. My prediction: 25bp cut, two dissents, and a press conference where 'data dependent' is said eleven times. Set your bingo cards accordingly. I will revisit this post when I am inevitably correct.","hashtag":""}
+{"type":"like","author":8,"targetRef":"p023"}
+{"type":"likeReply","author":9,"targetRef":"r044"}
+{"type":"post","ref":"p046","author":6,"content":"gym at 6am has two demographics. guys like gary who nod at you with the warmth of a thousand suns and one guy doing curls in the squat rack like its his job","hashtag":""}
+{"type":"follow","author":8,"target":2}
+{"type":"follow","author":6,"target":7}
+{"type":"reply","ref":"r054","author":3,"rootRef":"p046","parentRef":"p046","content":"The nod is a covenant king. Also send me that curl guy's gym, I just want to talk"}
+{"type":"likeReply","author":9,"targetRef":"r019"}
+{"type":"like","author":7,"targetRef":"p025"}
+{"type":"repost","author":1,"targetRef":"p035"}
+{"type":"bookmark","author":8,"targetRef":"p035"}
+{"type":"follow","author":3,"target":4}
+{"type":"post","ref":"p047","author":0,"content":"opened my first real PR against dashpay/platform. 40 lines of code, 300 lines of tests, one comment from CI that hurt my feelings. https://github.com/dashpay/platform — this is how they get you; you read the code to complain and end up contributing #dashplatform","hashtag":"dashplatform"}
+{"type":"follow","author":1,"target":4}
+{"type":"reply","ref":"r055","author":4,"rootRef":"p047","parentRef":"p047","content":"'you read the code to complain and end up contributing' the open source pipeline in one sentence. congrats!!"}
+{"type":"like","author":7,"targetRef":"p034"}
+{"type":"reply","ref":"r056","author":6,"rootRef":"p047","parentRef":"p047","content":"rust aunt is committing to the blockchain repo. we are all going to be fine"}
+{"type":"like","author":1,"targetRef":"p022"}
+{"type":"like","author":6,"targetRef":"p037"}
+{"type":"reply","ref":"r057","author":0,"rootRef":"p047","parentRef":"r056","content":"rust aunt is acceptable. rust aunt has merge rights over your memes now"}
+{"type":"post","ref":"p048","author":1,"content":"Tried to make a 'deconstructed' galão at home for the blog. Burned the milk TWICE. Some drinks belong to cafés and their steel pitchers and their unbothered baristas. Know your limits!! Mine is milk, apparently ☕","hashtag":""}
+{"type":"repost","author":9,"targetRef":"p019"}
+{"type":"likeReply","author":6,"targetRef":"r036"}
+{"type":"follow","author":6,"target":3}
+{"type":"like","author":3,"targetRef":"p048"}
+{"type":"post","ref":"p049","author":3,"content":"SUNDAY MEAL PREP: 12 containers. Chicken, rice, broccoli, the holy trinity. 3 containers of 'fun rice' (it has peas). My freezer looks like a warehouse and my heart is FULL #gains","hashtag":"gains","mediaUrl":"https://picsum.photos/seed/mealprep/900/700"}
+{"type":"likeReply","author":9,"targetRef":"r023"}
+{"type":"like","author":6,"targetRef":"p047"}
+{"type":"reply","ref":"r058","author":1,"rootRef":"p049","parentRef":"p049","content":"Gary. 'Fun rice (it has peas)' made me laugh and then genuinely reflect. Next week: I teach you a marinade. One marinade. Your trinity can stay"}
+{"type":"like","author":2,"targetRef":"p036"}
+{"type":"like","author":9,"targetRef":"p044"}
+{"type":"like","author":9,"targetRef":"p046"}
+{"type":"reply","ref":"r059","author":3,"rootRef":"p049","parentRef":"r058","content":"Deal but if my macros move I'm filing a complaint with the blog"}
+{"type":"repost","author":7,"targetRef":"p033"}
+{"type":"post","ref":"p050","author":4,"content":"spent 6 hours on the station clerk's idle animation. she now taps her pen. nobody will ever notice. it was worth every minute (this is either craftsmanship or a disorder, no in-between) #gamedev","hashtag":"gamedev","mediaUrl":"https://picsum.photos/seed/pixelclerk/800/450"}
+{"type":"reply","ref":"r060","author":8,"rootRef":"p050","parentRef":"p050","content":"i will notice the pen tap... want a tiny sound for it? like a felt piano note..."}
+{"type":"reply","ref":"r061","author":4,"rootRef":"p050","parentRef":"r060","content":"a FELT PIANO NOTE. kev. this game is going to be so unreasonably cozy"}
+{"type":"repost","author":7,"targetRef":"p038"}
+{"type":"like","author":9,"targetRef":"p042"}
+{"type":"like","author":6,"targetRef":"p043"}
+{"type":"post","ref":"p051","author":6,"content":"me looking for one more thing to buy at checkout so the shipping feels earned","hashtag":"","mediaUrl":"https://media.giphy.com/media/13HgwGsXF0aiGY/giphy.gif"}
+{"type":"post","ref":"p052","author":8,"content":"juno repair log day 1: opened it up. previous owner 'repaired' it with electrical tape and hope. respect. voice chip donors ordered from a man in osaka who only communicates in waveform screenshots","hashtag":""}
+{"type":"reply","ref":"r062","author":0,"rootRef":"p052","parentRef":"p052","content":"a man in osaka who only communicates in waveform screenshots is the most trustworthy vendor description i have ever heard"}
+{"type":"like","author":6,"targetRef":"p042"}
+{"type":"like","author":3,"targetRef":"p051"}
+{"type":"post","ref":"p053","author":2,"content":"fog series, one of three. the mountain is there. you will have to trust me.","hashtag":"","mediaUrl":"https://picsum.photos/seed/fogone/1100/733"}
+{"type":"likeReply","author":9,"targetRef":"r034"}
+{"type":"post","ref":"p054","author":9,"content":"CORRECTION to my earlier reporting: the lot C sign was in lot D because lot D is being renamed lot C. the old lot C will become 'the new lot F.' i have read the facilities memo four times. i understand it less each time. standards require i share this","hashtag":""}
+{"type":"like","author":2,"targetRef":"p044"}
+{"type":"reply","ref":"r063","author":6,"rootRef":"p054","parentRef":"p054","content":"the parking lots are doing a 51% attack on each other"}
+{"type":"reply","ref":"r064","author":0,"rootRef":"p054","parentRef":"r063","content":"finally a consensus failure i can explain to my mother"}
+{"type":"post","ref":"p055","author":5,"content":"Rate decision: 50bp cut, zero dissents, 'data dependent' said only four times. I was wrong on all three counts, publicly, with confidence. This is the tax one pays for making falsifiable claims, and I would rather pay it than post horoscopes. {{link:p045}}","hashtag":""}
+{"type":"like","author":6,"targetRef":"p019"}
+{"type":"like","author":1,"targetRef":"p034"}
+{"type":"reply","ref":"r065","author":6,"rootRef":"p055","parentRef":"p055","content":"an economist admitting he was wrong. screenshot this. frame it. national holiday"}
+{"type":"reply","ref":"r066","author":5,"rootRef":"p055","parentRef":"r065","content":"Enjoy it. The next admission is scheduled for 2031."}
+{"type":"likeReply","author":4,"targetRef":"r043"}
+{"type":"post","ref":"p056","author":7,"content":"My grandson installed a camera on the feeder so I can watch from my kitchen. Modern technology is a marvel. Anyway I still stand outside in the cold with binoculars because the camera 'lacks soul.' He sighed so deeply.","hashtag":""}
+{"type":"like","author":7,"targetRef":"p042"}
+{"type":"post","ref":"p057","author":1,"content":"New blog post: 9 tascas in Lisbon where the menu is a laminated card and the fish was swimming this morning. Writing it made me hungry, editing it made me hungrier, posting it from a café where I ordered a THIRD lunch 🍴 #food","hashtag":"food"}
+{"type":"like","author":3,"targetRef":"p033"}
+{"type":"likeReply","author":0,"targetRef":"r042"}
+{"type":"post","ref":"p058","author":3,"content":"DELOAD WEEK. The hardest week. The weights are light but the DEMONS are heavy. Did 8 sets of stretching and called it training. My body says thank you, my brain says fraud","hashtag":"gains"}
+{"type":"reply","ref":"r067","author":6,"rootRef":"p058","parentRef":"p058","content":"the weights are light but the demons are heavy is going on my tombstone king"}
+{"type":"like","author":3,"targetRef":"p019"}
+{"type":"post","ref":"p059","author":0,"content":"the wasm sdk exposes snake_case getters and i will simply never remember this. camelCase muscle memory has ruined me; every third call is undefined. skill issue, admittedly; still posting about it","hashtag":""}
+{"type":"likeReply","author":3,"targetRef":"r034"}
+{"type":"likeReply","author":6,"targetRef":"r057"}
+{"type":"post","ref":"p060","author":6,"content":"monday is just the universe's deload week","hashtag":""}
+{"type":"post","ref":"p061","author":4,"content":"scope check: 'small cozy game' currently has 4 train lines, weather, a cat you can pet, ghost trains, and a clerk with a pen. january me would like a word with september me (block him, he's mean) #gamedev","hashtag":"gamedev"}
+{"type":"like","author":9,"targetRef":"p037"}
+{"type":"likeReply","author":4,"targetRef":"r056"}
+{"type":"post","ref":"p062","author":8,"content":"new track 'last transfer (station theme)' is done... 84 bpm, felt piano over jupiter pads, one (1) train sample recorded from an actual platform at 6am. nova this is your fault","hashtag":""}
+{"type":"repost","author":8,"targetRef":"p035"}
+{"type":"like","author":4,"targetRef":"p041"}
+{"type":"follow","author":4,"target":2}
+{"type":"reply","ref":"r068","author":4,"rootRef":"p062","parentRef":"p062","content":"kev went to an ACTUAL TRAIN PLATFORM at 6am for a sample. the soundtrack has more production value than the game (keeping it that way)"}
+{"type":"like","author":2,"targetRef":"p033"}
+{"type":"post","ref":"p063","author":9,"content":"the campus coffee cart raised prices 40 cents and the line got LONGER. my econ professor says this is 'inelastic demand.' i say we are all unwell. both true apparently #campusnews","hashtag":"campusnews"}
+{"type":"like","author":0,"targetRef":"p033"}
+{"type":"like","author":8,"targetRef":"p043"}
+{"type":"reply","ref":"r069","author":5,"rootRef":"p063","parentRef":"p063","content":"Your professor is correct, and so are you. Most of monetary economics is formalizing the ways in which we are all unwell."}
+{"type":"likeReply","author":3,"targetRef":"r045"}
+{"type":"follow","author":9,"target":4}
+{"type":"post","ref":"p064","author":4,"content":"IT'S OUT. The Last Transfer demo is live on itch. 30 minutes of night shifts, one ghost train, a cat, a pen. Two years of work compressed into a 200mb zip file. I am going to stare at the download counter until my eyes fall out. Be nice (or don't, I need the feedback) #gamedev","hashtag":"gamedev"}
+{"type":"repost","author":5,"targetRef":"p033"}
+{"type":"reply","ref":"r070","author":8,"rootRef":"p064","parentRef":"p064","content":"IT'S OUT!! everyone go hear my songs (also there is apparently a game attached)"}
+{"type":"like","author":0,"targetRef":"p043"}
+{"type":"like","author":9,"targetRef":"p057"}
+{"type":"follow","author":5,"target":9}
+{"type":"reply","ref":"r071","author":0,"rootRef":"p064","parentRef":"p064","content":"downloaded. review incoming. i test software for a living nova; i apologize in advance"}
+{"type":"likeReply","author":5,"targetRef":"r036"}
+{"type":"like","author":7,"targetRef":"p038"}
+{"type":"like","author":0,"targetRef":"p055"}
+{"type":"like","author":7,"targetRef":"p063"}
+{"type":"reply","ref":"r072","author":4,"rootRef":"p064","parentRef":"r071","content":"(sweating in solo dev) please be gentle with the save system it is held together with json and denial"}
+{"type":"like","author":5,"targetRef":"p047"}
+{"type":"like","author":5,"targetRef":"p054"}
+{"type":"follow","author":0,"target":1}
+{"type":"reply","ref":"r073","author":5,"rootRef":"p064","parentRef":"p064","content":"Purchased the supporter tier. Not because I play games, but because pricing one's labor honestly is the rarest economic behavior on this platform and it ought to be rewarded."}
+{"type":"like","author":1,"targetRef":"p037"}
+{"type":"likeReply","author":6,"targetRef":"r051"}
+{"type":"like","author":2,"targetRef":"p055"}
+{"type":"follow","author":4,"target":1}
+{"type":"reply","ref":"r074","author":4,"rootRef":"p064","parentRef":"r073","content":"the crypto skeptic economist is my first supporter. 2026 is a strange and beautiful year. thank you hal, genuinely"}
+{"type":"like","author":4,"targetRef":"p052"}
+{"type":"follow","author":8,"target":0}
+{"type":"reply","ref":"r075","author":7,"rootRef":"p064","parentRef":"p064","content":"My grandson downloaded your game for me. I ran the station for two hours and only crashed one train. The cat is a very good touch, Nova. Congratulations on shipping!"}
+{"type":"likeReply","author":0,"targetRef":"r044"}
+{"type":"post","ref":"p065","author":6,"content":"played nova's train game for six hours straight. it is 30 minutes of content. i have seen the ghost train 11 times. the pen tap sound rewired something in my brain. 10/10 go get it","hashtag":"gamedev"}
+{"type":"like","author":3,"targetRef":"p042"}
+{"type":"like","author":6,"targetRef":"p054"}
+{"type":"reply","ref":"r076","author":4,"rootRef":"p065","parentRef":"p065","content":"SIX HOURS?? milo the demo loops after the third night. you found more game than i shipped"}
+{"type":"like","author":9,"targetRef":"p051"}
+{"type":"like","author":4,"targetRef":"p062"}
+{"type":"likeReply","author":4,"targetRef":"r070"}
+{"type":"reply","ref":"r077","author":6,"rootRef":"p065","parentRef":"r076","content":"the real content was the timetables we optimized along the way"}
+{"type":"bookmark","author":7,"targetRef":"p057"}
+{"type":"quote","ref":"p066","author":8,"content":"soundtrack EP for this drops friday... 6 tracks, one is just the ghost train theme slowed 15% because it was better that way","quotedRef":"p064","hashtag":""}
+{"type":"likeReply","author":0,"targetRef":"r066"}
+{"type":"like","author":2,"targetRef":"p056"}
+{"type":"quote","ref":"p067","author":1,"content":"I don't play games but I played THIS because the dev is a gem, and now I've been assigning personalities to commuter trains for two days. The 22:40 express is going through something!!","quotedRef":"p064","hashtag":""}
+{"type":"repost","author":1,"targetRef":"p033"}
+{"type":"like","author":6,"targetRef":"p049"}
+{"type":"post","ref":"p068","author":0,"content":"last transfer demo review, as promised: found 3 bugs, 1 crash, and a save file corruption if you quit during the ghost train (nova has the report). also: did not notice four hours pass. that is the whole review; that is the only metric","hashtag":""}
+{"type":"like","author":5,"targetRef":"p038"}
+{"type":"reply","ref":"r078","author":4,"rootRef":"p068","parentRef":"p068","content":"the bug report was so well formatted i felt honored while being destroyed. patch tonight (thank you petra, actually)"}
+{"type":"repost","author":7,"targetRef":"p019"}
+{"type":"post","ref":"p069","author":9,"content":"wrote up nova's demo launch for the paper's culture section. headline: 'Night Shift Simulator Charms Campus, Ruins GPAs.' the editor cut my raccoon reference. some day this paper will be ready for my vision","hashtag":""}
+{"type":"like","author":8,"targetRef":"p050"}
+{"type":"post","ref":"p070","author":3,"content":"Played the train game between sets. Missed a set. THE TRAIN GAME MADE ME MISS A SET. Uninstalled, reinstalled, 5 stars, deeply conflicted 💪","hashtag":""}
+{"type":"like","author":3,"targetRef":"p064"}
+{"type":"like","author":6,"targetRef":"p069"}
+{"type":"post","ref":"p071","author":2,"content":"fog series, two of three. the mountain negotiates. #photography","hashtag":"photography","mediaUrl":"https://picsum.photos/seed/fogtwo/1100/733"}
+{"type":"like","author":5,"targetRef":"p019"}
+{"type":"like","author":9,"targetRef":"p067"}
+{"type":"post","ref":"p072","author":7,"content":"A Golden-crowned Kinglet, close enough to touch, at the park this morning. They weigh less than a nickel. They survive winters that would kill us all. Perspective, delivered at 7am, free of charge. #birding","hashtag":"birding","mediaUrl":"https://picsum.photos/seed/kinglet/800/600"}
+{"type":"like","author":3,"targetRef":"p067"}
+{"type":"like","author":0,"targetRef":"p067"}
+{"type":"post","ref":"p073","author":6,"content":"wednesday. the week's ghost train. takes no passengers. pays nothing #memes","hashtag":"memes"}
+{"type":"repost","author":6,"targetRef":"p019"}
+{"type":"like","author":4,"targetRef":"p038"}
+{"type":"like","author":4,"targetRef":"p068"}
+{"type":"post","ref":"p074","author":5,"content":"A colleague asked whether I prefer gold to bitcoin. I prefer neither; I prefer institutions. But gold at least has the decency to be heavy. When you drop it on your foot, the pain is settled instantly, with finality. No consensus required.","hashtag":""}
+{"type":"likeReply","author":3,"targetRef":"r065"}
+{"type":"like","author":4,"targetRef":"p066"}
+{"type":"reply","ref":"r079","author":0,"rootRef":"p074","parentRef":"p074","content":"'the pain is settled instantly with finality' harold that is the best description of physical settlement in the literature; i am putting it in a conference talk"}
+{"type":"likeReply","author":9,"targetRef":"r048"}
+{"type":"like","author":4,"targetRef":"p047"}
+{"type":"like","author":2,"targetRef":"p066"}
+{"type":"quote","ref":"p075","author":6,"content":"hal said gold has the decency to be heavy. this man could sell me a mortgage i already have","quotedRef":"p074","hashtag":""}
+{"type":"like","author":1,"targetRef":"p035"}
+{"type":"post","ref":"p076","author":1,"content":"Lisbon has a new ramen place and I waited 45 minutes in the rain like a rookie. WORTH IT. Broth like liquid velvet, egg cooked by someone who respects eggs. I'll be back Tuesday. And Thursday 🍜","hashtag":"","mediaUrl":"https://picsum.photos/seed/lisbonramen/900/700"}
+{"type":"post","ref":"p077","author":8,"content":"LAST TRANSFER OST EP IS OUT... 6 tracks of night shift synthwave on bandcamp. made on a juno with two dead voices and it sounds like that on purpose. this one means a lot #synthwave","hashtag":"synthwave"}
+{"type":"like","author":6,"targetRef":"p052"}
+{"type":"repost","author":9,"targetRef":"p064"}
+{"type":"like","author":4,"targetRef":"p074"}
+{"type":"reply","ref":"r080","author":2,"rootRef":"p077","parentRef":"p077","content":"listened on the drive north. track four and the fog arrived at the same time. you may have the aurora photo."}
+{"type":"like","author":6,"targetRef":"p061"}
+{"type":"like","author":1,"targetRef":"p064"}
+{"type":"reply","ref":"r081","author":8,"rootRef":"p077","parentRef":"r080","content":"deal of the decade. printing it huge. thank you lars..."}
+{"type":"post","ref":"p078","author":4,"content":"demo patch 1.0.1: fixed the ghost train save corruption (thanks petra), the cat can no longer board trains (sorry everyone), pen tap volume slider added by popular demand (one person, kev, demanded it)","hashtag":""}
+{"type":"like","author":0,"targetRef":"p035"}
+{"type":"reply","ref":"r082","author":6,"rootRef":"p078","parentRef":"p078","content":"the cat could BOARD TRAINS and you PATCHED IT OUT? nova the cat had places to be"}
+{"type":"like","author":0,"targetRef":"p078"}
+{"type":"reply","ref":"r083","author":4,"rootRef":"p078","parentRef":"r082","content":"the cat was ending up 4 stations away and despawning, milo. i freed him from the loop. he is home now"}
+{"type":"like","author":6,"targetRef":"p063"}
+{"type":"likeReply","author":9,"targetRef":"r075"}
+{"type":"like","author":2,"targetRef":"p072"}
+{"type":"post","ref":"p079","author":5,"content":"On the latest rally: 1) Number going up is not adoption, it is momentum. 2) Momentum is not a monetary property. 3) I have watched this film four times now, and I notice the sequels keep getting bigger budgets. Draw your own conclusions, but draw them with a pencil.","hashtag":""}
+{"type":"like","author":8,"targetRef":"p019"}
+{"type":"like","author":6,"targetRef":"p067"}
+{"type":"follow","author":2,"target":4}
+{"type":"reply","ref":"r084","author":0,"rootRef":"p079","parentRef":"p079","content":"four cycles of being directionally wrong at the bottom and directionally right at the top is called a coin flip, harold; publish your entry points or its horoscopes with footnotes"}
+{"type":"like","author":6,"targetRef":"p055"}
+{"type":"like","author":1,"targetRef":"p065"}
+{"type":"like","author":6,"targetRef":"p070"}
+{"type":"like","author":4,"targetRef":"p079"}
+{"type":"reply","ref":"r085","author":5,"rootRef":"p079","parentRef":"r084","content":"I do not trade, precisely so that I can say these things without a position to defend. My entry point is tenure."}
+{"type":"likeReply","author":0,"targetRef":"r068"}
+{"type":"follow","author":6,"target":8}
+{"type":"reply","ref":"r086","author":4,"rootRef":"p079","parentRef":"r085","content":"'my entry point is tenure' hal wins this round on style points alone (petra wins on substance, calling it a draw before it escalates)"}
+{"type":"repost","author":6,"targetRef":"p033"}
+{"type":"like","author":0,"targetRef":"p050"}
+{"type":"like","author":0,"targetRef":"p061"}
+{"type":"reply","ref":"r087","author":0,"rootRef":"p079","parentRef":"r085","content":"tenure is the deepest liquidity pool of all. fine; draw. rematch next cycle"}
+{"type":"quote","ref":"p080","author":6,"content":"the economist and the rust dev have fought to a draw. the arena is quiet. somewhere a candle chart weeps. see you all next cycle for the rematch of the century","quotedRef":"p079","hashtag":""}
+{"type":"like","author":7,"targetRef":"p065"}
+{"type":"repost","author":2,"targetRef":"p077"}
+{"type":"repost","author":3,"targetRef":"p080"}
+{"type":"reply","ref":"r088","author":9,"rootRef":"p080","parentRef":"p080","content":"i keep minutes of these fights for the school paper. this is my beat now. hal v petra IV: tenure boogaloo"}
+{"type":"like","author":8,"targetRef":"p035"}
+{"type":"like","author":1,"targetRef":"p038"}
+{"type":"follow","author":2,"target":8}
+{"type":"repost","author":9,"targetRef":"p080"}
+{"type":"post","ref":"p081","author":7,"content":"I confess I do not understand what a bitcoin is despite my nephew explaining it at three consecutive Thanksgivings. It seems to be a lottery ticket that argues with economists? Anyway, the juncos don't care and neither do I. Happy birding!","hashtag":""}
+{"type":"follow","author":7,"target":4}
+{"type":"reply","ref":"r089","author":6,"rootRef":"p081","parentRef":"p081","content":"fran you understand it better than half my timeline. lottery ticket that argues with economists is the whitepaper now"}
+{"type":"like","author":9,"targetRef":"p055"}
+{"type":"likeReply","author":9,"targetRef":"r085"}
+{"type":"reply","ref":"r090","author":5,"rootRef":"p081","parentRef":"p081","content":"Madam, I have written eleven papers on digital assets, and your one-sentence summary has more explanatory power than nine of them. The juncos have it right."}
+{"type":"like","author":4,"targetRef":"p051"}
+{"type":"like","author":3,"targetRef":"p075"}
+{"type":"post","ref":"p082","author":0,"content":"if you actually want to understand what a platform 'document' is before arguing about it, docs are here: https://docs.dash.org/projects/platform/en/stable/docs/explanations/platform-protocol-document.html — read it; then argue. informed arguing is twice as fun #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":5,"targetRef":"p033"}
+{"type":"likeReply","author":0,"targetRef":"r090"}
+{"type":"post","ref":"p083","author":6,"content":"my toxic trait is opening the fridge again like the contents changed since the last inspection 8 minutes ago","hashtag":""}
+{"type":"likeReply","author":4,"targetRef":"r057"}
+{"type":"likeReply","author":2,"targetRef":"r075"}
+{"type":"like","author":2,"targetRef":"p065"}
+{"type":"like","author":6,"targetRef":"p066"}
+{"type":"post","ref":"p084","author":3,"content":"Winter bulk update week 3: up 3.1 lbs, 545 rematch scheduled, fun rice now has CORN TOO. Living dangerously #gains","hashtag":"gains"}
+{"type":"like","author":7,"targetRef":"p033"}
+{"type":"like","author":8,"targetRef":"p078"}
+{"type":"post","ref":"p085","author":1,"content":"Making cacio e pepe for 6 tonight. Pray for me. This dish has three ingredients and NO mercy. If the pasta water is wrong the cheese clumps and so does my reputation 🧀 #food","hashtag":"food"}
+{"type":"repost","author":3,"targetRef":"p065"}
+{"type":"like","author":6,"targetRef":"p084"}
+{"type":"reply","ref":"r091","author":3,"rootRef":"p085","parentRef":"p085","content":"Three ingredients and no mercy. So it's a heavy single. You got this chief. Chalk up (flour?)"}
+{"type":"reply","ref":"r092","author":1,"rootRef":"p085","parentRef":"r091","content":"REPORT: no clumps!! Six happy guests. Gary I did in fact say 'chalk up' out loud before the final toss and it HELPED"}
+{"type":"likeReply","author":9,"targetRef":"r065"}
+{"type":"like","author":6,"targetRef":"p062"}
+{"type":"bookmark","author":2,"targetRef":"p077"}
+{"type":"post","ref":"p086","author":2,"content":"fog series, three of three. the mountain wins. it always wins. that is why we photograph it.","hashtag":"","mediaUrl":"https://picsum.photos/seed/fogthree/1100/733"}
+{"type":"like","author":7,"targetRef":"p035"}
+{"type":"like","author":3,"targetRef":"p035"}
+{"type":"post","ref":"p087","author":8,"content":"test pressing of the EP arrived... holding music i made as a physical object never gets old. the juno's dead voices are in the grooves forever now. permanence is underrated","hashtag":"","mediaUrl":"https://picsum.photos/seed/vinylpress/800/800"}
+{"type":"likeReply","author":8,"targetRef":"r080"}
+{"type":"reply","ref":"r093","author":5,"rootRef":"p087","parentRef":"p087","content":"A bearer instrument containing irreproducible state, held physically by its creator. Finally, a digital asset settlement model I endorse without reservation."}
+{"type":"like","author":0,"targetRef":"p038"}
+{"type":"bookmark","author":3,"targetRef":"p064"}
+{"type":"likeReply","author":0,"targetRef":"r076"}
+{"type":"likeReply","author":3,"targetRef":"r089"}
+{"type":"post","ref":"p088","author":9,"content":"student council meeting recap: 40 minutes debating the vending machine contract, 90 seconds approving the budget. the vending machine debate had a POWERPOINT. i love this beat so much #campusnews","hashtag":"campusnews"}
+{"type":"repost","author":3,"targetRef":"p033"}
+{"type":"likeReply","author":6,"targetRef":"r074"}
+{"type":"like","author":0,"targetRef":"p077"}
+{"type":"like","author":9,"targetRef":"p083"}
+{"type":"post","ref":"p089","author":6,"content":"anyway the moon is doing something insane tonight go look. free content. no login","hashtag":""}
+{"type":"like","author":2,"targetRef":"p064"}
+{"type":"like","author":0,"targetRef":"p079"}
+{"type":"like","author":4,"targetRef":"p082"}
+{"type":"reply","ref":"r094","author":2,"rootRef":"p089","parentRef":"p089","content":"he is right. went out with the long lens. thank you milo."}
+{"type":"reply","ref":"r095","author":7,"rootRef":"p089","parentRef":"p089","content":"He IS right! And an owl was out. Two treats, one walk. This nice young man posts nonsense all day and then this. People contain multitudes."}
+{"type":"like","author":1,"targetRef":"p033"}
+{"type":"like","author":8,"targetRef":"p053"}
+{"type":"like","author":1,"targetRef":"p070"}
+{"type":"likeReply","author":6,"targetRef":"r079"}
+{"type":"post","ref":"p090","author":3,"content":"Rolled my ankle stepping off the platform after a PR-tying deadlift. Not the lift. THE WALK. Photo of the swelling below for the medically curious, it looks like I smuggled a plum in my sock. RICE protocol engaged. The bar wins by technicality","hashtag":"","mediaUrl":"https://picsum.photos/seed/plumankle/800/600","sensitive":true}
+{"type":"like","author":6,"targetRef":"p086"}
+{"type":"reply","ref":"r096","author":7,"rootRef":"p090","parentRef":"p090","content":"Oh Gary! Elevate it above your heart and be patient with yourself. I sprained mine chasing a Townsend's Warbler in 2019 and rushing back cost me the whole spring migration. Rest, dear."}
+{"type":"like","author":9,"targetRef":"p035"}
+{"type":"like","author":9,"targetRef":"p090"}
+{"type":"reply","ref":"r097","author":3,"rootRef":"p090","parentRef":"r096","content":"Ma'am you chased a BIRD hard enough to sprain an ankle. You're one of us. Rest promised 🫡"}
+{"type":"like","author":6,"targetRef":"p035"}
+{"type":"like","author":7,"targetRef":"p086"}
+{"type":"reply","ref":"r098","author":1,"rootRef":"p090","parentRef":"p090","content":"Sending you my recovery caldo verde recipe. It heals nothing medically but everything else!!"}
+{"type":"repost","author":7,"targetRef":"p035"}
+{"type":"like","author":6,"targetRef":"p038"}
+{"type":"reply","ref":"r099","author":6,"rootRef":"p090","parentRef":"p090","content":"the walk got you. the WALK. cardio confirmed dangerous, never doing it again"}
+{"type":"like","author":4,"targetRef":"p089"}
+{"type":"post","ref":"p091","author":0,"content":"explain dash platform like you're five: imagine a shared notebook that thousands of strangers keep identical copies of. you can write in it if you sign your name with math. nobody can erase your page, and everyone checks everyone's spelling. that's it; that's the whole thing #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":5,"targetRef":"p080"}
+{"type":"reply","ref":"r100","author":7,"rootRef":"p091","parentRef":"p091","content":"This is the first explanation of any of this that has ever made sense to me. Everyone checks everyone's spelling! I taught fourth grade for 31 years, Petra. You'd have been a fine teacher."}
+{"type":"likeReply","author":4,"targetRef":"r084"}
+{"type":"like","author":2,"targetRef":"p081"}
+{"type":"reply","ref":"r101","author":0,"rootRef":"p091","parentRef":"r100","content":"from a 31-year teacher that is the best code review i have ever received"}
+{"type":"like","author":0,"targetRef":"p064"}
+{"type":"likeReply","author":6,"targetRef":"r084"}
+{"type":"likeReply","author":4,"targetRef":"r093"}
+{"type":"reply","ref":"r102","author":5,"rootRef":"p091","parentRef":"p091","content":"A fair primer. I would append: the notebook charges you a small fee per sentence, and the strangers occasionally vote on the dictionary. Still the cleanest version I have seen."}
+{"type":"like","author":5,"targetRef":"p064"}
+{"type":"likeReply","author":4,"targetRef":"r073"}
+{"type":"like","author":9,"targetRef":"p075"}
+{"type":"post","ref":"p092","author":1,"content":"Recovery soup for a certain injured powerlifter, recipe now on the blog. 40g protein per bowl because I KNOW he checked. Get well soon Gary, the plum sock photo haunts me 🍲","hashtag":""}
+{"type":"repost","author":6,"targetRef":"p064"}
+{"type":"reply","ref":"r103","author":3,"rootRef":"p092","parentRef":"p092","content":"40g per bowl. She gets it. She GETS it. Made a triple batch from the chair like a soup goblin. 10/10"}
+{"type":"like","author":5,"targetRef":"p068"}
+{"type":"like","author":2,"targetRef":"p091"}
+{"type":"post","ref":"p093","author":9,"content":"they have begun repainting old lot C into 'new lot F.' a man stood there for one hour today holding the stencil upside down. i checked. F. upside down. i am the only journalist covering this and honestly? it's an honor #campusnews","hashtag":"campusnews"}
+{"type":"quote","ref":"p094","author":6,"content":"upside down F is crazy. campus infrastructure said no thoughts head empty and honestly same","quotedRef":"p093","hashtag":""}
+{"type":"post","ref":"p095","author":2,"content":"orcas in the sound this morning. six of them. i forgot the camera existed for a full minute. some photographs you keep in the hands, not the drive.","hashtag":""}
+{"type":"like","author":4,"targetRef":"p075"}
+{"type":"like","author":9,"targetRef":"p092"}
+{"type":"like","author":7,"targetRef":"p092"}
+{"type":"reply","ref":"r104","author":7,"rootRef":"p095","parentRef":"p095","content":"'Some photographs you keep in the hands.' Lars, that's going in my journal, with attribution. What a morning you had."}
+{"type":"like","author":9,"targetRef":"p080"}
+{"type":"likeReply","author":9,"targetRef":"r102"}
+{"type":"post","ref":"p096","author":8,"content":"juno repair day 9: osaka chips arrived wrapped in a hand-drawn waveform diagram. installed. all six voices ALIVE. she sounds like 1984 was never over... emotional honestly #synthwave","hashtag":"synthwave"}
+{"type":"like","author":3,"targetRef":"p038"}
+{"type":"like","author":7,"targetRef":"p067"}
+{"type":"like","author":1,"targetRef":"p090"}
+{"type":"reply","ref":"r105","author":0,"rootRef":"p096","parentRef":"p096","content":"hand-drawn waveform packing slip; six voices restored. the osaka man delivers. never doubted"}
+{"type":"like","author":4,"targetRef":"p035"}
+{"type":"likeReply","author":4,"targetRef":"r069"}
+{"type":"like","author":9,"targetRef":"p064"}
+{"type":"post","ref":"p097","author":4,"content":"1,000 downloads. one thousand. i cried a little into my coffee and I'm not even embarrassed (i am a little embarrassed). thank you all. remember when this was ghost train bugs {{link:p015}} #buildinpublic","hashtag":"buildinpublic"}
+{"type":"like","author":6,"targetRef":"p064"}
+{"type":"like","author":3,"targetRef":"p085"}
+{"type":"likeReply","author":6,"targetRef":"r097"}
+{"type":"reply","ref":"r106","author":6,"rootRef":"p097","parentRef":"p097","content":"1k of those downloads are me on different devices. jk. proud of you king"}
+{"type":"likeReply","author":4,"targetRef":"r090"}
+{"type":"post","ref":"p098","author":6,"content":"fridge inspection number nine. contents unchanged. morale declining. the mustard and i have started talking","hashtag":""}
+{"type":"like","author":4,"targetRef":"p073"}
+{"type":"like","author":9,"targetRef":"p097"}
+{"type":"post","ref":"p099","author":5,"content":"My local sandwich shop has raised prices 12% and shrunk the baguette 8%. That is a 20% real deterioration, disguised across two variables. Shrinkflation is monetary policy conducted by delicatessens, and frankly they are better at the communications strategy.","hashtag":""}
+{"type":"like","author":9,"targetRef":"p065"}
+{"type":"likeReply","author":4,"targetRef":"r101"}
+{"type":"reply","ref":"r107","author":1,"rootRef":"p099","parentRef":"p099","content":"Hal auditing his lunch is my favorite genre of economics. Name the shop, I'll review them so hard they restore the baguette!!"}
+{"type":"like","author":7,"targetRef":"p095"}
+{"type":"reply","ref":"r108","author":5,"rootRef":"p099","parentRef":"r107","content":"I shall not name them; I still require the sandwiches. This is what economists call regulatory capture."}
+{"type":"like","author":4,"targetRef":"p091"}
+{"type":"like","author":4,"targetRef":"p096"}
+{"type":"post","ref":"p100","author":3,"content":"Day 4 of ankle jail. Upper body only. Did so many pullups the bar filed a restraining order. Ankle down to a small plum. Progress","hashtag":""}
+{"type":"like","author":3,"targetRef":"p076"}
+{"type":"post","ref":"p101","author":1,"content":"Took a pastel de nata CLASS today. The secret is lard in the dough and a 290C oven, which means my home version will forever be 85% correct. I accept this. The lady from Alcântara would not 🥧 {{link:p019}}","hashtag":""}
+{"type":"likeReply","author":6,"targetRef":"r088"}
+{"type":"post","ref":"p102","author":0,"content":"bug hunt hour 3: the bug is in the test. hour 4: the test was right, the bug is in my mental model. hour 5: the mental model was fine, i was reading logs from the wrong node the entire time. computing","hashtag":""}
+{"type":"like","author":4,"targetRef":"p065"}
+{"type":"like","author":4,"targetRef":"p077"}
+{"type":"like","author":6,"targetRef":"p077"}
+{"type":"like","author":0,"targetRef":"p081"}
+{"type":"like","author":8,"targetRef":"p095"}
+{"type":"reply","ref":"r109","author":4,"rootRef":"p102","parentRef":"p102","content":"wrong node logs is the systems programmer version of looking for your phone while holding it"}
+{"type":"like","author":8,"targetRef":"p068"}
+{"type":"like","author":3,"targetRef":"p073"}
+{"type":"likeReply","author":0,"targetRef":"r085"}
+{"type":"post","ref":"p103","author":6,"content":"rust aunt just spent 5 hours debugging the wrong computer. hanging this in the louvre next to my cereal lunch","hashtag":""}
+{"type":"like","author":9,"targetRef":"p081"}
+{"type":"likeReply","author":9,"targetRef":"r096"}
+{"type":"like","author":9,"targetRef":"p101"}
+{"type":"reply","ref":"r110","author":0,"rootRef":"p103","parentRef":"p103","content":"the louvre accepts both pieces; we are artists, milo"}
+{"type":"likeReply","author":9,"targetRef":"r066"}
+{"type":"like","author":3,"targetRef":"p080"}
+{"type":"like","author":4,"targetRef":"p099"}
+{"type":"post","ref":"p104","author":7,"content":"Full moon owl walk with the grandchildren tonight. Two Great Horned Owls calling to each other across the ravine. The youngest whispered 'they're texting.' They are, dear. They are. #birding","hashtag":"birding"}
+{"type":"repost","author":6,"targetRef":"p038"}
+{"type":"post","ref":"p105","author":9,"content":"VENDING MACHINE UPDATE: the powerpoint worked. council approved a machine that takes cards AND has the good sparkling water. democracy is slow but it delivers. 40 more minutes of debate and we might get snacks that aren't from 2019","hashtag":"campusnews"}
+{"type":"like","author":3,"targetRef":"p089"}
+{"type":"likeReply","author":9,"targetRef":"r106"}
+{"type":"post","ref":"p106","author":8,"content":"84 bpm is the correct tempo. not 83. not 85. this is not a debate it's a public service announcement...","hashtag":""}
+{"type":"like","author":2,"targetRef":"p099"}
+{"type":"reply","ref":"r111","author":6,"rootRef":"p106","parentRef":"p106","content":"84 is crazy. everyone knows the correct tempo is whatever the metronome lands on when you stop caring"}
+{"type":"likeReply","author":4,"targetRef":"r082"}
+{"type":"post","ref":"p107","author":2,"content":"opened print orders for the aurora. small batch, signed, numbered. the fjord pays my rent this month. thank you for asking, those who asked.","hashtag":""}
+{"type":"post","ref":"p108","author":1,"content":"Tuesday ramen as promised. Ordered the spicy one. The chef nodded at me. I have been NODDED AT. Lisbon food scene get ready, we are entering my ramen era 🍜 #food","hashtag":"food"}
+{"type":"like","author":6,"targetRef":"p095"}
+{"type":"post","ref":"p109","author":3,"content":"First full walk on the ankle. 2.4 miles, zero pain, ate a celebration burrito the size of a forearm. The comeback documentary starts now #gains","hashtag":"gains"}
+{"type":"likeReply","author":0,"targetRef":"r086"}
+{"type":"post","ref":"p110","author":4,"content":"Last Transfer has a Steam page now. Wishlisting is free and every single one makes the algorithm like me more (parasocial relationship with an algorithm, extremely healthy, don't look it up) #buildinpublic","hashtag":"buildinpublic"}
+{"type":"like","author":0,"targetRef":"p074"}
+{"type":"like","author":4,"targetRef":"p106"}
+{"type":"follow","author":1,"target":2}
+{"type":"reply","ref":"r112","author":8,"rootRef":"p110","parentRef":"p110","content":"wishlisted from three accounts... for the algorithm..."}
+{"type":"like","author":1,"targetRef":"p089"}
+{"type":"post","ref":"p111","author":0,"content":"my talk on proof verification got accepted. 25 minutes on merkle proofs for an audience that came for the free lunch. i will win them over with diagrams or die trying #dashplatform","hashtag":"dashplatform"}
+{"type":"likeReply","author":3,"targetRef":"r107"}
+{"type":"reply","ref":"r113","author":5,"rootRef":"p111","parentRef":"p111","content":"Request the slot immediately after lunch. A fed audience is a docile audience. This is the only useful thing I learned at Davos."}
+{"type":"repost","author":9,"targetRef":"p065"}
+{"type":"follow","author":7,"target":9}
+{"type":"post","ref":"p112","author":6,"content":"woke up today and chose violence (replied 'source?' to my own post)","hashtag":""}
+{"type":"post","ref":"p113","author":5,"content":"Taught the payments seminar today. A student asked why settlement takes two days when a text message takes 200 milliseconds. I gave a 40-minute answer. The honest answer is: it doesn't have to, and the people it inconveniences are not the people who decide.","hashtag":""}
+{"type":"like","author":1,"targetRef":"p093"}
+{"type":"like","author":6,"targetRef":"p111"}
+{"type":"like","author":6,"targetRef":"p113"}
+{"type":"quote","ref":"p114","author":0,"content":"screenshotting this for eternity: harold nkemelu, crypto skeptic, explaining better than any bitcoiner why settlement rails are broken. the call is coming from inside the house harold","quotedRef":"p113","hashtag":""}
+{"type":"like","author":6,"targetRef":"p081"}
+{"type":"reply","ref":"r114","author":5,"rootRef":"p114","parentRef":"p114","content":"Identifying the disease and endorsing your particular cure are different acts, Petra. But yes. The house has been making calls for some time."}
+{"type":"like","author":8,"targetRef":"p091"}
+{"type":"repost","author":4,"targetRef":"p091"}
+{"type":"post","ref":"p115","author":7,"content":"Put the garden to bed for winter today. Left the seed heads standing for the finches, mess be damned. A tidy garden is a hungry neighborhood. #birding","hashtag":"birding","mediaUrl":"https://picsum.photos/seed/wintergarden/900/600"}
+{"type":"likeReply","author":9,"targetRef":"r082"}
+{"type":"likeReply","author":8,"targetRef":"r094"}
+{"type":"post","ref":"p116","author":2,"content":"people ask about my camera. the camera is fine. the alarm clock is the professional equipment. #photography","hashtag":"photography"}
+{"type":"like","author":6,"targetRef":"p102"}
+{"type":"like","author":6,"targetRef":"p110"}
+{"type":"quote","ref":"p117","author":3,"content":"THE ALARM CLOCK IS THE PROFESSIONAL EQUIPMENT. Lars just described every 5am lifter on earth. Different sport, same religion 💪 #gains","quotedRef":"p116","hashtag":"gains"}
+{"type":"like","author":6,"targetRef":"p096"}
+{"type":"likeReply","author":6,"targetRef":"r110"}
+{"type":"post","ref":"p118","author":8,"content":"bounced the whole EP to cassette and back for the tape saturation... yes real tape, yes it took all night, no a plugin is not the same, don't @ me (ok @ me i love arguing about this) #synthwave","hashtag":"synthwave"}
+{"type":"like","author":3,"targetRef":"p091"}
+{"type":"like","author":1,"targetRef":"p116"}
+{"type":"reply","ref":"r115","author":0,"rootRef":"p118","parentRef":"p118","content":"the plugin is the same. @'ing you as invited. fight me at 84 bpm"}
+{"type":"like","author":6,"targetRef":"p097"}
+{"type":"like","author":9,"targetRef":"p113"}
+{"type":"reply","ref":"r116","author":8,"rootRef":"p118","parentRef":"r115","content":"the plugin is NOT the same and now the collab track is called 'petra is wrong (tape mix)'... shipping friday"}
+{"type":"like","author":6,"targetRef":"p087"}
+{"type":"like","author":6,"targetRef":"p088"}
+{"type":"like","author":9,"targetRef":"p089"}
+{"type":"like","author":6,"targetRef":"p091"}
+{"type":"likeReply","author":0,"targetRef":"r108"}
+{"type":"post","ref":"p119","author":9,"content":"midterms week. the library (raccoon-free since tuesday) is at 100% capacity. the coffee cart line is 25 minutes. a guy in front of me paid in coins. we persevere","hashtag":""}
+{"type":"likeReply","author":1,"targetRef":"r095"}
+{"type":"post","ref":"p120","author":6,"content":"college students discovering the library exists during midterms like tourists discovering the eiffel tower. its been here the whole time chief #memes","hashtag":"memes"}
+{"type":"likeReply","author":2,"targetRef":"r095"}
+{"type":"like","author":7,"targetRef":"p093"}
+{"type":"post","ref":"p121","author":1,"content":"Unpopular opinion: leftover cacio e pepe, eaten cold from the container at 1am, is a DIFFERENT dish and arguably a better one. The clumps are the point now. Free yourselves!!","hashtag":""}
+{"type":"like","author":8,"targetRef":"p064"}
+{"type":"like","author":0,"targetRef":"p110"}
+{"type":"reply","ref":"r117","author":6,"rootRef":"p121","parentRef":"p121","content":"the clumps are the point now is the most liberated sentence on this app. sofia i am free"}
+{"type":"like","author":4,"targetRef":"p080"}
+{"type":"post","ref":"p122","author":4,"content":"lore drop: the station cat's name is Junction. he was named by a playtester's 6 year old and the decision is final and legally binding (the 6 year old made me shake on it)","hashtag":""}
+{"type":"likeReply","author":9,"targetRef":"r097"}
+{"type":"like","author":6,"targetRef":"p104"}
+{"type":"post","ref":"p123","author":3,"content":"Ankle at 100%. Squats feeling angry (good angry). The 545 rematch is scheduled for the 14th. Mark it down. The bar has been talking behind my back for 6 weeks and I have heard EVERYTHING {{link:p037}} #gains","hashtag":"gains"}
+{"type":"like","author":6,"targetRef":"p085"}
+{"type":"post","ref":"p124","author":0,"content":"espresso log: dialed in the new beans on shot 3. new personal record; the previous record was 9. growth is nonlinear","hashtag":""}
+{"type":"like","author":0,"targetRef":"p065"}
+{"type":"like","author":1,"targetRef":"p083"}
+{"type":"likeReply","author":4,"targetRef":"r105"}
+{"type":"repost","author":0,"targetRef":"p110"}
+{"type":"like","author":4,"targetRef":"p112"}
+{"type":"likeReply","author":0,"targetRef":"r114"}
+{"type":"post","ref":"p125","author":5,"content":"Weekend reading: Kindleberger, 'Manias, Panics and Crashes.' I reread it annually the way others get a physical. https://en.wikipedia.org/wiki/Manias,_Panics,_and_Crashes — the case studies age like wine; the human behavior does not age at all.","hashtag":""}
+{"type":"like","author":6,"targetRef":"p090"}
+{"type":"like","author":2,"targetRef":"p090"}
+{"type":"post","ref":"p126","author":8,"content":"'petra is wrong (tape mix)' is real and it slaps. she consulted on the track description as 'technical advisor (hostile)'... friday","hashtag":"synthwave"}
+{"type":"repost","author":8,"targetRef":"p064"}
+{"type":"repost","author":0,"targetRef":"p097"}
+{"type":"like","author":9,"targetRef":"p104"}
+{"type":"reply","ref":"r118","author":0,"rootRef":"p126","parentRef":"p126","content":"'technical advisor (hostile)' is going on my resume above the degree"}
+{"type":"like","author":9,"targetRef":"p098"}
+{"type":"like","author":3,"targetRef":"p098"}
+{"type":"like","author":6,"targetRef":"p117"}
+{"type":"post","ref":"p127","author":6,"content":"went outside to touch grass and a little grey bird yelled at me for a full minute. fran what did i do. what does he want","hashtag":""}
+{"type":"like","author":3,"targetRef":"p094"}
+{"type":"like","author":9,"targetRef":"p099"}
+{"type":"like","author":5,"targetRef":"p114"}
+{"type":"reply","ref":"r119","author":7,"rootRef":"p127","parentRef":"p127","content":"That, dear, sounds like a junco defending his territory. You stood on his lawn. Apologize and move along; they hold grudges through spring."}
+{"type":"like","author":9,"targetRef":"p091"}
+{"type":"like","author":6,"targetRef":"p114"}
+{"type":"like","author":9,"targetRef":"p122"}
+{"type":"reply","ref":"r120","author":6,"rootRef":"p127","parentRef":"r119","content":"apologized to the bird. he accepted. we're good now. birding might be real"}
+{"type":"like","author":1,"targetRef":"p110"}
+{"type":"post","ref":"p128","author":6,"content":"me returning to the gym after gary said the nod is a covenant","hashtag":"","mediaUrl":"https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif"}
+{"type":"repost","author":1,"targetRef":"p064"}
+{"type":"likeReply","author":4,"targetRef":"r115"}
+{"type":"post","ref":"p129","author":0,"content":"CI is red. the failing test is called test_should_never_fail. whoever named it summoned this","hashtag":""}
+{"type":"like","author":6,"targetRef":"p099"}
+{"type":"like","author":9,"targetRef":"p123"}
+{"type":"post","ref":"p130","author":1,"content":"Torrada, galão, and a newspaper someone left behind. Total cost 3.20. Some mornings the city just hands you the good life for pocket change 🌅 #food","hashtag":"food"}
+{"type":"likeReply","author":9,"targetRef":"r108"}
+{"type":"follow","author":6,"target":5}
+{"type":"post","ref":"p131","author":3,"content":"Gym has a new stairmaster with a TV in it. Watched a cooking show for 40 minutes and now I'm at the store buying saffron. The machines are radicalizing me","hashtag":""}
+{"type":"like","author":1,"targetRef":"p080"}
+{"type":"likeReply","author":6,"targetRef":"r109"}
+{"type":"likeReply","author":2,"targetRef":"r119"}
+{"type":"follow","author":0,"target":8}
+{"type":"post","ref":"p132","author":4,"content":"someone asked if Last Transfer will be localized. friend, the english version has typos I'm keeping as lore. (yes, eventually, starting with portuguese because sofia said she'd proofread)","hashtag":""}
+{"type":"like","author":0,"targetRef":"p080"}
+{"type":"post","ref":"p133","author":2,"content":"a seal watched me pack up for twenty minutes. no photo. he asked me not to.","hashtag":""}
+{"type":"likeReply","author":4,"targetRef":"r116"}
+{"type":"like","author":6,"targetRef":"p126"}
+{"type":"post","ref":"p134","author":8,"content":"someone at the flea market sold me a 'broken drum machine' that is a fully working tr-505 with a dead battery. i paid twelve dollars. crime? possibly. slaps? certainly #synthwave","hashtag":"synthwave"}
+{"type":"like","author":4,"targetRef":"p102"}
+{"type":"likeReply","author":0,"targetRef":"r113"}
+{"type":"bookmark","author":9,"targetRef":"p125"}
+{"type":"post","ref":"p135","author":9,"content":"post-raccoon the campus wildlife situation remains ACTIVE: a squirrel has learned to open the trash lids by the union. facilities installed 'squirrel-proof' lids monday. it is wednesday. he has solved them. i have footage #campusnews","hashtag":"campusnews","mediaUrl":"https://picsum.photos/seed/trashsquirrel/900/600"}
+{"type":"post","ref":"p136","author":7,"content":"Rainy day count from the kitchen window: 14 juncos, 2 chickadees, 1 very soggy scrub-jay who I let dry off on the porch rail. He left a peanut on the mat once. We have an understanding. #birding","hashtag":"birding"}
+{"type":"post","ref":"p137","author":5,"content":"The post office queue moved faster than the 'express' self-checkout at the market today. There is a dissertation in this: humans batching tasks beat machines when the machine outsources its labor to confused customers. Automation without redesign is just cost-shifting.","hashtag":""}
+{"type":"like","author":4,"targetRef":"p114"}
+{"type":"like","author":3,"targetRef":"p130"}
+{"type":"post","ref":"p138","author":6,"content":"drink water. not because of health. because being hydrated makes your enemies nervous","hashtag":""}
+{"type":"like","author":5,"targetRef":"p091"}
+{"type":"like","author":8,"targetRef":"p114"}
+{"type":"post","ref":"p139","author":0,"content":"caught myself typing :wq into a google doc today. the muscle memory does not respect context; it barely respects me","hashtag":""}
+{"type":"like","author":9,"targetRef":"p112"}
+{"type":"post","ref":"p140","author":1,"content":"They say there are 365 ways to cook bacalhau, one for each day. My neighbor claims to know 40. I have now eaten 6 of them at her table and I believe EVERYTHING she says 🐟 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/bacalhau/900/650"}
+{"type":"repost","author":0,"targetRef":"p064"}
+{"type":"post","ref":"p141","author":3,"content":"Sleep is the most anabolic thing you can do and it's FREE. 8 hours 40 minutes last night. Woke up feeling like a forklift. Go to bed angry at nothing, wake up strong at everything","hashtag":""}
+{"type":"post","ref":"p142","author":4,"content":"cutting the launch trailer. 14 seconds in and I've watched the ghost train clip 200 times and can no longer tell if it's good (it's the same 14 seconds, it has to be good, right? right)","hashtag":""}
+{"type":"likeReply","author":6,"targetRef":"r103"}
+{"type":"post","ref":"p143","author":8,"content":"scoring nova's trailer... the brief was 'lonely but hopeful, like a train station at 4am' which is just. my entire discography. easiest brief of my life","hashtag":""}
+{"type":"likeReply","author":6,"targetRef":"r073"}
+{"type":"like","author":4,"targetRef":"p129"}
+{"type":"post","ref":"p144","author":9,"content":"the dorm wifi went down for 3 hours tonight and i watched a hallway of 19-year-olds rediscover board games. the RA said it was 'the best night of the semester.' the wifi is back. the games are gone. modernity is a curse etc","hashtag":""}
+{"type":"post","ref":"p145","author":6,"content":"wifi went down at ada's dorm and civilization bloomed for 3 hours. turn the router off forever. become ungovernable. play uno","hashtag":""}
+{"type":"like","author":4,"targetRef":"p111"}
+{"type":"like","author":9,"targetRef":"p116"}
+{"type":"post","ref":"p146","author":2,"content":"first ice on the inner fjord. thin as paper. it sings when the tide moves it. i recorded it for kev.","hashtag":""}
+{"type":"reply","ref":"r121","author":8,"rootRef":"p146","parentRef":"p146","content":"lars sent me 40 minutes of singing ice and i've done nothing else all day... this is going in everything i make forever"}
+{"type":"like","author":9,"targetRef":"p126"}
+{"type":"post","ref":"p147","author":5,"content":"Asked at dinner why I am 'so negative about crypto.' I am not negative; I am unpaid to be positive, which reads the same to those accustomed to sponsored optimism. My pension is in index funds and my hope is in institutions. Neither has mooned. Both exist. #econ","hashtag":"econ"}
+{"type":"like","author":1,"targetRef":"p109"}
+{"type":"like","author":0,"targetRef":"p132"}
+{"type":"quote","ref":"p148","author":0,"content":"'unpaid to be positive' is a fantastic phrase and i am stealing it. this is what a worthy adversary looks like; take notes","quotedRef":"p147","hashtag":""}
+{"type":"like","author":3,"targetRef":"p065"}
+{"type":"post","ref":"p149","author":1,"content":"An old man at the market handed me an orange, said 'try before you doubt,' and walked away. It was the best orange of my life and I bought a full crate. Marketing departments could NEVER 🍊","hashtag":""}
+{"type":"post","ref":"p150","author":3,"content":"FUN RICE UPDATE: added the stairmaster saffron. It's not fun rice anymore. It's FANCY rice. The trinity has a new member and she is expensive","hashtag":""}
+{"type":"post","ref":"p151","author":6,"content":"gary's rice lore is better than most tv shows. season 1 peas. season 2 corn. season 3 saffron?? the writers are cooking #memes","hashtag":"memes"}
+{"type":"like","author":5,"targetRef":"p102"}
+{"type":"likeReply","author":4,"targetRef":"r118"}
+{"type":"like","author":9,"targetRef":"p127"}
+{"type":"post","ref":"p152","author":4,"content":"1,000 wishlists!! the algorithm and i are officially in a situationship. next milestone is 5k which is when steam apparently starts taking you seriously (source: forum posts of dubious provenance) #buildinpublic","hashtag":"buildinpublic"}
+{"type":"like","author":0,"targetRef":"p099"}
+{"type":"post","ref":"p153","author":7,"content":"My granddaughter drew 'grandma's favorite bird.' It is, by her account, a Varied Thrush. It has six legs and a crown. I have framed it and hung it above the REAL photo. Correct choice. #birding","hashtag":"birding","mediaUrl":"https://picsum.photos/seed/birddrawing/700/900"}
+{"type":"like","author":8,"targetRef":"p080"}
+{"type":"post","ref":"p154","author":9,"content":"LOT SAGA CONCLUSION: new lot F opened today. it is, and i am quoting the facilities director, 'the same lot.' the ribbon cutting had a RIBBON. i have covered this story for 11 weeks. i would die for this beat {{link:p009}} #campusnews","hashtag":"campusnews"}
+{"type":"likeReply","author":6,"targetRef":"r116"}
+{"type":"post","ref":"p155","author":0,"content":"wrote a data migration; ran it against a copy first; it deleted nothing and completed in one pass. suspicious. checking it again. success without suffering violates conservation laws","hashtag":""}
+{"type":"like","author":2,"targetRef":"p104"}
+{"type":"post","ref":"p156","author":8,"content":"4am. the singing ice is pitched down 12 semitones and layered under the station theme... it sounds like the fjord is humming to the trains. lars gets a writing credit","hashtag":""}
+{"type":"like","author":9,"targetRef":"p103"}
+{"type":"repost","author":7,"targetRef":"p116"}
+{"type":"like","author":9,"targetRef":"p149"}
+{"type":"post","ref":"p157","author":3,"content":"TODAY IS THE DAY. 545 rematch. Slept 9 hours. Ate the fancy rice. Playlist locked (kev's EP, don't laugh, 84bpm is PERFECT for warmups). Report at 6pm or don't look for me 💪 {{link:p037}}","hashtag":""}
+{"type":"like","author":6,"targetRef":"p109"}
+{"type":"like","author":1,"targetRef":"p115"}
+{"type":"post","ref":"p158","author":3,"content":"545. THREE WHITE LIGHTS. It went up so slow I aged a year at the sticking point but it WENT UP. Six months, one ankle, one plum sock, 40 containers of rice. WE ARE SO BACK. Video soon, my hands are still shaking #gains","hashtag":"gains"}
+{"type":"like","author":7,"targetRef":"p064"}
+{"type":"like","author":7,"targetRef":"p107"}
+{"type":"reply","ref":"r122","author":6,"rootRef":"p158","parentRef":"p158","content":"THE BAR HEARD EVERYTHING AND LOST ANYWAY. gary you are the timeline's strongest soldier. crying in the club (gym)"}
+{"type":"like","author":2,"targetRef":"p080"}
+{"type":"follow","author":7,"target":8}
+{"type":"reply","ref":"r123","author":1,"rootRef":"p158","parentRef":"p158","content":"GARY!!! 545!! I'm making the celebration dinner and it will NOT track your macros. This is non-negotiable. CONGRATULATIONS!!"}
+{"type":"like","author":1,"targetRef":"p113"}
+{"type":"like","author":8,"targetRef":"p116"}
+{"type":"repost","author":1,"targetRef":"p116"}
+{"type":"like","author":9,"targetRef":"p153"}
+{"type":"reply","ref":"r124","author":7,"rootRef":"p158","parentRef":"p158","content":"I don't know what most of those numbers mean but I know what six months of showing up means. Well done, Gary. The juncos and I salute you."}
+{"type":"like","author":2,"targetRef":"p156"}
+{"type":"reply","ref":"r125","author":3,"rootRef":"p158","parentRef":"r124","content":"Ma'am the junco salute means more than the white lights. Thank you 🫡"}
+{"type":"likeReply","author":2,"targetRef":"r100"}
+{"type":"like","author":7,"targetRef":"p097"}
+{"type":"like","author":3,"targetRef":"p121"}
+{"type":"quote","ref":"p159","author":8,"content":"gary hit his 545 warming up to my EP... heaviest thing my music has ever done. putting '84bpm, tested under load' on the bandcamp page #synthwave","quotedRef":"p158","hashtag":"synthwave"}
+{"type":"post","ref":"p160","author":2,"content":"hard frost. every birch branch wearing glass. the whole forest a chandelier nobody will see but us. out before dawn again tomorrow. #photography","hashtag":"photography","mediaUrl":"https://picsum.photos/seed/frostbirch/1200/800"}
+{"type":"repost","author":8,"targetRef":"p097"}
+{"type":"post","ref":"p161","author":1,"content":"Cooked for a champion tonight: francesinha, the whole beast, extra sauce. Gary ate it, went quiet, and said 'this is why I lift.' A food writer waits her whole career for a review like that 🏆","hashtag":"","mediaUrl":"https://picsum.photos/seed/francesinha/900/700"}
+{"type":"likeReply","author":6,"targetRef":"r118"}
+{"type":"post","ref":"p162","author":6,"content":"sofia really flew a francesinha across a continent emotionally. the sandwich has a bench press number i bet","hashtag":""}
+{"type":"post","ref":"p163","author":5,"content":"My bank has closed its last branch within walking distance. The replacement is an app that requires three biometric scans to show me my own money, and a phone line that plays Vivaldi at me until I surrender. Institutions, I am starting to see the argument against you.","hashtag":""}
+{"type":"likeReply","author":4,"targetRef":"r112"}
+{"type":"like","author":6,"targetRef":"p129"}
+{"type":"like","author":0,"targetRef":"p152"}
+{"type":"like","author":1,"targetRef":"p154"}
+{"type":"quote","ref":"p164","author":6,"content":"day 847: the institutions guy is being radicalized by vivaldi hold music. petra get ready he's almost yours","quotedRef":"p163","hashtag":""}
+{"type":"like","author":9,"targetRef":"p131"}
+{"type":"like","author":1,"targetRef":"p146"}
+{"type":"like","author":1,"targetRef":"p160"}
+{"type":"reply","ref":"r126","author":0,"rootRef":"p164","parentRef":"p164","content":"we have a desk ready for him; it has a mechanical keyboard and no hold music"}
+{"type":"like","author":0,"targetRef":"p113"}
+{"type":"like","author":6,"targetRef":"p144"}
+{"type":"post","ref":"p165","author":4,"content":"THE TRAILER IS OUT. 62 seconds, one ghost train, kev's fjord-hum score, and a pen tap at exactly the right moment. i have watched it 40 times and i still get chills at my own game which is either narcissism or love #gamedev","hashtag":"gamedev"}
+{"type":"like","author":6,"targetRef":"p122"}
+{"type":"like","author":6,"targetRef":"p135"}
+{"type":"post","ref":"p166","author":9,"content":"finals week quiet hours in effect. the library is silent except for keyboards and the occasional single tear. someone brought a HOT PLATE to the quiet floor. security took the hot plate. the semester's last great story and i was THERE #campusnews","hashtag":"campusnews"}
+{"type":"like","author":2,"targetRef":"p115"}
+{"type":"post","ref":"p167","author":7,"content":"Christmas Bird Count is in three weeks and I am recruiting. You get: a clipboard, a thermos of my good tea, and the smug satisfaction of citizen science. Sign-ups open. Milo, I know you're reading this. #birding","hashtag":"birding"}
+{"type":"reply","ref":"r127","author":6,"rootRef":"p167","parentRef":"p167","content":"fran publicly drafting me into the bird census. fine. FINE. i want the clipboard with the good clip"}
+{"type":"post","ref":"p168","author":0,"content":"conference talk delivered. the post-lunch slot worked exactly as harold predicted; they were docile until slide 9, then a man in the back asked the exact question my entire talk was built to dodge. respect. bought him a coffee; hired him? no. but almost #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":4,"targetRef":"p139"}
+{"type":"post","ref":"p169","author":8,"content":"the EP test pressing run sold out... 50 copies. small numbers, huge feelings. repress when the plant reopens in january. the fjord hum edition will have a blue swirl","hashtag":""}
+{"type":"post","ref":"p170","author":6,"content":"december posting schedule: soup pics, year in review threads nobody asked for, and me getting emotional about strangers hitting squat prs. no changes","hashtag":""}
+{"type":"post","ref":"p171","author":1,"content":"SOUP SEASON IS FULLY OPERATIONAL. This week: caldo verde (obviously), roasted chestnut, and an experimental ramen-bacalhau crossover that will either get me a medal or deported 🍜","hashtag":""}
+{"type":"like","author":6,"targetRef":"p116"}
+{"type":"like","author":4,"targetRef":"p127"}
+{"type":"like","author":3,"targetRef":"p170"}
+{"type":"post","ref":"p172","author":3,"content":"Actual rest day today. No gym. Sat in a chair like a civilian. Terrible. Do not recommend. 10 hours until legs","hashtag":""}
+{"type":"like","author":0,"targetRef":"p116"}
+{"type":"like","author":1,"targetRef":"p122"}
+{"type":"like","author":9,"targetRef":"p138"}
+{"type":"likeReply","author":4,"targetRef":"r126"}
+{"type":"post","ref":"p173","author":2,"content":"the sun did not rise today. it will not rise again until january. people ask how we manage. we photograph the dark. it has more colors than you'd think.","hashtag":"","mediaUrl":"https://picsum.photos/seed/polarnight/1200/800"}
+{"type":"repost","author":5,"targetRef":"p091"}
+{"type":"like","author":4,"targetRef":"p113"}
+{"type":"like","author":6,"targetRef":"p172"}
+{"type":"post","ref":"p174","author":5,"content":"Drafting my year-end review of predictions. Preliminary tally: 7 correct, 4 wrong, 2 'directionally right' (wrong, but with tenure). Publishing the full ledger next week because accountability should hurt a little.","hashtag":""}
+{"type":"like","author":3,"targetRef":"p161"}
+{"type":"post","ref":"p175","author":4,"content":"a playtester's mom crocheted a JUNCTION PLUSH and mailed it to me. the cat has merch before the game has a release date. correct priorities honestly","hashtag":"","mediaUrl":"https://picsum.photos/seed/catplush/800/800"}
+{"type":"like","author":3,"targetRef":"p097"}
+{"type":"post","ref":"p176","author":9,"content":"submitted my last final, filed my last story of the semester (hot plate follow-up: he got it back), and i'm on the bus home. the lot F ribbon is in my backpack. don't ask how i got it. happy break everyone","hashtag":"campusnews"}
+{"type":"post","ref":"p177","author":6,"content":"ada stole the ribbon. the semester's final heist. journalism won this year #memes","hashtag":"memes"}
+{"type":"post","ref":"p178","author":5,"content":"As promised, the full prediction ledger, wins and losses alike: {{link:p045}} remains my most instructive failure of the year. If your favorite pundit does not publish a ledger, ask yourself what they are optimizing for. It is not your portfolio.","hashtag":""}
+{"type":"likeReply","author":9,"targetRef":"r100"}
+{"type":"like","author":3,"targetRef":"p140"}
+{"type":"follow","author":8,"target":1}
+{"type":"quote","ref":"p179","author":6,"content":"this aged well actually. the economist posted his L's in public. everyone else take notes, receipts szn #memes","quotedRef":"p178","hashtag":"memes"}
+{"type":"like","author":4,"targetRef":"p126"}
+{"type":"like","author":4,"targetRef":"p162"}
+{"type":"follow","author":3,"target":7}
+{"type":"post","ref":"p180","author":0,"content":"year in review, by the numbers: 1 merged platform PR, 3 rejected (fair), 214 espresso shots logged, 1 conference talk, 0 unit tests named test_should_never_fail. growth","hashtag":""}
+{"type":"like","author":0,"targetRef":"p097"}
+{"type":"like","author":0,"targetRef":"p158"}
+{"type":"post","ref":"p181","author":1,"content":"MY YEAR IN FOOD: 14 pastéis de nata ranked, 9 tascas reviewed, 1 landlady apprenticeship (ongoing), 6 bacalhau preparations of 365 (long game), and one anabolic dessert crime I've chosen to forgive {{link:p022}} 🥂 #food","hashtag":"food"}
+{"type":"like","author":6,"targetRef":"p123"}
+{"type":"post","ref":"p182","author":3,"content":"YEAR IN REVIEW: 545 squat ✅ One ankle plum ✅ Fun rice cinematic universe: 3 seasons ✅ Made friends with a food blogger, a bird general, and a guy who posts memes at 4am ✅ Best year of my LIFE #gains","hashtag":"gains"}
+{"type":"likeReply","author":9,"targetRef":"r119"}
+{"type":"bookmark","author":0,"targetRef":"p178"}
+{"type":"post","ref":"p183","author":4,"content":"2026 devlog wrap: shipped a demo, hit 1k downloads and 2.3k wishlists, gained a composer, a cat plush, and a QA department (petra, unpaid, terrifying). 2027 is release year. i typed that out loud. no takebacks #buildinpublic","hashtag":"buildinpublic"}
+{"type":"like","author":2,"targetRef":"p167"}
+{"type":"post","ref":"p184","author":6,"content":"my year in review: 1400 posts, 3 good ones. the grind continues","hashtag":""}
+{"type":"repost","author":0,"targetRef":"p165"}
+{"type":"like","author":4,"targetRef":"p168"}
+{"type":"like","author":3,"targetRef":"p181"}
+{"type":"post","ref":"p185","author":2,"content":"one photo per month, twelve photos, one year in the north. thread below. the aurora is march. the seal is july. he changed his mind about being photographed. #photography","hashtag":"photography","mediaUrl":"https://picsum.photos/seed/yearnorth/1200/800"}
+{"type":"post","ref":"p186","author":7,"content":"2026 bird report: 47 species in the yard, 3 lifers, 1 committee-confirmed Varied Thrush {{link:p032}}, and one young man converted to the cause. A very good year. Happy birding, all. See you at the Count.","hashtag":""}
+{"type":"like","author":6,"targetRef":"p156"}
+{"type":"like","author":9,"targetRef":"p163"}
+{"type":"like","author":6,"targetRef":"p176"}
+{"type":"like","author":6,"targetRef":"p180"}
+{"type":"post","ref":"p187","author":8,"content":"2026 in sound: one dead juno resurrected, one EP, 50 records, singing ice, a trailer, and a track named after losing an argument... wouldn't change a thing (petra is still wrong)","hashtag":""}
+{"type":"repost","author":0,"targetRef":"p113"}
+{"type":"post","ref":"p188","author":9,"content":"MY 2026 IN HEADLINES: the raccoon (legend), the lot saga (11 weeks), the hot plate incident, the vending machine powerpoint. journalism school says find your beat. my beat found ME","hashtag":""}
+{"type":"like","author":9,"targetRef":"p177"}
+{"type":"like","author":9,"targetRef":"p182"}
+{"type":"post","ref":"p189","author":6,"content":"new years resolution is to keep the same bit going all year. consistency is the only content strategy #memes","hashtag":"memes"}
+{"type":"repost","author":6,"targetRef":"p091"}
+{"type":"like","author":7,"targetRef":"p160"}
+{"type":"post","ref":"p190","author":1,"content":"NYE menu locked: oysters, the good champagne (the 14 euro one), and twelve grapes at midnight because I respect traditions that involve snacks. To 2027, may all your custards set!! 🥂","hashtag":""}
+{"type":"like","author":6,"targetRef":"p158"}
+{"type":"post","ref":"p191","author":3,"content":"New Year's Eve deadlifts. Gym was empty. Just me, the bar, and a janitor named Dave who said 'looked fast.' DAVE. Best hype man in the building. 2027 we go UP","hashtag":""}
+{"type":"like","author":0,"targetRef":"p173"}
+{"type":"like","author":9,"targetRef":"p174"}
+{"type":"post","ref":"p192","author":5,"content":"My New Year tradition: I reread my worst prediction of the year aloud to my wife, who enjoys it enormously. Humility, like compounding, works best applied annually. Happy New Year to all, including the speculators. Especially the speculators. Someone must fund the lessons.","hashtag":""}
+{"type":"like","author":9,"targetRef":"p164"}
+{"type":"post","ref":"p193","author":0,"content":"new year; same terminal. first commit of 2027 will be a revert. starting the year with honesty","hashtag":""}
+{"type":"like","author":4,"targetRef":"p159"}
+{"type":"like","author":8,"targetRef":"p173"}
+{"type":"like","author":4,"targetRef":"p179"}
+{"type":"like","author":0,"targetRef":"p183"}
+{"type":"post","ref":"p194","author":4,"content":"midnight in melbourne. the demo player count spiked at 12:01 (someone rang in the new year running the night shift at my little station and honestly? correct)","hashtag":""}
+{"type":"like","author":8,"targetRef":"p097"}
+{"type":"like","author":4,"targetRef":"p169"}
+{"type":"post","ref":"p195","author":2,"content":"fireworks over the fjord. i photographed the crowd instead. faces up, lit by other people's money burning beautifully. happy new year. #photography","hashtag":"photography","mediaUrl":"https://picsum.photos/seed/fjordfireworks/1100/733"}
+{"type":"like","author":2,"targetRef":"p113"}
+{"type":"like","author":7,"targetRef":"p133"}
+{"type":"post","ref":"p196","author":8,"content":"the label (me) has reviewed 2026 and approved the 2027 roadmap (a sticky note that says 'more')... happy new year from the basement","hashtag":""}
+{"type":"like","author":5,"targetRef":"p180"}
+{"type":"post","ref":"p197","author":7,"content":"The grandchildren stayed up till midnight. The juncos did not. First bird of 2027: a Bewick's Wren at 7:14am, singing like he invented mornings. A good omen. Happy New Year! #birding","hashtag":"birding"}
+{"type":"post","ref":"p198","author":9,"content":"first news of 2027: my mom's neighbor's cousin claims the raccoon from the library has been seen at a DIFFERENT campus library. cannot confirm. will absolutely investigate. some stories choose you #campusnews","hashtag":"campusnews"}
+{"type":"like","author":8,"targetRef":"p158"}
+{"type":"like","author":7,"targetRef":"p173"}
+{"type":"quote","ref":"p199","author":6,"content":"the raccoon has gone multi-campus. franchise mode. 2027 is already delivering","quotedRef":"p198","hashtag":""}
+{"type":"like","author":6,"targetRef":"p169"}
+{"type":"like","author":0,"targetRef":"p192"}
+{"type":"like","author":2,"targetRef":"p197"}
+{"type":"post","ref":"p200","author":0,"content":"as foretold: first commit of 2027 was a revert. second was a fix for the revert. third, coffee. the system works #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":2,"targetRef":"p153"}
+{"type":"likeReply","author":3,"targetRef":"r122"}
+{"type":"like","author":0,"targetRef":"p178"}
+{"type":"post","ref":"p201","author":1,"content":"Everyone's doing January detoxes and I'm doing a January RETOX: revisiting my top 5 meals of last year to see if they hold up. Rigorous methodology. Peer reviewed (Gary). Science 🧪","hashtag":""}
+{"type":"like","author":9,"targetRef":"p158"}
+{"type":"likeReply","author":9,"targetRef":"r122"}
+{"type":"like","author":7,"targetRef":"p161"}
+{"type":"like","author":9,"targetRef":"p186"}
+{"type":"post","ref":"p202","author":3,"content":"January gym report: 400% capacity. I love it. Yes it's crowded. Yes I wait for racks. NO I will not gatekeep. Everyone starts somewhere and some of them will still be here in March. Those are my people","hashtag":""}
+{"type":"likeReply","author":4,"targetRef":"r127"}
+{"type":"quote","ref":"p203","author":7,"content":"This is the correct attitude about beginners in January and it applies to birding, gyms, and everything else. The flock grows. Be glad.","quotedRef":"p202","hashtag":""}
+{"type":"like","author":4,"targetRef":"p116"}
+{"type":"post","ref":"p204","author":6,"content":"posted my gym check-in and gary liked it in 4 seconds. this man has january rookie radar","hashtag":""}
+{"type":"like","author":1,"targetRef":"p097"}
+{"type":"like","author":4,"targetRef":"p155"}
+{"type":"like","author":0,"targetRef":"p163"}
+{"type":"repost","author":1,"targetRef":"p182"}
+{"type":"like","author":6,"targetRef":"p201"}
+{"type":"post","ref":"p205","author":4,"content":"decided: no crunch for the release. wrote it on the whiteboard. the whiteboard has seen promises before (it's a very skeptical whiteboard) but this one's real. release when it's cozy, not when it's january","hashtag":""}
+{"type":"like","author":2,"targetRef":"p186"}
+{"type":"post","ref":"p206","author":8,"content":"new year gear audit: 6 synths, 2 working properly, which is the correct ratio... a fully working studio makes boring records, this is documented science","hashtag":""}
+{"type":"like","author":3,"targetRef":"p190"}
+{"type":"post","ref":"p207","author":2,"content":"the sun returns in nine days. the town is counting. there will be cake. this is not a metaphor, there is an actual cake, it is shaped like the sun.","hashtag":""}
+{"type":"like","author":7,"targetRef":"p146"}
+{"type":"like","author":0,"targetRef":"p165"}
+{"type":"post","ref":"p208","author":5,"content":"January prediction, on the record: at least one major 'AI-powered' financial product will spectacularly fail this year, and the postmortem will reveal it was a spreadsheet with confidence. Ledger updated accordingly. See you in December.","hashtag":""}
+{"type":"like","author":3,"targetRef":"p164"}
+{"type":"like","author":1,"targetRef":"p173"}
+{"type":"post","ref":"p209","author":9,"content":"back on campus. the squirrel remembered me. the new semester's first mystery: the library has installed a small door. raccoon-sized. i have EMAILED SEVEN DEPARTMENTS. no one will claim it","hashtag":"","mediaUrl":"https://picsum.photos/seed/smalldoor/800/600"}
+{"type":"like","author":8,"targetRef":"p165"}
+{"type":"reply","ref":"r128","author":6,"rootRef":"p209","parentRef":"p209","content":"they built him a door. the raccoon won. he has tenure now like hal"}
+{"type":"like","author":6,"targetRef":"p188"}
+{"type":"post","ref":"p210","author":7,"content":"Christmas Bird Count results are in: our sector logged 61 species, including a Snowy Owl that made a grown man cry (me, briefly). Milo counted 340 juncos and only complained twice. He gets the good clipboard permanently. #birding","hashtag":"birding"}
+{"type":"like","author":2,"targetRef":"p182"}
+{"type":"like","author":6,"targetRef":"p192"}
+{"type":"post","ref":"p211","author":6,"content":"bird count report: cold. juncos everywhere. fran's tea slaps. saw a snowy owl and understood everything. anyway i'm a birder now, no further questions","hashtag":""}
+{"type":"like","author":6,"targetRef":"p154"}
+{"type":"like","author":9,"targetRef":"p161"}
+{"type":"like","author":0,"targetRef":"p175"}
+{"type":"like","author":4,"targetRef":"p202"}
+{"type":"like","author":7,"targetRef":"p207"}
+{"type":"post","ref":"p212","author":1,"content":"A new bakery opened near me and their croissant SHATTERED correctly. Lamination you could read a newspaper through. Lisbon does not need to be Paris but this croissant didn't get the memo and I'm keeping it 🥐 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/croissantshatter/900/650"}
+{"type":"like","author":6,"targetRef":"p181"}
+{"type":"post","ref":"p213","author":3,"content":"Gym lost power in the snowstorm. Did we go home? We did NOT. Squats by phone flashlight, spotted by vibes and Dave the janitor. Legendary session. Do not tell the insurance company","hashtag":""}
+{"type":"repost","author":9,"targetRef":"p113"}
+{"type":"like","author":9,"targetRef":"p157"}
+{"type":"like","author":4,"targetRef":"p193"}
+{"type":"post","ref":"p214","author":0,"content":"today's platform tip: if your query needs an index that doesn't exist, the error tells you exactly which one. read the error. i say this as someone who spent 40 minutes not reading the error #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":6,"targetRef":"p190"}
+{"type":"like","author":8,"targetRef":"p195"}
+{"type":"like","author":3,"targetRef":"p198"}
+{"type":"likeReply","author":9,"targetRef":"r128"}
+{"type":"like","author":3,"targetRef":"p211"}
+{"type":"post","ref":"p215","author":4,"content":"tested the demo on a 7 year old laptop (the target hardware of my heart). runs at 58fps and only sets the fan to 'hovercraft' during ghost trains. shipping quality","hashtag":""}
+{"type":"like","author":1,"targetRef":"p158"}
+{"type":"like","author":8,"targetRef":"p194"}
+{"type":"like","author":7,"targetRef":"p198"}
+{"type":"post","ref":"p216","author":8,"content":"announcement: 'singing ice' the EP. me, lars's field recordings, one very patient fjord. spring 2027... the fjord requested no deadline and i respect the artist #synthwave","hashtag":"synthwave"}
+{"type":"post","ref":"p217","author":2,"content":"cover shoot for the ice EP. the fjord was informed. it wore black.","hashtag":"","mediaUrl":"https://picsum.photos/seed/icecover/1000/1000"}
+{"type":"like","author":3,"targetRef":"p113"}
+{"type":"like","author":6,"targetRef":"p182"}
+{"type":"like","author":1,"targetRef":"p185"}
+{"type":"like","author":2,"targetRef":"p210"}
+{"type":"post","ref":"p218","author":5,"content":"Update on the sandwich shop: the baguette has been restored to its former dimensions following what I can only assume was market discipline (I stopped going for three weeks and told them why). One consumer, voting with his feet, was statistically insignificant but emotionally decisive.","hashtag":""}
+{"type":"like","author":9,"targetRef":"p181"}
+{"type":"like","author":1,"targetRef":"p213"}
+{"type":"post","ref":"p219","author":6,"content":"hal boycotted a sandwich shop with the energy of a central bank and it WORKED. transmission mechanism confirmed","hashtag":"memes"}
+{"type":"post","ref":"p220","author":9,"content":"THE SMALL DOOR HAS BEEN CLAIMED. the philosophy department. their statement: 'he was here first.' i have never respected an institution more. case closed {{link:p033}}","hashtag":""}
+{"type":"like","author":6,"targetRef":"p178"}
+{"type":"like","author":0,"targetRef":"p205"}
+{"type":"like","author":6,"targetRef":"p209"}
+{"type":"post","ref":"p221","author":1,"content":"Announcement: Gary and I are writing a joint post. Working title: 'Strong Food: meals that lift back.' His macros, my technique, ZERO protein custard (I have a restraining order on that recipe). February 🍳💪","hashtag":""}
+{"type":"like","author":7,"targetRef":"p116"}
+{"type":"post","ref":"p222","author":3,"content":"STRONG FOOD IS REAL. She's letting me keep the fun rice section. This is the greatest crossover in the history of content. February chief. FEBRUARY #food","hashtag":"food"}
+{"type":"like","author":3,"targetRef":"p171"}
+{"type":"like","author":7,"targetRef":"p182"}
+{"type":"like","author":5,"targetRef":"p220"}
+{"type":"post","ref":"p223","author":6,"content":"the food blogger and the powerlifter dropping a collab before most startups ship a landing page. the timeline provides #memes","hashtag":"memes"}
+{"type":"post","ref":"p224","author":1,"content":"STRONG FOOD IS LIVE. 12 meals that lift back: Gary's macros, my technique, one shared byline, zero custard crimes. Six months ago a man put egg whites in oats and changed my life. Today we publish. Go eat something that loves you back 💪🍳 {{link:p014}}","hashtag":""}
+{"type":"like","author":6,"targetRef":"p210"}
+{"type":"post","ref":"p225","author":3,"content":"IT'S OUT. My name is on a FOOD BLOG. My mom printed the page and taped it to the fridge next to my first meet total. Sofia taught me what 'fond' is and I taught her what 'RPE' is. Fair trade. STRONG FOOD baby","hashtag":""}
+{"type":"like","author":6,"targetRef":"p161"}
+{"type":"post","ref":"p226","author":6,"content":"strong food dropped and the recipes actually slap. the fun rice section reads like a memoir. 10/10 collab of the year already","hashtag":""}
+{"type":"like","author":5,"targetRef":"p198"}
+{"type":"post","ref":"p227","author":0,"content":"reviewing a contract migration proposal; 60 pages. page 4 contains the sentence 'this should be straightforward.' bless their heart; flagging for review #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":8,"targetRef":"p182"}
+{"type":"like","author":8,"targetRef":"p205"}
+{"type":"like","author":7,"targetRef":"p217"}
+{"type":"post","ref":"p228","author":4,"content":"deep breath. Last Transfer releases April 14. there's a real date now. it's on the Steam page and everything. the whiteboard and i are going to lie down (no crunch. the whiteboard is watching) #gamedev","hashtag":"gamedev"}
+{"type":"like","author":1,"targetRef":"p165"}
+{"type":"bookmark","author":9,"targetRef":"p178"}
+{"type":"like","author":6,"targetRef":"p217"}
+{"type":"quote","ref":"p229","author":6,"content":"APRIL 14. the train game has a date. clearing my calendar and my sleep schedule. junction we ride","quotedRef":"p228","hashtag":""}
+{"type":"like","author":9,"targetRef":"p184"}
+{"type":"quote","ref":"p230","author":9,"content":"the game i watched go from ghost train bug to steam page in one year of posts. this is why the timeline is undefeated. april 14!!","quotedRef":"p228","hashtag":""}
+{"type":"like","author":4,"targetRef":"p164"}
+{"type":"follow","author":9,"target":8}
+{"type":"post","ref":"p231","author":8,"content":"april 14... the full OST is 14 tracks. this is not a coincidence, i moved a track to make it 14. details matter, nobody will notice, both statements true","hashtag":""}
+{"type":"like","author":4,"targetRef":"p182"}
+{"type":"like","author":3,"targetRef":"p184"}
+{"type":"follow","author":4,"target":3}
+{"type":"post","ref":"p232","author":7,"content":"The Great Backyard Bird Count is this weekend! Fifteen minutes, any yard, any birds, real science. My rookie counter from December has already registered. No pressure on the rest of you. (Some pressure.) #birding","hashtag":"birding"}
+{"type":"like","author":7,"targetRef":"p195"}
+{"type":"post","ref":"p233","author":6,"content":"counted birds for 15 minutes for fran's science thing. results: 6 juncos, 1 crow with main character energy, 1 mystery bird i have described to fran as 'brown, suspicious'. science thanked me","hashtag":""}
+{"type":"like","author":4,"targetRef":"p187"}
+{"type":"like","author":7,"targetRef":"p220"}
+{"type":"post","ref":"p234","author":2,"content":"the sun came back today. eight minutes above the ridge. the whole town outside, faces south, eyes closed. the cake was eaten. i took one photo and then i just stood there.","hashtag":"","mediaUrl":"https://picsum.photos/seed/soldag/1200/800"}
+{"type":"repost","author":9,"targetRef":"p158"}
+{"type":"like","author":9,"targetRef":"p189"}
+{"type":"post","ref":"p235","author":5,"content":"Guest lecture at the uni went well until a student asked my position on 'decentralized social media.' I said I post on one, hedge my enthusiasm, and read the docs before arguing. Petra will call this character development. It is merely due diligence.","hashtag":""}
+{"type":"like","author":4,"targetRef":"p214"}
+{"type":"quote","ref":"p236","author":0,"content":"harold telling a lecture hall he reads the docs before arguing. my work here is done; it took 14 months and one sandwich boycott","quotedRef":"p235","hashtag":""}
+{"type":"repost","author":1,"targetRef":"p158"}
+{"type":"like","author":8,"targetRef":"p175"}
+{"type":"like","author":0,"targetRef":"p208"}
+{"type":"like","author":6,"targetRef":"p224"}
+{"type":"post","ref":"p237","author":1,"content":"Valentine's menu for one, cooked with extreme self-respect: scallops, brown butter, the good bread, a dessert wine older than my blog. Table for one is still a table, friends. Set it properly 🥂 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/valentines/900/700"}
+{"type":"like","author":1,"targetRef":"p210"}
+{"type":"post","ref":"p238","author":3,"content":"Valentine's Day gym report: just me, Dave, and one couple doing partner stretches. Dave gave them a nod. The covenant grows","hashtag":""}
+{"type":"like","author":4,"targetRef":"p231"}
+{"type":"post","ref":"p239","author":6,"content":"getting flowers for the mustard. we've been through a lot together #memes","hashtag":"memes"}
+{"type":"like","author":5,"targetRef":"p158"}
+{"type":"like","author":4,"targetRef":"p185"}
+{"type":"like","author":9,"targetRef":"p237"}
+{"type":"post","ref":"p240","author":9,"content":"student body president race has begun and one candidate's entire platform is 'more vending machines.' the incumbent's counter: 'better vending machines.' the debate is thursday. i will be front row. democracy has never been this alive","hashtag":""}
+{"type":"like","author":6,"targetRef":"p173"}
+{"type":"like","author":8,"targetRef":"p183"}
+{"type":"like","author":1,"targetRef":"p209"}
+{"type":"post","ref":"p241","author":0,"content":"pair programmed with nova today; she writes gdscript with the confidence of someone whose compiler never argues back. i felt fear; also envy. mostly fear","hashtag":""}
+{"type":"repost","author":9,"targetRef":"p182"}
+{"type":"like","author":6,"targetRef":"p183"}
+{"type":"post","ref":"p242","author":4,"content":"petra reviewed my save system today. she was 'gentle' (her word). i have 9 action items and a new appreciation for mortality (the save system is bulletproof now though)","hashtag":""}
+{"type":"repost","author":6,"targetRef":"p158"}
+{"type":"like","author":9,"targetRef":"p178"}
+{"type":"like","author":3,"targetRef":"p233"}
+{"type":"like","author":9,"targetRef":"p235"}
+{"type":"post","ref":"p243","author":8,"content":"do NOT get into modular synths. that's the post. (i got into modular synths)","hashtag":"","mediaUrl":"https://picsum.photos/seed/modularwall/900/700"}
+{"type":"like","author":4,"targetRef":"p178"}
+{"type":"like","author":9,"targetRef":"p194"}
+{"type":"like","author":2,"targetRef":"p243"}
+{"type":"post","ref":"p244","author":2,"content":"white-tailed eagle at close range. two meters of wing deciding my presence was acceptable. some mornings the north just shows off. #photography","hashtag":"photography","mediaUrl":"https://picsum.photos/seed/seaeagle/1100/733"}
+{"type":"like","author":6,"targetRef":"p241"}
+{"type":"post","ref":"p245","author":7,"content":"Lars's eagle photo is my phone background now. When my grandchildren ask what grandma likes, the answer is: exactly this. #birding","hashtag":""}
+{"type":"like","author":0,"targetRef":"p194"}
+{"type":"like","author":1,"targetRef":"p202"}
+{"type":"like","author":7,"targetRef":"p224"}
+{"type":"post","ref":"p246","author":5,"content":"Tax season observation: several acquaintances who assured me their gains were 'not real until realized' have now realized them, and are discovering that the revenue service agreed all along. The ledger, as ever, wins in the end. All ledgers do. #econ","hashtag":"econ"}
+{"type":"like","author":9,"targetRef":"p199"}
+{"type":"post","ref":"p247","author":6,"content":"hal's tax post has the same energy as a horror movie narrator. 'the ledger wins in the end. all ledgers do.' sir it's february","hashtag":""}
+{"type":"like","author":7,"targetRef":"p185"}
+{"type":"like","author":2,"targetRef":"p187"}
+{"type":"like","author":6,"targetRef":"p191"}
+{"type":"like","author":9,"targetRef":"p246"}
+{"type":"post","ref":"p248","author":1,"content":"My nonna called to say she read the Strong Food post (my cousin printed it). Her review: 'the muscles boy seems nice, but tell him more garlic.' Gary, nonna has spoken. MORE GARLIC 🧄","hashtag":""}
+{"type":"like","author":9,"targetRef":"p211"}
+{"type":"like","author":8,"targetRef":"p220"}
+{"type":"like","author":9,"targetRef":"p229"}
+{"type":"post","ref":"p249","author":3,"content":"NONNA HAS SPOKEN AND I OBEY. Fun rice season 4: garlic confit. The trinity is now a quartet. Tell her the muscles boy says thank you","hashtag":""}
+{"type":"like","author":4,"targetRef":"p158"}
+{"type":"like","author":4,"targetRef":"p206"}
+{"type":"like","author":1,"targetRef":"p222"}
+{"type":"post","ref":"p250","author":9,"content":"VENDING DEBATE LIVE THREAD: incumbent opens with a chart. challenger responds by handing out free chips 'from the future machines.' the moderator has eaten the chips. this is the greatest night of my career","hashtag":""}
+{"type":"like","author":6,"targetRef":"p216"}
+{"type":"post","ref":"p251","author":6,"content":"the chips guy won the debate by feeding the moderator. politics is solved. every election should have snacks","hashtag":""}
+{"type":"like","author":4,"targetRef":"p220"}
+{"type":"post","ref":"p252","author":0,"content":"touched actual grass this weekend; hiked 14km, zero bars of signal, one notebook. wrote three architecture ideas and a grocery list. the grocery list was the best work","hashtag":""}
+{"type":"like","author":6,"targetRef":"p186"}
+{"type":"like","author":6,"targetRef":"p213"}
+{"type":"post","ref":"p253","author":4,"content":"a shelter near me has a real cat who looks EXACTLY like Junction. reader, i am filling out paperwork (the game is getting a 'based on a true story' badge now)","hashtag":"","mediaUrl":"https://picsum.photos/seed/junctionirl/800/800"}
+{"type":"post","ref":"p254","author":8,"content":"writing a song for nova's real cat. working title 'junction (irl mix)'... it's the station theme but with purring in the low end. this is my job now and it's a good job","hashtag":""}
+{"type":"repost","author":4,"targetRef":"p158"}
+{"type":"like","author":7,"targetRef":"p188"}
+{"type":"post","ref":"p255","author":7,"content":"Signs of spring: the juncos are singing differently, the catalogs have arrived, and I have drawn up this year's nest box maintenance schedule. Retirement is just project management with better coworkers. #birding","hashtag":"birding"}
+{"type":"like","author":3,"targetRef":"p201"}
+{"type":"like","author":2,"targetRef":"p203"}
+{"type":"post","ref":"p256","author":2,"content":"the ice is breaking up. the fjord sounds like applause. kev, your sequel has arrived.","hashtag":""}
+{"type":"likeReply","author":2,"targetRef":"r124"}
+{"type":"like","author":1,"targetRef":"p207"}
+{"type":"bookmark","author":7,"targetRef":"p224"}
+{"type":"post","ref":"p257","author":5,"content":"A student asked what I have learned from a year of posting here. Answer: the food writer taught me about quality, the photographer about patience, the powerlifter about consistency, and the meme account, irritatingly, about reach. The economists teach nothing; we grade.","hashtag":""}
+{"type":"quote","ref":"p258","author":6,"content":"the economist just called me a professor of reach. framing this. hal you're the timeline's final boss and we love you. no notes","quotedRef":"p257","hashtag":""}
+{"type":"repost","author":1,"targetRef":"p220"}
+{"type":"like","author":5,"targetRef":"p240"}
+{"type":"like","author":8,"targetRef":"p253"}
+{"type":"post","ref":"p259","author":1,"content":"March project locked: I'm eating my way down the entire Tagus ferry line, one riverside grill at a time. Research begins Saturday. Gary is coming for 'protein oversight.' Pray for the grills 🔥","hashtag":""}
+{"type":"like","author":1,"targetRef":"p225"}
+{"type":"like","author":9,"targetRef":"p233"}
+{"type":"post","ref":"p260","author":3,"content":"PROTEIN OVERSIGHT is my new government job. Ferry grill tour with the blog boss. I've been told there will be 'no macros discussed on the boat.' We'll see. WE'LL SEE #gains","hashtag":"gains"}
+{"type":"like","author":3,"targetRef":"p237"}
+{"type":"post","ref":"p261","author":6,"content":"year one of this app: made friends with a rust aunt, a bird general, a soup wizard, the world's strongest rice enjoyer, and an economist who grades my posts. decentralization is when the group chat has no landlord. wait. hm","hashtag":""}
+{"type":"like","author":7,"targetRef":"p209"}
+{"type":"like","author":1,"targetRef":"p220"}
+{"type":"like","author":6,"targetRef":"p221"}
+{"type":"post","ref":"p262","author":0,"content":"one year of posting on a protocol i also help build; every like on this app is a signed state transition and honestly that still rules. ok; back to the terminal #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":6,"targetRef":"p228"}
+{"type":"post","ref":"p263","author":4,"content":"56 days to release. junction (irl) supervises from the second monitor. the whiteboard says no crunch. kev's mix of the ice track is playing. this is the good part. see you april 14 #buildinpublic","hashtag":"buildinpublic"}
+{"type":"post","ref":"p264","author":9,"content":"semester goals: cover the election, find the raccoon, graduate eventually. in that order. the beat goes on","hashtag":""}
+{"type":"post","ref":"p265","author":8,"content":"84 bpm forever... see you all in the mix #synthwave","hashtag":"synthwave"}
+{"type":"like","author":6,"targetRef":"p202"}
+{"type":"like","author":4,"targetRef":"p224"}
+{"type":"like","author":4,"targetRef":"p236"}
+{"type":"like","author":6,"targetRef":"p238"}
+{"type":"post","ref":"p266","author":2,"content":"more light every day now. the long exposure of winter develops into spring. i'll be on the ridge.","hashtag":"","mediaUrl":"https://picsum.photos/seed/springridge/1200/800"}
+{"type":"like","author":9,"targetRef":"p257"}
+{"type":"like","author":3,"targetRef":"p258"}
+{"type":"like","author":1,"targetRef":"p261"}
+{"type":"post","ref":"p267","author":7,"content":"312 species and counting. New count starts now, as it does every year. There is always another bird. Happy birding, friends. #birding","hashtag":"birding"}
+{"type":"likeReply","author":9,"targetRef":"r124"}
+{"type":"like","author":2,"targetRef":"p224"}
+{"type":"like","author":2,"targetRef":"p232"}
+{"type":"like","author":4,"targetRef":"p243"}
+{"type":"post","ref":"p268","author":3,"content":"600 by december. You heard it here. The bar and I have unfinished business 💪","hashtag":""}
+{"type":"like","author":9,"targetRef":"p247"}
+{"type":"like","author":7,"targetRef":"p250"}
+{"type":"like","author":8,"targetRef":"p263"}
+{"type":"post","ref":"p269","author":1,"content":"There are 359 bacalhau recipes left. See you at the table, friends 🐟","hashtag":""}
+{"type":"like","author":6,"targetRef":"p214"}
+{"type":"like","author":0,"targetRef":"p218"}
+{"type":"post","ref":"p270","author":5,"content":"Respectfully: stay solvent, publish your ledgers, and be suspicious of anything that promises more than the risk-free rate plus a story. Class dismissed until further data.","hashtag":""}
+{"type":"like","author":2,"targetRef":"p202"}
+{"type":"like","author":4,"targetRef":"p211"}
+{"type":"like","author":9,"targetRef":"p226"}
+{"type":"post","ref":"p271","author":0,"content":"daylight saving hit and my cron jobs are confused; so am i. we deserve each other","hashtag":""}
+{"type":"like","author":1,"targetRef":"p219"}
+{"type":"like","author":6,"targetRef":"p222"}
+{"type":"like","author":9,"targetRef":"p225"}
+{"type":"post","ref":"p272","author":6,"content":"daylight saving is a psyop and the birds agree. fran confirm","hashtag":""}
+{"type":"like","author":6,"targetRef":"p250"}
+{"type":"post","ref":"p273","author":7,"content":"Confirmed, dear. The birds keep solar time and are smug about it. The juncos were up at the SAME actual moment as always. It's only the humans who lost an hour arguing about it. #birding","hashtag":"birding"}
+{"type":"like","author":0,"targetRef":"p235"}
+{"type":"like","author":6,"targetRef":"p240"}
+{"type":"like","author":3,"targetRef":"p261"}
+{"type":"post","ref":"p274","author":1,"content":"FERRY GRILL TOUR STOP 1: Cacilhas. Grilled dourada, tomato rice, a view of the whole city. Gary tried to discuss macros ON THE BOAT and was fined one pastel de nata (payable to me) 🐟","hashtag":"","mediaUrl":"https://picsum.photos/seed/ferrygrill/900/650"}
+{"type":"like","author":4,"targetRef":"p216"}
+{"type":"post","ref":"p275","author":3,"content":"Fined a whole nata for saying 'good protein' out loud. This tour has RULES and honestly I respect the governance structure. Stop 2 next Saturday #food","hashtag":"food"}
+{"type":"like","author":7,"targetRef":"p158"}
+{"type":"post","ref":"p276","author":4,"content":"pre-release checklist item 34 of 71: the cat no longer clips through the vending machine (the vending machine now clips through the cat, once, on tuesdays. shipping it, it's funny) #gamedev","hashtag":"gamedev"}
+{"type":"like","author":6,"targetRef":"p235"}
+{"type":"like","author":9,"targetRef":"p239"}
+{"type":"post","ref":"p277","author":8,"content":"windows open, juno warm, tape rolling... first spring session always sounds different. the room remembers","hashtag":""}
+{"type":"like","author":9,"targetRef":"p219"}
+{"type":"like","author":1,"targetRef":"p234"}
+{"type":"like","author":6,"targetRef":"p237"}
+{"type":"like","author":4,"targetRef":"p241"}
+{"type":"like","author":5,"targetRef":"p250"}
+{"type":"post","ref":"p278","author":2,"content":"the light is coming back fast now. sea eagles paired up. the fjord is loud with arrivals. busiest season for the patient.","hashtag":"","mediaUrl":"https://picsum.photos/seed/springfjord/1100/733"}
+{"type":"post","ref":"p279","author":5,"content":"Spring forecast, on the ledger: two more cuts this year, one 'surprise' that surprises no one who reads primary sources, and at least one viral chart with truncated axes that I will be forced to correct at a dinner party.","hashtag":""}
+{"type":"like","author":9,"targetRef":"p210"}
+{"type":"like","author":6,"targetRef":"p253"}
+{"type":"post","ref":"p280","author":9,"content":"SCOOP: the 'more vending machines' candidate has dropped out and endorsed 'better vending machines.' coalition politics. the free chips guy remains undefeated in the polls (n=40, margin of error: vibes)","hashtag":""}
+{"type":"like","author":3,"targetRef":"p221"}
+{"type":"like","author":9,"targetRef":"p228"}
+{"type":"like","author":4,"targetRef":"p254"}
+{"type":"like","author":0,"targetRef":"p261"}
+{"type":"like","author":6,"targetRef":"p264"}
+{"type":"post","ref":"p281","author":6,"content":"making a bracket of the timeline's best moments this year. play-in game: gary's plum sock vs the upside down F stencil. vote now","hashtag":""}
+{"type":"like","author":3,"targetRef":"p212"}
+{"type":"like","author":6,"targetRef":"p248"}
+{"type":"post","ref":"p282","author":0,"content":"plum sock; it had narrative structure and a redemption arc. the stencil was one perfect frame. this is a serious analysis; i stand by it","hashtag":""}
+{"type":"like","author":2,"targetRef":"p158"}
+{"type":"bookmark","author":9,"targetRef":"p224"}
+{"type":"like","author":4,"targetRef":"p233"}
+{"type":"like","author":9,"targetRef":"p258"}
+{"type":"like","author":0,"targetRef":"p263"}
+{"type":"post","ref":"p283","author":3,"content":"My own ankle is in a BRACKET?? And it might LOSE to a STENCIL?? The disrespect is fuel. Vote sock","hashtag":""}
+{"type":"repost","author":0,"targetRef":"p228"}
+{"type":"like","author":4,"targetRef":"p261"}
+{"type":"post","ref":"p284","author":9,"content":"as the journalist of record for the stencil incident i must remain neutral. (vote stencil)","hashtag":""}
+{"type":"like","author":3,"targetRef":"p269"}
+{"type":"post","ref":"p285","author":1,"content":"Abstaining from the bracket vote until someone explains why my 14-bakery nata investigation wasn't seeded. Rigged!!","hashtag":""}
+{"type":"like","author":6,"targetRef":"p220"}
+{"type":"like","author":1,"targetRef":"p238"}
+{"type":"post","ref":"p286","author":6,"content":"bracket update: the sock won. gary's ankle is your champion. sofia your nata thing was seeded, it lost to the raccoon in round zero, please stop emailing my legal team #memes","hashtag":"memes"}
+{"type":"like","author":4,"targetRef":"p225"}
+{"type":"like","author":3,"targetRef":"p259"}
+{"type":"post","ref":"p287","author":7,"content":"First nest box occupied! Chestnut-backed Chickadees, box 3, the one my grandson painted 'like a tiny house for tiny business people.' Residents approve. #birding","hashtag":"birding","mediaUrl":"https://picsum.photos/seed/nestbox/800/600"}
+{"type":"post","ref":"p288","author":8,"content":"last transfer OST double vinyl preorders live... side D is just the ambient station loops and the ice. the pressing plant guy said 'this is my favorite one this month' and i floated home","hashtag":""}
+{"type":"like","author":8,"targetRef":"p228"}
+{"type":"like","author":3,"targetRef":"p239"}
+{"type":"post","ref":"p289","author":4,"content":"a real games site previewed Last Transfer today. they called it 'the most patient game of the year.' i have read the sentence 50 times. patient! the game about waiting for trains! they GET IT #gamedev","hashtag":"gamedev"}
+{"type":"like","author":6,"targetRef":"p225"}
+{"type":"like","author":8,"targetRef":"p234"}
+{"type":"like","author":9,"targetRef":"p267"}
+{"type":"post","ref":"p290","author":0,"content":"wrote docs this week instead of code; harder. every sentence is an API you can't deprecate. new respect for whoever writes the platform tutorials #dashplatform","hashtag":"dashplatform"}
+{"type":"like","author":4,"targetRef":"p227"}
+{"type":"like","author":6,"targetRef":"p285"}
+{"type":"post","ref":"p291","author":5,"content":"For the seminar students asking for one book: Galbraith, 'A Short History of Financial Euphoria.' https://en.wikipedia.org/wiki/John_Kenneth_Galbraith — ninety pages; reads in an evening; inoculates for a decade. The half-life of financial memory is twenty years. Extend yours. #econ","hashtag":"econ"}
+{"type":"like","author":4,"targetRef":"p234"}
+{"type":"like","author":8,"targetRef":"p244"}
+{"type":"bookmark","author":9,"targetRef":"p291"}
+{"type":"post","ref":"p292","author":1,"content":"FERRY TOUR STOP 2: Trafaria. A grill so close to the water the fish barely noticed the transition. An old man told Gary he 'carries the plates well.' Gary has not stopped smiling. New career unlocked 🐟 #food","hashtag":"food","mediaUrl":"https://picsum.photos/seed/trafaria/900/650"}
+{"type":"post","ref":"p293","author":3,"content":"HE SAID I CARRY THE PLATES WELL. Sir I have trained 9 years for this exact compliment. Retiring from powerlifting to become a grill waiter (not really) (unless?)","hashtag":""}
+{"type":"like","author":6,"targetRef":"p236"}
+{"type":"like","author":1,"targetRef":"p250"}
+{"type":"post","ref":"p294","author":6,"content":"gary got scouted by a grill grandpa. the crossover arc continues. the timeline's strongest waiter #memes","hashtag":"memes"}
+{"type":"like","author":9,"targetRef":"p293"}
+{"type":"post","ref":"p295","author":2,"content":"took a commercial job to fund the summer. photographed 400 identical hotel rooms. the money is green and the soul recovers. back to the ridge friday.","hashtag":""}
+{"type":"like","author":7,"targetRef":"p234"}
+{"type":"post","ref":"p296","author":9,"content":"RACCOON WATCH: verified sighting at the SMALL DOOR. he used it. he lives there now. the philosophy department has named him Diogenes. i am filing this under 'closure' {{link:p033}}","hashtag":""}
+{"type":"like","author":0,"targetRef":"p234"}
+{"type":"bookmark","author":9,"targetRef":"p290"}
+{"type":"quote","ref":"p297","author":6,"content":"they named the raccoon DIOGENES. the philosophy department understood the assignment completely. best storyline in app history #memes","quotedRef":"p296","hashtag":"memes"}
+{"type":"post","ref":"p298","author":7,"content":"A raccoon named Diogenes living in a library through a door built by philosophers. Sometimes the world is exactly as silly and kind as you hope. Happy spring, everyone.","hashtag":""}
+{"type":"like","author":0,"targetRef":"p220"}
+{"type":"like","author":8,"targetRef":"p236"}
+{"type":"like","author":0,"targetRef":"p257"}
+{"type":"like","author":1,"targetRef":"p263"}
+{"type":"like","author":9,"targetRef":"p298"}
+{"type":"post","ref":"p299","author":8,"content":"new monitor speakers day... playing the whole catalog front to back. the dead juno voices, the ice, the trains. it holds up. onward","hashtag":""}
+{"type":"like","author":3,"targetRef":"p224"}
+{"type":"like","author":6,"targetRef":"p249"}
+{"type":"like","author":5,"targetRef":"p262"}
+{"type":"post","ref":"p300","author":4,"content":"demo update shipped with the new tutorial. if you bounced off the timetable screen before, try again (it now explains itself, a feature i resisted for 8 months out of pure stubbornness, i apologize)","hashtag":""}
+{"type":"like","author":1,"targetRef":"p182"}
+{"type":"like","author":3,"targetRef":"p248"}
+{"type":"like","author":9,"targetRef":"p270"}
+{"type":"post","ref":"p301","author":1,"content":"Someone recognized me at the market today from the nata ranking. She disagreed with my #3 pick. We argued for ten minutes. Best fan interaction possible. This is why I write!! 🥧 {{link:p019}}","hashtag":""}
+{"type":"post","ref":"p302","author":0,"content":"merge notification at 7am: the second platform PR is in. two for five lifetime; batting average of a hall of famer, if i pick the right sport #dashplatform","hashtag":"dashplatform"}
+{"type":"repost","author":5,"targetRef":"p220"}
+{"type":"like","author":9,"targetRef":"p224"}
+{"type":"like","author":0,"targetRef":"p224"}
+{"type":"like","author":8,"targetRef":"p224"}
+{"type":"repost","author":3,"targetRef":"p224"}
+{"type":"repost","author":9,"targetRef":"p224"}
+{"type":"repost","author":6,"targetRef":"p224"}
+{"type":"like","author":0,"targetRef":"p228"}
+{"type":"like","author":1,"targetRef":"p228"}
+{"type":"like","author":3,"targetRef":"p228"}
+{"type":"like","author":2,"targetRef":"p228"}
+{"type":"repost","author":8,"targetRef":"p228"}
+{"type":"like","author":7,"targetRef":"p244"}
+{"type":"like","author":1,"targetRef":"p249"}
+{"type":"like","author":4,"targetRef":"p250"}
+{"type":"like","author":0,"targetRef":"p253"}
+{"type":"like","author":6,"targetRef":"p257"}
+{"type":"like","author":1,"targetRef":"p260"}
+{"type":"like","author":9,"targetRef":"p261"}
+{"type":"like","author":4,"targetRef":"p262"}
+{"type":"like","author":6,"targetRef":"p262"}
+{"type":"like","author":4,"targetRef":"p265"}
+{"type":"like","author":1,"targetRef":"p266"}
+{"type":"like","author":2,"targetRef":"p267"}
+{"type":"like","author":9,"targetRef":"p268"}
+{"type":"like","author":6,"targetRef":"p268"}
+{"type":"like","author":9,"targetRef":"p269"}
+{"type":"like","author":4,"targetRef":"p272"}
+{"type":"like","author":9,"targetRef":"p273"}
+{"type":"like","author":9,"targetRef":"p274"}
+{"type":"like","author":8,"targetRef":"p276"}
+{"type":"like","author":9,"targetRef":"p281"}
+{"type":"like","author":3,"targetRef":"p281"}
+{"type":"like","author":5,"targetRef":"p282"}
+{"type":"like","author":1,"targetRef":"p283"}
+{"type":"like","author":6,"targetRef":"p283"}
+{"type":"like","author":7,"targetRef":"p284"}
+{"type":"like","author":3,"targetRef":"p285"}
+{"type":"like","author":9,"targetRef":"p286"}
+{"type":"like","author":3,"targetRef":"p286"}
+{"type":"like","author":2,"targetRef":"p287"}
+{"type":"like","author":9,"targetRef":"p287"}
+{"type":"like","author":6,"targetRef":"p288"}
+{"type":"like","author":0,"targetRef":"p289"}
+{"type":"like","author":8,"targetRef":"p289"}
+{"type":"like","author":9,"targetRef":"p289"}
+{"type":"like","author":4,"targetRef":"p291"}
+{"type":"like","author":3,"targetRef":"p292"}
+{"type":"like","author":6,"targetRef":"p292"}
+{"type":"like","author":6,"targetRef":"p293"}
+{"type":"like","author":6,"targetRef":"p296"}
+{"type":"like","author":5,"targetRef":"p296"}
+{"type":"like","author":7,"targetRef":"p296"}
+{"type":"like","author":3,"targetRef":"p296"}
+{"type":"like","author":1,"targetRef":"p296"}
+{"type":"like","author":3,"targetRef":"p297"}
+{"type":"like","author":1,"targetRef":"p298"}
+{"type":"like","author":3,"targetRef":"p301"}
+{"type":"like","author":4,"targetRef":"p302"}
+{"type":"like","author":6,"targetRef":"p302"}
+{"type":"follow","author":1,"target":5}
+{"type":"follow","author":0,"target":7}
+{"type":"follow","author":7,"target":3}
+{"type":"follow","author":4,"target":9}

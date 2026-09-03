@@ -8,7 +8,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import { followRankingsAvailable } from '@/lib/contract-topology'
-import type { RankedGroupCount } from '@/lib/services/ranked-likes'
+import type { RankedGroupCount, RankingWindow } from '@/lib/services/ranked-likes'
 
 /** A ranked identity hydrated into something renderable. */
 interface RankedUser {
@@ -102,17 +102,20 @@ function RankedUserList({
  *
  * Render-gated by the caller on `prefixRankingsAvailable()`.
  */
-export function TopCreators() {
+export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {}) {
   const [creators, setCreators] = useState<RankedUser[]>([])
   const [mostFollowed, setMostFollowed] = useState<RankedUser[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
+    setIsLoading(true)
     const load = async () => {
       try {
         const { topCreatorsByLikes, mostFollowedUsers } = await import('@/lib/services/ranked-likes')
+        // Most-followed has no windowed twin (follow has no timeRange index):
+        // it stays all-time under either window.
         const [creatorRanking, followRanking] = await Promise.all([
-          topCreatorsByLikes(10),
+          topCreatorsByLikes(10, window),
           followRankingsAvailable() ? mostFollowedUsers(10) : Promise.resolve([]),
         ])
         const [hydratedCreators, hydratedFollowed] = await hydrateRankedUsers([
@@ -131,7 +134,7 @@ export function TopCreators() {
     }
 
     load().catch((err) => logger.error('Failed to load creator leaderboard:', err))
-  }, [])
+  }, [window])
 
   if (isLoading) {
     return (
@@ -159,7 +162,7 @@ export function TopCreators() {
           <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 flex items-center gap-1.5">
               <TrophyIcon className="h-4 w-4" />
-              Top creators by likes received
+              Top creators by likes received{window === 'today' ? ' today' : ''}
             </h3>
           </div>
           <RankedUserList users={creators} countLabel="like" testId="explore-top-creators" />
