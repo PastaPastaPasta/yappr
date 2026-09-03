@@ -85,9 +85,7 @@ function FeedPage() {
               isLoadingMore={isLoadingMore}
               pendingNewPosts={pendingNewPosts}
               onShowNewPosts={showNewPosts}
-              onLoadMore={() => {
-                loadMore().catch((error) => logger.error('Feed loadMore failed', error));
-              }}
+              onLoadMore={loadMore}
               onRetry={() => {
                 refresh().catch((error) => logger.error('Feed retry refresh failed', error));
               }}

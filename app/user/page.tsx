@@ -39,6 +39,8 @@ import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { BannerCustomization } from '@/components/settings/banner-customization'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import toast from 'react-hot-toast'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
@@ -718,6 +720,20 @@ function UserProfileContent() {
       setIsLoadingMore(false)
     }
   }, [userId, isLoadingMore, hasMore, hasMoreReposts, lastPostId, lastRepostId, username, profile?.displayName, hasDpns, enrichProgressively])
+
+  // Only the Posts tab paginates, so infinite scroll is off elsewhere.
+  const hasMorePosts = hasMore || hasMoreReposts
+  const {
+    sentinelRef: postsSentinelRef,
+    isSuspended: postsAutoLoadSuspended,
+    loadMore: loadMorePostsManually
+  } = useInfiniteScroll({
+    hasMore: hasMorePosts,
+    isLoading: isLoadingMore,
+    onLoadMore: loadMorePosts,
+    disabled: activeTab !== 'posts',
+    resetKey: userId
+  })
 
   // Load mentions for this user (lazy load when tab is selected)
   const loadMentions = useCallback(async () => {
@@ -1721,18 +1737,16 @@ function UserProfileContent() {
                         />
                       ))}
 
-                    {/* Load More button — only the Posts tab paginates */}
-                    {activeTab === 'posts' && (hasMore || hasMoreReposts) && (
-                      <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
-                        <Button
-                          variant="outline"
-                          onClick={loadMorePosts}
-                          disabled={isLoadingMore}
-                          className="w-full max-w-xs"
-                        >
-                          {isLoadingMore ? 'Loading...' : 'Load more posts'}
-                        </Button>
-                      </div>
+                    {/* Infinite scroll sentinel — only the Posts tab paginates */}
+                    {activeTab === 'posts' && hasMorePosts && (
+                      <InfiniteScrollSentinel
+                        sentinelRef={postsSentinelRef}
+                        isLoading={isLoadingMore}
+                        isSuspended={postsAutoLoadSuspended}
+                        onLoadMore={loadMorePostsManually}
+                        label="Load more posts"
+                        className="border-t border-gray-200 dark:border-gray-800"
+                      />
                     )}
                     </div>
                   )}

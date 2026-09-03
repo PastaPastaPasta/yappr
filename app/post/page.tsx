@@ -14,6 +14,8 @@ import { usePostDetail } from '@/hooks/use-post-detail'
 import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
@@ -42,6 +44,17 @@ function PostDetailContent() {
   } = usePostDetail({
     postId,
     enabled: !!postId
+  })
+
+  const {
+    sentinelRef: repliesSentinelRef,
+    isSuspended: repliesAutoLoadSuspended,
+    loadMore: loadMoreRepliesManually
+  } = useInfiniteScroll({
+    hasMore: hasMoreReplies,
+    isLoading: isLoadingReplies || isLoadingMoreReplies,
+    onLoadMore: loadMoreReplies,
+    resetKey: postId
   })
 
   const {
@@ -219,15 +232,12 @@ function PostDetailContent() {
               )}
 
               {hasMoreReplies && (
-                <div className="p-4 flex justify-center">
-                  <button
-                    onClick={() => { loadMoreReplies().catch(() => undefined) }}
-                    disabled={isLoadingMoreReplies}
-                    className="px-6 py-2 rounded-full bg-yappr-500 text-white hover:bg-yappr-600 disabled:opacity-50 transition-colors"
-                  >
-                    {isLoadingMoreReplies ? 'Loading...' : 'Load More'}
-                  </button>
-                </div>
+                <InfiniteScrollSentinel
+                  sentinelRef={repliesSentinelRef}
+                  isLoading={isLoadingMoreReplies}
+                  isSuspended={repliesAutoLoadSuspended}
+                  onLoadMore={loadMoreRepliesManually}
+                />
               )}
             </div>
           </>

@@ -3,7 +3,9 @@
 import { Post } from '@/lib/types';
 import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
 import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link';
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll';
 import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
 import { useAuth } from '@/contexts/auth-context';
@@ -18,7 +20,7 @@ interface FeedPostListProps {
   isLoadingMore: boolean;
   pendingNewPosts: Post[];
   onShowNewPosts: () => void;
-  onLoadMore: () => void;
+  onLoadMore: () => Promise<void>;
   onRetry: () => void;
   onPostDelete: (postId: string) => void;
   getPostEnrichment: (post: Post) => {
@@ -52,6 +54,13 @@ export function FeedPostList({
   // 'hide' filters at render time so pagination cursors stay untouched — a
   // short page is fine, a broken cursor is not.
   const visiblePosts = posts && filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId);
+
+  const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
+    hasMore,
+    isLoading: isLoadingMore || isLoading,
+    onLoadMore,
+    resetKey: activeTab,
+  });
 
   return (
     <ErrorBoundary level="component">
@@ -90,15 +99,13 @@ export function FeedPostList({
           ))}
 
           {hasMore && posts && posts.length > 0 && (
-            <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
-              <button
-                onClick={onLoadMore}
-                disabled={isLoadingMore}
-                className="px-6 py-2 rounded-full bg-yappr-500 text-white hover:bg-yappr-600 disabled:opacity-50 transition-colors"
-              >
-                {isLoadingMore ? 'Loading...' : 'Load More'}
-              </button>
-            </div>
+            <InfiniteScrollSentinel
+              sentinelRef={sentinelRef}
+              isLoading={isLoadingMore}
+              isSuspended={isSuspended}
+              onLoadMore={loadMore}
+              className="border-t border-gray-200 dark:border-gray-800"
+            />
           )}
 
           {!hasMore && posts && posts.length > 0 && (
