@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '@/lib/logger';
 import { useAuth } from '@/contexts/auth-context';
-import { checkBlockedForAuthors } from '@/hooks/use-block';
+import { filterBlockedAuthors } from '@/hooks/use-block';
 import { followService } from '@/lib/services';
 import type { Post } from '@/lib/types';
 import type { RankingWindow } from '@/lib/services/ranked-likes';
@@ -36,15 +36,19 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   const userId = user?.identityId;
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Following Top fans out one ranked read per followed author and can settle
+  // well after a For You Top read issued later; only the newest request may
+  // touch state, so a superseded response never overwrites the current view.
+  const requestIdRef = useRef(0);
 
   const load = useCallback(
     async (force = false) => {
-      if (!likesAreIndexOnly()) {
+      const requestId = ++requestIdRef.current;
+      const isCurrent = () => requestIdRef.current === requestId;
+
+      if (!likesAreIndexOnly() || (activeTab === 'following' && !userId)) {
         setPosts([]);
-        return;
-      }
-      if (activeTab === 'following' && !userId) {
-        setPosts([]);
+        setIsLoading(false);
         return;
       }
 
@@ -58,19 +62,13 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         } else {
           ranked = await topLikedPostsHydrated({ limit: 20, window, force });
         }
-
-        if (userId && ranked.length > 0) {
-          const authorIds = Array.from(new Set(ranked.map((post) => post.author.id)));
-          const blockedMap = await checkBlockedForAuthors(userId, authorIds);
-          ranked = ranked.filter((post) => !blockedMap.get(post.author.id));
-        }
-
-        setPosts(ranked);
+        const visible = await filterBlockedAuthors(userId, ranked);
+        if (isCurrent()) setPosts(visible);
       } catch (error) {
         logger.error('Feed: Failed to load top posts:', error);
-        setPosts([]);
+        if (isCurrent()) setPosts([]);
       } finally {
-        setIsLoading(false);
+        if (isCurrent()) setIsLoading(false);
       }
     },
     [activeTab, userId, window]

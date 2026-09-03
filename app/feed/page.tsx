@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { logger } from '@/lib/logger';
-import { scopedKey } from '@/lib/storage-scope';
+import { readScoped, writeScoped } from '@/lib/storage-scope';
 import { Sidebar } from '@/components/layout/sidebar';
 import { RightSidebar } from '@/components/layout/right-sidebar';
 import { withAuth, useAuth } from '@/contexts/auth-context';
@@ -19,29 +19,12 @@ import { useFeedData, type FeedTab } from '@/hooks/use-feed-data';
 import { useTopFeed } from '@/hooks/use-top-feed';
 
 function readSavedTab(): FeedTab {
-  try {
-    if (typeof window !== 'undefined') {
-      const savedTab = localStorage.getItem(scopedKey('feed-tab'));
-      if (savedTab === 'forYou' || savedTab === 'following') {
-        return savedTab;
-      }
-    }
-  } catch {
-    return 'forYou';
-  }
-  return 'forYou';
+  const saved = readScoped('feed-tab');
+  return saved === 'forYou' || saved === 'following' ? saved : 'forYou';
 }
 
 function readSavedSortMode(): FeedSortMode {
-  try {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(scopedKey('feed-sort'));
-      if (saved === 'top' && likesAreIndexOnly()) return 'top';
-    }
-  } catch {
-    return 'recent';
-  }
-  return 'recent';
+  return readScoped('feed-sort') === 'top' && likesAreIndexOnly() ? 'top' : 'recent';
 }
 
 function FeedPage() {
@@ -74,20 +57,12 @@ function FeedPage() {
 
   const handleTabChange = (tab: FeedTab) => {
     setActiveTab(tab);
-    try {
-      localStorage.setItem(scopedKey('feed-tab'), tab);
-    } catch {
-      // Ignore storage write failures (privacy mode/blocked storage).
-    }
+    writeScoped('feed-tab', tab);
   };
 
   const handleSortModeChange = (mode: FeedSortMode) => {
     setSortMode(mode);
-    try {
-      localStorage.setItem(scopedKey('feed-sort'), mode);
-    } catch {
-      // Ignore storage write failures (privacy mode/blocked storage).
-    }
+    writeScoped('feed-sort', mode);
   };
 
   const handleRefresh = () => {

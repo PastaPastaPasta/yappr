@@ -169,6 +169,20 @@ export async function checkBlockedForAuthors(
 }
 
 /**
+ * Drop posts whose author the viewer has blocked. A no-op for logged-out
+ * viewers and empty lists; block lookups fail soft to "not blocked".
+ */
+export async function filterBlockedAuthors<T extends { author: { id: string } }>(
+  viewerId: string | undefined,
+  posts: T[]
+): Promise<T[]> {
+  if (!viewerId || posts.length === 0) return posts
+  const authorIds = Array.from(new Set(posts.map((post) => post.author.id)))
+  const blocked = await checkBlockedForAuthors(viewerId, authorIds)
+  return posts.filter((post) => !blocked.get(post.author.id))
+}
+
+/**
  * Clear all block caches
  */
 export function clearBlockCache(): void {

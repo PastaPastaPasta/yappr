@@ -259,21 +259,15 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
     return [];
   }
 
-  const cacheKey = `${window}:${hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
+  const cacheKey = `${window}:${limit}:${hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
   return hydrateRankedCached(cacheKey, force, () =>
     topLikedPosts(hashtag === undefined ? { limit, window } : { hashtag, limit, window })
   );
 }
 
-export interface HydratedTopPostsByAuthorsOptions {
-  /** Base58 identity ids whose per-author rankings are merged. */
+export interface HydratedTopPostsByAuthorsOptions extends Omit<HydratedTopPostsOptions, 'hashtag'> {
+  /** Base58 identity ids whose per-author rankings are merged; `limit` sizes the merged page. */
   authorIds: string[];
-  /** Size of the merged page, 1..100, default 20. */
-  limit?: number;
-  /** `'today'` reads the v6 daily-windowed twin; default `'all'`. */
-  window?: RankingWindow;
-  /** Skip the 60-second hydrated cache (an explicit user refresh). */
-  force?: boolean;
 }
 
 /**
@@ -295,10 +289,12 @@ const TOP_BY_AUTHORS_CONCURRENCY = 8;
  */
 export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsByAuthorsOptions): Promise<Post[]> {
   const { limit = 20, window = 'all', force = false } = options;
+  // Sorted so the cache key is order-independent; above the cap this keeps a
+  // fixed (alphabetical by id) subset rather than a different one per call.
   const authorIds = Array.from(new Set(options.authorIds)).sort().slice(0, TOP_BY_AUTHORS_MAX_AUTHORS);
   if (authorIds.length === 0) return [];
 
-  const cacheKey = `${window}:authors:${authorIds.join(',')}`;
+  const cacheKey = `${window}:${limit}:authors:${authorIds.join(',')}`;
   return hydrateRankedCached(cacheKey, force, async () => {
     const { mapLimit } = await import('./pagination-utils');
     const perAuthor = await mapLimit(authorIds, TOP_BY_AUTHORS_CONCURRENCY, (postAuthor) =>
@@ -314,6 +310,8 @@ export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsBy
 /**
  * Serve a hydrated ranking from the 60-second cache, or run `rank` and
  * hydrate its result. `force` bypasses the cache read but still refills it.
+ * Keys carry the page size, so callers asking for different limits never
+ * share (and truncate) each other's page.
  */
 async function hydrateRankedCached(
   cacheKey: string,
