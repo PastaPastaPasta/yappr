@@ -557,9 +557,19 @@ async function buildActors(handle, ledger, personas, ops) {
 
 async function snapshotBalances(handle, actors, tokenId) {
   const ids = [...actors.values()].map((actor) => actor.ownerId);
-  const credits = await readback(handle, () => handle.sdk.identities.balances(ids));
-  const yapp = await readback(handle, () => handle.sdk.tokens.balances(ids, tokenId));
-  const get = (map, key) => ((map instanceof Map ? map.get(key) : map?.[key]) ?? 0n);
+  // DAPI caps identity/token balance queries at 100 ids per call.
+  const credits = new Map();
+  const yapp = new Map();
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const c = await readback(handle, () => handle.sdk.identities.balances(chunk));
+    const y = await readback(handle, () => handle.sdk.tokens.balances(chunk, tokenId));
+    for (const id of chunk) {
+      credits.set(id, (c instanceof Map ? c.get(id) : c?.[id]) ?? 0n);
+      yapp.set(id, (y instanceof Map ? y.get(id) : y?.[id]) ?? 0n);
+    }
+  }
+  const get = (map, key) => map.get(key) ?? 0n;
   const out = new Map();
   for (const actor of actors.values()) {
     out.set(actor.personaIdx, { credits: get(credits, actor.ownerId), yapp: get(yapp, actor.ownerId) });
