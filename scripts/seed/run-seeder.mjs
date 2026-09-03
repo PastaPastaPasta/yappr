@@ -97,6 +97,8 @@ const SETTLE_MS = 3_000;
 const SETTLE_POLLS = 3;
 /** How long an op may park waiting for its target ref before giving up. */
 const DEP_WAIT_TIMEOUT_MS = 15 * 60_000;
+/** Identity fetches in flight while building the actor table (startup cost only). */
+const ACTOR_FETCH_CONCURRENCY = 16;
 
 // ---- CLI ------------------------------------------------------------------------
 
@@ -534,7 +536,10 @@ async function buildActors(handle, ledger, personas, ops) {
   const authors = new Set(ops.map((op) => op.author));
   for (const op of ops) if (op.type === 'follow') authors.add(op.target);
   const actors = new Map();
-  for (const idx of authors) {
+  // One identity fetch each; sequentially that is minutes of startup at 300
+  // authors, so fetch a bounded number of them at a time.
+  const queue = [...authors];
+  const build = async (idx) => {
     const entry = ledgerEntry(ledger, idx);
     if (!entry || !entry.identityId || stateRank(entry.state) < stateRank('registered')) {
       throw new Error(`persona ${idx} is not provisioned (run provision-seed-identities.mjs first)`);
@@ -551,7 +556,12 @@ async function buildActors(handle, ledger, personas, ops) {
     const signer = new IdentitySigner();
     signer.addKeyFromWif(wifFromHex(authKey.privateKeyHex));
     actors.set(idx, { personaIdx: idx, ownerId: entry.identityId, handle: entry.handle, identityKey, signer });
-  }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(ACTOR_FETCH_CONCURRENCY, queue.length) }, async () => {
+      while (queue.length > 0) await build(queue.shift());
+    })
+  );
   return actors;
 }
 
