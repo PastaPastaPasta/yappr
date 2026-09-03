@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { XMarkIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildYapprStateTransitionUri } from 'platform-auth'
@@ -53,7 +53,7 @@ const MODAL_TITLES: Record<ModalState, string> = {
 
 // How long the dash-st: QR stays valid before the flow gives up waiting for
 // the wallet (matches the key-registration flow's 5-minute window).
-const WALLET_SIGN_TIMEOUT_S = 300
+const WALLET_SIGN_TIMEOUT_MS = 300000
 
 export function BuyYappModal() {
   const { isOpen, reason, signing, close } = useBuyYappModal()
@@ -74,11 +74,13 @@ export function BuyYappModal() {
   // CRITICAL key the user pastes when their login key is HIGH — kept in
   // component state only for the purchase, never persisted.
   const [criticalKeyWif, setCriticalKeyWif] = useState('')
-  // Remote wallet signing (dash-st: QR): the unsigned purchase URI, the QR
-  // countdown, and the YAPP balance right before the QR was shown — success is
-  // detected by the balance growing by the purchased amount.
+  const [showKeyEntry, setShowKeyEntry] = useState(false)
+  // Remote wallet signing (dash-st: QR): the unsigned purchase URI, whether
+  // the silent wait for it has run out, and the YAPP balance right before the
+  // QR was shown — success is detected by the balance growing by the
+  // purchased amount.
   const [walletUri, setWalletUri] = useState<string | null>(null)
-  const [walletRemaining, setWalletRemaining] = useState<number | null>(null)
+  const [walletExpired, setWalletExpired] = useState(false)
   const walletBaselineRef = useRef<bigint | null>(null)
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation can't overwrite a fresh QR or
@@ -103,8 +105,9 @@ export function BuyYappModal() {
       setError(null)
       setShowCosts(false)
       setCriticalKeyWif('')
+      setShowKeyEntry(false)
       setWalletUri(null)
-      setWalletRemaining(null)
+      setWalletExpired(false)
       walletBaselineRef.current = null
       walletSessionRef.current++
     }
@@ -163,7 +166,8 @@ export function BuyYappModal() {
     } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
       // Login key is HIGH but purchases must be signed with CRITICAL — ask for
       // it. If a key was already entered, it didn't match a CRITICAL key.
-      setError(enteredKey ? 'That key doesn\'t match a CRITICAL key on your identity — check it and try again' : null)
+      setError(enteredKey ? 'That key doesn\'t match a critical key on your identity. Check it and try again.' : null)
+      setShowKeyEntry(Boolean(enteredKey))
       setState('needKey')
     } else {
       // Leaving the needKey flow — drop the entered key so a later retry can't
@@ -182,7 +186,7 @@ export function BuyYappModal() {
   const exitWalletSign = useCallback((message: string | null) => {
     walletSessionRef.current++
     setWalletUri(null)
-    setWalletRemaining(null)
+    setWalletExpired(false)
     setError(message)
     setState(preferWallet ? 'confirming' : 'needKey')
   }, [preferWallet])
@@ -198,7 +202,7 @@ export function BuyYappModal() {
     setState('walletSign')
     setError(null)
     setWalletUri(null)
-    setWalletRemaining(null)
+    setWalletExpired(false)
     try {
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
@@ -215,23 +219,24 @@ export function BuyYappModal() {
     }
   }
 
+  const startWalletSign = () => {
+    handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err))
+  }
+
   // While the dash-st: QR is up, poll the YAPP balance until the wallet's
-  // broadcast lands (balance grew by at least the purchased amount), and run
-  // the QR expiry countdown. The transition embeds the current contract nonce,
-  // so it expires naturally if the user posts or likes in the meantime.
+  // broadcast lands (balance grew by at least the purchased amount). The wait
+  // has a silent budget; when it runs out the QR gives way to a "check again"
+  // prompt rather than a visible countdown. The transition embeds the current
+  // contract nonce, so it expires naturally if the user posts or likes in the
+  // meantime.
   useEffect(() => {
     if (state !== 'walletSign' || !walletUri || !user) return
     const identityId = user.identityId
-    const startedAt = Date.now()
-    setWalletRemaining(WALLET_SIGN_TIMEOUT_S)
 
-    const countdown = setInterval(() => {
-      const remaining = Math.max(0, WALLET_SIGN_TIMEOUT_S - Math.floor((Date.now() - startedAt) / 1000))
-      setWalletRemaining(remaining)
-      if (remaining === 0) {
-        exitWalletSign('Didn\'t detect the purchase in time — if your wallet did broadcast it, your balance will update shortly')
-      }
-    }, 1000)
+    const budget = setTimeout(() => {
+      setWalletUri(null)
+      setWalletExpired(true)
+    }, WALLET_SIGN_TIMEOUT_MS)
 
     let finished = false
     const poll = setInterval(() => {
@@ -255,10 +260,10 @@ export function BuyYappModal() {
     }, 5000)
 
     return () => {
-      clearInterval(countdown)
+      clearTimeout(budget)
       clearInterval(poll)
     }
-  }, [state, walletUri, user, amountBig, finishPurchase, exitWalletSign])
+  }, [state, walletUri, user, amountBig, finishPurchase])
 
   const handleClose = () => {
     if (state === 'processing') return
@@ -412,7 +417,7 @@ export function BuyYappModal() {
                           <Button onClick={() => { setState('input'); setError(null); setCriticalKeyWif('') }} variant="outline" className="flex-1">Back</Button>
                           {preferWallet ? (
                             <Button
-                              onClick={() => { handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err)) }}
+                              onClick={startWalletSign}
                               className="flex-1"
                             >
                               Approve in wallet
@@ -432,58 +437,67 @@ export function BuyYappModal() {
                     {state === 'needKey' && (
                       <div className="space-y-4">
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          Buying YAPP spends DASH credits, and Dash Platform requires your{' '}
-                          <span className="font-medium text-gray-900 dark:text-gray-100">CRITICAL</span> key to
-                          authorize that — your login key is a HIGH key, which can post but not spend.
-                          Paste your CRITICAL private key below. It signs this purchase locally and is
-                          never stored or sent anywhere.
+                          Buying YAPP spends DASH credits, which needs your identity&apos;s{' '}
+                          <span className="font-medium text-gray-900 dark:text-gray-100">critical</span> key.
+                          Your sign-in key can post but not spend, so approve this purchase in the Dash wallet
+                          that holds it.
                         </p>
                         <div className="flex justify-between text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2">
                           <span className="text-gray-600 dark:text-gray-400">Buying {amountBig.toString()} YAPP</span>
                           <span className="font-medium">{costDashLabel}</span>
                         </div>
-                        <input
-                          type="password"
-                          value={criticalKeyWif}
-                          onChange={(e) => { setCriticalKeyWif(e.target.value); setError(null) }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && criticalKeyWif.trim()) {
-                              e.preventDefault()
-                              handleBuy().catch(err => logger.error('Failed to buy YAPP:', err))
-                            }
-                          }}
-                          placeholder="CRITICAL private key (WIF)"
-                          autoComplete="off"
-                          className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
-                        />
-                        {error && <p className="text-red-500 text-sm">{error}</p>}
+                        {error && !showKeyEntry && <p className="text-red-500 text-sm">{error}</p>}
                         <div className="flex gap-3">
                           <Button
-                            onClick={() => { setState('confirming'); setError(null); setCriticalKeyWif('') }}
+                            onClick={() => { setState('confirming'); setError(null); setCriticalKeyWif(''); setShowKeyEntry(false) }}
                             variant="outline"
                             className="flex-1"
                           >
                             Back
                           </Button>
-                          <Button onClick={handleBuy} disabled={!criticalKeyWif.trim()} className="flex-1">
-                            Authorize &amp; Buy
+                          <Button
+                            onClick={startWalletSign}
+                            className="flex-1"
+                          >
+                            Approve in wallet
                           </Button>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
-                          <span className="text-xs text-gray-500">or</span>
-                          <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
+                        <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
+                          <button
+                            type="button"
+                            aria-expanded={showKeyEntry}
+                            onClick={() => setShowKeyEntry(v => !v)}
+                            className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors py-1"
+                          >
+                            <span>{showKeyEntry ? 'Hide private key entry' : 'Paste a critical private key instead'}</span>
+                            <ChevronDownIcon aria-hidden="true" className={`w-4 h-4 transition-transform ${showKeyEntry ? 'rotate-180' : ''}`} />
+                          </button>
+                          {showKeyEntry && (
+                            <div className="space-y-3 pt-3">
+                              <p className="text-xs text-gray-500">
+                                The key signs this purchase locally and is never stored or sent anywhere.
+                              </p>
+                              <input
+                                type="password"
+                                value={criticalKeyWif}
+                                onChange={(e) => { setCriticalKeyWif(e.target.value); setError(null) }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && criticalKeyWif.trim()) {
+                                    e.preventDefault()
+                                    handleBuy().catch(err => logger.error('Failed to buy YAPP:', err))
+                                  }
+                                }}
+                                placeholder="Critical private key (WIF)"
+                                autoComplete="off"
+                                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+                              />
+                              {error && <p className="text-red-500 text-sm">{error}</p>}
+                              <Button onClick={handleBuy} disabled={!criticalKeyWif.trim()} variant="outline" className="w-full">
+                                Authorize &amp; buy with this key
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                        <Button
-                          onClick={() => { handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err)) }}
-                          variant="outline"
-                          className="w-full"
-                        >
-                          Sign with Dash wallet
-                        </Button>
-                        <p className="text-xs text-gray-500 text-center">
-                          Approve the purchase in a wallet that holds your CRITICAL key — no key ever touches this browser.
-                        </p>
                       </div>
                     )}
 
@@ -495,12 +509,25 @@ export function BuyYappModal() {
                         </div>
                         {walletUri ? (
                           <>
-                            <KeyExchangeQR uri={walletUri} size={200} remainingTime={walletRemaining} />
+                            <KeyExchangeQR uri={walletUri} size={200} />
                             <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
                               <Spinner size="sm" className="border-yappr-500" />
                               Waiting for the wallet to sign &amp; broadcast…
                             </div>
                           </>
+                        ) : walletExpired ? (
+                          <div className="py-6 text-center space-y-4">
+                            <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the purchase land yet</p>
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
+                              If your wallet already broadcast it, your balance will update shortly. Otherwise check again for a fresh request.
+                            </p>
+                            <Button
+                              onClick={startWalletSign}
+                              className="w-full"
+                            >
+                              Check again
+                            </Button>
+                          </div>
                         ) : (
                           <div className="py-8 text-center space-y-4">
                             <Spinner size="lg" className="mx-auto border-yappr-500" />
