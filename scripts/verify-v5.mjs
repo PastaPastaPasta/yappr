@@ -2359,6 +2359,49 @@ async function caseD2WindowedBeat(ctx) {
     (wrong.error ?? 'accepted').slice(0, 160)
   );
   if (!wrong.ok) capturedErrors.push({ label: 'd2e beat hashtag mismatch', message: wrong.error ?? '' });
+
+  // Un-beat: the delete tuple's $createdAt comes from the beat's OWN
+  // byPostTime projection ([postId, $createdAt] → $ownerId) — the like's
+  // timestamp is NOT a substitute (different block). After the delete the
+  // tag's today count drops by one and the byPost entry is gone.
+  const page = await readback(() =>
+    ctx.sdk.documents.query({
+      dataContractId: ctx.contractId,
+      documentTypeName: 'beat',
+      where: [['postId', '==', ctx.postT2]],
+      orderBy: [['postId', 'asc'], ['$createdAt', 'desc']],
+      limit: 20,
+    })
+  );
+  const mine = [...page.values()].map((doc) => doc.toObject()).find((obj) => asBase58(obj?.$ownerId) === ctx.botA.ownerId);
+  check(
+    'd2f beat.byPostTime projects the beat\'s own $createdAt (+ $id) for the delete tuple',
+    mine !== undefined && mine.$createdAt !== undefined && mine.$createdAt !== null,
+    mine ? `id=${asBase58(mine.$id)?.slice(0, 8)} createdAt=${mine.$createdAt}` : 'no beat projection for postT2'
+  );
+  if (mine) {
+    const before = groupValueOf(await readback(() => ctx.sdk.documents.ranked(beatShape('hashtag'))), ctx.tag) ?? 0n;
+    // Same shape as b8: the SDK needs a full built Document for an indexOnly
+    // delete (its values are what identify the entries).
+    const { document: beatDoc } = buildDocument({
+      contractId: ctx.contractId,
+      docType: 'beat',
+      ownerId: ctx.botA.ownerId,
+      id: Uint8Array.from(mine.$id),
+      data: { postId: bs58.decode(ctx.postT2), hashtag: ctx.tag },
+      entropy: randomIdBytes(),
+      createdAt: BigInt(mine.$createdAt),
+    });
+    const removed = await attemptDeleteByValues(ctx.sdk, ctx.botA, {
+      document: beatDoc,
+      accepted: async () => !(await entryExists(ctx.sdk, ctx.contractId, 'beat', 'postId', ctx.postT2, ctx.botA.ownerId)),
+    });
+    check('d2g delete-by-values with the projected tuple removes the beat (byPost entry gone)', removed.ok, (removed.error ?? '').slice(0, 160));
+    await settle();
+    const after = groupValueOf(await readback(() => ctx.sdk.documents.ranked(beatShape('hashtag'))), ctx.tag) ?? 0n;
+    check("d2h today's trending count for the run tag drops by exactly one after the un-beat", after === before - 1n, `before=${before} after=${after}`);
+    if (removed.ok) ctx.beats.postT2 = false;
+  }
 }
 
 async function caseD3ColdBucket(ctx) {
