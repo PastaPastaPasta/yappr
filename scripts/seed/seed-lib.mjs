@@ -237,11 +237,15 @@ export function ledgerEntry(ledger, personaIdx) {
  * can never match DPNS's contested-name pattern, so registration never enters
  * a masternode vote.
  */
-export function validateHandle(handle) {
+export function validateHandle(handle, { allowContested = false } = {}) {
   if (typeof handle !== 'string') return 'handle must be a string';
   if (!/^[a-z0-9-]{3,19}$/.test(handle)) return `handle "${handle}" must be [a-z0-9-], 3-19 chars`;
   if (handle.startsWith('-') || handle.endsWith('-')) return `handle "${handle}" must not start or end with a hyphen`;
-  if (!/[2-9]/.test(handle)) return `handle "${handle}" needs at least one digit 2-9 (avoids DPNS contested names)`;
+  // A label with no digit 2-9 matches DPNS's contested pattern ^[a-zA-Z01-]{3,19}$
+  // and its registration enters a masternode vote instead of landing at once.
+  // Hero personas (alice / bob / carol) opt in with `contested: true` and the
+  // provisioner handles the vote flow; everyone else must carry a digit.
+  if (!allowContested && !/[2-9]/.test(handle)) return `handle "${handle}" needs at least one digit 2-9 (avoids DPNS contested names)`;
   return null;
 }
 
@@ -274,7 +278,7 @@ export function avatarFieldFor(persona) {
 export function validatePersona(persona, limits) {
   const errors = [];
   if (!Number.isInteger(persona.idx) || persona.idx < 0) errors.push('idx must be a non-negative integer');
-  const handleError = validateHandle(persona.handle);
+  const handleError = validateHandle(persona.handle, { allowContested: persona.contested === true });
   if (handleError) errors.push(handleError);
   if (typeof persona.displayName !== 'string' || persona.displayName.trim().length < 1) {
     errors.push('displayName is required');
