@@ -19,6 +19,8 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay } from '@/components/store'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useSettingsStore } from '@/lib/store'
@@ -218,6 +220,18 @@ function StoreDetailContent() {
       setIsLoadingMore(false)
     }
   }, [storeId, isLoadingMore, hasMoreItems, lastCursor])
+
+  const {
+    sentinelRef: itemsSentinelRef,
+    isSuspended: itemsAutoLoadSuspended,
+    loadMore: loadMoreItemsManually
+  } = useInfiniteScroll({
+    hasMore: hasMoreItems,
+    isLoading: isLoadingMore,
+    onLoadMore: handleLoadMoreItems,
+    disabled: activeTab !== 'items',
+    resetKey: storeId
+  })
 
   const handleItemClick = (itemId: string) => {
     // Save current state to cache for back-button restoration
@@ -628,15 +642,14 @@ function StoreDetailContent() {
                       )
                     })}
                     {hasMoreItems && (
-                      <div className="col-span-2 py-4 text-center">
-                        <Button
-                          variant="outline"
-                          onClick={handleLoadMoreItems}
-                          disabled={isLoadingMore}
-                        >
-                          {isLoadingMore ? 'Loading...' : 'Load More Products'}
-                        </Button>
-                      </div>
+                      <InfiniteScrollSentinel
+                        sentinelRef={itemsSentinelRef}
+                        isLoading={isLoadingMore}
+                        isSuspended={itemsAutoLoadSuspended}
+                        onLoadMore={loadMoreItemsManually}
+                        label="Load More Products"
+                        className="col-span-2"
+                      />
                     )}
                   </>
                 )}
