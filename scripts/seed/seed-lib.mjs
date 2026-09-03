@@ -84,12 +84,13 @@ export function profileContractId() {
 //        like `byHashtagPost` index is skipIfAbsent — absence simply writes no
 //        entry, which needs no seeder action beyond the correct doc shape.
 
-export const TOPOLOGIES = ['v4', 'v5'];
-export const HASHTAG_MAX = { v4: 63, v5: 61 };
+export const TOPOLOGIES = ['v4', 'v5', 'v6'];
+export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61 };
 
 /** Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file), else v4. */
 export function defaultTopology() {
-  return envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v5' ? 'v5' : 'v4';
+  const configured = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY');
+  return TOPOLOGIES.includes(configured) ? configured : 'v4';
 }
 
 /**
@@ -99,8 +100,22 @@ export function defaultTopology() {
  */
 export function hashtagProps(hashtag, topology) {
   const tag = hashtag ?? '';
-  if (topology === 'v5') return tag === '' ? {} : { hashtag: tag };
+  if (topology === 'v5' || topology === 'v6') return tag === '' ? {} : { hashtag: tag };
   return { hashtag: tag };
+}
+
+/**
+ * v6: the `beat` companion a like of a TAGGED post writes beside itself —
+ * the tagged-only indexOnly doctype whose byDayHashtagPost serves today's
+ * trending hashtags / per-tag top. `null` when no beat is written (pre-v6,
+ * or an untagged target: beat.hashtag is required). Its postId refersTo the
+ * post with propertyAgreement on hashtag, so consensus checks the tag.
+ */
+export function beatValueTuple(target, topology) {
+  if (topology !== 'v6') return null;
+  const tag = target.hashtag ?? '';
+  if (tag === '') return null;
+  return { postId: bs58.decode(target.id), hashtag: tag };
 }
 
 /**

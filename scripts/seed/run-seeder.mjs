@@ -68,6 +68,7 @@ import {
   hashtagProps,
   ledgerEntry,
   likeValueTuple,
+  beatValueTuple,
   loadLedger,
   loadPersonas,
   loadProgress,
@@ -346,6 +347,7 @@ export function planOp(op, { actors, resolveRef, topology }) {
     }
     case 'like': {
       const target = resolveRef(op.targetRef);
+      const beat = beatValueTuple(target, topology);
       return {
         docType: 'like',
         tokenCost: TOKEN_COST.like,
@@ -356,6 +358,11 @@ export function planOp(op, { actors, resolveRef, topology }) {
         // tuple is what a delete-by-values would have to carry.
         data: likeValueTuple(target, topology),
         existenceKey: { keyField: 'postId', keyValue: target.id },
+        // v6: a like of a tagged post carries a `beat` companion (today's
+        // trending rides beat.byDayHashtagPost). Written as a second
+        // indexOnly create after the like lands; its own existence read is
+        // the acceptance probe, and a duplicate (resume) is success.
+        ...(beat ? { companion: { docType: 'beat', data: beat, existenceKey: { keyField: 'postId', keyValue: target.id } } } : {}),
       };
     }
     case 'likeReply': {
@@ -418,6 +425,50 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
       : (async () =>
         (await readback(handle, () => handle.sdk.documents.get(contractId, plan.docType, id))) != null);
 
+    // v6: a like of a tagged post carries a `beat` companion. It is written
+    // AFTER the like is confirmed on chain (a beat without its like would be a
+    // phantom trending vote), through the same indexOnly acceptance loop: the
+    // chain decides, a duplicate on resume is success, transport collapse
+    // reconnects. A companion failure fails the op so a retry re-runs the
+    // (duplicate-tolerant) like and then the beat again.
+    const writeCompanion = async () => {
+      if (!plan.companion) return;
+      const companion = plan.companion;
+      const { document: companionDoc } = buildDocument({
+        contractId,
+        docType: companion.docType,
+        ownerId: actor.ownerId,
+        data: companion.data,
+        entropy: randomEntropy(),
+      });
+      const companionAccepted = () =>
+        entryExists(handle, contractId, companion.docType, companion.existenceKey.keyField, companion.existenceKey.keyValue, actor.ownerId);
+      if (await companionAccepted()) return; // resumed after a landed beat
+      let companionError = null;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          await handle.sdk.documents.create({ document: companionDoc, identityKey: actor.identityKey, signer: actor.signer });
+          if (await companionAccepted()) return;
+          companionError = new Error(`${companion.docType} create returned but the entry is not on chain`);
+        } catch (e) {
+          companionError = e;
+          const text = describeErr(e);
+          if (DUPLICATE_UNIQUE.test(text)) return;
+          if (TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text)) {
+            try { await handle.reconnect(text); } catch { /* next attempt retries */ }
+          }
+          for (let poll = 0; poll < SETTLE_POLLS; poll++) {
+            await sleep(SETTLE_MS);
+            try { if (await companionAccepted()) return; } catch (readError) { companionError = readError; }
+          }
+          const isConsensus = /code=4\d{4}/.test(text) || /consensus/i.test(text);
+          if (isConsensus) throw e;
+        }
+        await sleep(2_000 * attempt);
+      }
+      throw companionError ?? new Error(`${companion.docType} companion failed after retries`);
+    };
+
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -430,13 +481,14 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
         if (!plan.indexOnly) return plan.refRecord ? plan.refRecord(id) : null;
         // indexOnly: a clean return still gets one confirming read (cheap, and
         // the SDK's post-broadcast behavior for these types is unreliable).
-        if (await accepted()) return plan.refRecord ? plan.refRecord(id) : null;
+        if (await accepted()) { await writeCompanion(); return plan.refRecord ? plan.refRecord(id) : null; }
         lastError = new Error('create returned but the entry is not on chain');
       } catch (e) {
         lastError = e;
         const text = describeErr(e);
         if (DUPLICATE_UNIQUE.test(text) && DUPLICATE_IS_SUCCESS.has(op.type)) {
-          return plan.refRecord ? plan.refRecord(id) : null; // end state already holds
+          await writeCompanion(); // end state already holds; the beat may still be missing (resume)
+          return plan.refRecord ? plan.refRecord(id) : null;
         }
         if (TRANSPORT_COLLAPSE.test(text)) {
           try { await handle.reconnect(text); } catch { /* next attempt retries the rebuild */ }
@@ -450,7 +502,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
         for (let poll = 0; poll < settlePolls; poll++) {
           await sleep(SETTLE_MS);
           try {
-            if (await accepted()) return plan.refRecord ? plan.refRecord(id) : null;
+            if (await accepted()) { await writeCompanion(); return plan.refRecord ? plan.refRecord(id) : null; }
           } catch (readError) {
             lastError = readError;
           }
@@ -740,6 +792,13 @@ async function selfTest() {
   const quoteOp = { type: 'quote', ref: 'p2', author: 0, content: 'q', quotedRef: 'p1', hashtag: '', line: 2 };
   const likeOp = { type: 'like', author: 1, targetRef: 'p1', line: 3 };
 
+  check('v6: tagged like plans a beat companion { postId, hashtag }', (() => {
+    const plan = planOp(likeOp, planCtx('v6', 'dash'));
+    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash' && plan.companion.data.postId instanceof Uint8Array && plan.companion.existenceKey.keyField === 'postId';
+  })());
+  check('v6: untagged like plans NO companion', planOp(likeOp, planCtx('v6', '')).companion === undefined);
+  check('v5: tagged like plans NO companion (beat is v6-only)', planOp(likeOp, planCtx('v5', 'dash')).companion === undefined);
+  check('v6: untagged post OMITS hashtag (v5 rule carries over)', !('hashtag' in planOp(postOp, planCtx('v6', '')).data));
   check('v5: untagged post OMITS hashtag', !('hashtag' in planOp(postOp, planCtx('v5', '')).data));
   check('v5: tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('v5', '')).data.hashtag === 'dash');
   const v5Quote = planOp(quoteOp, planCtx('v5', '')).data;
