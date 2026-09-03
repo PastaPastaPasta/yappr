@@ -306,23 +306,13 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const { docType } = likeIndexFor(kind);
     const likeData = this.indexOnlyLikeData(targetId, shape, kind, info);
 
-    // v6: a like of a TAGGED post carries its `beat` companion in the SAME
-    // batch transition (today's trending rides beat.byDayHashtagPost), so the
-    // pair lands atomically. Untagged targets, reply likes and pre-v6
-    // topologies write the like alone.
-    const companion = beatCompanionFor(kind, info.hashtag);
-    const result = companion
-      ? await stateTransitionService.createDocumentPair(this.contractId, ownerId, [
-          { documentType: docType, data: likeData },
-          { documentType: companion.docType, data: this.beatData(targetId, info.hashtag ?? '') },
-        ])
-      : await stateTransitionService.createDocument(
-          this.contractId,
-          docType,
-          ownerId,
-          likeData,
-          { confirmation: 'affectedState' }
-        );
+    const result = await stateTransitionService.createDocument(
+      this.contractId,
+      docType,
+      ownerId,
+      likeData,
+      { confirmation: 'affectedState' }
+    );
 
     if (!result.success) {
       // Definitive, user-actionable failures propagate to the UI untouched.
@@ -333,6 +323,28 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const landed = await this.waitForLikeVisible(targetId, ownerId, kind);
       if (!landed) throw err;
       logger.warn('Like create reported failure but the like is on-chain — treating as success');
+    }
+
+    // v6: a like of a TAGGED post is followed by its `beat` companion (today's
+    // trending rides beat.byDayHashtagPost). Consensus caps a document batch
+    // at ONE transition on this network, so the pair cannot be atomic: the
+    // beat is a second transition, written only once the like is known to
+    // have landed, and awaited so the UI's "liked" state does not race the
+    // trending count. A beat failure is logged, never surfaced — the like is
+    // the user's action; the beat is the ranking's bookkeeping, and a missing
+    // one only under-counts one tag for the rest of the UTC day.
+    const companion = beatCompanionFor(kind, info.hashtag);
+    if (companion) {
+      const beat = await stateTransitionService.createDocument(
+        this.contractId,
+        companion.docType,
+        ownerId,
+        this.beatData(targetId, info.hashtag ?? ''),
+        { confirmation: 'affectedState' }
+      );
+      if (!beat.success) {
+        logger.warn('Like landed but its beat companion did not; today\'s trending under-counts this tag:', beat.error);
+      }
     }
 
     // Warm the unlike tuple ((ownerId, targetId) → $createdAt/$id) while the
@@ -441,7 +453,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     // $ownerId terminal). Best effort after a successful unlike: a stale beat
     // only over-counts one tag for the rest of the UTC day.
     if (result.success && beatCompanionFor(kind, info.hashtag)) {
-      this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '').catch((error) => {
+      this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '', tuple.createdAt).catch((error) => {
         logger.warn('Unlike landed but the beat companion could not be removed:', error);
       });
     }
@@ -487,26 +499,39 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * consensus `$createdAt`. Pinned on the target's author, newest first, so a
    * recent like is on the first page; bounded rather than exhaustive.
    */
-  /** v6: delete the `beat` written beside a like of a tagged post. */
-  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string): Promise<void> {
+  /**
+   * v6: delete the `beat` written after a like of a tagged post.
+   *
+   * The delete-by-values tuple needs the beat's `$id` AND `$createdAt`. Its
+   * `byPost` entry yields the id, but no plain beat index carries the
+   * timestamp (the bucketed ones store only the bucket START), so it is read
+   * from the beat's own `$createdAt`-bearing projection when present and
+   * otherwise probed as the like's timestamp (the beat lands in the block
+   * right after the like; a miss is a no-op delete). A beat that cannot be
+   * addressed is left standing — it only over-counts one tag for the rest of
+   * the UTC day.
+   */
+  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string, likeCreatedAtMs: number): Promise<void> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const response = await sdk.documents.query({
       dataContractId: this.contractId,
       documentTypeName: 'beat',
       where: [['postId', '==', targetId], ['$ownerId', '==', ownerId]],
+      orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
       limit: 1,
     });
     const doc = normalizeSDKResponse(response)[0];
     if (!doc) return; // nothing to remove (untagged at like time, or already gone)
     const documentId = typeof doc.$id === 'string' ? doc.$id : null;
-    const createdAt = doc.$createdAt !== undefined ? Number(doc.$createdAt) : null;
-    if (!documentId || createdAt === null) {
-      logger.warn('beat companion found but its delete tuple is incomplete', { targetId });
+    if (!documentId) {
+      logger.warn('beat companion found but carries no $id', { targetId });
       return;
     }
+    const own = doc.$createdAt !== undefined && doc.$createdAt !== null ? Number(doc.$createdAt) : NaN;
+    const createdAtMs = Number.isFinite(own) && own > 0 ? own : likeCreatedAtMs;
     await stateTransitionService.deleteDocumentByValues(this.contractId, 'beat', ownerId, {
       documentId,
-      createdAtMs: createdAt,
+      createdAtMs,
       data: this.beatData(targetId, hashtag),
     });
   }

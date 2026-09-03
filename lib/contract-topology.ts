@@ -286,7 +286,9 @@ const V5_DESCRIPTOR: ContractTopologyDescriptor = {
  *   is optional (v5), and an optional property may only lead a
  *   `skipIfAbsent` index, so the windowed hashtag axis cannot live on `like`;
  *   the client writes one `beat` beside every like of a TAGGED post, in the
- *   same batch transition, and deletes it beside the unlike
+ *   second transition once the like has landed (a document batch is capped
+ *   at ONE transition on this network, so the pair is sequential, not
+ *   atomic), and deletes it beside the unlike
  *   ({@link beatCompanionFor}).
  */
 const V6_DESCRIPTOR: ContractTopologyDescriptor = {

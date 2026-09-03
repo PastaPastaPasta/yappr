@@ -711,7 +711,7 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
 
 // The v6 block: the same optional-hashtag graph as v5, plus DAILY-WINDOWED
 // rankings (dev.8, contract v6). A like of a TAGGED post writes a `beat`
-// companion in the same batch transition, and every ranked surface gains a
+// companion as a second transition once the like lands, and every ranked surface gains a
 // Today | All time switch. The assertions pin the run's own writes on the
 // TODAY window: unlike the all-time top-K (which seeded content dominates),
 // "today" on a devnet is small enough that the run's like ranks — and the

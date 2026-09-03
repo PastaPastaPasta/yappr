@@ -12,7 +12,7 @@ JSON.
 |---|---|
 | Platform | **4.2.0-dev.8** (cut by us 2026-09-02: dashpay/platform#4591 → tag `v4.2.0-dev.8`), carrying #4578 (ranked below timeRange) + #4574 (`byStart`). moutai: 13/13 masternodes on dev.8, no wipe |
 | Contract | **Registered**: `DNNibJtgEEkQkLfDZXh9xkbfdVHWu6CtJcgcpicMAuHZ` (this file's shape, verbatim). YAPP token `AwyQ6rGrrZviBoYfqykyQ8Nhau5xjsxFQsQCj8vrV9pW` |
-| Client | `.env.devnet` → v6; `windowedRankingsAvailable()`; like of a tagged post writes its `beat` in the **same batch transition** (`createDocumentPair`); Today \| All time switch on Explore Top / trending / Creators, tag page Top, profile Top |
+| Client | `.env.devnet` → v6; `windowedRankingsAvailable()`; like of a tagged post writes its `beat` as a **second transition** after the like lands (consensus caps a document batch at ONE transition — verified live: `Amount of document transitions must be less or equal to 1`); Today \| All time switch on Explore Top / trending / Creators, tag page Top, profile Top |
 | Battery | `scripts/verify-v5.mjs` gains d1–d3 (windowed like axes, beat + propertyAgreement + grid disambiguation, cold bucket) |
 | Seeder | `--topology v6`: a beat companion beside every tagged like |
 | Known dev.8 edge | a proved ranked read on a **never-populated** bucket fails proof generation instead of proving empty → **dashpay/platform#4592**. Client maps that error to an empty ranking until fixed |
@@ -41,7 +41,7 @@ tagged-only doctype instead — **`beat`**: indexOnly, `hashtag` **required**,
 `postId` refersTo `post` with `propertyAgreement {hashtag: hashtag}` (so
 consensus enforces `beat.hashtag == post.hashtag`, exactly as it does for
 `like.hashtag`). The client writes one `beat` beside each like of a tagged
-post, in the same batch transition; untagged likes write no beat — the
+post, as a second transition after the like; untagged likes write no beat — the
 `skipIfAbsent` economy by other means. This is the shape upstream's own
 `yappr-likes` fixture uses for its windowed hashtag index (its `beat`
 doctype), which is reassuring.

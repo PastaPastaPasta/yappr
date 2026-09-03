@@ -95,7 +95,6 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
       // Invalidate trending cache when new hashtag is created
       this.trendingCache = null;
-    this.trendingCacheByWindow.clear();
       this.trendingCacheByWindow.clear();
 
       return result.success;
@@ -329,7 +328,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     if (hashtagsAreInline()) {
       try {
         const trending = await this.deriveTrendingFromRecentPosts(minPosts);
-        this.trendingCache = { data: trending, timestamp: Date.now() };
+        this.trendingCacheByWindow.set('all', { data: trending, timestamp: Date.now() });
         return trending.slice(0, limit);
       } catch (error) {
         logger.error('Error deriving trending hashtags from recent posts:', error);
@@ -359,11 +358,8 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Sort by post count descending
       trending.sort((a, b) => b.postCount - a.postCount);
 
-      // Cache the full result
-      this.trendingCache = {
-        data: trending,
-        timestamp: Date.now()
-      };
+      // Cache the full result (pre-v5 derivations are all-time by construction)
+      this.trendingCacheByWindow.set('all', { data: trending, timestamp: Date.now() });
 
       return trending.slice(0, limit);
     } catch (error) {
@@ -442,6 +438,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    */
   invalidateTrendingCache(): void {
     this.trendingCache = null;
+    this.trendingCacheByWindow.clear();
   }
 
   /**
