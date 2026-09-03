@@ -8,7 +8,9 @@
  * that depends on it — the same discipline provision-test-identity.mjs uses —
  * so no funds are ever stranded behind key material that existed only in memory.
  *
- * Phases (each identity advances independently; re-running skips what's done):
+ * Phases (each identity advances independently; re-running skips what's done;
+ * --parallel N runs the per-identity phases REGISTER/PROFILE/DPNS/YAPP-purchase
+ * N identities at a time — maker YAPP transfers stay serial):
  *   SPLIT     one core-chain tx spends treasury UTXO(s) into one P2PKH output
  *             per identity (default 8,000,000 duffs, --credits-per overrides),
  *             each paying a fresh one-shot asset-lock key; change → treasury
@@ -120,6 +122,7 @@ function parseArgs(argv) {
     only: null,
     selfTest: false,
     treasuryAddress: false,
+    parallel: 1,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -130,6 +133,7 @@ function parseArgs(argv) {
       case '--only': args.only = new Set(argv[++i].split(',').map((s) => Number(s.trim()))); break;
       case '--self-test': args.selfTest = true; break;
       case '--treasury-address': args.treasuryAddress = true; break;
+      case '--parallel': args.parallel = Number(argv[++i]); break;
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
   }
@@ -143,6 +147,9 @@ function parseArgs(argv) {
     throw new Error('--credits-per must be an integer ≥ 1,000,000 duffs (identity registration alone eats a chunk)');
   }
   if (args.yapp < 0n) throw new Error('--yapp must be ≥ 0 (0 skips the purchase phase)');
+  if (!Number.isInteger(args.parallel) || args.parallel < 1 || args.parallel > 64) {
+    throw new Error('--parallel must be an integer between 1 and 64');
+  }
   return args;
 }
 
@@ -196,6 +203,20 @@ function syncLedger(ledger, personas, only) {
 
 function selected(ledger, only) {
   return ledger.identities.filter((entry) => !only || only.has(entry.personaIdx));
+}
+
+/**
+ * Run `fn(entry)` over `entries` with at most `limit` in flight. Each entry is
+ * an independent identity (own keys, own nonce), so the REGISTER / PROFILE /
+ * DPNS / YAPP-purchase phases parallelise safely; `fn` must catch its own
+ * errors (every phase already routes failures through noteError).
+ */
+async function forEachParallel(entries, limit, fn) {
+  const queue = entries.slice();
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, queue.length)) }, async () => {
+    while (queue.length > 0) await fn(queue.shift());
+  });
+  await Promise.all(workers);
 }
 
 function noteError(ledger, entry, phase, error) {
@@ -361,7 +382,7 @@ function buildSignerFor(entry) {
   return signer;
 }
 
-async function phaseRegister(handle, ledger, only) {
+async function phaseRegister(handle, ledger, only, parallel) {
   const sdk = handle.sdk;
   const toRegister = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('locked'));
   if (toRegister.length === 0) {
@@ -370,7 +391,7 @@ async function phaseRegister(handle, ledger, only) {
   }
   const heights = await waitForChainLocks(sdk, toRegister.map((entry) => entry.lockOutpoint.txid));
 
-  for (const entry of toRegister) {
+  await forEachParallel(toRegister, parallel, async (entry) => {
     try {
       const proof = AssetLockProof.createChainAssetLockProof(
         heights.get(entry.lockOutpoint.txid),
@@ -387,7 +408,7 @@ async function phaseRegister(handle, ledger, only) {
         entry.state = 'registered';
         saveLedger(ledger);
         console.log(`  persona ${entry.personaIdx}: identity ${identityIdBase58} already exists — skipping create`);
-        continue;
+        return;
       }
 
       const identity = new Identity(identityId);
@@ -428,16 +449,16 @@ async function phaseRegister(handle, ledger, only) {
     } catch (e) {
       noteError(ledger, entry, 'register', e);
     }
-  }
+  });
 }
 
 // ---- Phase PROFILE ------------------------------------------------------------------
 
-async function phaseProfile(handle, ledger, only, personasByIdx) {
+async function phaseProfile(handle, ledger, only, personasByIdx, parallel) {
   const sdk = handle.sdk;
   const contractId = profileContractId();
-  for (const entry of selected(ledger, only)) {
-    if (stateRank(entry.state) !== stateRank('registered')) continue;
+  const todo = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('registered'));
+  await forEachParallel(todo, parallel, async (entry) => {
     try {
       const persona = personasByIdx.get(entry.personaIdx);
       if (!persona) throw new Error(`persona ${entry.personaIdx} missing from the personas file`);
@@ -453,7 +474,7 @@ async function phaseProfile(handle, ledger, only, personasByIdx) {
         entry.state = 'profiled';
         saveLedger(ledger);
         console.log(`  persona ${entry.personaIdx}: profile already exists`);
-        continue;
+        return;
       }
 
       const identity = await readback(handle, () => sdk.identities.fetch(entry.identityId));
@@ -494,22 +515,22 @@ async function phaseProfile(handle, ledger, only, personasByIdx) {
     } catch (e) {
       noteError(ledger, entry, 'profile', e);
     }
-  }
+  });
 }
 
 // ---- Phase DPNS ---------------------------------------------------------------------
 
-async function phaseDpns(handle, ledger, only) {
+async function phaseDpns(handle, ledger, only, parallel) {
   const sdk = handle.sdk;
-  for (const entry of selected(ledger, only)) {
-    if (stateRank(entry.state) !== stateRank('profiled')) continue;
+  const todo = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('profiled'));
+  await forEachParallel(todo, parallel, async (entry) => {
     try {
       const existingName = await readback(handle, () => sdk.dpns.username(entry.identityId));
       if (existingName && existingName.toLowerCase().startsWith(`${entry.handle}.`)) {
         entry.state = 'named';
         saveLedger(ledger);
         console.log(`  persona ${entry.personaIdx}: DPNS name already registered (${existingName})`);
-        continue;
+        return;
       }
       if (!(await readback(handle, () => sdk.dpns.isNameAvailable(entry.handle)))) {
         throw new Error(`DPNS name "${entry.handle}" is taken by another identity — change the persona handle`);
@@ -535,7 +556,7 @@ async function phaseDpns(handle, ledger, only) {
     } catch (e) {
       noteError(ledger, entry, 'dpns', e);
     }
-  }
+  });
 }
 
 // ---- Phase YAPP ---------------------------------------------------------------------
@@ -556,7 +577,7 @@ async function makerContext(handle) {
   return { makerId, identityKey, signer };
 }
 
-async function phaseYapp(handle, ledger, only, yappTarget, yappSource) {
+async function phaseYapp(handle, ledger, only, yappTarget, yappSource, parallel) {
   const sdk = handle.sdk;
   const contractId = socialContractId();
   const tokenId = await readback(handle, () => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
@@ -580,13 +601,16 @@ async function phaseYapp(handle, ledger, only, yappTarget, yappSource) {
   let makerPromise = null;
   const getMaker = () => (makerPromise ??= makerContext(handle));
 
-  for (const entry of selected(ledger, only)) {
-    if (stateRank(entry.state) !== stateRank('named')) continue;
+  // Maker transfers all spend ONE identity's nonce sequence and the SDK waits
+  // per call, so they stay serial; direct purchases are per-identity and parallelise.
+  const todo = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('named'));
+  const limit = yappSource === 'maker' ? 1 : parallel;
+  await forEachParallel(todo, limit, async (entry) => {
     try {
       if (yappTarget === 0n) {
         entry.state = 'ready';
         saveLedger(ledger);
-        continue;
+        return;
       }
       const balances = await readback(handle, () => sdk.tokens.balances([entry.identityId], tokenId));
       const balance = (balances instanceof Map ? balances.get(entry.identityId) : undefined) ?? 0n;
@@ -594,7 +618,7 @@ async function phaseYapp(handle, ledger, only, yappTarget, yappSource) {
         entry.state = 'ready';
         saveLedger(ledger);
         console.log(`  persona ${entry.personaIdx}: already holds ${balance} YAPP`);
-        continue;
+        return;
       }
       let amount = yappTarget - balance;
 
@@ -653,7 +677,7 @@ async function phaseYapp(handle, ledger, only, yappTarget, yappSource) {
     } catch (e) {
       noteError(ledger, entry, 'yapp', e);
     }
-  }
+  });
 }
 
 // ---- Final table ---------------------------------------------------------------------
@@ -811,16 +835,16 @@ try {
   console.log(`  connected (PV${protocolVersion ?? '?'})`);
 
   console.log('\nPhase REGISTER');
-  await phaseRegister(handle, ledger, args.only);
+  await phaseRegister(handle, ledger, args.only, args.parallel);
 
   console.log('\nPhase PROFILE');
-  await phaseProfile(handle, ledger, args.only, personasByIdx);
+  await phaseProfile(handle, ledger, args.only, personasByIdx, args.parallel);
 
   console.log('\nPhase DPNS');
-  await phaseDpns(handle, ledger, args.only);
+  await phaseDpns(handle, ledger, args.only, args.parallel);
 
   console.log('\nPhase YAPP');
-  await phaseYapp(handle, ledger, args.only, args.yapp, args.yappSource);
+  await phaseYapp(handle, ledger, args.only, args.yapp, args.yappSource, args.parallel);
 
   await printTable(handle, ledger, args.only);
 
