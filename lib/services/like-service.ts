@@ -453,7 +453,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     // $ownerId terminal). Best effort after a successful unlike: a stale beat
     // only over-counts one tag for the rest of the UTC day.
     if (result.success && beatCompanionFor(kind, info.hashtag)) {
-      this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '', tuple.createdAt).catch((error) => {
+      this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '').catch((error) => {
         logger.warn('Unlike landed but the beat companion could not be removed:', error);
       });
     }
@@ -502,33 +502,31 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   /**
    * v6: delete the `beat` written after a like of a tagged post.
    *
-   * The delete-by-values tuple needs the beat's `$id` AND `$createdAt`. Its
-   * `byPost` entry yields the id, but no plain beat index carries the
-   * timestamp (the bucketed ones store only the bucket START), so it is read
-   * from the beat's own `$createdAt`-bearing projection when present and
-   * otherwise probed as the like's timestamp (the beat lands in the block
-   * right after the like; a miss is a no-op delete). A beat that cannot be
-   * addressed is left standing — it only over-counts one tag for the rest of
-   * the UTC day.
+   * The delete-by-values tuple needs the beat's `$id` AND its own
+   * `$createdAt` (the beat lands in a later block than the like, so the
+   * like's timestamp addresses nothing — probed live). Both come from the
+   * `byPostTime` projection: `[postId, $createdAt] → $ownerId`, the plain
+   * twin of `like.byAuthorTimePost`, which keys the timestamp. A beat that
+   * cannot be addressed is left standing — it only over-counts one tag for
+   * the rest of the UTC day.
    */
-  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string, likeCreatedAtMs: number): Promise<void> {
+  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string): Promise<void> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const response = await sdk.documents.query({
       dataContractId: this.contractId,
       documentTypeName: 'beat',
-      where: [['postId', '==', targetId], ['$ownerId', '==', ownerId]],
-      orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
-      limit: 1,
+      where: [['postId', '==', targetId]],
+      orderBy: [['postId', 'asc'], ['$createdAt', 'desc']],
+      limit: LIKE_RECOVERY_PAGE_SIZE,
     });
-    const doc = normalizeSDKResponse(response)[0];
+    const doc = normalizeSDKResponse(response).find((row) => row.$ownerId === ownerId);
     if (!doc) return; // nothing to remove (untagged at like time, or already gone)
     const documentId = typeof doc.$id === 'string' ? doc.$id : null;
-    if (!documentId) {
-      logger.warn('beat companion found but carries no $id', { targetId });
+    const createdAtMs = doc.$createdAt !== undefined && doc.$createdAt !== null ? Number(doc.$createdAt) : NaN;
+    if (!documentId || !Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+      logger.warn('beat companion found but its delete tuple is incomplete', { targetId, documentId, createdAtMs });
       return;
     }
-    const own = doc.$createdAt !== undefined && doc.$createdAt !== null ? Number(doc.$createdAt) : NaN;
-    const createdAtMs = Number.isFinite(own) && own > 0 ? own : likeCreatedAtMs;
     await stateTransitionService.deleteDocumentByValues(this.contractId, 'beat', ownerId, {
       documentId,
       createdAtMs,

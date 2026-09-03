@@ -38,8 +38,14 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file> \
- *     [--concurrency 10] [--max-ops N] [--topology v4|v5]
+ *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6] [--pipeline [--window 8]]
  *   node scripts/seed/run-seeder.mjs --self-test
+ *
+ * `--pipeline` swaps the confirm-per-op executor for scripts/seed/pipeline.mjs:
+ * hand-built transitions with locally-tracked nonces, broadcast without
+ * waiting, reconciled by readback — up to `--window` in flight per identity.
+ * Use a high --concurrency (hundreds) with it; throughput scales with the
+ * number of distinct authors, not with concurrency on one.
  */
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -95,7 +101,7 @@ const DEP_WAIT_TIMEOUT_MS = 15 * 60_000;
 // ---- CLI ------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, topology: null, selfTest: false };
+  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, topology: null, selfTest: false, pipeline: false, window: 8 };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--personas': args.personas = argv[++i]; break;
@@ -103,6 +109,8 @@ function parseArgs(argv) {
       case '--concurrency': args.concurrency = Number(argv[++i]); break;
       case '--max-ops': args.maxOps = Number(argv[++i]); break;
       case '--topology': args.topology = argv[++i]; break;
+      case '--pipeline': args.pipeline = true; break;
+      case '--window': args.window = Number(argv[++i]); break;
       case '--self-test': args.selfTest = true; break;
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
@@ -549,9 +557,19 @@ async function buildActors(handle, ledger, personas, ops) {
 
 async function snapshotBalances(handle, actors, tokenId) {
   const ids = [...actors.values()].map((actor) => actor.ownerId);
-  const credits = await readback(handle, () => handle.sdk.identities.balances(ids));
-  const yapp = await readback(handle, () => handle.sdk.tokens.balances(ids, tokenId));
-  const get = (map, key) => ((map instanceof Map ? map.get(key) : map?.[key]) ?? 0n);
+  // DAPI caps identity/token balance queries at 100 ids per call.
+  const credits = new Map();
+  const yapp = new Map();
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const c = await readback(handle, () => handle.sdk.identities.balances(chunk));
+    const y = await readback(handle, () => handle.sdk.tokens.balances(chunk, tokenId));
+    for (const id of chunk) {
+      credits.set(id, (c instanceof Map ? c.get(id) : c?.[id]) ?? 0n);
+      yapp.set(id, (y instanceof Map ? y.get(id) : y?.[id]) ?? 0n);
+    }
+  }
+  const get = (map, key) => map.get(key) ?? 0n;
   const out = new Map();
   for (const actor of actors.values()) {
     out.set(actor.personaIdx, { credits: get(credits, actor.ownerId), yapp: get(yapp, actor.ownerId) });
@@ -904,7 +922,13 @@ try {
   const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const before = await snapshotBalances(handle, actors, tokenId);
 
-  const executor = buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, topology: args.topology });
+  const executor = args.pipeline
+    ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
+        handle, contractId, actors, ledger, progressRefs: progress.refs, topology: args.topology,
+        planOp, entryExists, window: args.window, log: (m) => console.log(`  ${m}`),
+      })
+    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, topology: args.topology });
+  if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.
   const journal = (record) => {

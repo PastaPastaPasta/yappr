@@ -40,6 +40,7 @@ A JSON array of persona objects:
 | `style` | generator-only | free-text writing-style hints for the corpus generator; not written on chain |
 | `interests` | generator-only | topic hints for the generator; not written on chain |
 | `activity` | generator-only | relative activity weight (e.g. 0–1) for the generator; not written on chain |
+| `contested` | no | `true` lets the handle omit the 2–9 digit (e.g. `alice`); such a label matches DPNS's contested pattern and its registration goes through a masternode vote — reserve for hero personas |
 
 Profile field limits are validated against the checked-in
 `contracts/yappr-profile-contract.json` (the unified profile contract the app

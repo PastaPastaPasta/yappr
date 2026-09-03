@@ -145,6 +145,13 @@ def build():
             # Unlike needs the beat's index entry found by post: indexOnly
             # delete-by-values resolves through this plain index.
             {'name': 'byPost', 'properties': [{'postId': 'asc'}], 'terminal': '$ownerId'},
+            # ...and needs the beat's OWN $createdAt for the delete tuple. No
+            # bucketed index projects it (they store the bucket START), and the
+            # beat lands in a later block than its like, so the like's
+            # timestamp is not a substitute (probed live: "document not
+            # found"). This plain twin of like.byAuthorTimePost projects it
+            # (postId pinned, $createdAt as a key, $ownerId terminal).
+            {'name': 'byPostTime', 'properties': [{'postId': 'asc'}, {'$createdAt': 'asc'}], 'terminal': '$ownerId'},
         ],
     }
     assert 'beat' not in schemas, 'v5 must not already carry a beat doctype'
@@ -209,6 +216,8 @@ def self_test():
           rolling['timeRange']['range'] // rolling['timeRange']['step'] <= 24)
 
     check('like stays within the 10-index ceiling', len(v6['like']['indices']) <= 10)
+    check('beat.byPostTime projects \$createdAt for the delete tuple (plain, postId-pinned, \$ownerId terminal)',
+          beat['byPostTime']['properties'] == [{'postId': 'asc'}, {'$createdAt': 'asc'}] and beat['byPostTime']['terminal'] == '$ownerId' and 'timeRange' not in beat['byPostTime'])
     check('every windowed index names $createdAt as its source',
           all(i['timeRange']['on'] == '$createdAt'
               for t in ('like', 'beat') for i in v6[t]['indices'] if 'timeRange' in i))

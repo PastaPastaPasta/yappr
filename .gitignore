@@ -91,3 +91,7 @@ lib/wasm-sdk/
 .seed-identities.local*
 .seed-progress.local*
 .seed-report.local*
+.seed-faucet.local*
+
+# generated seed corpora + claude-authored text banks (150 MB at 1M ops) — never commit
+.seed-corpus.local*

@@ -1508,6 +1508,18 @@
             }
           ],
           "terminal": "$ownerId"
+        },
+        {
+          "name": "byPostTime",
+          "properties": [
+            {
+              "postId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "terminal": "$ownerId"
         }
       ]
     }
