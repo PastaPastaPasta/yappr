@@ -191,6 +191,26 @@ function toPasskeyAccess(access: Awaited<ReturnType<typeof authVaultAccessServic
   }
 }
 
+/**
+ * Profile presence exactly as the auth gates define it: a unified profile
+ * document, or a legacy one.
+ *
+ * Exported because the session-restore path in `contexts/auth-context.tsx` has
+ * to ask the same question the controller asks through `deps.profiles` on the
+ * interactive login path — `restoreSession()` never consults it.
+ *
+ * Note for callers: both lookups swallow query failures and return `null`, so a
+ * `false` here means "no profile *or* the query failed". Confirm the network is
+ * actually reachable before treating it as grounds for a redirect.
+ */
+export async function hasYapprProfile(identityId: string, username?: string): Promise<boolean> {
+  await ensureSdk()
+  const unifiedProfile = await unifiedProfileService.getProfile(identityId, username)
+  if (unifiedProfile) return true
+  const legacyProfile = await profileService.getProfile(identityId, username)
+  return Boolean(legacyProfile)
+}
+
 async function runPostLogin(identityId: string, context: { delayMs: number; isSessionActive: () => boolean }): Promise<void> {
   void import('@/lib/services/block-service').then(async ({ blockService }) => {
     try {
@@ -336,13 +356,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       },
     },
     profiles: {
-      async hasProfile(identityId, username) {
-        await ensureSdk()
-        const unifiedProfile = await unifiedProfileService.getProfile(identityId, username)
-        if (unifiedProfile) return true
-        const legacyProfile = await profileService.getProfile(identityId, username)
-        return Boolean(legacyProfile)
-      },
+      hasProfile: hasYapprProfile,
     },
     clientIdentity: {
       setIdentity(identityId) {

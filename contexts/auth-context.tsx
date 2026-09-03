@@ -2,11 +2,12 @@
 
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
 import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
-import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
+import { createYapprPlatformAuthDependencies, hasYapprProfile } from '@/lib/auth/platform-auth-adapters'
+import { identityService } from '@/lib/services/identity-service'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
 
@@ -108,22 +109,67 @@ function decodeBase64ToBytes(value: string): Uint8Array {
   return bytes
 }
 
+/**
+ * Routes that intentionally host a signed-in user who has no profile document
+ * yet. Bouncing them off these would make profile creation and username
+ * registration unreachable.
+ *
+ * Matched as suffixes so the `/testing` deployment's `basePath` still resolves.
+ */
+const PROFILE_OPTIONAL_ROUTES = ['/profile/create', '/dpns/register', '/login', '/welcome']
+
+function isProfileOptionalRoute(pathname: string): boolean {
+  const normalized = pathname.replace(/\/+$/, '')
+  return PROFILE_OPTIONAL_ROUTES.some((route) => normalized.endsWith(route))
+}
+
+/**
+ * Reproduces the controller's `profile-required` decision for a *restored*
+ * session.
+ *
+ * `restoreSession()` hands back a user without ever consulting `deps.profiles`,
+ * so the intent that `loginWithAuthKey` returns on the interactive login path
+ * is never built on reload — a profile-less identity stays put instead of being
+ * sent to `/profile/create`. Returns the intent to apply, or `null` to leave
+ * the user where they are.
+ *
+ * Assumes the controller's `profileGate` feature is on, which it is: it
+ * defaults to true and Yappr passes no `features` override.
+ */
+async function profileIntentForRestoredSession(user: PlatformAuthUser): Promise<PlatformAuthIntent | null> {
+  // The controller returns at the *first* gate that fires, and the username
+  // gate is checked before the profile gate. On restore it is `withAuth` that
+  // pushes to /dpns/register, so bail here rather than race it to the router.
+  const skipDPNS = sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true'
+  if (!user.username && !skipDPNS) return null
+
+  if (isProfileOptionalRoute(window.location.pathname)) return null
+
+  if (await hasYapprProfile(user.identityId, user.username)) return null
+
+  // `hasYapprProfile` cannot tell "no profile" apart from "the query failed" —
+  // both surface as false. `identityService.getIdentity` rethrows instead of
+  // swallowing, which makes it a usable liveness probe: let a failure reject so
+  // the caller fails open, and treat a missing identity as "not our call".
+  // `app/user/page.tsx` probes the same way before its own /profile/create push,
+  // though it goes further and logs the user out when the identity is gone —
+  // too destructive to do from a provider-wide effect.
+  const identity = await identityService.getIdentity(user.identityId)
+  if (!identity) return null
+
+  // The lookups above are network round trips; the user may have navigated to a
+  // profile-less-friendly route in the meantime.
+  if (isProfileOptionalRoute(window.location.pathname)) return null
+
+  return { kind: 'profile-required', identityId: user.identityId, username: user.username }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
   const [controllerState, setControllerState] = useState(() => controller.getState())
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
-
-  useEffect(() => {
-    controller.restoreSession().catch((error) => {
-      logger.error('Auth: Failed to restore session:', error)
-    })
-
-    return () => {
-      controller.dispose()
-    }
-  }, [controller])
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     switch (intent.kind) {
@@ -141,6 +187,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
     }
   }, [router])
+
+  // The restore effect below must run exactly once per controller — its cleanup
+  // disposes the controller — so it reaches `applyIntent` through a ref instead
+  // of taking it as a dependency.
+  const applyIntentRef = useRef(applyIntent)
+  useEffect(() => {
+    applyIntentRef.current = applyIntent
+  }, [applyIntent])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const restoreAndGate = async (): Promise<void> => {
+      const restoredUser = await controller.restoreSession()
+      if (cancelled || !restoredUser) return
+
+      const intent = await profileIntentForRestoredSession(restoredUser).catch((error) => {
+        // Fail open: a gate that cannot reach the network must never strand a
+        // user who does have a profile on /profile/create.
+        logger.error('Auth: Failed to evaluate the profile gate after session restore:', error)
+        return null
+      })
+      if (cancelled || !intent) return
+
+      await applyIntentRef.current(intent)
+    }
+
+    restoreAndGate().catch((error) => {
+      logger.error('Auth: Failed to restore session:', error)
+    })
+
+    return () => {
+      cancelled = true
+      controller.dispose()
+    }
+  }, [controller])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
     const result = await controller.loginWithAuthKey(identityId, privateKey, options)
