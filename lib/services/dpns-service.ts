@@ -45,12 +45,27 @@ class DpnsService {
   /** identity id -> primary username */
   private reverseCache = new TtlMap<string, string>(DpnsService.CACHE_TTL_MS);
 
+  /** Cache only complete DPNS lookup results; null records a proven absence. */
+  private reverseMissCache = new TtlMap<string, true>(5 * 60 * 1000);
+
+  seedUsernames(usernames: ReadonlyMap<string, string | null>): void {
+    usernames.forEach((username, identityId) => {
+      if (username) {
+        this._cacheEntry(username, identityId);
+      } else {
+        this.reverseCache.delete(identityId);
+        this.reverseMissCache.set(identityId, true);
+      }
+    });
+  }
+
   /**
    * Helper method to cache entries in both directions
    */
   private _cacheEntry(username: string, identityId: string): void {
     this.cache.set(username.toLowerCase(), identityId);
     this.reverseCache.set(identityId, username);
+    this.reverseMissCache.delete(identityId);
   }
 
   /**
@@ -122,6 +137,8 @@ class DpnsService {
       const cached = this.reverseCache.get(id);
       if (cached !== undefined) {
         results.set(id, cached);
+      } else if (this.reverseMissCache.has(id)) {
+        results.set(id, null);
       } else {
         uncachedIds.push(id);
       }
@@ -187,6 +204,7 @@ class DpnsService {
       // Check cache
       const cached = this.reverseCache.get(identityId);
       if (cached !== undefined) return cached;
+      if (this.reverseMissCache.has(identityId)) return null;
 
       // Get all usernames for this identity and pick the primary one
       const allUsernames = await this.getAllUsernames(identityId);
@@ -582,10 +600,12 @@ class DpnsService {
     }
     if (identityId) {
       this.reverseCache.delete(identityId);
+      this.reverseMissCache.delete(identityId);
     }
     if (!username && !identityId) {
       this.cache.clear();
       this.reverseCache.clear();
+      this.reverseMissCache.clear();
     }
   }
 
@@ -595,6 +615,7 @@ class DpnsService {
   cleanupCache(): void {
     this.cache.prune();
     this.reverseCache.prune();
+    this.reverseMissCache.prune();
   }
 }
 
