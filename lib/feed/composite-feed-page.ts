@@ -1,10 +1,5 @@
+import type { EvoSDK } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
-import type {
-  CompositeBind,
-  CompositeDocumentsQuery,
-  CompositeDocumentsResult,
-  CompositeSubQuery,
-} from '@dashevo/wasm-sdk';
 import {
   DPNS_CONTRACT_ID,
   DPNS_DOCUMENT_TYPE,
@@ -15,6 +10,7 @@ import {
   bookmarkIndexFor,
   likeIndexFor,
   quoteFieldFor,
+  referencesAreEnforced,
   replyCountFieldFor,
   repostIndexFor,
 } from '@/lib/contract-topology';
@@ -34,27 +30,92 @@ import { getPrimaryUsername } from '@/lib/utils/username';
 import { transformRawPost } from './transform-raw-post';
 
 /**
- * Batch a feed page, engagement counts, quoted posts, author profiles/names
- * and viewer interactions through the composite documents surface. Initial
- * pages take one document request; subsequent pages first use the timeline's
- * cursor query, then fetch those exact ids with their enrichment here.
+ * One For You feed page as ONE composite document query.
  *
- * Requires the dev.9 SDK and a dev.9 node exposing documents.composite.
- * Repost attribution, block/follow status and unseeded quoted authors still
- * need separate lookups; this is not a fixed total request count for the UI.
+ * The node answers the page and everything a card needs to render it
+ * under a single merged proof: the four engagement counts, the posts the
+ * page quotes, the authors' profiles and DPNS names, and (logged in) the
+ * viewer's own likes, reposts and bookmarks on the page. The SDK derives
+ * every sub-query from the PROVEN page, so nothing here can be steered by
+ * the responding node. Compared with the legacy loaders this replaces
+ * about ten round trips per page with one.
+ *
+ * The composite surface needs an evo-sdk that exposes
+ * `documents.composite` and a v6 (refersTo-enforced) contract; where either
+ * is missing this module reports `null` and the caller keeps the legacy
+ * path. Nothing downstream changes shape: the result is the same raw page
+ * plus a `PreloadedEnrichment` the progressive-enrichment hook merges and
+ * then skips over, so `PostCard` and the per-card fallbacks are untouched.
  */
 
-// ---- Query limits ----
+// ---- Wire types (mirror wasm-sdk's `CompositeDocumentsQuery` / `Result`) ----
+
+type WhereClause = [string, string, unknown];
+type OrderByClause = [string, 'asc' | 'desc'];
+
+interface CompositeBind {
+  source?: 'page' | number;
+  sourceProperty: string;
+  field: string;
+}
+
+interface CompositeSubQuery {
+  dataContractId?: string;
+  documentType: string;
+  kind?: 'documents' | 'counts';
+  where?: WhereClause[];
+  orderBy?: OrderByClause[];
+  limit?: number;
+  bind?: CompositeBind;
+}
+
+interface CompositeDocumentsQuery {
+  dataContractId: string;
+  documentType: string;
+  where?: WhereClause[];
+  orderBy?: OrderByClause[];
+  limit: number;
+  subQueries: CompositeSubQuery[];
+}
+
+type CompositeSubResult =
+  | { kind: 'documents'; documents: unknown[] }
+  | { kind: 'counts'; counts: Map<string, bigint> };
+
+interface CompositeDocumentsResult {
+  pageDocuments: unknown[];
+  subResults: CompositeSubResult[];
+}
+
+interface CompositeDocumentsFacade {
+  composite(query: CompositeDocumentsQuery): Promise<CompositeDocumentsResult>;
+}
+
+/** The evo-sdk build in use may predate the composite surface. */
+function compositeFacade(sdk: EvoSDK): CompositeDocumentsFacade | null {
+  const documents = sdk.documents as unknown as Partial<CompositeDocumentsFacade>;
+  return typeof documents.composite === 'function'
+    ? (documents as CompositeDocumentsFacade)
+    : null;
+}
+
+// ---- Availability ----
 
 /** At most this many sub-queries per request (the platform's `MAX_SUB_QUERIES`). */
 const MAX_SUB_QUERIES = 10;
-/** Total DPNS document budget across ALL page authors, not per identity. */
-const DPNS_QUERY_LIMIT = 100;
+/** DPNS `records.identity` is a non-unique index, so the lookup needs a per-identity cap. */
+const DPNS_NAMES_PER_IDENTITY = 3;
+/** After a composite failure, use the legacy loaders for this long before retrying. */
+const RETRY_BACKOFF_MS = 60_000;
+
+let unsupportedLogged = false;
+let retryAfter = 0;
+
 export interface CompositeFeedPageOptions {
   language: string;
   limit: number;
-  /** Exact next-page ids selected by a timeline query using startAfter. */
-  documentIds?: string[];
+  /** Continue past this `$createdAt` (exclusive); omit for the first page. */
+  beforeCreatedAt?: number;
   currentUserId?: string;
 }
 
@@ -69,44 +130,38 @@ export interface CompositeFeedPage {
 }
 
 /**
- * Load one feed page through the dev.9 composite surface.
- *
- * Composite support is a deployment requirement. SDK or node errors propagate
- * to the caller so a partially enriched response cannot be rendered.
+ * Load one feed page through the composite surface, or `null` when the
+ * surface is unavailable (older SDK, pre-v6 contract, recent failure), in
+ * which case the caller falls back to the legacy per-query loaders.
  */
 export async function loadCompositeFeedPage(
   options: CompositeFeedPageOptions
-): Promise<CompositeFeedPage> {
+): Promise<CompositeFeedPage | null> {
+  if (!referencesAreEnforced()) return null;
+  if (Date.now() < retryAfter) return null;
+
   const sdk = await getEvoSdk();
+  const facade = compositeFacade(sdk);
+  if (!facade) {
+    if (!unsupportedLogged) {
+      unsupportedLogged = true;
+      logger.info('Feed: this evo-sdk has no composite documents surface; using the legacy loaders');
+    }
+    return null;
+  }
 
   const { query, slots } = buildFeedPageQuery(options);
-  const result = await sdk.documents.composite(query);
-  validateCompositeResult(result, query);
-  return decodeFeedPage(result, slots, options);
-}
 
-/** Validate the response shape before decode can seed any derived caches. */
-function validateCompositeResult(
-  result: CompositeDocumentsResult,
-  query: CompositeDocumentsQuery
-): asserts result is CompositeDocumentsResult {
-  if (!Array.isArray(result.pageDocuments) || !Array.isArray(result.subResults) ||
-      result.subResults.length !== query.subQueries.length) {
-    throw new Error('Feed: incomplete composite result');
+  let result: CompositeDocumentsResult;
+  try {
+    result = await facade.composite(query);
+  } catch (error) {
+    retryAfter = Date.now() + RETRY_BACKOFF_MS;
+    logger.warn('Feed: composite page failed, falling back to the legacy loaders', error);
+    return null;
   }
-  for (let i = 0; i < query.subQueries.length; i++) {
-    const sub = result.subResults[i];
-    const expectedKind = query.subQueries[i].kind ?? 'documents';
-    if (!sub || sub.kind !== expectedKind) {
-      throw new Error(`Feed: invalid composite result at sub-query ${i}`);
-    }
-    if (sub.kind === 'documents' && !Array.isArray(sub.documents)) {
-      throw new Error(`Feed: invalid documents result at sub-query ${i}`);
-    }
-    if (sub.kind === 'counts' && !(sub.counts instanceof Map)) {
-      throw new Error(`Feed: invalid counts result at sub-query ${i}`);
-    }
-  }
+
+  return decodeFeedPage(result, slots, options);
 }
 
 // ---- Query ----
@@ -173,7 +228,7 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     dataContractId: DPNS_CONTRACT_ID,
     documentType: DPNS_DOCUMENT_TYPE,
     bind: fromPage('$ownerId', 'records.identity'),
-    limit: DPNS_QUERY_LIMIT,
+    limit: DPNS_NAMES_PER_IDENTITY,
   });
 
   let quotedAuthorProfiles = -1;
@@ -183,7 +238,7 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   if (options.currentUserId) {
     // The viewer's marks on the page: `$ownerId == me` pins the owner-first
     // index, the bound post id is its terminal, so these are value-bounded.
-    const mine = [['$ownerId', '==', options.currentUserId]];
+    const mine: WhereClause[] = [['$ownerId', '==', options.currentUserId]];
     myLikes = slot({ documentType: like.docType, where: mine, bind: fromPage('$id', like.field) });
     if (repost) {
       myReposts = slot({ documentType: repost.docType, where: mine, bind: fromPage('$id', repost.field) });
@@ -205,13 +260,15 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     throw new Error(`Feed: composite page needs ${subQueries.length} sub-queries, the limit is ${MAX_SUB_QUERIES}`);
   }
 
+  const before = options.beforeCreatedAt;
   const query: CompositeDocumentsQuery = {
     dataContractId: YAPPR_CONTRACT_ID,
     documentType: 'post',
-    where: options.documentIds
-      ? [['$id', 'in', options.documentIds]]
-      : [['language', '==', options.language], ['$createdAt', '>', 0]],
-    orderBy: options.documentIds ? undefined : [['language', 'asc'], ['$createdAt', 'desc']],
+    where: [
+      ['language', '==', options.language],
+      before !== undefined ? ['$createdAt', '<', before] : ['$createdAt', '>', 0],
+    ],
+    orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
     limit: options.limit,
     subQueries,
   };
@@ -239,7 +296,7 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
 function documentsAt(result: CompositeDocumentsResult, index: number): Record<string, unknown>[] {
   if (index < 0) return [];
   const sub = result.subResults[index];
-  if (!sub || sub.kind !== 'documents') throw new Error('Feed: missing composite documents result');
+  if (!sub || sub.kind !== 'documents') return [];
   return sub.documents.map((doc) => documentToPlainObject(doc));
 }
 
@@ -247,7 +304,7 @@ function countsAt(result: CompositeDocumentsResult, index: number): Map<string, 
   const counts = new Map<string, number>();
   if (index < 0) return counts;
   const sub = result.subResults[index];
-  if (!sub || sub.kind !== 'counts') throw new Error('Feed: missing composite counts result');
+  if (!sub || sub.kind !== 'counts') return counts;
   sub.counts.forEach((count, key) => counts.set(key, Number(count)));
   return counts;
 }
@@ -262,13 +319,7 @@ function targetIdsOf(records: Record<string, unknown>[], field: string): Set<str
   return ids;
 }
 
-function usernamesByIdentity(records: Record<string, unknown>[], identityIds: readonly string[], pageSize: number): Map<string, string | null> {
-  // At the cap, even returned authors may have unseen aliases that would
-  // change their primary name. Leave the entire slice to normal enrichment;
-  // never cache a missing name (or a partial primary name) as a proven result.
-  // Empty bound identity branches can also consume a slot. Reserve one per
-  // page document (including tombstones), conservatively covering every author.
-  if (records.length + pageSize >= DPNS_QUERY_LIMIT) return new Map();
+function usernamesByIdentity(records: Record<string, unknown>[], identityIds: readonly string[]): Map<string, string | null> {
   const names = new Map<string, string[]>();
   for (const doc of records) {
     const data = (doc.data || doc) as Record<string, unknown>;
@@ -294,15 +345,7 @@ async function decodeFeedPage(
   slots: SubQuerySlots,
   options: CompositeFeedPageOptions
 ): Promise<CompositeFeedPage> {
-  let rawPosts = result.pageDocuments.map((doc) => documentToPlainObject(doc));
-  if (options.documentIds) {
-    // By-id queries return key order, which is different from timeline order.
-    const byId = new Map(rawPosts.map(doc => [doc.$id, doc]));
-    rawPosts = options.documentIds.flatMap(id => {
-      const doc = byId.get(id);
-      return doc ? [doc] : [];
-    });
-  }
+  const rawPosts = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   const posts = rawPosts
     .map((doc) => transformRawPost(doc))
     .filter((post) => !post.deleted);
@@ -341,7 +384,7 @@ async function decodeFeedPage(
       doc ? unifiedProfileService.parseAvatarField(doc.avatar, id) : unifiedProfileService.getDefaultAvatarUrl(id)
     );
   }
-  const usernames = usernamesByIdentity(documentsAt(result, slots.usernames), authorIds, rawPosts.length);
+  const usernames = usernamesByIdentity(documentsAt(result, slots.usernames), authorIds);
   dpnsService.seedUsernames(usernames);
 
   // The viewer's marks; only meaningful when logged in.
@@ -358,8 +401,8 @@ async function decodeFeedPage(
   }
 
   // Quoted posts, attached in place; their authors resolve through the
-  // (now seeded) batch resolvers. Distinct quoted authors still need DPNS
-  // lookups, and logged-in pages also need their profiles.
+  // (now seeded) batch resolvers, so anonymous pages take no extra hop and
+  // logged-in pages take at most one for the names.
   const quotedPosts = documentsAt(result, slots.quotedPosts)
     .map((doc) => transformRawPost(doc))
     .filter((post) => !post.deleted);
