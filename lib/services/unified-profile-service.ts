@@ -211,6 +211,48 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
   }
 
+  // ==================== Seeding from external lookups ====================
+
+  /**
+   * Seed the profile caches from documents fetched elsewhere (a composite
+   * feed page carries the authors' profiles under the same proof as the
+   * posts). Every id in `queriedOwnerIds` without a document is a PROVEN
+   * absence and is negative-cached exactly as a batch miss would be, so
+   * the DataLoader answers later lookups from cache. Returns the found
+   * documents keyed by owner, with their avatar URLs already cached.
+   */
+  seedProfileDocuments(
+    records: readonly Record<string, unknown>[],
+    queriedOwnerIds: readonly string[]
+  ): Map<string, UnifiedProfileDocument> {
+    const found = new Map<string, UnifiedProfileDocument>();
+    for (const record of records) {
+      const profileDoc = this.extractDocumentData(record);
+      if (!profileDoc.$ownerId) continue;
+      found.set(profileDoc.$ownerId, profileDoc);
+      cacheManager.set(this.RAW_PROFILE_CACHE, profileDoc.$ownerId, profileDoc, {
+        ttl: 300000,
+        tags: ['profile', `user:${profileDoc.$ownerId}`]
+      });
+      cacheManager.set(this.AVATAR_CACHE, profileDoc.$ownerId, this.parseAvatarField(profileDoc.avatar, profileDoc.$ownerId), {
+        ttl: 300000,
+        tags: ['avatar', `user:${profileDoc.$ownerId}`]
+      });
+    }
+    for (const ownerId of queriedOwnerIds) {
+      if (found.has(ownerId)) continue;
+      cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
+        ttl: 60000,
+        tags: ['profile', `user:${ownerId}`]
+      });
+      cacheManager.set(this.AVATAR_CACHE, ownerId, this.getDefaultAvatarUrl(ownerId), {
+        ttl: 300000,
+        tags: ['avatar', `user:${ownerId}`]
+      });
+    }
+    return found;
+  }
+
   // ==================== Batching for Profile Documents ====================
 
   /**

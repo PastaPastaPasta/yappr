@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useAsyncState } from '@/components/ui/loading-state';
 import { Post } from '@/lib/types';
 import { cacheManager } from '@/lib/cache-manager';
-import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment';
+import { useProgressiveEnrichment, type PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
@@ -287,6 +287,8 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         }
 
         let posts: Post[] = [];
+        // Enrichment that arrived with the posts (composite For You pages).
+        let forYouPreloaded: PreloadedEnrichment | undefined;
 
         if (activeTab === 'following' && user?.identityId) {
           let followingPosts: Post[] = [];
@@ -322,6 +324,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
             startAfter: pagination?.startAfter,
             forceRefresh,
             feedLanguage,
+            currentUserId: user?.identityId,
             setData,
             setHasMore,
             setLastPostId,
@@ -329,6 +332,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           });
 
           posts = forYouResult.posts;
+          forYouPreloaded = forYouResult.preloaded;
 
           if (posts.length === 0) {
             logger.info('Feed: No posts found on platform');
@@ -368,7 +372,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         }
 
         if (activeTab !== 'following') {
-          enrichProgressively(sortedPosts);
+          enrichProgressively(sortedPosts, forYouPreloaded);
         }
 
         if (!isPaginating && sortedPosts.length > 0) {
