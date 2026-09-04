@@ -34,6 +34,21 @@ export interface ReplyToData {
   authorUsername: string | null  // null = no DPNS
 }
 
+/**
+ * Enrichment slices that arrived with the posts themselves (a composite
+ * feed page proves the counts, profiles, names and the viewer's marks
+ * under the same root as the posts). Keys present here are merged into
+ * the state at once and excluded from the follow-up queries; keys absent
+ * are fetched as before, so partial preloads degrade gracefully.
+ */
+export interface PreloadedEnrichment {
+  usernames?: Map<string, string | null>
+  profiles?: Map<string, ProfileData>
+  avatars?: Map<string, string>
+  stats?: Map<string, PostStats>
+  interactions?: Map<string, UserInteractions>
+}
+
 export interface EnrichmentState {
   // Author data keyed by authorId
   usernames: Map<string, string | null>     // authorId → DPNS username (null = no DPNS)
@@ -70,7 +85,7 @@ interface UseProgressiveEnrichmentOptions {
 }
 
 interface UseProgressiveEnrichmentResult {
-  enrichProgressively: (posts: Post[]) => void
+  enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void
   enrichmentState: EnrichmentState
   reset: () => void
   getPostEnrichment: (post: Post) => {
@@ -119,7 +134,7 @@ export function useProgressiveEnrichment(
    * Start progressive enrichment for the given posts.
    * Non-blocking - returns immediately and updates state as data loads.
    */
-  const enrichProgressively = useCallback((posts: Post[]) => {
+  const enrichProgressively = useCallback((posts: Post[], preloaded?: PreloadedEnrichment) => {
     if (posts.length === 0) return
 
     // Increment request ID to invalidate any in-flight requests
@@ -150,9 +165,6 @@ export function useProgressiveEnrichment(
       new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
     )
 
-    // Set loading phase
-    setEnrichmentState(prev => ({ ...prev, phase: 'loading' }))
-
     // Helper to merge Maps (TypeScript-compatible without downlevelIteration)
     const mergeMaps = <K, V>(prev: Map<K, V>, next: Map<K, V>): Map<K, V> => {
       const merged = new Map(prev)
@@ -160,11 +172,32 @@ export function useProgressiveEnrichment(
       return merged
     }
 
+    // Set loading phase, merging whatever arrived with the posts
+    setEnrichmentState(prev => ({
+      ...prev,
+      phase: 'loading',
+      usernames: preloaded?.usernames ? mergeMaps(prev.usernames, preloaded.usernames) : prev.usernames,
+      profiles: preloaded?.profiles ? mergeMaps(prev.profiles, preloaded.profiles) : prev.profiles,
+      avatars: preloaded?.avatars ? mergeMaps(prev.avatars, preloaded.avatars) : prev.avatars,
+      stats: preloaded?.stats ? mergeMaps(prev.stats, preloaded.stats) : prev.stats,
+      interactions: preloaded?.interactions ? mergeMaps(prev.interactions, preloaded.interactions) : prev.interactions,
+    }))
+
+    // Only what the preload did not cover goes to the network
+    const notIn = <V,>(map: Map<string, V> | undefined) => (id: string) => !map?.has(id)
+    const usernameAuthorIds = authorIds.filter(notIn(preloaded?.usernames))
+    const profileAuthorIds = authorIds.filter(notIn(preloaded?.profiles))
+    const avatarAuthorIds = authorIds.filter(notIn(preloaded?.avatars))
+    const statsTargets = targets.filter(target => notIn(preloaded?.stats)(target.id))
+    const interactionTargets = targets.filter(target => notIn(preloaded?.interactions)(target.id))
+
     // Store promises so we can reuse them for completion tracking
     // This prevents duplicate queries that were happening before
 
     // Priority 1: DPNS usernames (most visible - author identity)
-    const usernamePromise = dpnsService.resolveUsernamesBatch(authorIds)
+    const usernamePromise = usernameAuthorIds.length > 0
+      ? dpnsService.resolveUsernamesBatch(usernameAuthorIds)
+      : Promise.resolve(new Map<string, string | null>())
     usernamePromise.then(usernames => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -174,7 +207,9 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: usernames failed', err))
 
     // Priority 1: Profiles (display names)
-    const profilePromise = unifiedProfileService.getProfilesByIdentityIds(authorIds)
+    const profilePromise = profileAuthorIds.length > 0
+      ? unifiedProfileService.getProfilesByIdentityIds(profileAuthorIds)
+      : Promise.resolve([] as Awaited<ReturnType<typeof unifiedProfileService.getProfilesByIdentityIds>>)
     // Seed queried authors that have no entry yet, so consumers can
     // distinguish "loaded, no profile" (empty entry) from "still loading"
     // (no entry) without clobbering profiles from earlier batches
@@ -219,7 +254,9 @@ export function useProgressiveEnrichment(
     })
 
     // Priority 2: Avatars
-    const avatarPromise = unifiedProfileService.getAvatarUrlsBatch(authorIds)
+    const avatarPromise = avatarAuthorIds.length > 0
+      ? unifiedProfileService.getAvatarUrlsBatch(avatarAuthorIds)
+      : Promise.resolve(new Map<string, string>())
     avatarPromise.then(avatars => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -229,7 +266,9 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: avatars failed', err))
 
     // Priority 3: Stats
-    const statsPromise = postService.getBatchPostStats(targets)
+    const statsPromise = statsTargets.length > 0
+      ? postService.getBatchPostStats(statsTargets)
+      : Promise.resolve(new Map<string, PostStats>())
     statsPromise.then(stats => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -239,8 +278,8 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: stats failed', err))
 
     // Priority 4: User interactions (only if logged in)
-    const interactionsPromise = currentUserId
-      ? postService.getBatchUserInteractions(targets)
+    const interactionsPromise = currentUserId && interactionTargets.length > 0
+      ? postService.getBatchUserInteractions(interactionTargets)
       : Promise.resolve(new Map<string, UserInteractions>())
 
     if (currentUserId) {

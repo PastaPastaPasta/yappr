@@ -1,21 +1,88 @@
 import { logger } from '@/lib/logger';
 import { getDashPlatformClient } from '@/lib/dash-platform-client';
 import { Post } from '@/lib/types';
+import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
+import { loadCompositeFeedPage } from './composite-feed-page';
 import { enrichPostsWithRepostsAndQuotes } from './enrich-posts';
 import { sortFeedByTimestamp, transformRawPost } from './transform-raw-post';
+
+const PAGE_SIZE = 20;
+
+/**
+ * `$createdAt` of every page cursor the composite path handed out, keyed by
+ * the cursor post id. The feed paginates by document id (`startAfter`); the
+ * composite surface has no cursor and continues with a range clause on the
+ * page's ordering property instead, so an id cursor is translated back to
+ * its timestamp here. A cursor this map does not know (a legacy page, a
+ * reload) simply takes the legacy path.
+ */
+const cursorCreatedAtById = new Map<string, number>();
+
+interface FeedPage {
+  raw: Record<string, unknown>[];
+  posts: Post[];
+  cursor: string | null;
+  hasMore: boolean;
+  preloaded?: PreloadedEnrichment;
+}
+
+async function fetchFeedPage(options: {
+  startAfter?: string;
+  forceRefresh: boolean;
+  language?: string;
+  currentUserId?: string;
+}): Promise<FeedPage> {
+  const beforeCreatedAt = options.startAfter ? cursorCreatedAtById.get(options.startAfter) : undefined;
+  const compositeEligible = !options.startAfter || beforeCreatedAt !== undefined;
+
+  if (compositeEligible) {
+    const page = await loadCompositeFeedPage({
+      language: options.language || 'en',
+      limit: PAGE_SIZE,
+      beforeCreatedAt,
+      currentUserId: options.currentUserId,
+    });
+    if (page) {
+      const last = page.rawPosts[page.rawPosts.length - 1];
+      const cursor = last ? ((last.$id || last.id) as string) : null;
+      const cursorCreatedAt = last ? Number(last.$createdAt ?? last.createdAt) : NaN;
+      if (cursor && Number.isFinite(cursorCreatedAt)) {
+        cursorCreatedAtById.set(cursor, cursorCreatedAt);
+      }
+      return { raw: page.rawPosts, posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
+    }
+  }
+
+  const raw = await getDashPlatformClient().queryPosts({
+    limit: PAGE_SIZE,
+    forceRefresh: options.forceRefresh,
+    startAfter: options.startAfter,
+    language: options.language,
+  });
+  // Tombstones are dropped here, before the raw batch renders — the async
+  // enrichment merge falls back to the ORIGINAL post for ids missing from the
+  // enriched result, so filtering only inside enrichPostsWithRepostsAndQuotes
+  // would let deleted posts reappear. `deleted` is never set on v2.
+  const posts = raw
+    .map((doc) => transformRawPost(doc as Record<string, unknown>))
+    .filter((post) => !post.deleted);
+  const last = raw[raw.length - 1];
+  const cursor = last ? ((last.$id || last.id) as string) : null;
+  return { raw, posts, cursor, hasMore: raw.length === PAGE_SIZE };
+}
 
 export async function loadForYouFeed(options: {
   startAfter?: string;
   forceRefresh: boolean;
   feedLanguage?: string;
+  currentUserId?: string;
   setData: (updater: (prev: Post[] | null) => Post[] | null) => void;
   setHasMore: (value: boolean) => void;
   setLastPostId: (id: string) => void;
-  enrichProgressively: (posts: Post[]) => void;
-}): Promise<{ posts: Post[]; cursor: string | null; hasMore: boolean }> {
+  enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void;
+}): Promise<{ posts: Post[]; cursor: string | null; hasMore: boolean; preloaded?: PreloadedEnrichment }> {
   const MIN_NON_REPLY_POSTS = 20;
   const MAX_FETCH_ITERATIONS = 5;
-  const dashClient = getDashPlatformClient();
 
   const currentStartAfter = options.startAfter;
 
@@ -25,34 +92,29 @@ export async function loadForYouFeed(options: {
     '(iteration 1)'
   );
 
-  const firstBatchRaw = await dashClient.queryPosts({
-    limit: 20,
-    forceRefresh: options.forceRefresh,
+  const firstPage = await fetchFeedPage({
     startAfter: currentStartAfter,
+    forceRefresh: options.forceRefresh,
     language: options.feedLanguage,
+    currentUserId: options.currentUserId,
   });
 
-  if (firstBatchRaw.length === 0) {
+  if (firstPage.raw.length === 0) {
     logger.info('Feed: No posts available');
     options.setHasMore(false);
     return { posts: [], cursor: null, hasMore: false };
   }
 
-  // Tombstones are dropped here, before the raw batch renders — the async
-  // enrichment merge falls back to the ORIGINAL post for ids missing from the
-  // enriched result, so filtering only inside enrichPostsWithRepostsAndQuotes
-  // would let deleted posts reappear. `deleted` is never set on v2.
-  const firstBatchPosts = firstBatchRaw
-    .map((doc) => transformRawPost(doc as Record<string, unknown>))
-    .filter((post) => !post.deleted);
-  const firstBatchCursor = (firstBatchRaw[firstBatchRaw.length - 1].$id ||
-    firstBatchRaw[firstBatchRaw.length - 1].id) as string;
+  const firstBatchPosts = firstPage.posts;
+  const firstBatchCursor = firstPage.cursor;
 
   logger.info(`Feed: First batch has ${firstBatchPosts.length} posts`);
 
   const forYouNextCursor: string | null = firstBatchCursor;
-  const forYouHasMore = firstBatchRaw.length === 20;
+  const forYouHasMore = firstPage.hasMore;
 
+  // Repost attribution ("X reposted") and whatever quotes the composite page
+  // did not already attach (quoted replies, blog quotes).
   enrichPostsWithRepostsAndQuotes(firstBatchPosts)
     .then((enrichedPosts) => {
       options.setData((current) => {
@@ -74,34 +136,33 @@ export async function loadForYouFeed(options: {
       let bgCurrentStartAfter = firstBatchCursor;
       let bgFetchIteration = 1;
       let allPostCount = firstBatchPosts.length;
-      let bgLastBatchSize = firstBatchRaw.length;
+      let bgHasMore: boolean = forYouHasMore;
 
       while (
         allPostCount < MIN_NON_REPLY_POSTS &&
         bgFetchIteration < MAX_FETCH_ITERATIONS &&
-        bgLastBatchSize === 20
+        bgHasMore &&
+        bgCurrentStartAfter
       ) {
         bgFetchIteration++;
         logger.info(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
 
-        const bgRawPosts = await dashClient.queryPosts({
-          limit: 20,
-          forceRefresh: false,
+        const bgPage = await fetchFeedPage({
           startAfter: bgCurrentStartAfter,
+          forceRefresh: false,
           language: options.feedLanguage,
+          currentUserId: options.currentUserId,
         });
 
-        bgLastBatchSize = bgRawPosts.length;
+        bgHasMore = bgPage.hasMore;
 
-        if (bgRawPosts.length === 0) {
+        if (bgPage.raw.length === 0) {
           logger.info('Feed: No more posts available (background)');
           options.setHasMore(false);
           break;
         }
 
-        const bgPosts = bgRawPosts
-          .map((doc) => transformRawPost(doc as Record<string, unknown>))
-          .filter((post) => !post.deleted);
+        const bgPosts = bgPage.posts;
 
         enrichPostsWithRepostsAndQuotes(bgPosts)
           .then((enrichedPosts) => {
@@ -117,8 +178,7 @@ export async function loadForYouFeed(options: {
 
         allPostCount += bgPosts.length;
 
-        const lastPost = bgRawPosts[bgRawPosts.length - 1];
-        bgCurrentStartAfter = (lastPost.$id || lastPost.id) as string;
+        bgCurrentStartAfter = bgPage.cursor;
 
         options.setData((currentItems) => {
           if (!currentItems) return bgPosts;
@@ -131,15 +191,17 @@ export async function loadForYouFeed(options: {
           return allItems;
         });
 
-        options.enrichProgressively(bgPosts);
-        options.setLastPostId(bgCurrentStartAfter);
+        options.enrichProgressively(bgPosts, bgPage.preloaded);
+        if (bgCurrentStartAfter) {
+          options.setLastPostId(bgCurrentStartAfter);
+        }
 
         if (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
           logger.info(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`);
         }
       }
 
-      options.setHasMore(bgLastBatchSize === 20);
+      options.setHasMore(bgHasMore);
       logger.info(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
     };
 
@@ -159,5 +221,6 @@ export async function loadForYouFeed(options: {
     posts: sortedPosts,
     cursor: forYouNextCursor,
     hasMore: forYouHasMore,
+    preloaded: firstPage.preloaded,
   };
 }

@@ -40,6 +40,25 @@ class DpnsService {
   private cache: Map<string, { value: string; timestamp: number }> = new Map();
   private reverseCache: Map<string, { value: string; timestamp: number }> = new Map();
   private readonly CACHE_TTL = 3600000; // 1 hour cache for DPNS
+  /** Identities a proven lookup showed to have NO name; short-lived so new names show up. */
+  private reverseMissCache: Map<string, number> = new Map();
+  private readonly MISS_CACHE_TTL = 300000; // 5 minutes
+
+  /**
+   * Seed the reverse cache from names resolved elsewhere (a composite feed
+   * page carries the authors' DPNS documents), so the batch resolvers hit
+   * the cache instead of re-querying. `null` records a proven absence.
+   */
+  seedUsernames(usernames: ReadonlyMap<string, string | null>): void {
+    const now = Date.now();
+    usernames.forEach((username, identityId) => {
+      if (username) {
+        this._cacheEntry(username, identityId);
+      } else {
+        this.reverseMissCache.set(identityId, now);
+      }
+    });
+  }
 
   /**
    * Helper method to cache entries in both directions
@@ -117,8 +136,11 @@ class DpnsService {
     const uncachedIds: string[] = [];
     for (const id of identityIds) {
       const cached = this.reverseCache.get(id);
+      const missedAt = this.reverseMissCache.get(id);
       if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
         results.set(id, cached.value);
+      } else if (missedAt !== undefined && Date.now() - missedAt < this.MISS_CACHE_TTL) {
+        results.set(id, null);
       } else {
         uncachedIds.push(id);
       }
