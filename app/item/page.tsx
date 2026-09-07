@@ -126,12 +126,13 @@ function ItemDetailContent() {
   const axes = useMemo(() => {
     if (!item?.variants?.axes) return []
 
-    return item.variants.axes.map((axis, index) => {
+    const allAxes = item.variants.axes
+    return allAxes.map((axis, index) => {
       // For first axis, all options are available
       // For subsequent axes, filter based on prior selections
       const priorSelections: Record<string, string> = {}
       for (let i = 0; i < index; i++) {
-        const priorAxis = item.variants!.axes[i]
+        const priorAxis = allAxes[i]
         if (variantSelections[priorAxis.name]) {
           priorSelections[priorAxis.name] = variantSelections[priorAxis.name]
         }

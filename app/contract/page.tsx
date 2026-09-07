@@ -43,9 +43,8 @@ export default function ContractPage() {
   }
 
   const documentCount = Object.keys(dataContract.documents).length
-  const totalIndices = Object.values(dataContract.documents).reduce((acc, doc: any) => 
-    acc + (doc.indices?.length || 0), 0
-  )
+  const totalIndices = Object.values(dataContract.documents as Record<string, { indices?: unknown[] }>)
+    .reduce((acc, doc) => acc + (doc.indices?.length || 0), 0)
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">

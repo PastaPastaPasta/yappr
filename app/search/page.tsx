@@ -15,6 +15,7 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import { getPrimaryUsername } from '@/lib/utils/username'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
+import type { UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import { useSettingsStore } from '@/lib/store'
 import type { BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
@@ -135,7 +136,7 @@ function SearchPageContent() {
       const ownerIds = Array.from(new Set(dpnsResults.map(r => r.ownerId).filter(Boolean)))
 
       // Fetch profiles for display names
-      let profiles: any[] = []
+      let profiles: UnifiedProfileDocument[] = []
       if (ownerIds.length > 0) {
         try {
           profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
@@ -145,7 +146,7 @@ function SearchPageContent() {
       }
 
       // Create profile map
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Group by owner to handle multiple usernames per owner
       const ownerToNames = new Map<string, string[]>()
@@ -160,14 +161,13 @@ function SearchPageContent() {
       // Build results, picking the best matched name via the canonical ordering
       const results: UserResult[] = Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
         const profile = profileMap.get(ownerId)
-        const profileData = (profile as any)?.data || profile
         const primaryUsername = getPrimaryUsername(names) ?? names[0]
 
         return {
           id: ownerId,
           username: primaryUsername,
-          displayName: profileData?.displayName || primaryUsername,
-          bio: profileData?.bio
+          displayName: profile?.displayName || primaryUsername,
+          bio: profile?.bio
         }
       })
 

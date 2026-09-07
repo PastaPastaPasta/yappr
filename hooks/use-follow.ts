@@ -79,7 +79,7 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
   }, [user?.identityId, targetUserId, cacheKey, initialValue])
 
   useEffect(() => {
-    checkFollowStatus()
+    checkFollowStatus().catch((error) => logger.error('useFollow: status check failed:', error))
   }, [checkFollowStatus])
 
   const toggleFollow = useCallback(async () => {
@@ -138,7 +138,7 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
     if (cacheKey) {
       deleteFollowStatus(cacheKey)
     }
-    checkFollowStatus(true)
+    checkFollowStatus(true).catch((error) => logger.error('useFollow: refresh failed:', error))
   }, [cacheKey, checkFollowStatus])
 
   return { isFollowing, isLoading, toggleFollow, refresh }

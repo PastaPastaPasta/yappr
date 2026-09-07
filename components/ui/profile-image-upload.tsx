@@ -154,7 +154,6 @@ export function ProfileImageUpload({
 
   function renderImage(): React.ReactNode {
     if (previewUrl) {
-      // eslint-disable-next-line @next/next/no-img-element
       return <img src={previewUrl} alt="Preview" className={imageClass} />
     }
 
@@ -180,7 +179,6 @@ export function ProfileImageUpload({
     }
 
     // Regular http(s) URL
-    // eslint-disable-next-line @next/next/no-img-element
     return <img src={currentUrl} alt="Preview" className={imageClass} />
   }
 

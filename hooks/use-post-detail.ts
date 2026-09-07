@@ -343,7 +343,7 @@ export function usePostDetail({
    * context. On v2 the only link is the polymorphic direct parent, so the chain
    * has to be walked one lookup at a time.
    */
-  const fetchReplyChain = async (mainPost: Post): Promise<Post[]> => {
+  const fetchReplyChain = useCallback(async (mainPost: Post): Promise<Post[]> => {
     const chain: Post[] = []
 
     if (hasFlatThreads()) {
@@ -390,7 +390,7 @@ export function usePostDetail({
     }
 
     return chain
-  }
+  }, [enrich])
 
   const loadPost = useCallback(async () => {
     if (!postId || !enabled) return
@@ -535,7 +535,7 @@ export function usePostDetail({
         setIsLoadingReplies(false)
       }
     }
-  }, [postId, enabled, enrich])
+  }, [postId, enabled, enrich, fetchReplyChain])
 
   /**
    * Fetch the next page of the thread (v3 only — v2's `getReplies` covers one
@@ -612,7 +612,7 @@ export function usePostDetail({
       setError(null)
     }
 
-    loadPost()
+    loadPost().catch((err) => logger.error('usePostDetail: load failed:', err))
   }, [postId, enabled, loadPost, resetEnrichment])
 
   const refresh = useCallback(async () => {
@@ -683,7 +683,7 @@ export function usePostDetail({
 
       if (belongsHere) {
         // Refresh to get the new reply with proper data
-        refresh()
+        refresh().catch((err) => logger.error('usePostDetail: refresh after reply failed:', err))
       }
     }
 

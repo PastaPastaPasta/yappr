@@ -66,7 +66,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
       }
     }
 
-    check()
+    check().catch((error) => logger.error('useBlogFollow: status check failed:', error))
     return () => { cancelled = true }
   }, [user?.identityId, blogId, cacheKey, initialFollowing])
 
@@ -84,7 +84,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
       }
     }
 
-    load()
+    load().catch((error) => logger.error('useBlogFollow: follower count failed:', error))
     return () => { cancelled = true }
   }, [blogId])
 
@@ -127,7 +127,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     } finally {
       setIsLoading(false)
     }
-  }, [user?.identityId, blogId, isFollowing, isLoading, cacheKey, openLoginPrompt])
+  }, [user?.identityId, blogId, isFollowing, isLoading, followerCount, cacheKey, openLoginPrompt])
 
   return { isFollowing, isLoading, followerCount, toggleFollow }
 }

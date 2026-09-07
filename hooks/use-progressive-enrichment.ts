@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Post, User } from '@/lib/types'
+import { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
@@ -192,14 +192,10 @@ export function useProgressiveEnrichment(
       if (!isValid()) return
       const profileMap = new Map<string, ProfileData>()
       for (const profile of profiles) {
-        const ownerId = profile.$ownerId
-        // Profile data may be nested under 'data' property or at root level
-        const profileAny = profile as any
-        const data = profileAny.data || profile
-        if (ownerId) {
-          profileMap.set(ownerId, {
-            displayName: data.displayName,
-            bio: data.bio
+        if (profile.$ownerId) {
+          profileMap.set(profile.$ownerId, {
+            displayName: profile.displayName,
+            bio: profile.bio
           })
         }
       }
@@ -286,17 +282,18 @@ export function useProgressiveEnrichment(
       }
     }
 
-    // Track completion using the SAME promises (no duplicate queries!)
-    Promise.all([
+    // Track completion using the SAME promises (no duplicate queries!). Each
+    // promise already reports its own failure above; here only settlement matters.
+    Promise.allSettled([
       usernamePromise,
       profilePromise,
       avatarPromise,
       statsPromise,
       interactionsPromise
-    ]).finally(() => {
+    ]).then(() => {
       if (!isValid()) return
       setEnrichmentState(prev => ({ ...prev, phase: 'complete' }))
-    })
+    }).catch(err => logger.error('Progressive enrichment: completion tracking failed', err))
 
   }, [currentUserId, skipFollowStatus])
 
@@ -329,8 +326,9 @@ export function useProgressiveEnrichment(
 
   // Cleanup on unmount
   useEffect(() => {
+    const idRef = enrichmentIdRef
     return () => {
-      enrichmentIdRef.current++
+      idRef.current++
     }
   }, [])
 

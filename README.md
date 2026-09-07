@@ -2,7 +2,7 @@
 
 A decentralized social media platform and marketplace built on Dash Platform. All data—posts, profiles, likes, follows, bookmarks, mentions, tips, direct messages, stores, and orders—is stored on-chain with full user ownership.
 
-<img src="assets/yappr.png" alt="Yappr Screenshot" width="200">
+<img src="public/yappr.png" alt="Yappr Screenshot" width="200">
 
 ## Features
 
@@ -93,8 +93,8 @@ npm run dev
 # Build for production
 npm run build
 
-# Build for GitHub Pages
-npm run build:gh-pages
+# Build for a sub-path deployment (e.g. GitHub Pages)
+npm run build:subpath
 
 # Run linting
 npm run lint
@@ -127,7 +127,7 @@ yappr/
 │   ├── orders/seller/     # Seller order management
 │   ├── post/              # Post detail view and threads
 │   ├── privacy/           # Privacy policy
-│   ├── profile/           # User profile (current user + edit)
+│   ├── profile/create/    # Profile creation
 │   ├── search/            # Search users and hashtags
 │   ├── settings/          # User settings
 │   ├── store/             # Store listing and storefront views
@@ -171,13 +171,11 @@ yappr/
 │   ├── use-link-preview.ts         # Link preview fetching
 │   ├── use-login-prompt-modal.ts        # Login prompt modal
 │   ├── use-mention-validation.ts        # Mention validation
-│   ├── use-platform-detection.ts        # Platform/device detection
 │   ├── use-post-detail.ts          # Post detail with thread loading
 │   ├── use-post-enrichment.ts      # Post stats with deduplication
 │   ├── use-private-feed-request.ts      # Private feed access requests
 │   ├── use-progressive-enrichment.ts    # Progressive data loading
 │   ├── use-require-auth.ts         # Auth requirement wrapper
-│   ├── use-require-encryption-key.ts    # Require encryption key
 │   └── use-tip-modal.ts            # Tip/payment modal
 │
 ├── lib/
@@ -206,7 +204,6 @@ yappr/
 │   │   ├── private-feed-follower-service.ts # Private feed grants
 │   │   ├── private-feed-crypto-service.ts   # Private feed encryption
 │   │   ├── private-feed-key-store.ts    # Private feed key storage
-│   │   ├── profile-migration-service.ts # Profile migration
 │   │   ├── profile-service.ts           # Profile management
 │   │   ├── reply-service.ts             # Reply operations
 │   │   ├── repost-service.ts            # Reposts
@@ -234,20 +231,18 @@ yappr/
 │   ├── bloom-filter.ts    # Bloom filter for efficient lookups
 │   ├── cache-manager.ts   # Query caching
 │   ├── constants.ts       # Contract IDs, network config
-│   ├── dash-platform-client.ts # Platform client wrapper
 │   ├── error-utils.ts     # Error handling utilities
 │   ├── message-encryption.ts # DM encryption
-│   ├── mock-data.ts       # Development mock data
+│   ├── mock-data.ts       # Default placeholder avatar
 │   ├── onchain-key-encryption.ts # Key backup encryption
 │   ├── post-helpers.ts    # Post utility functions
 │   ├── retry-utils.ts     # Retry logic with backoff
 │   ├── secure-storage.ts  # Session storage for keys
 │   ├── store.ts           # Main Zustand store
-│   ├── types.ts           # TypeScript interfaces
-│   └── utils.ts           # Helper functions
+│   ├── types.ts           # TypeScript interfaces (re-exports types/)
+│   └── utils/             # Helper functions
 │
-├── types/
-│   └── sdk.ts             # Dash SDK type definitions
+├── types/                 # Domain types: user, post, store, notification
 │
 ├── contracts/             # Dash Platform data contracts
 │   ├── yappr-social-contract-v2.json      # Main social contract (staging/prod)

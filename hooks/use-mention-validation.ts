@@ -75,7 +75,7 @@ export function useMentionValidation(post: Post | null): MentionValidationState 
     return () => {
       cancelled = true
     }
-  }, [postId, mentions.join(','), post?.content])
+  }, [postId, mentions, post?.content])
 
   // Revalidate function to clear cache and re-fetch
   const revalidate = useCallback(() => {

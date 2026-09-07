@@ -76,7 +76,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
     } finally {
       setIsLoading(false)
     }
-  }, [blogPostId, commentsEnabled, user?.identityId])
+  }, [blogPostId, commentsEnabled, user?.identityId, onCommentCountChange])
 
   useEffect(() => {
     loadComments().catch(() => {

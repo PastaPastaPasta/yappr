@@ -12,6 +12,7 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
 import { followService, dpnsService, unifiedProfileService } from '@/lib/services'
+import type { UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import { sortUsernames } from '@/lib/utils/username'
 import { cacheManager } from '@/lib/cache-manager'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -173,12 +174,12 @@ function FollowingPage() {
       // Create maps for easy lookup (primary username = first of the sorted list)
       const dpnsMap = new Map(allUsernamesData.map(item => [item.id, item.usernames[0] || null]))
       const allUsernamesMap = new Map(allUsernamesData.map(item => [item.id, item.usernames]))
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
       const followerCountMap = new Map(followerCounts.map(item => [item.id, item.count]))
       const followingCountMap = new Map(followingCounts.map(item => [item.id, item.count]))
       
       // Create enriched user data
-      const followingUsers = follows.map((follow: any) => {
+      const followingUsers = follows.map((follow) => {
         const followingId = follow.followingId
         if (!followingId) {
           logger.warn('Follow document missing followingId:', follow)
@@ -188,14 +189,12 @@ function FollowingPage() {
         const username = dpnsMap.get(followingId)
         const allUsernames = allUsernamesMap.get(followingId) || []
         const profile = profileMap.get(followingId)
-        // Handle both formats: direct properties or nested in data
-        const profileData = (profile as any)?.data || profile
 
         return {
           id: followingId,
           username: username || followingId.slice(-8),
-          displayName: profileData?.displayName || username || `User ${followingId.slice(-8)}`,
-          bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
+          displayName: profile?.displayName || username || `User ${followingId.slice(-8)}`,
+          bio: profile?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
           hasProfile: !!profile,
           hasDpnsName: !!username,
           followersCount: followerCountMap.get(followingId) || 0,
@@ -335,7 +334,7 @@ function FollowingPage() {
         const uniqueIdentityIds = Array.from(new Set(searchResults.map(r => r.ownerId).filter(id => id)))
         
         // Query Yappr profiles and follower/following counts for all these identities
-        let profiles: any[] = []
+        let profiles: UnifiedProfileDocument[] = []
         let followerCounts: { id: string; count: number }[] = []
         let followingCounts: { id: string; count: number }[] = []
         if (uniqueIdentityIds.length > 0) {
@@ -371,7 +370,7 @@ function FollowingPage() {
         }
 
         // Create maps for easy lookup
-        const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+        const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
         const followerCountMap = new Map(followerCounts.map(item => [item.id, item.count]))
         const followingCountMap = new Map(followingCounts.map(item => [item.id, item.count]))
         
@@ -386,8 +385,6 @@ function FollowingPage() {
         // Create user objects - one per unique owner
         const searchUsers: FollowingUser[] = Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
           const profile = profileMap.get(ownerId)
-          // Handle both formats: direct properties or nested in data
-          const profileData = (profile as any)?.data || profile
           // Canonical ordering: the first sorted name is the primary username
           const sortedNames = sortUsernames(names)
           const primaryUsername = sortedNames[0]
@@ -395,8 +392,8 @@ function FollowingPage() {
           return {
             id: ownerId,
             username: primaryUsername,
-            displayName: profileData?.displayName || primaryUsername,
-            bio: profileData?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
+            displayName: profile?.displayName || primaryUsername,
+            bio: profile?.bio || (profile ? 'Yappr user' : 'Not yet on Yappr'),
             hasProfile: !!profile,
             hasDpnsName: true, // Search results are always from DPNS
             followersCount: followerCountMap.get(ownerId) || 0,

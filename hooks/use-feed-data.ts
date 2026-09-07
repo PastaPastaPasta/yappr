@@ -320,7 +320,6 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         } else {
           const forYouResult = await loadForYouFeed({
             startAfter: pagination?.startAfter,
-            forceRefresh,
             feedLanguage,
             setData,
             setHasMore,

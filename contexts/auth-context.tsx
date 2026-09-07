@@ -315,7 +315,7 @@ export function withAuth<P extends object>(
       if (needsDPNS) {
         router.push('/dpns/register')
       }
-    }, [user, isAuthRestoring, router, needsDPNS, options?.optional])
+    }, [user, isAuthRestoring, router, needsDPNS])
 
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />

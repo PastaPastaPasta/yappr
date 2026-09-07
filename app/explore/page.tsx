@@ -24,13 +24,6 @@ import { TopCreators } from '@/components/explore/top-creators'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
-interface RawPostDocument {
-  $id: string
-  $ownerId: string
-  $createdAt: number
-  content?: string
-}
-
 type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
 export default function ExplorePage() {
@@ -156,45 +149,27 @@ export default function ExplorePage() {
       try {
         setIsSearching(true)
 
-        // Search regular posts
-        const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
-        const dashClient = getDashPlatformClient()
+        // Search regular posts: a client-side substring match over the most
+        // recent timeline page. Authors are left as placeholders for PostCard
+        // to resolve progressively.
+        const { postService } = await import('@/lib/services/post-service')
+        const { documents: recentPosts } = await postService.getTimeline({ limit: 100 })
 
-        const allPosts = await dashClient.queryPosts({ limit: 100 })
-
-        const typedPosts = allPosts as RawPostDocument[]
-        const authorIds = Array.from(new Set(typedPosts.map(p => p.$ownerId).filter(Boolean)))
+        const authorIds = Array.from(new Set(recentPosts.map(p => p.author.id).filter(Boolean)))
         const blockedMap = user?.identityId
           ? await checkBlockedForAuthors(user.identityId, authorIds)
           : new Map<string, boolean>()
 
-        const filtered = typedPosts
+        const needle = searchQuery.toLowerCase()
+        const filtered = recentPosts
           .filter(post =>
-            post.$ownerId &&
-            post.content?.toLowerCase().includes(searchQuery.toLowerCase()) &&
-            !blockedMap.get(post.$ownerId)
+            !post.deleted &&
+            post.content.toLowerCase().includes(needle) &&
+            !blockedMap.get(post.author.id)
           )
           .map(post => ({
-            id: post.$id,
-            content: post.content || '',
-            author: {
-              id: post.$ownerId,
-              username: '',
-              handle: '',
-              displayName: '',
-              avatar: '',
-              followers: 0,
-              following: 0,
-              verified: false,
-              joinedAt: new Date(),
-              hasDpns: undefined
-            },
-            createdAt: new Date(post.$createdAt || 0),
-            likes: 0,
-            replies: 0,
-            reposts: 0,
-            quotes: 0,
-            views: 0
+            ...post,
+            author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
           }))
 
         setSearchResults(filtered)

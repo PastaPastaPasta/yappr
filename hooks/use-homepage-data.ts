@@ -2,9 +2,9 @@
 
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Post, User } from '@/lib/types'
+import { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
-import { unifiedProfileService } from '@/lib/services/unified-profile-service'
+import { unifiedProfileService, type UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { useSdk } from '@/contexts/sdk-context'
 
@@ -72,7 +72,6 @@ export function useHomepageData(): HomepageData {
     error: null
   })
 
-  const loadingRef = useRef(false)
   const hasLoadedRef = useRef(false)
 
   const loadPlatformStats = useCallback(async (forceRefresh = false) => {
@@ -182,25 +181,22 @@ export function useHomepageData(): HomepageData {
         dpnsService.resolveUsernamesBatch(authorIds)
       ])
 
-      // Build profile map
-      const profileMap = new Map<string, any>()
+      const profileMap = new Map<string, UnifiedProfileDocument>()
       for (const profile of profiles) {
-        const ownerId = profile.$ownerId || (profile as any).ownerId
-        if (ownerId) {
-          profileMap.set(ownerId, profile)
+        if (profile.$ownerId) {
+          profileMap.set(profile.$ownerId, profile)
         }
       }
 
       // Build top users array
       const users: TopUser[] = sortedAuthors.map(([authorId, postCount]) => {
         const profile = profileMap.get(authorId)
-        const profileData = profile?.data || profile
         const username = usernameMap.get(authorId) || authorId.substring(0, 8) + '...'
 
         return {
           id: authorId,
           username,
-          displayName: profileData?.displayName || username,
+          displayName: profile?.displayName || username,
           postCount
         }
       })
@@ -230,10 +226,9 @@ export function useHomepageData(): HomepageData {
     cache.featuredPosts = null
     cache.topUsers = null
 
-    // Reload all data
-    loadPlatformStats(true)
-    loadFeaturedPosts(true)
-    loadTopUsers(true)
+    // Reload all data. Each loader reports its own failure into its slice.
+    Promise.all([loadPlatformStats(true), loadFeaturedPosts(true), loadTopUsers(true)])
+      .catch((error) => logger.error('Homepage refresh failed:', error))
   }, [sdkReady, loadPlatformStats, loadFeaturedPosts, loadTopUsers])
 
   // Initial load - wait for SDK to be ready
@@ -242,10 +237,9 @@ export function useHomepageData(): HomepageData {
     if (hasLoadedRef.current) return
     hasLoadedRef.current = true
 
-    // Load all data in parallel
-    loadPlatformStats()
-    loadFeaturedPosts()
-    loadTopUsers()
+    // Load all data in parallel. Each loader reports its own failure into its slice.
+    Promise.all([loadPlatformStats(), loadFeaturedPosts(), loadTopUsers()])
+      .catch((error) => logger.error('Homepage load failed:', error))
   }, [sdkReady, loadPlatformStats, loadFeaturedPosts, loadTopUsers])
 
   return {

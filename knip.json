@@ -1,0 +1,21 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "e2e/**/*.ts",
+    "scripts/**/*.mjs"
+  ],
+  "project": [
+    "app/**",
+    "components/**",
+    "contexts/**",
+    "hooks/**",
+    "lib/**",
+    "types/**",
+    "e2e/**",
+    "scripts/**"
+  ],
+  "ignoreDependencies": [
+    "platform-auth"
+  ]
+}

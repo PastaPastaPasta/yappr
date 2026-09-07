@@ -390,7 +390,6 @@ function CreateProfilePage() {
               {/* Banner Preview */}
               {bannerUrl && (
                 <div className="relative aspect-[3/1] rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={isIpfsProtocol(bannerUrl) ? ipfsToGatewayUrl(bannerUrl) : bannerUrl}
                     alt="Banner preview"

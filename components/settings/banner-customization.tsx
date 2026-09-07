@@ -219,7 +219,6 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
 
         {/* Regular URL image */}
         {displayUrl && !isIpfsProtocol(bannerUrl || '') && (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={displayUrl}
             alt="Banner"
@@ -229,7 +228,6 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
 
         {/* Preview overlay - shown on top while IPFS image loads */}
         {previewUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={previewUrl}
             alt="Banner preview"

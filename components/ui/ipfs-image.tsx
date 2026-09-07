@@ -116,7 +116,6 @@ export function IpfsImage({
   return (
     <>
       {!loaded && loadingFallback}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={withRetryParam(candidateUrls[safeIndex], retryRound)}
         alt={alt}

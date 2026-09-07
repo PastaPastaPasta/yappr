@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { User, Post } from './types'
-import { mockCurrentUser } from './mock-data'
+import { Post } from './types'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 import { scopedKey } from '@/lib/storage-scope'
@@ -24,7 +23,6 @@ export interface PendingPostNavigation {
 }
 
 interface AppState {
-  currentUser: User | null
   isComposeOpen: boolean
   replyingTo: Post | null
   quotingPost: Post | null
@@ -34,7 +32,6 @@ interface AppState {
   // Pending navigation data (set when clicking post, consumed on detail page mount)
   pendingPostNavigation: PendingPostNavigation | null
 
-  setCurrentUser: (user: User | null) => void
   setComposeOpen: (open: boolean) => void
   setReplyingTo: (post: Post | null) => void
   setQuotingPost: (post: Post | null) => void
@@ -60,7 +57,6 @@ const createInitialThreadPost = (): ThreadPost => ({
 })
 
 export const useAppStore = create<AppState>((set, get) => ({
-  currentUser: mockCurrentUser,
   isComposeOpen: false,
   replyingTo: null,
   quotingPost: null,
@@ -68,25 +64,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeThreadPostId: null,
   pendingPostNavigation: null,
 
-  setCurrentUser: (user) => set({ currentUser: user }),
   setComposeOpen: (open) => {
-    if (open) {
-      // Reset thread posts when opening modal
-      const initialPost = createInitialThreadPost()
-      set({
-        isComposeOpen: open,
-        threadPosts: [initialPost],
-        activeThreadPostId: initialPost.id
-      })
-    } else {
-      // Reset thread posts when closing modal to prevent stale state
-      const initialPost = createInitialThreadPost()
-      set({
-        isComposeOpen: false,
-        threadPosts: [initialPost],
-        activeThreadPostId: initialPost.id
-      })
-    }
+    // Reset thread drafts on both open and close so no stale draft survives.
+    const initialPost = createInitialThreadPost()
+    set({
+      isComposeOpen: open,
+      threadPosts: [initialPost],
+      activeThreadPostId: initialPost.id
+    })
   },
   setReplyingTo: (post) => set({ replyingTo: post }),
   setQuotingPost: (post) => set({ quotingPost: post }),
