@@ -30,8 +30,9 @@ const IN_FLIGHT_LINGER_MS = 100
 /**
  * Validates that a post's secondary index documents (postHashtag, postMention)
  * were actually written. Content is the source of truth for what SHOULD exist;
- * the chain says what DOES. Fails open: a fetch error reports every value as
- * registered rather than flagging a healthy post.
+ * the chain says what DOES. Fails open: when the registered set cannot be
+ * fetched, every value reports as valid and nothing is cached, so a healthy
+ * post is never flagged and the next look retries.
  *
  * One instance per field kind. Results are cached per post, callers within a
  * 10ms window are batched, and in-flight fetches are shared.
@@ -43,9 +44,10 @@ export class PostFieldValidator {
   private readonly isInline: () => boolean
 
   private cache = new Map<string, { registered: Set<string>; timestamp: number }>()
-  private pending = new Map<string, Array<(registered: Set<string>) => void>>()
+  /** `null` is delivered to waiters when the fetch failed. */
+  private pending = new Map<string, Array<(registered: Set<string> | null) => void>>()
   private batchTimer: ReturnType<typeof setTimeout> | null = null
-  private inFlight = new Map<string, Promise<Set<string>>>()
+  private inFlight = new Map<string, Promise<Set<string> | null>>()
 
   constructor(options: PostFieldValidatorOptions) {
     this.kind = options.kind
@@ -66,16 +68,21 @@ export class PostFieldValidator {
     }
 
     const registered = await this.registeredFor(postId)
-    for (const value of values) result.set(value, registered.has(value) ? 'valid' : 'invalid')
+    for (const value of values) result.set(value, !registered || registered.has(value) ? 'valid' : 'invalid')
     return result
   }
 
-  /** Drop the cached result for a post, e.g. after a value was registered. */
+  /**
+   * Drop the cached result for a post, e.g. after a value was registered. A
+   * fetch already in flight is dropped too: it started before the write and
+   * would hand back the pre-registration set.
+   */
   invalidate(postId: string): void {
     this.cache.delete(postId)
+    this.inFlight.delete(postId)
   }
 
-  private registeredFor(postId: string): Promise<Set<string>> {
+  private registeredFor(postId: string): Promise<Set<string> | null> {
     const cached = this.cache.get(postId)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return Promise.resolve(cached.registered)
@@ -83,7 +90,7 @@ export class PostFieldValidator {
     const inFlight = this.inFlight.get(postId)
     if (inFlight) return inFlight
 
-    return new Promise<Set<string>>((resolve) => {
+    return new Promise<Set<string> | null>((resolve) => {
       const waiters = this.pending.get(postId)
       if (waiters) {
         waiters.push(resolve)
@@ -103,17 +110,19 @@ export class PostFieldValidator {
 
     await Promise.all(
       Array.from(batch.entries()).map(async ([postId, waiters]) => {
-        const promise = this.fetchRegistered(postId).catch((error) => {
+        const promise: Promise<Set<string> | null> = this.fetchRegistered(postId).catch((error) => {
           logger.error(`Error fetching ${this.kind}s for post ${postId}:`, error)
-          return new Set<string>()
+          return null
         })
         this.inFlight.set(postId, promise)
         try {
           const registered = await promise
-          this.cache.set(postId, { registered, timestamp: Date.now() })
+          if (registered) this.cache.set(postId, { registered, timestamp: Date.now() })
           waiters.forEach((resolve) => resolve(registered))
         } finally {
-          setTimeout(() => this.inFlight.delete(postId), IN_FLIGHT_LINGER_MS)
+          setTimeout(() => {
+            if (this.inFlight.get(postId) === promise) this.inFlight.delete(postId)
+          }, IN_FLIGHT_LINGER_MS)
         }
       })
     )

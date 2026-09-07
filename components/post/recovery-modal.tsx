@@ -17,15 +17,17 @@ import { mentionService } from '@/lib/services/mention-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { dispatchFieldRegistered, type PostFieldKind } from '@/lib/services/post-field-validation'
 
-const COPY: Record<PostFieldKind, { noun: string; title: string; prefix: string; consequence: string }> = {
+const COPY: Record<PostFieldKind, { noun: string; Noun: string; title: string; prefix: string; consequence: string }> = {
   hashtag: {
     noun: 'hashtag',
+    Noun: 'Hashtag',
     title: 'Hashtag Not Registered',
     prefix: '#',
     consequence: "this post won't appear in hashtag searches for",
   },
   mention: {
     noun: 'mention',
+    Noun: 'Mention',
     title: 'Mention Not Registered',
     prefix: '@',
     consequence: "this post won't appear when viewing posts that mention",
@@ -52,6 +54,7 @@ export function RecoveryModal() {
   useEffect(() => {
     if (!isOpen || kind !== 'mention' || !value) {
       setResolvedIdentityId(null)
+      setIsResolving(false)
       return
     }
     let cancelled = false
@@ -78,16 +81,20 @@ export function RecoveryModal() {
     setRegistering(true)
     setError(null)
     try {
-      const success =
-        kind === 'hashtag'
-          ? await hashtagService.createPostHashtag(post.id, user.identityId, value)
-          : await mentionService.createPostMention(post.id, user.identityId, resolvedIdentityId as string)
+      let success: boolean
+      if (kind === 'hashtag') {
+        success = await hashtagService.createPostHashtag(post.id, user.identityId, value)
+      } else if (resolvedIdentityId) {
+        success = await mentionService.createPostMention(post.id, user.identityId, resolvedIdentityId)
+      } else {
+        return
+      }
       if (!success) {
         setError(`Failed to register ${copy.noun}. Please try again.`)
         return
       }
       dispatchFieldRegistered(kind, { postId: post.id, value })
-      toast.success(`${copy.noun[0].toUpperCase()}${copy.noun.slice(1)} ${copy.prefix}${value} registered successfully!`)
+      toast.success(`${copy.Noun} ${copy.prefix}${value} registered successfully!`)
       close()
     } catch (err) {
       logger.error(`Error registering ${copy.noun}:`, err)
@@ -168,7 +175,14 @@ export function RecoveryModal() {
                           </p>
                           <p className="text-sm">
                             Without registration, {copy.consequence}{' '}
-                            <span className="font-medium text-yappr-500">{copy.prefix}{value}</span>.
+                            {valueHref ? (
+                              <Link href={valueHref} className="font-medium text-yappr-500 hover:underline" onClick={close}>
+                                {copy.prefix}{value}
+                              </Link>
+                            ) : (
+                              <span className="font-medium text-yappr-500">{copy.prefix}{value}</span>
+                            )}
+                            .
                           </p>
                         </div>
 
@@ -189,7 +203,7 @@ export function RecoveryModal() {
                           <div className="space-y-3 pt-2">
                             <p className="text-sm text-gray-500">Since you own this post, you can register the {copy.noun} now.</p>
                             <Button onClick={handleRegister} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
-                              Register {copy.noun[0].toUpperCase()}{copy.noun.slice(1)}
+                              Register {copy.Noun}
                             </Button>
                           </div>
                         ) : isOwner ? (
