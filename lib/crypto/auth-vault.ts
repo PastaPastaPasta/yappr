@@ -60,10 +60,6 @@ function buildPrfSalt(identityId: string, vaultId: string, rpId: string): Uint8A
   return sha256(utf8(`yappr/auth-vault/prf-salt/v1:${identityId}:${vaultId}:${rpId}`))
 }
 
-async function derivePasswordWrappingKey(password: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
-  return deriveKeyFromPasswordAndSalt(password, salt, iterations)
-}
-
 async function derivePrfWrappingKey(prfOutput: Uint8Array, identityId: string, vaultId: string, rpId: string): Promise<CryptoKey> {
   return deriveKeyWithHkdf(prfOutput, buildPrfSalt(identityId, vaultId, rpId), utf8(PRF_WRAP_INFO))
 }
@@ -94,7 +90,7 @@ export async function decryptBundle(bundleCiphertext: Uint8Array, iv: Uint8Array
 
 export async function wrapDekWithPassword(dek: Uint8Array, password: string, iterations: number, identityId: string, vaultId: string): Promise<{ wrappedDek: Uint8Array; iv: Uint8Array; pbkdf2Salt: Uint8Array }> {
   const pbkdf2Salt = randomBytes(32)
-  const wrappingKey = await derivePasswordWrappingKey(password, pbkdf2Salt, iterations)
+  const wrappingKey = await deriveKeyFromPasswordAndSalt(password, pbkdf2Salt, iterations)
   const aad = buildWrapperAad(identityId, vaultId, 'password', 1)
   const encrypted = await aesGcmSeal(wrappingKey, dek, { aad })
 
@@ -106,7 +102,7 @@ export async function wrapDekWithPassword(dek: Uint8Array, password: string, ite
 }
 
 export async function unwrapDekWithPassword(wrappedDek: Uint8Array, iv: Uint8Array, password: string, pbkdf2Salt: Uint8Array, iterations: number, identityId: string, vaultId: string): Promise<Uint8Array> {
-  const wrappingKey = await derivePasswordWrappingKey(password, pbkdf2Salt, iterations)
+  const wrappingKey = await deriveKeyFromPasswordAndSalt(password, pbkdf2Salt, iterations)
   const aad = buildWrapperAad(identityId, vaultId, 'password', 1)
   return aesGcmOpen(wrappingKey, wrappedDek, iv, aad)
 }

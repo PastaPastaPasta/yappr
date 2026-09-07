@@ -42,7 +42,7 @@ export async function aesGcmSeal(
 ): Promise<AesGcmSealed> {
   const iv = options.iv ?? randomIv()
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv), ...(options.aad ? { additionalData: toArrayBuffer(options.aad) } : {}) },
+    { name: 'AES-GCM', iv: toArrayBuffer(iv), ...(options.aad?.length ? { additionalData: toArrayBuffer(options.aad) } : {}) },
     key,
     toArrayBuffer(plaintext)
   )
@@ -57,7 +57,7 @@ export async function aesGcmOpen(
   aad?: Uint8Array
 ): Promise<Uint8Array> {
   const plaintext = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv), ...(aad ? { additionalData: toArrayBuffer(aad) } : {}) },
+    { name: 'AES-GCM', iv: toArrayBuffer(iv), ...(aad?.length ? { additionalData: toArrayBuffer(aad) } : {}) },
     key,
     toArrayBuffer(ciphertext)
   )
