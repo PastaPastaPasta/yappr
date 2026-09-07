@@ -15,6 +15,7 @@ import { logger } from '@/lib/logger';
 
 import type { NodeKey } from './private-feed-crypto-service';
 import { scopedKey } from '@/lib/storage-scope';
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 
 // Storage key prefix as per PRD §3.4
 const STORAGE_PREFIX = scopedKey('yappr:pf:');
@@ -50,30 +51,6 @@ export interface CachedCEK {
  */
 export interface RecipientLeafMap {
   [recipientId: string]: number; // recipientId -> leafIndex
-}
-
-/**
- * Encode Uint8Array to base64 string
- */
-function toBase64(bytes: Uint8Array): string {
-  // Use btoa with binary string conversion
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-/**
- * Decode base64 string to Uint8Array
- */
-function fromBase64(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 /**
@@ -143,7 +120,7 @@ class PrivateFeedKeyStore {
    * Store feed seed for owner
    */
   storeFeedSeed(seed: Uint8Array): void {
-    setItem(KEY_FEED_SEED, toBase64(seed));
+    setItem(KEY_FEED_SEED, bytesToBase64(seed));
   }
 
   /**
@@ -153,7 +130,7 @@ class PrivateFeedKeyStore {
     const stored = getItem(KEY_FEED_SEED);
     if (!stored) return null;
     try {
-      return fromBase64(stored);
+      return base64ToBytes(stored);
     } catch {
       return null;
     }
@@ -324,7 +301,7 @@ class PrivateFeedKeyStore {
     const stored: StoredPathKey[] = pathKeys.map((pk) => ({
       nodeId: pk.nodeId,
       version: pk.version,
-      key: toBase64(pk.key),
+      key: bytesToBase64(pk.key),
     }));
     setItem(KEY_PATH_KEYS_PREFIX + ownerId, JSON.stringify(stored));
   }
@@ -340,7 +317,7 @@ class PrivateFeedKeyStore {
       return parsed.map((pk) => ({
         nodeId: pk.nodeId,
         version: pk.version,
-        key: fromBase64(pk.key),
+        key: base64ToBytes(pk.key),
       }));
     } catch {
       return null;
@@ -375,7 +352,7 @@ class PrivateFeedKeyStore {
   storeCachedCEK(ownerId: string, epoch: number, cek: Uint8Array): void {
     const cached: CachedCEK = {
       epoch,
-      cek: toBase64(cek),
+      cek: bytesToBase64(cek),
     };
     setItem(KEY_CACHED_CEK_PREFIX + ownerId, JSON.stringify(cached));
   }
@@ -390,7 +367,7 @@ class PrivateFeedKeyStore {
       const cached: CachedCEK = JSON.parse(stored);
       return {
         epoch: cached.epoch,
-        cek: fromBase64(cached.cek),
+        cek: base64ToBytes(cached.cek),
       };
     } catch {
       return null;

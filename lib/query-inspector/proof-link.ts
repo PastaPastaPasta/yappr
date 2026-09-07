@@ -6,7 +6,7 @@
  * `#f=bytes&d=<base64url(gzip(raw proof bytes))>`, base64url without padding.
  */
 
-import { hexToBytes } from './serialize'
+import { bytesToBase64Url, hexToBytes } from '@/lib/bytes'
 
 export const PROOF_VISUALIZER_URL = 'https://dashpay.github.io/grovedb-proof-visualizer-widget/'
 
@@ -21,16 +21,8 @@ export async function buildVisualizerLink(grovedbProofHex: string): Promise<stri
     const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
     const compressed = new Uint8Array(await new Response(stream).arrayBuffer())
     if (compressed.length > MAX_ENCODED_BYTES) return null
-    return `${PROOF_VISUALIZER_URL}#f=bytes&d=${base64UrlEncode(compressed)}`
+    return `${PROOF_VISUALIZER_URL}#f=bytes&d=${bytesToBase64Url(compressed)}`
   } catch {
     return null
   }
-}
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }

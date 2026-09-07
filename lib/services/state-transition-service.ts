@@ -9,6 +9,7 @@ import { promptForAuthKey } from '../auth-utils';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -52,13 +53,8 @@ interface CachedSTEntry {
 function savePendingSTBytes(documentId: string, bytes: Uint8Array): void {
   try {
     const key = ST_CACHE_PREFIX + documentId;
-    // Store as base64 with timestamp
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
     const entry: CachedSTEntry = {
-      data: btoa(binary),
+      data: bytesToBase64(bytes),
       cachedAt: Date.now(),
     };
     localStorage.setItem(key, JSON.stringify(entry));
@@ -91,12 +87,7 @@ function loadPendingSTBytes(documentId: string): Uint8Array | null {
       base64 = raw;
     }
 
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
+    return base64ToBytes(base64);
   } catch {
     return null;
   }

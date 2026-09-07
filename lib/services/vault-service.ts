@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
+import { normalizeBytes } from '@/lib/bytes';
 import { dpnsService } from './dpns-service';
 import { YAPPR_VAULT_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import {
@@ -42,16 +43,7 @@ export interface LoginWithPasswordResult {
 // ---------- Helpers ----------
 
 function toUint8Array(data: unknown): Uint8Array | undefined {
-  if (data instanceof Uint8Array) return data;
-  if (Array.isArray(data)) return new Uint8Array(data);
-  if (typeof data === 'string') {
-    // base64
-    const binary = atob(data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
-  return undefined;
+  return normalizeBytes(data) ?? undefined;
 }
 
 // ---------- Service ----------

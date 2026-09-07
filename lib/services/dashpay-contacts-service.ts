@@ -14,6 +14,7 @@ import { dpnsService } from './dpns-service';
 import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
 import { DASHPAY_CONTRACT_ID } from '../constants';
 import bs58 from 'bs58';
+import { base64ToBytes } from '@/lib/bytes';
 
 // Raw contact request document from Dash Pay contract
 export interface ContactRequestDocument {
@@ -53,16 +54,7 @@ class DashPayContactsService {
    */
   private base64ToBase58(base64: string): string | null {
     try {
-      let bytes: Uint8Array;
-      if (typeof atob === 'function') {
-        const binary = atob(base64);
-        bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-      } else {
-        bytes = new Uint8Array(Buffer.from(base64, 'base64'));
-      }
+      const bytes = base64ToBytes(base64);
 
       if (bytes.length === 32) {
         return bs58.encode(bytes);

@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
-import { identifierToBase58, identifierStringToDocumentBytes, toUint8Array } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
   StoreOrder,
@@ -33,8 +33,8 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     const sellerId = identifierToBase58(data.sellerId) || '';
 
     // Convert encrypted payload and nonce to Uint8Array
-    const encryptedPayload = toUint8Array(data.encryptedPayload) || new Uint8Array();
-    const nonce = toUint8Array(data.nonce) || new Uint8Array();
+    const encryptedPayload = normalizeBytes(data.encryptedPayload) || new Uint8Array();
+    const nonce = normalizeBytes(data.nonce) || new Uint8Array();
 
     return {
       id: (doc.$id || doc.id) as string,

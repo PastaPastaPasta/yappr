@@ -15,6 +15,7 @@ import { logger } from '@/lib/logger'
 import bs58 from 'bs58'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { KEY_EXCHANGE_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
+import { bytesToBase64, requireBytes } from '@/lib/bytes'
 import {
   deriveSharedSecret,
   decryptLoginKey,
@@ -72,33 +73,6 @@ export interface PollOptions {
 }
 
 /**
- * Runtime-safe base64 encoding/decoding helpers.
- * Uses Node's Buffer when available, falls back to browser globals.
- */
-function base64ToBytes(base64: string): Uint8Array {
-  if (typeof globalThis.Buffer !== 'undefined') {
-    return new Uint8Array(globalThis.Buffer.from(base64, 'base64'))
-  }
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof globalThis.Buffer !== 'undefined') {
-    return globalThis.Buffer.from(bytes).toString('base64')
-  }
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-/**
  * Service for querying the key exchange contract.
  *
  * Extends BaseDocumentService to query loginKeyResponse documents
@@ -117,35 +91,12 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
       $id: doc.$id as string,
       $ownerId: doc.$ownerId as string,
       $revision: doc.$revision as number,
-      contractId: this.toUint8Array(doc.contractId),
-      appEphemeralPubKeyHash: this.toUint8Array(doc.appEphemeralPubKeyHash),
-      walletEphemeralPubKey: this.toUint8Array(doc.walletEphemeralPubKey),
-      encryptedPayload: this.toUint8Array(doc.encryptedPayload),
+      contractId: requireBytes(doc.contractId, 'contractId'),
+      appEphemeralPubKeyHash: requireBytes(doc.appEphemeralPubKeyHash, 'appEphemeralPubKeyHash'),
+      walletEphemeralPubKey: requireBytes(doc.walletEphemeralPubKey, 'walletEphemeralPubKey'),
+      encryptedPayload: requireBytes(doc.encryptedPayload, 'encryptedPayload'),
       keyIndex: doc.keyIndex as number
     }
-  }
-
-  /**
-   * Convert various byte array formats to Uint8Array.
-   */
-  private toUint8Array(data: unknown): Uint8Array {
-    if (data instanceof Uint8Array) {
-      return data
-    }
-    if (Array.isArray(data)) {
-      return new Uint8Array(data)
-    }
-    if (typeof data === 'string') {
-      return base64ToBytes(data)
-    }
-    // Handle Buffer-like objects
-    if (data && typeof data === 'object' && 'type' in data && 'data' in data) {
-      const bufferLike = data as { type: string; data: number[] }
-      if (bufferLike.type === 'Buffer' && Array.isArray(bufferLike.data)) {
-        return new Uint8Array(bufferLike.data)
-      }
-    }
-    throw new Error(`Cannot convert to Uint8Array: ${typeof data}`)
   }
 
   /**

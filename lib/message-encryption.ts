@@ -13,6 +13,7 @@
 
 import * as secp256k1 from '@noble/secp256k1'
 import bs58 from 'bs58'
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 
 export interface EncryptedMessage {
   ciphertext: string  // base64 encoded
@@ -124,9 +125,9 @@ export async function encryptMessage(
   )
 
   return {
-    ciphertext: arrayBufferToBase64(ciphertext),
-    iv: arrayBufferToBase64(iv),
-    senderPublicKey: arrayBufferToBase64(senderPublicKey)
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+    iv: bytesToBase64(iv),
+    senderPublicKey: bytesToBase64(senderPublicKey)
   }
 }
 
@@ -153,11 +154,11 @@ export async function decryptMessage(
   const aesKey = await deriveAesKey(sharedSecret)
 
   // 4. Decrypt
-  const iv = base64ToArrayBuffer(encrypted.iv)
-  const ciphertext = base64ToArrayBuffer(encrypted.ciphertext)
+  const iv = base64ToBytes(encrypted.iv)
+  const ciphertext = base64ToBytes(encrypted.ciphertext)
 
   const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
     aesKey,
     ciphertext
   )
@@ -263,35 +264,4 @@ export function parseEncryptedContent(encryptedContent: string): EncryptedMessag
  */
 export function formatEncryptedContent(encrypted: EncryptedMessage): string {
   return `${encrypted.senderPublicKey}:${encrypted.iv}:${encrypted.ciphertext}`
-}
-
-// Helper functions
-function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes.buffer
-}
-
-/**
- * Convert base64 string to Uint8Array (exported for use in decryption)
- */
-export function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
 }

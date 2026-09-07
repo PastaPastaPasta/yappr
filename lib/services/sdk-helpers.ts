@@ -21,6 +21,9 @@ import type {
   DocumentOrderByClause,
 } from '@dashevo/wasm-sdk';
 import bs58 from 'bs58';
+import { base64ToBytes, bytesToBase64, hexToBytes, normalizeBytes } from '@/lib/bytes';
+
+export { base64ToBytes, normalizeBytes };
 
 export type { DocumentWhereClause, DocumentOrderByClause };
 
@@ -286,88 +289,6 @@ export function base58ArrayToBytes(values: string[]): Uint8Array[] {
   return result;
 }
 
-/**
- * Convert hex string to bytes
- */
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  }
-  return bytes;
-}
-
-/**
- * Convert base64 string to bytes
- */
-export function base64ToBytes(base64: string): Uint8Array {
-  // Handle both browser and Node.js environments
-  if (typeof atob === 'function') {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  } else {
-    // Node.js fallback
-    return new Uint8Array(Buffer.from(base64, 'base64'));
-  }
-}
-
-/**
- * Convert various byte formats to Uint8Array.
- * Handles Uint8Array (passthrough), number[] (from JSON), and base64 strings.
- * Returns null if format is unrecognized or invalid.
- */
-export function toUint8Array(data: unknown): Uint8Array | null {
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  if (Array.isArray(data) && data.every(n => typeof n === 'number')) {
-    return new Uint8Array(data);
-  }
-  if (typeof data === 'string') {
-    try {
-      return base64ToBytes(data);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
- * Normalize bytes from SDK response to Uint8Array.
- * Handles all common SDK byte formats: Uint8Array, number[] (JSON), base64 string, and hex string.
- * Returns null on decode failure to prevent malformed data from being treated as valid.
- *
- * Used for normalizing encrypted content, nonces, and other byte array fields from SDK responses.
- */
-export function normalizeBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-  if (Array.isArray(value) && value.every(n => typeof n === 'number')) {
-    return new Uint8Array(value);
-  }
-  if (typeof value === 'string') {
-    // Try base64 decode first using SSR-compatible helper
-    try {
-      return base64ToBytes(value);
-    } catch {
-      // Not valid base64 - try hex
-      if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
-        const bytes = new Uint8Array(value.length / 2);
-        for (let i = 0; i < bytes.length; i++) {
-          bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-        }
-        return bytes;
-      }
-    }
-  }
-  return null;
-}
 
 /**
  * Get current user ID from localStorage session.
@@ -566,15 +487,7 @@ export function identifierStringToLegacyNumberArray(value: string): number[] {
  * Identifier-like fields should stay in their base58 string form instead.
  */
 export function bytesToBase64QueryOperand(value: Uint8Array): string {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(value).toString('base64');
-  }
-
-  let binary = '';
-  for (let i = 0; i < value.length; i++) {
-    binary += String.fromCharCode(value[i]);
-  }
-  return btoa(binary);
+  return bytesToBase64(value);
 }
 
 /**

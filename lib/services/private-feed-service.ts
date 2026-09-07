@@ -34,8 +34,8 @@ import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
+import { bytesEqual, normalizeBytes, requireBytes } from '@/lib/bytes';
 import { identityService } from './identity-service';
-import { parsePublicKeyData } from '../crypto/key-validation';
 
 /**
  * PrivateFeedState document from platform
@@ -76,18 +76,6 @@ export interface PrivatePostResult {
  */
 function utf8Encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
-}
-
-/**
- * Convert base64 to Uint8Array
- */
-function fromBase64(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 class PrivateFeedService {
@@ -135,7 +123,7 @@ class PrivateFeedService {
         $createdAt: doc.$createdAt as number,
         treeCapacity: doc.treeCapacity as number,
         maxEpoch: doc.maxEpoch as number,
-        encryptedSeed: this.normalizeBytes(doc.encryptedSeed),
+        encryptedSeed: requireBytes(doc.encryptedSeed, 'encryptedSeed'),
       };
     } catch (error) {
       logger.error('Error fetching private feed state:', error);
@@ -194,8 +182,8 @@ class PrivateFeedService {
           $createdAt: doc.$createdAt as number,
           epoch: doc.epoch as number,
           revokedLeaf: doc.revokedLeaf as number,
-          packets: this.normalizeBytes(doc.packets),
-          encryptedCEK: this.normalizeBytes(doc.encryptedCEK),
+          packets: requireBytes(doc.packets, 'packets'),
+          encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
         }),
         { maxResults: 2000 } // SPEC allows up to 2000 epochs
       );
@@ -241,20 +229,17 @@ class PrivateFeedService {
         return { success: false, error: 'Could not fetch identity' };
       }
 
-      const derivedPubKeyHex = Buffer.from(encryptionPubKey).toString('hex');
+      const matchesDerived = (data: unknown) => {
+        const onChainPubKey = normalizeBytes(data);
+        return onChainPubKey !== null && bytesEqual(onChainPubKey, encryptionPubKey);
+      };
       // Find the identity's encryption key
       const preferredKey = findEncryptionKey(identity.publicKeys);
-      const matchesPreferred = preferredKey?.data
-        ? Buffer.from(parsePublicKeyData(preferredKey.data) ?? new Uint8Array()).toString('hex') === derivedPubKeyHex
-        : false;
-      const matchingKey = matchesPreferred
+      const matchingKey = preferredKey?.data && matchesDerived(preferredKey.data)
         ? preferredKey
-        : identity.publicKeys.find(key => {
-            if (key.purpose !== 1 || key.type !== 0 || key.disabledAt) return false;
-            const onChainPubKey = parsePublicKeyData(key.data);
-            if (!onChainPubKey) return false;
-            return Buffer.from(onChainPubKey).toString('hex') === derivedPubKeyHex;
-          });
+        : identity.publicKeys.find(key =>
+            key.purpose === 1 && key.type === 0 && !key.disabledAt && matchesDerived(key.data)
+          );
 
       if (!matchingKey) {
         return {
@@ -1291,35 +1276,6 @@ class PrivateFeedService {
   // ============================================================
   // Utility Methods
   // ============================================================
-
-  /**
-   * Normalize bytes from SDK response (may be base64 string or array)
-   */
-  private normalizeBytes(value: unknown): Uint8Array {
-    if (value instanceof Uint8Array) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return new Uint8Array(value);
-    }
-    if (typeof value === 'string') {
-      // Try base64 decode
-      try {
-        return fromBase64(value);
-      } catch {
-        // Might be hex
-        if (/^[0-9a-fA-F]+$/.test(value)) {
-          const bytes = new Uint8Array(value.length / 2);
-          for (let i = 0; i < bytes.length; i++) {
-            bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-          }
-          return bytes;
-        }
-      }
-    }
-    logger.warn('Unable to normalize bytes:', value);
-    return new Uint8Array(0);
-  }
 }
 
 // Export singleton instance

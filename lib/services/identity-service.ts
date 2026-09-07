@@ -3,6 +3,8 @@ import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
 import { keyNetwork } from '@/lib/constants'
+import { requireBytes } from '@/lib/bytes'
+import { getPublicKey } from '@/lib/crypto/keys'
 
 export interface IdentityPublicKey {
   id: number;
@@ -350,9 +352,7 @@ class IdentityService {
         type: key.type,
         purpose: key.purpose,
         securityLevel: key.securityLevel,
-        data: typeof key.data === 'string'
-          ? Uint8Array.from(atob(key.data), c => c.charCodeAt(0))
-          : key.data as Uint8Array
+        data: requireBytes(key.data, 'identity key data')
       }));
 
       const network = keyNetwork();
@@ -432,8 +432,7 @@ class IdentityService {
       const newKeyId = maxKeyId + 1;
 
       // Derive public key from private key
-      const { privateFeedCryptoService } = await import('./index');
-      const publicKeyBytes = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
+      const publicKeyBytes = getPublicKey(encryptionPrivateKey);
 
       // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
       // so the WASM object shares the same linear memory as sdk.identities.update().
@@ -581,8 +580,7 @@ class IdentityService {
       const newKeyId = maxKeyId + 1;
 
       // Derive public key from private key
-      const { privateFeedCryptoService } = await import('./index');
-      const publicKeyBytes = privateFeedCryptoService.getPublicKey(transferPrivateKey);
+      const publicKeyBytes = getPublicKey(transferPrivateKey);
 
       // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
       // so the WASM object shares the same linear memory as sdk.identities.update().

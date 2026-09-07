@@ -12,6 +12,7 @@
 import bs58 from 'bs58';
 import { logger } from '@/lib/logger';
 import { normalizeSDKResponse, identifierToHex } from './sdk-helpers';
+import { hexToBytes } from '@/lib/bytes';
 
 export interface PaginateOptions {
   /** Maximum results to return (safety limit). Default: 1000 */
@@ -211,11 +212,7 @@ function groupedCountEntries(raw: unknown): [string, unknown][] {
  * are also valid base58, so the permissive `identifierToBase58` cannot be used. */
 function hexKeyToBase58(key: string): string | null {
   if (!/^[0-9a-fA-F]{64}$/.test(key)) return null;
-  const bytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    bytes[i] = parseInt(key.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bs58.encode(bytes);
+  return bs58.encode(hexToBytes(key));
 }
 
 /**

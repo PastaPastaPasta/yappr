@@ -167,22 +167,6 @@ export function getBundleHash(bundle: AuthVaultBundle): Uint8Array {
   return sha256(encodeBundle(bundle))
 }
 
-export function encodeBinaryToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-export function decodeBinaryFromBase64(value: string): Uint8Array {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
 
 export async function encryptBundle(bundle: AuthVaultBundle, dek: Uint8Array, vaultId: string): Promise<EncryptResult & { bundleHash: Uint8Array }> {
   const aad = buildBundleAad(bundle.identityId, vaultId, bundle.secretKind, bundle.version)

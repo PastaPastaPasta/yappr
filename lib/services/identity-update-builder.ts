@@ -14,6 +14,7 @@ import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
 import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hash160 } from '../crypto/hash'
+import { requireBytes } from '@/lib/bytes'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -339,29 +340,8 @@ export async function checkKeysRegistered(
   // Helper to extract key data as Uint8Array from a WASM IdentityPublicKey.
   // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
   // Try the direct `.data` hex property first, then toJSON as fallback.
-  const getKeyData = (key: RegisteredIdentityKey): Uint8Array => {
-    // Prefer the direct .data hex getter from WASM objects
-    const raw = key.data ?? key.toJSON().data
-    if (raw instanceof Uint8Array) {
-      return raw
-    }
-    // Hex-encoded string (with or without 0x prefix)
-    const hex = raw.startsWith('0x') ? raw.slice(2) : raw
-    if (/^[0-9a-fA-F]+$/.test(hex) && hex.length % 2 === 0) {
-      const bytes = new Uint8Array(hex.length / 2)
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
-      }
-      return bytes
-    }
-    // Base64 fallback
-    const binary = atob(raw)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i)
-    }
-    return bytes
-  }
+  const getKeyData = (key: RegisteredIdentityKey): Uint8Array =>
+    requireBytes(key.data ?? key.toJSON().data, 'identity key data')
 
   const authHash = hash160(authPublicKey)
 

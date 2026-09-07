@@ -1,4 +1,6 @@
 import { parsePrivateKey } from './wif'
+import { getPublicKey } from './keys'
+import { bytesEqual, normalizeBytes } from '@/lib/bytes'
 
 /**
  * Key purpose constants matching Dash Platform identity key purposes
@@ -44,46 +46,10 @@ export type EncryptionKeyValidationErrorType = KeyValidationErrorType
 export type EncryptionKeyValidationResult = KeyValidationResult
 
 /**
- * Parse public key data from identity (can be Uint8Array, hex string, or base64)
+ * Parse identity public-key data (Uint8Array, number[], hex, or base64).
  */
 export function parsePublicKeyData(data: unknown): Uint8Array | null {
-  if (!data) return null
-
-  if (data instanceof Uint8Array) {
-    return data
-  }
-
-  if (typeof data === 'string') {
-    // Check if hex (must be even length for valid hex encoding)
-    if (/^[0-9a-fA-F]+$/.test(data) && data.length % 2 === 0) {
-      const bytes = new Uint8Array(data.length / 2)
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(data.substring(i * 2, i * 2 + 2), 16)
-      }
-      return bytes
-    }
-    // Try base64
-    try {
-      const binary = atob(data)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
-      return bytes
-    } catch {
-      // Invalid base64
-      return null
-    }
-  }
-
-  return null
-}
-
-/**
- * Compare two Uint8Arrays for equality
- */
-function areEqual(a: Uint8Array, b: Uint8Array): boolean {
-  return a.length === b.length && a.every((byte, i) => byte === b[i])
+  return data ? normalizeBytes(data) : null
 }
 
 /**
@@ -137,10 +103,9 @@ export async function validateKey(
   }
 
   // Step 2: Derive public key from private key
-  const { privateFeedCryptoService } = await import('@/lib/services')
   let derivedPubKey: Uint8Array
   try {
-    derivedPubKey = privateFeedCryptoService.getPublicKey(keyBytes)
+    derivedPubKey = getPublicKey(keyBytes)
   } catch {
     return {
       isValid: false,
@@ -179,7 +144,7 @@ export async function validateKey(
   for (const targetKey of candidateKeys) {
     const onChainPubKeyBytes = parsePublicKeyData(targetKey.data)
     if (onChainPubKeyBytes) {
-      const matches = areEqual(derivedPubKey, onChainPubKeyBytes)
+      const matches = bytesEqual(derivedPubKey, onChainPubKeyBytes)
       if (matches) {
         // Key is valid - found a match
         return {
@@ -257,10 +222,9 @@ export async function validateKeyBytes(
   const purposeName = getPurposeName(purpose)
 
   // Step 1: Derive public key from private key
-  const { privateFeedCryptoService } = await import('@/lib/services')
   let derivedPubKey: Uint8Array
   try {
-    derivedPubKey = privateFeedCryptoService.getPublicKey(keyBytes)
+    derivedPubKey = getPublicKey(keyBytes)
   } catch {
     return {
       isValid: false,
@@ -299,7 +263,7 @@ export async function validateKeyBytes(
   for (const targetKey of candidateKeys) {
     const onChainPubKeyBytes = parsePublicKeyData(targetKey.data)
     if (onChainPubKeyBytes) {
-      const matches = areEqual(derivedPubKey, onChainPubKeyBytes)
+      const matches = bytesEqual(derivedPubKey, onChainPubKeyBytes)
       if (matches) {
         // Key is valid - found a match
         return {

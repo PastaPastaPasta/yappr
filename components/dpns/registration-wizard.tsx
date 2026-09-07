@@ -18,6 +18,7 @@ import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
+import { normalizeBytes } from '@/lib/bytes'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -31,15 +32,7 @@ interface DpnsRegistrationWizardProps {
  */
 function convertToKeyInfo(keys: IdentityPublicKey[]): IdentityPublicKeyInfo[] {
   return keys.map((key) => {
-    let data: Uint8Array
-    if (key.data instanceof Uint8Array) {
-      data = key.data
-    } else if (typeof key.data === 'string') {
-      // Base64 decode
-      data = Uint8Array.from(atob(key.data), (c) => c.charCodeAt(0))
-    } else {
-      data = new Uint8Array()
-    }
+    const data = normalizeBytes(key.data) ?? new Uint8Array()
     return {
       id: key.id,
       type: key.type,

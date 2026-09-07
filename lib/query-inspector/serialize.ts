@@ -6,26 +6,15 @@
  * record can outlive the wasm objects it was captured from.
  */
 
+import { bytesToHex } from '@/lib/bytes'
+
+export { bytesToHex }
+
 const MAX_DEPTH = 6
 const MAX_ARRAY_ITEMS = 200
 const MAX_MAP_ENTRIES = 200
 const MAX_STRING_LENGTH = 4096
 
-export function bytesToHex(bytes: Uint8Array): string {
-  let hex = ''
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, '0')
-  }
-  return hex
-}
-
-export function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(Math.floor(hex.length / 2))
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  }
-  return bytes
-}
 
 function truncateString(value: string): string {
   return value.length > MAX_STRING_LENGTH

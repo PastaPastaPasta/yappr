@@ -1,6 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 /**
  * On-chain key encryption utilities for encrypted key backup feature.
  *
@@ -233,8 +234,8 @@ export async function encryptKeyForOnchain(
   )
 
   return {
-    encryptedKey: arrayBufferToBase64(ciphertext),
-    iv: arrayBufferToBase64(iv),
+    encryptedKey: bytesToBase64(new Uint8Array(ciphertext)),
+    iv: bytesToBase64(iv),
     version: ENCRYPTION_VERSION,
     kdfIterations: iterations
   }
@@ -258,8 +259,8 @@ export async function decryptKeyFromOnchain(
   const key = await deriveOnchainKey(identityId, password, data.kdfIterations)
 
   // Decrypt
-  const iv = base64ToUint8Array(data.iv)
-  const ciphertext = base64ToArrayBuffer(data.encryptedKey)
+  const iv = base64ToBytes(data.iv)
+  const ciphertext = base64ToBytes(data.encryptedKey)
 
   try {
     const decrypted = await crypto.subtle.decrypt(
@@ -282,35 +283,6 @@ export async function estimateDecryptionTime(iterations: number): Promise<number
   const benchmark = await benchmarkPbkdf2(1000) // Quick benchmark
   const iterationsPerMs = benchmark.iterations / benchmark.estimatedMs
   return Math.round(iterations / iterationsPerMs)
-}
-
-// --- Utility functions ---
-
-function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes.buffer
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
 }
 
 // --- Extended Backup (v2) Functions ---
@@ -356,8 +328,8 @@ export async function encryptExtendedBackup(
   )
 
   return {
-    encryptedKey: arrayBufferToBase64(ciphertext),
-    iv: arrayBufferToBase64(iv),
+    encryptedKey: bytesToBase64(new Uint8Array(ciphertext)),
+    iv: bytesToBase64(iv),
     version: ENCRYPTION_VERSION,
     kdfIterations: iterations
   }

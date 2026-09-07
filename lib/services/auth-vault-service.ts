@@ -20,7 +20,7 @@ import {
   authVaultAccessService,
   type AuthVaultAccessDocument,
 } from '@/lib/services/auth-vault-access-service'
-import { decodeBinaryFromBase64, encodeBinaryToBase64 } from '@/lib/crypto/auth-vault'
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 
 export interface AuthVaultDocument {
   $id: string
@@ -79,7 +79,7 @@ function stringOrUndefined(value: string | undefined): string | undefined {
 
 function normalizeLoginKey(value?: Uint8Array | string): string | undefined {
   if (!value) return undefined
-  return typeof value === 'string' ? value : encodeBinaryToBase64(value)
+  return typeof value === 'string' ? value : bytesToBase64(value)
 }
 
 class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
@@ -483,7 +483,7 @@ export function createAuthVaultBundle(params: {
 }
 
 export function getLoginKeyBytesFromBundle(bundle: AuthVaultBundle): Uint8Array | null {
-  return bundle.loginKey ? decodeBinaryFromBase64(bundle.loginKey) : null
+  return bundle.loginKey ? base64ToBytes(bundle.loginKey) : null
 }
 
 export function bundleContainsSecondaryKeys(bundle: AuthVaultBundle): { hasEncryptionKey: boolean; hasTransferKey: boolean } {
