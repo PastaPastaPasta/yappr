@@ -236,7 +236,6 @@ export function LinkPreviewInfoIcon() {
 // Note: We use next/image for favicon (small, fixed size) but regular img
 // for preview images so we can check naturalWidth/Height on load
 
-
 interface LinkPreviewProps {
   data: LinkPreviewData
   className?: string

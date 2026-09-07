@@ -1,10 +1,10 @@
-import { IPFS_GATEWAYS, isIpfsProtocol, isIpfsUrl, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
-
 /**
  * Fetching a page for its preview metadata. `ipfs://` goes through the
  * gateway list, a short allow-list of CORS-enabled hosts is fetched directly,
  * and everything else goes through a third-party CORS proxy.
  */
+
+import { IPFS_GATEWAYS, isIpfsProtocol, isIpfsUrl, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
 
 /**
  * PRIVACY: the proxies see every URL they fetch. Rich previews are on by
@@ -14,7 +14,6 @@ import { IPFS_GATEWAYS, isIpfsProtocol, isIpfsUrl, getAllGatewayUrls } from '@/l
 export const CORS_PROXY_INFO = {
   warning:
     'Some URLs (YouTube, Reddit, IPFS, etc.) are fetched directly from their services. Other URLs use third-party proxy servers to fetch metadata. These services may log the URLs you view.',
-  /** Services that are fetched directly without a proxy */
   directServices: [
     { name: 'YouTube', description: 'Video thumbnails (img.youtube.com)' },
     { name: 'Reddit', description: 'Image hosting (i.redd.it)' },
@@ -25,7 +24,6 @@ export const CORS_PROXY_INFO = {
   ],
   /** IPFS gateways used for ipfs:// URLs (derived from the shared gateway list) */
   ipfsGateways: IPFS_GATEWAYS.map((gateway) => ({ name: gateway.domain, url: `https://${gateway.domain}` })),
-  /** Third-party proxies used for other URLs */
   proxies: [
     { name: 'allorigins.win', url: 'https://allorigins.win/' },
     { name: 'corsproxy.io', url: 'https://corsproxy.io/' },
@@ -51,7 +49,7 @@ const FETCH_TIMEOUT_MS = 8000
 /** Larger bodies are not worth downloading for a title and an image URL. */
 const MAX_PREVIEW_SIZE_BYTES = 5 * 1024 * 1024
 
-export interface FetchResult {
+export interface PreviewFetchResult {
   content: string
   contentType: string | null
   /** For ipfs:// URLs, the gateway URL that actually answered, which a browser can load. */
@@ -84,7 +82,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 }
 
 /** Fetch without a proxy. Images are not downloaded; only their Content-Type matters. */
-async function fetchDirectly(url: string): Promise<FetchResult> {
+async function fetchDirectly(url: string): Promise<PreviewFetchResult> {
   const response = await fetchWithTimeout(url)
   const contentType = response.headers.get('content-type')
   if (isImageContentType(contentType)) return { content: '', contentType }
@@ -94,25 +92,27 @@ async function fetchDirectly(url: string): Promise<FetchResult> {
 }
 
 /** Try each candidate in order; the first success wins, the last failure is thrown. */
-async function firstSuccessful<T>(candidates: string[], attempt: (url: string) => Promise<T>, allFailed: string): Promise<T> {
-  let lastError: Error | null = null
+async function firstSuccessful(
+  candidates: string[],
+  attempt: (url: string) => Promise<PreviewFetchResult>
+): Promise<PreviewFetchResult> {
+  let lastError: unknown = new Error('No candidates')
   for (const candidate of candidates) {
     try {
       return await attempt(candidate)
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error('Unknown error')
+      lastError = error
     }
   }
-  throw lastError ?? new Error(allFailed)
+  throw lastError
 }
 
-export async function fetchPreviewContent(url: string): Promise<FetchResult> {
+export async function fetchPreviewContent(url: string): Promise<PreviewFetchResult> {
   if (isIpfsProtocol(url)) {
-    return firstSuccessful(
-      getAllGatewayUrls(url),
-      async (gatewayUrl) => ({ ...(await fetchDirectly(gatewayUrl)), resolvedUrl: gatewayUrl }),
-      'All IPFS gateways failed'
-    )
+    return firstSuccessful(getAllGatewayUrls(url), async (gatewayUrl) => ({
+      ...(await fetchDirectly(gatewayUrl)),
+      resolvedUrl: gatewayUrl,
+    }))
   }
   if (isIpfsUrl(url)) return fetchDirectly(url)
   if (isCorsAllowedDomain(url)) {
@@ -123,10 +123,8 @@ export async function fetchPreviewContent(url: string): Promise<FetchResult> {
     }
   }
   // Proxies do not preserve Content-Type reliably, so the body is treated as HTML.
-  const content = await firstSuccessful(
+  return firstSuccessful(
     CORS_PROXIES.map((proxy) => proxy(url)),
-    async (proxyUrl) => (await fetchWithTimeout(proxyUrl)).text(),
-    'All proxies failed'
+    async (proxyUrl) => ({ content: await (await fetchWithTimeout(proxyUrl)).text(), contentType: 'text/html' })
   )
-  return { content, contentType: 'text/html' }
 }

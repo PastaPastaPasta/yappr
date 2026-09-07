@@ -1,29 +1,25 @@
-import type { LinkPreviewData } from './types'
-import { extractYouTubeVideoId, isDirectImageUrl } from './urls'
-import { fetchPreviewContent, isImageContentType } from './fetch'
-import { parseHtmlForPreview } from './parse-html'
-
 /**
  * Preview data for a URL. YouTube and image links are built from the URL
  * alone; anything else is fetched and parsed. Results are cached for the
  * page's lifetime and concurrent requests for one URL share a fetch.
  */
 
-const previewCache = new Map<string, LinkPreviewData>()
-const pendingRequests = new Map<string, Promise<LinkPreviewData>>()
+import type { LinkPreviewData } from './types'
+import { extractYouTubeVideoId, isDirectImageUrl } from './urls'
+import { fetchPreviewContent, isImageContentType } from './fetch'
+import { parseHtmlForPreview } from './parse-html'
 
-function siteFromUrl(url: string): Pick<LinkPreviewData, 'siteName' | 'favicon'> {
-  try {
-    const parsed = new URL(url)
-    return { siteName: parsed.hostname.replace(/^www\./, ''), favicon: `${parsed.origin}/favicon.ico` }
-  } catch {
-    return {}
-  }
-}
+const previewCache = new Map<string, LinkPreviewData>()
+const pendingPreviews = new Map<string, Promise<LinkPreviewData>>()
 
 /** What we can say about a URL without fetching it. */
 function basicPreview(url: string): LinkPreviewData {
-  return { url, ...siteFromUrl(url) }
+  try {
+    const parsed = new URL(url)
+    return { url, siteName: parsed.hostname.replace(/^www\./, ''), favicon: `${parsed.origin}/favicon.ico` }
+  } catch {
+    return { url }
+  }
 }
 
 function directImagePreview(url: string): LinkPreviewData {
@@ -57,10 +53,10 @@ export function getCachedPreview(url: string): LinkPreviewData | undefined {
 }
 
 /** Never rejects: on any failure the preview degrades to host name and favicon. */
-export function fetchLinkPreview(url: string): Promise<LinkPreviewData> {
+export function getLinkPreview(url: string): Promise<LinkPreviewData> {
   const cached = previewCache.get(url)
   if (cached) return Promise.resolve(cached)
-  const pending = pendingRequests.get(url)
+  const pending = pendingPreviews.get(url)
   if (pending) return pending
 
   const request = buildPreview(url)
@@ -69,7 +65,7 @@ export function fetchLinkPreview(url: string): Promise<LinkPreviewData> {
       previewCache.set(url, data)
       return data
     })
-    .finally(() => pendingRequests.delete(url))
-  pendingRequests.set(url, request)
+    .finally(() => pendingPreviews.delete(url))
+  pendingPreviews.set(url, request)
   return request
 }

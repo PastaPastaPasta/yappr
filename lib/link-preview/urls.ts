@@ -3,6 +3,8 @@
  * images, Yappr posts, or not worth previewing at all. Pure; no network.
  */
 
+import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
+
 const YOUTUBE_DOMAINS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
 const YAPPR_POST_HOSTS = new Set(['yap.pr', 'www.yap.pr'])
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif']
@@ -88,7 +90,7 @@ export function isDirectImageUrl(url: string): boolean {
 
 /** Whether a URL should get no preview at all: local hosts, or unparseable. `ipfs://` is never skipped. */
 export function shouldSkipPreview(url: string): boolean {
-  if (url.startsWith('ipfs://')) return false
+  if (isIpfsProtocol(url)) return false
   try {
     const hostname = new URL(url).hostname
     return SKIP_HOSTS.some((host) => hostname.includes(host))

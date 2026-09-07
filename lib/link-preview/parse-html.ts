@@ -1,6 +1,6 @@
-import type { LinkPreviewData } from './types'
-
 /** Open Graph, Twitter card and plain `<meta>`/`<title>` extraction from raw HTML. No DOM. */
+
+import type { LinkPreviewData } from './types'
 
 function decodeEntities(text: string): string {
   return text
@@ -39,7 +39,7 @@ function metaName(name: string): RegExp[] {
   ]
 }
 
-export function makeAbsoluteUrl(url: string | undefined, baseUrl: string): string | undefined {
+function makeAbsoluteUrl(url: string | undefined, baseUrl: string): string | undefined {
   if (!url) return undefined
   if (url.startsWith('http')) return url
   if (url.startsWith('//')) return `https:${url}`

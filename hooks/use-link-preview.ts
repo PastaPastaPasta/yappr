@@ -3,10 +3,9 @@
 import { useState, useEffect } from 'react'
 import type { LinkPreviewData } from '@/lib/link-preview/types'
 import { shouldSkipPreview } from '@/lib/link-preview/urls'
-import { fetchLinkPreview, getCachedPreview } from '@/lib/link-preview/preview'
+import { getLinkPreview, getCachedPreview } from '@/lib/link-preview/preview'
 
 interface UseLinkPreviewOptions {
-  /** Disable preview entirely */
   disabled?: boolean
 }
 
@@ -29,24 +28,22 @@ export function useLinkPreview(url: string | null, options: UseLinkPreviewOption
   const [error, setError] = useState(false)
 
   useEffect(() => {
+    setError(false)
     if (inactive) {
       setData(null)
       setLoading(false)
-      setError(false)
       return
     }
     const cached = getCachedPreview(url)
     if (cached) {
       setData(cached)
       setLoading(false)
-      setError(false)
       return
     }
 
     let cancelled = false
     setLoading(true)
-    setError(false)
-    fetchLinkPreview(url)
+    getLinkPreview(url)
       .then((result) => {
         if (cancelled) return
         setData(result)
