@@ -11,6 +11,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
+import { useCopy } from '@/hooks/use-copy'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
 import { followService, dpnsService, unifiedProfileService } from '@/lib/services'
@@ -46,7 +47,7 @@ interface ConnectionUser {
 
 const COPY: Record<ConnectionKind, {
   title: string
-  noun: (count: number) => string
+  noun: [one: string, many: string]
   loadingText: string
   emptyText: string
   emptyDescription: string
@@ -54,7 +55,7 @@ const COPY: Record<ConnectionKind, {
 }> = {
   following: {
     title: 'Following',
-    noun: (count) => (count === 1 ? 'user' : 'users'),
+    noun: ['user', 'users'],
     loadingText: 'Loading following list...',
     emptyText: 'Not following anyone yet',
     emptyDescription: 'Find interesting people to follow on Yappr',
@@ -62,7 +63,7 @@ const COPY: Record<ConnectionKind, {
   },
   followers: {
     title: 'Followers',
-    noun: (count) => (count === 1 ? 'follower' : 'followers'),
+    noun: ['follower', 'followers'],
     loadingText: 'Loading followers...',
     emptyText: 'No followers yet',
     emptyDescription: 'Share interesting content to gain followers',
@@ -80,36 +81,29 @@ function toHomographSafe(input: string): string {
   }
 }
 
-async function countOrZero(count: (id: string) => Promise<number>, id: string, what: string): Promise<number> {
-  try {
-    return await count(id)
-  } catch (error) {
-    logger.error(`Failed to get ${what} count for ${id}:`, error)
-    return 0
-  }
+interface Enrichment {
+  id: string
+  profile: UnifiedProfileDocument | undefined
+  followersCount: number
+  followingCount: number
 }
 
-/** Profiles and follower/following counts for a set of identities, keyed by id. */
-async function fetchProfilesAndCounts(ids: string[]) {
+/**
+ * Profile and follower/following counts per identity, in `ids` order. The
+ * count queries never reject (the service returns 0 on failure); a profile
+ * query failure is the caller's to handle.
+ */
+async function fetchEnrichment(ids: string[]): Promise<Enrichment[]> {
   const [profiles, followerCounts, followingCounts] = await Promise.all([
     unifiedProfileService.getProfilesByIdentityIds(ids),
-    Promise.all(ids.map((id) => countOrZero((i) => followService.countFollowers(i), id, 'follower'))),
-    Promise.all(ids.map((id) => countOrZero((i) => followService.countFollowing(i), id, 'following'))),
+    Promise.all(ids.map((id) => followService.countFollowers(id))),
+    Promise.all(ids.map((id) => followService.countFollowing(id))),
   ])
-  return {
-    profiles: new Map<string, UnifiedProfileDocument>(profiles.map((p) => [p.$ownerId, p])),
-    followers: new Map(ids.map((id, i) => [id, followerCounts[i]])),
-    following: new Map(ids.map((id, i) => [id, followingCounts[i]])),
-  }
+  const byOwner = new Map(profiles.map((p) => [p.$ownerId, p]))
+  return ids.map((id, i) => ({ id, profile: byOwner.get(id), followersCount: followerCounts[i], followingCount: followingCounts[i] }))
 }
 
-function toUser(
-  id: string,
-  usernames: string[],
-  profile: UnifiedProfileDocument | undefined,
-  counts: { followers: Map<string, number>; following: Map<string, number> },
-  isFollowing: boolean
-): ConnectionUser {
+function toUser({ id, profile, followersCount, followingCount }: Enrichment, usernames: string[], isFollowing: boolean): ConnectionUser {
   const username = usernames[0] ?? null
   return {
     id,
@@ -118,11 +112,15 @@ function toUser(
     bio: profile?.bio || undefined,
     hasProfile: !!profile,
     hasDpnsName: !!username,
-    followersCount: counts.followers.get(id) ?? 0,
-    followingCount: counts.following.get(id) ?? 0,
+    followersCount,
+    followingCount,
     isFollowing,
     allUsernames: usernames,
   }
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`
 }
 
 /**
@@ -134,11 +132,11 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const copy = COPY[kind]
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user } = useAuth()
+  const { user: viewer } = useAuth()
+  const viewerId = viewer?.identityId
   const { requireAuth } = useRequireAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
-  const list = useAsyncState<ConnectionUser[]>(null)
-  const { setLoading, setError, setData } = list
+  const { data, loading, error, setLoading, setError, setData } = useAsyncState<ConnectionUser[]>(null)
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
 
@@ -148,27 +146,32 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const [searchError, setSearchError] = useState<string | null>(null)
 
   const targetUserId = searchParams.get('id')
-  const isOwnProfile = !!user && (!targetUserId || targetUserId === user.identityId)
+  const isOwnProfile = !!viewerId && (!targetUserId || targetUserId === viewerId)
   const canSearch = kind === 'following' && isOwnProfile
+
+  // The header names whoever's list this is, when it is not the viewer's own.
+  useEffect(() => {
+    if (!targetUserId || targetUserId === viewerId) return
+    let cancelled = false
+    const fallback = `User ${targetUserId.slice(-6)}`
+    dpnsService
+      .resolveUsername(targetUserId)
+      .then((username) => { if (!cancelled) setTargetUserName(username || fallback) })
+      .catch((error) => {
+        logger.error('Failed to resolve target user name:', error)
+        if (!cancelled) setTargetUserName(fallback)
+      })
+    return () => { cancelled = true }
+  }, [targetUserId, viewerId])
 
   const load = useCallback(async (forceRefresh = false) => {
     setLoading(true)
     setError(null)
     try {
-      const userIdToLoad = targetUserId || user?.identityId
+      const userIdToLoad = targetUserId || viewerId
       if (!userIdToLoad) {
         setData([])
         return
-      }
-
-      if (targetUserId && targetUserId !== user?.identityId) {
-        const fallback = `User ${targetUserId.slice(-6)}`
-        try {
-          setTargetUserName((await dpnsService.resolveUsername(targetUserId)) || fallback)
-        } catch (error) {
-          logger.error('Failed to resolve target user name:', error)
-          setTargetUserName(fallback)
-        }
       }
 
       const cacheKey = `${kind}_${userIdToLoad}`
@@ -189,7 +192,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
         return
       }
 
-      const [usernames, counts, followStatus] = await Promise.all([
+      const [usernames, enrichment, followStatus] = await Promise.all([
         Promise.all(ids.map(async (id) => {
           try {
             return await dpnsService.getAllUsernamesSorted(id)
@@ -198,26 +201,26 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
             return []
           }
         })),
-        fetchProfilesAndCounts(ids),
+        fetchEnrichment(ids),
         // Everyone on a following list is followed by definition. On your own
         // followers list the button depends on whether you follow them back.
-        kind === 'followers' && isOwnProfile && user
-          ? followService.getFollowStatusBatch(ids, user.identityId)
+        kind === 'followers' && isOwnProfile && viewerId
+          ? followService.getFollowStatusBatch(ids, viewerId)
           : Promise.resolve(new Map<string, boolean>()),
       ])
 
-      const users = ids.map((id, i) =>
-        toUser(id, usernames[i], counts.profiles.get(id), counts, kind === 'following' || (followStatus.get(id) ?? false))
+      const users = enrichment.map((entry, i) =>
+        toUser(entry, usernames[i], kind === 'following' || (followStatus.get(entry.id) ?? false))
       )
       cacheManager.set(kind, cacheKey, users)
       setData(users)
     } catch (error) {
-      logger.error(`${copy.title}: failed to load list:`, error)
+      logger.error(`${kind}: failed to load list:`, error)
       setError(error instanceof Error ? error.message : 'Unknown error')
     } finally {
       setLoading(false)
     }
-  }, [kind, copy.title, isOwnProfile, setLoading, setError, setData, user, targetUserId])
+  }, [kind, isOwnProfile, setLoading, setError, setData, viewerId, targetUserId])
 
   useEffect(() => {
     load().catch((error) => logger.error(`Failed to load ${kind}:`, error))
@@ -236,7 +239,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     }
   }
 
-  const setFollowing = (userId: string, isFollowing: boolean) => {
+  const applyFollowChange = (userId: string, isFollowing: boolean) => {
     setSearchResults((prev) => prev.map((u) => (u.id === userId ? { ...u, isFollowing } : u)))
     if (kind === 'followers') {
       setData((prev) => (prev ?? []).map((u) => (u.id === userId ? { ...u, isFollowing } : u)))
@@ -252,7 +255,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       try {
         const result = await followService.followUser(authedUser.identityId, userId)
         if (!result.success) throw new Error(result.error || 'Follow failed')
-        setFollowing(userId, true)
+        applyFollowChange(userId, true)
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Following')
         // A new follow belongs on your own following list; refetch to place it.
@@ -271,7 +274,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       try {
         const result = await followService.unfollowUser(authedUser.identityId, userId)
         if (!result.success) throw new Error(result.error || 'Unfollow failed')
-        setFollowing(userId, false)
+        applyFollowChange(userId, false)
         cacheManager.delete('following', `following_${authedUser.identityId}`)
         toast.success('Unfollowed')
       } catch (error) {
@@ -304,12 +307,13 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
         namesByOwner.set(ownerId, [...(namesByOwner.get(ownerId) ?? []), username])
       }
       const ids = Array.from(namesByOwner.keys())
-      const counts = await fetchProfilesAndCounts(ids)
-      setSearchResults(
-        ids.map((id) =>
-          toUser(id, sortUsernames(namesByOwner.get(id) ?? []), counts.profiles.get(id), counts, list.data?.some((u) => u.id === id) ?? false)
-        )
-      )
+      // A DPNS hit is still worth showing when the profile lookup fails.
+      const enrichment = await fetchEnrichment(ids).catch((error): Enrichment[] => {
+        logger.error('Search: profile enrichment failed:', error)
+        return ids.map((id) => ({ id, profile: undefined, followersCount: 0, followingCount: 0 }))
+      })
+      const followed = new Set(data?.map((u) => u.id))
+      setSearchResults(enrichment.map((entry) => toUser(entry, sortUsernames(namesByOwner.get(entry.id) ?? []), followed.has(entry.id))))
     } catch (error) {
       logger.error('Search error:', error)
       setSearchError('Failed to search for user')
@@ -317,7 +321,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     } finally {
       setIsSearching(false)
     }
-  }, [searchQuery, list.data])
+  }, [searchQuery, data])
 
   useEffect(() => {
     if (!searchQuery) return
@@ -333,12 +337,11 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     setSearchError(null)
   }
 
-  const count = list.data?.length ?? 0
   const subtitle = searchQuery
-    ? `${searchResults.length} search result${searchResults.length === 1 ? '' : 's'}`
-    : list.loading
+    ? plural(searchResults.length, 'search result', 'search results')
+    : loading
       ? 'Loading...'
-      : `${count} ${copy.noun(count)}`
+      : plural(data?.length ?? 0, ...copy.noun)
 
   const renderRow = (u: ConnectionUser) => (
     <ConnectionRow
@@ -347,8 +350,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       showActions={isOwnProfile}
       followLabel={copy.followLabel}
       busy={actionInProgress.has(u.id)}
-      onFollow={() => handleFollow(u.id)}
-      onUnfollow={() => handleUnfollow(u.id)}
+      onToggleFollow={() => (u.isFollowing ? handleUnfollow(u.id) : handleFollow(u.id))}
     />
   )
 
@@ -378,8 +380,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                   </div>
                 </div>
                 {!searchQuery && (
-                  <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={list.loading}>
-                    <ArrowPathIcon className={`h-4 w-4 ${list.loading ? 'animate-spin' : ''}`} />
+                  <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={loading}>
+                    <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                   </Button>
                 )}
               </div>
@@ -429,15 +431,15 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
               ) : null
             ) : (
               <LoadingState
-                loading={list.loading || list.data === null}
-                error={list.error}
-                isEmpty={!list.loading && list.data !== null && list.data.length === 0}
+                loading={loading || data === null}
+                error={error}
+                isEmpty={!loading && data !== null && data.length === 0}
                 onRetry={load}
                 loadingText={copy.loadingText}
                 emptyText={copy.emptyText}
                 emptyDescription={copy.emptyDescription}
               >
-                <div>{list.data?.map(renderRow)}</div>
+                <div>{data?.map(renderRow)}</div>
               </LoadingState>
             )}
           </ErrorBoundary>
@@ -454,17 +456,16 @@ function ConnectionRow({
   showActions,
   followLabel,
   busy,
-  onFollow,
-  onUnfollow,
+  onToggleFollow,
 }: {
   user: ConnectionUser
   showActions: boolean
   followLabel: string
   busy: boolean
-  onFollow: () => void
-  onUnfollow: () => void
+  onToggleFollow: () => void
 }) {
   const router = useRouter()
+  const copy = useCopy()
   const goToProfile = () => router.push(`/user?id=${user.id}`)
   const hoverUsername = user.hasDpnsName ? user.username : null
 
@@ -505,8 +506,7 @@ function ConnectionRow({
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          navigator.clipboard.writeText(user.id).catch((error) => logger.error(error))
-                          toast.success('Identity ID copied')
+                          copy(user.id, 'Identity ID copied')
                         }}
                         className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"
                       >
@@ -534,11 +534,11 @@ function ConnectionRow({
             {showActions && (
               <div className="flex flex-col items-end gap-1 ml-4">
                 {user.isFollowing ? (
-                  <Button variant="outline" size="sm" onClick={onUnfollow} disabled={busy}>
+                  <Button variant="outline" size="sm" onClick={onToggleFollow} disabled={busy}>
                     {busy ? <Spinner size="sm" className="border-gray-600" /> : 'Following'}
                   </Button>
                 ) : (
-                  <Button size="sm" onClick={onFollow} disabled={busy}>
+                  <Button size="sm" onClick={onToggleFollow} disabled={busy}>
                     {busy ? <Spinner size="sm" className="border-white" /> : followLabel}
                   </Button>
                 )}
