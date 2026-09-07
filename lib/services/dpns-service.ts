@@ -3,7 +3,8 @@ import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
-import { KeyPurpose, SecurityLevel, getSecurityLevelName, matchIdentityKey } from '@/lib/crypto/keys';
+import { matchIdentityKey } from '@/lib/crypto/keys';
+import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
@@ -350,7 +351,11 @@ class DpnsService {
       allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
     });
     if (!result.ok) {
-      logger.error(`DPNS: No CRITICAL/HIGH authentication key matches the private key (${result.reason})`);
+      logger.error(
+        result.reason === 'rejected'
+          ? `DPNS: Private key matches key id=${result.match.keyId} (purpose ${getPurposeName(result.match.purpose)}, level ${getSecurityLevelName(result.match.securityLevel)}), which cannot sign this operation: CRITICAL or HIGH AUTHENTICATION required`
+          : `DPNS: Private key does not match any enabled key on this identity`
+      );
       return null;
     }
     logger.info(`DPNS: Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);

@@ -3,7 +3,8 @@ import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
-import { KeyPurpose, SecurityLevel, getSecurityLevelName, matchIdentityKey } from '@/lib/crypto/keys';
+import { matchIdentityKey } from '@/lib/crypto/keys';
+import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
@@ -194,7 +195,11 @@ class StateTransitionService {
       allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
     });
     if (!result.ok) {
-      logger.error(`No CRITICAL/HIGH authentication key matches the stored private key (${result.reason})`);
+      logger.error(
+        result.reason === 'rejected'
+          ? `Private key matches key id=${result.match.keyId} (purpose ${getPurposeName(result.match.purpose)}, level ${getSecurityLevelName(result.match.securityLevel)}), which cannot sign this operation: CRITICAL or HIGH AUTHENTICATION required`
+          : `Private key does not match any enabled key on this identity`
+      );
       return null;
     }
     logger.info(`Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);

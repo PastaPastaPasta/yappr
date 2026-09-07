@@ -9,7 +9,8 @@ import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { identityService } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
-import { findMatchingKeyIndex, getSecurityLevelName, isSecurityLevelAllowedForLogin, toKeyInfo } from '@/lib/crypto/keys'
+import { matchIdentityKey } from '@/lib/crypto/keys'
+import { KeyPurpose, SecurityLevel, getSecurityLevelName } from '@/lib/crypto/identity-keys'
 import toast from 'react-hot-toast'
 
 import { UsernameEntryStep } from './steps/username-entry-step'
@@ -119,24 +120,18 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         return
       }
 
-      // Determine network from environment
-      const network = keyNetwork()
-
-      // Convert identity public keys to the format expected by findMatchingKeyIndex
-      const keyInfos = identity.publicKeys.flatMap((key) => toKeyInfo(key) ?? [])
-
-      // Find which key matches the user's private key
-      const matchedKey = findMatchingKeyIndex(privateKey, keyInfos, network)
-      if (!matchedKey) {
-        toast.error('Your private key does not match any key on this identity.')
-        setStep('review')
-        return
-      }
-
-      // Verify the matched key has sufficient security level for DPNS (CRITICAL or HIGH)
-      if (!isSecurityLevelAllowedForLogin(matchedKey.securityLevel)) {
-        const levelName = getSecurityLevelName(matchedKey.securityLevel)
-        toast.error(`Your key has ${levelName} security level. DPNS requires CRITICAL or HIGH security level.`)
+      // DPNS registration signs with a CRITICAL or HIGH authentication key.
+      const matched = matchIdentityKey(privateKey, identity.publicKeys, {
+        network: keyNetwork(),
+        purpose: KeyPurpose.AUTHENTICATION,
+        allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
+      })
+      if (!matched.ok) {
+        toast.error(
+          matched.reason === 'rejected'
+            ? `Your key has ${getSecurityLevelName(matched.match.securityLevel)} security level. DPNS requires a CRITICAL or HIGH authentication key.`
+            : 'Your private key does not match any key on this identity.'
+        )
         setStep('review')
         return
       }
@@ -144,7 +139,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       const registrations = availableUsernames.map((u) => ({
         label: u.label,
         identityId,
-        publicKeyId: matchedKey.keyId,
+        publicKeyId: matched.match.keyId,
         privateKeyWif: privateKey,
       }))
 

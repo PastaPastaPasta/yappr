@@ -1,14 +1,13 @@
 import { logger } from '@/lib/logger';
 import { identityService } from './identity-service'
+import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys'
 import {
-  findMatchingKeyIndex,
   getSecurityLevelName,
   getPurposeName,
   isSecurityLevelAllowedForLogin,
   isPurposeAllowedForLogin,
   SecurityLevel,
-  type IdentityPublicKeyInfo
-} from '@/lib/crypto/keys'
+} from '@/lib/crypto/identity-keys'
 import { wifToPrivateKey, validateWifNetwork } from '@/lib/crypto/wif'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'

@@ -3,7 +3,8 @@ import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { signerService } from './signer-service';
 import { TipInfo } from '../../types';
-import { KeyPurpose, SecurityLevel, matchIdentityKey } from '@/lib/crypto/keys';
+import { matchIdentityKey } from '@/lib/crypto/keys';
+import { KeyPurpose } from '@/lib/crypto/identity-keys';
 import { isInsufficientTokenError } from '@/lib/error-utils';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { keyNetwork } from '@/lib/constants'
@@ -63,12 +64,11 @@ class TipService {
     const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
       network: keyNetwork(),
       purpose: KeyPurpose.TRANSFER,
-      allowedSecurityLevels: [SecurityLevel.MASTER, SecurityLevel.CRITICAL, SecurityLevel.HIGH, SecurityLevel.MEDIUM],
       keyId: specificKeyId,
     });
     if (!result.ok) {
       if (result.reason === 'wrong-key-id') {
-        logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${result.match?.keyId}`);
+        logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${result.match.keyId}`);
       } else {
         logger.error('Transfer private key does not match any transfer key on this identity');
       }

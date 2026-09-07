@@ -4,7 +4,8 @@ import { signerService } from './signer-service';
 import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
 import { keyNetwork } from '@/lib/constants'
 import { requireBytes } from '@/lib/bytes'
-import { findMatchingKeyIndex, getPublicKey, getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/keys'
+import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
+import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
 
 export interface IdentityPublicKey {
   id: number;
@@ -37,54 +38,10 @@ type IdentityPublicKeyLike = {
   type?: unknown;
 };
 
-function normalizeIdentityKeyEnum(value: unknown, names: Record<string, number>): number | null {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  if (typeof value === 'bigint') {
-    const asNumber = Number(value);
-    return Number.isSafeInteger(asNumber) ? asNumber : null;
-  }
-
-  if (typeof value === 'string') {
-    const numeric = Number(value);
-    if (Number.isInteger(numeric)) {
-      return numeric;
-    }
-
-    return names[value.toLowerCase()] ?? null;
-  }
-
-  return null;
-}
-
-function getIdentityKeyPurpose(key: IdentityPublicKeyLike): number | null {
-  return normalizeIdentityKeyEnum(key.purposeNumber ?? key.purpose, {
-    authentication: KeyPurpose.AUTHENTICATION,
-    encryption: KeyPurpose.ENCRYPTION,
-    decryption: KeyPurpose.DECRYPTION,
-    transfer: KeyPurpose.TRANSFER,
-    system: KeyPurpose.SYSTEM,
-    voting: KeyPurpose.VOTING,
-  });
-}
-
-function getIdentityKeyType(key: IdentityPublicKeyLike): number | null {
-  return normalizeIdentityKeyEnum(key.keyTypeNumber ?? key.keyType ?? key.type, {
-    ecdsa_secp256k1: KeyType.ECDSA_SECP256K1,
-    ecdsa: KeyType.ECDSA_SECP256K1,
-    bls12_381: KeyType.BLS12_381,
-    ecdsa_hash160: KeyType.ECDSA_HASH160,
-    bip13_script_hash: KeyType.BIP13_SCRIPT_HASH,
-    eddsa_25519_hash160: KeyType.EDDSA_25519_HASH160,
-  });
-}
-
 function isIdentityKeyForPurpose(key: IdentityPublicKeyLike, purpose: number): boolean {
   return (
-    getIdentityKeyPurpose(key) === purpose &&
-    getIdentityKeyType(key) === KeyType.ECDSA_SECP256K1
+    resolveKeyPurpose(key.purposeNumber ?? key.purpose) === purpose &&
+    resolveKeyType(key.keyTypeNumber ?? key.keyType ?? key.type) === KeyType.ECDSA_SECP256K1
   );
 }
 

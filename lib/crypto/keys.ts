@@ -1,18 +1,8 @@
 import * as secp256k1 from '@noble/secp256k1'
 import { hash160 } from './hash'
 import { wifToPrivateKey, validateWifNetwork } from './wif'
-import { KeyType } from './identity-keys'
+import { KeyType, resolveKeyPurpose, resolveKeyType, resolveSecurityLevel } from './identity-keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
-
-export {
-  KeyPurpose,
-  SecurityLevel,
-  KeyType,
-  getPurposeName,
-  getSecurityLevelName,
-  isPurposeAllowedForLogin,
-  isSecurityLevelAllowedForLogin,
-} from './identity-keys'
 
 export interface IdentityPublicKeyInfo {
   id: number
@@ -38,32 +28,31 @@ export interface KeyMatchResult {
 export interface IdentityKeyLike {
   id?: number
   keyId?: number
-  /** Numeric on the app shape; the wasm getter object names it (`'ecdsa_secp256k1'`) and carries `keyTypeNumber`. */
+  /** Numeric on the app shape; the wasm getter object names it (`keyType: 'ecdsa_secp256k1'`) and carries `keyTypeNumber`. */
   type?: number | string
+  keyType?: number | string
   keyTypeNumber?: number
   purpose?: number | string
   purposeNumber?: number
   securityLevel?: number | string
   securityLevelNumber?: number
   disabledAt?: number | bigint | null
-  data?: unknown
+  data: unknown
 }
 
-function numberOr(value: number | string | undefined, fallback: number): number {
-  return typeof value === 'number' ? value : fallback
-}
-
-/** Normalize either identity-key shape into the numeric fields the matcher reads. */
+/**
+ * Normalize either identity-key shape into the numeric fields the matcher
+ * reads. `null` when the data or any enum cannot be resolved: a key that
+ * cannot be classified must not be mistaken for an AUTHENTICATION/MASTER one.
+ */
 export function toKeyInfo(key: IdentityKeyLike): IdentityPublicKeyInfo | null {
   const data = normalizeBytes(key.data)
-  if (!data) return null
-  return {
-    id: key.keyId ?? key.id ?? 0,
-    type: key.keyTypeNumber ?? numberOr(key.type, KeyType.ECDSA_SECP256K1),
-    purpose: key.purposeNumber ?? numberOr(key.purpose, 0),
-    securityLevel: key.securityLevelNumber ?? numberOr(key.securityLevel, 0),
-    data,
-  }
+  const id = key.keyId ?? key.id
+  const type = resolveKeyType(key.keyTypeNumber ?? key.keyType ?? key.type)
+  const purpose = resolveKeyPurpose(key.purposeNumber ?? key.purpose)
+  const securityLevel = resolveSecurityLevel(key.securityLevelNumber ?? key.securityLevel)
+  if (!data || id === undefined || type === null || purpose === null || securityLevel === null) return null
+  return { id, type, purpose, securityLevel, data }
 }
 
 /**
@@ -117,19 +106,24 @@ export interface MatchIdentityKeyOptions {
   /** Only keys with this purpose are considered. */
   purpose: number
   /**
-   * Security levels the caller can sign with. Filtering happens BEFORE
-   * matching so that a lower-security key derived from the same private key
-   * (for example a MEDIUM key added after a rotation) cannot win the match and
-   * mask the key the operation actually needs.
+   * Security levels the caller can sign with; omit to accept any. Filtering
+   * happens BEFORE matching so that a lower-security key derived from the
+   * same private key (for example a MEDIUM key added after a rotation) cannot
+   * win the match and mask the key the operation actually needs.
    */
-  allowedSecurityLevels: readonly number[]
+  allowedSecurityLevels?: readonly number[]
   /** When set, the match must land on exactly this key id. */
   keyId?: number
 }
 
 export type MatchIdentityKeyResult<K> =
   | { ok: true; key: K; match: KeyMatchResult }
-  | { ok: false; reason: 'no-candidates' | 'no-match' | 'wrong-key-id'; match?: KeyMatchResult }
+  /** The WIF matches no enabled key on the identity at all. */
+  | { ok: false; reason: 'no-match' }
+  /** The WIF matches an enabled key, but not one of the purpose/level asked for. */
+  | { ok: false; reason: 'rejected'; match: KeyMatchResult }
+  /** The WIF matches an acceptable key, but not the one `keyId` pinned. */
+  | { ok: false; reason: 'wrong-key-id'; match: KeyMatchResult }
 
 /**
  * Find the enabled identity key, of the given purpose and at one of the
@@ -141,27 +135,29 @@ export function matchIdentityKey<K extends IdentityKeyLike>(
   keys: readonly K[],
   options: MatchIdentityKeyOptions
 ): MatchIdentityKeyResult<K> {
-  const candidates: { key: K; info: IdentityPublicKeyInfo }[] = []
+  const enabled: { key: K; info: IdentityPublicKeyInfo }[] = []
   for (const key of keys) {
     if (key.disabledAt) continue
     const info = toKeyInfo(key)
-    if (!info) continue
-    if (info.purpose !== options.purpose) continue
-    if (!options.allowedSecurityLevels.includes(info.securityLevel)) continue
-    candidates.push({ key, info })
+    if (info) enabled.push({ key, info })
   }
-  if (candidates.length === 0) {
-    return { ok: false, reason: 'no-candidates' }
-  }
+  const acceptable = enabled.filter(
+    ({ info }) =>
+      info.purpose === options.purpose &&
+      (options.allowedSecurityLevels?.includes(info.securityLevel) ?? true)
+  )
 
-  const match = findMatchingKeyIndex(privateKeyWif, candidates.map((c) => c.info), options.network)
+  const match = findMatchingKeyIndex(privateKeyWif, acceptable.map((c) => c.info), options.network)
   if (!match) {
-    return { ok: false, reason: 'no-match' }
+    // Name the key the WIF does correspond to, so the caller can say why it
+    // was turned down rather than only that it was.
+    const rejected = findMatchingKeyIndex(privateKeyWif, enabled.map((c) => c.info), options.network)
+    return rejected ? { ok: false, reason: 'rejected', match: rejected } : { ok: false, reason: 'no-match' }
   }
   if (options.keyId !== undefined && match.keyId !== options.keyId) {
     return { ok: false, reason: 'wrong-key-id', match }
   }
-  const found = candidates.find((c) => c.info.id === match.keyId)
+  const found = acceptable.find((c) => c.info.id === match.keyId)
   if (!found) {
     return { ok: false, reason: 'no-match' }
   }
