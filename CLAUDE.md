@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ```bash
-npm run dev      # Start development server
-npm run build    # Build for production
-npm run lint     # Run linting
+npm run dev        # Start development server
+npm run build      # Build for production
+npm run lint       # ESLint over app/ components/ contexts/ hooks/ lib/ types/; warnings fail
+npm run test       # Vitest unit tests (lib/**/*.test.ts)
+npm run lint:dead  # knip: unused files, exports, and dependencies
 ```
 
 ## Workflow
@@ -25,7 +27,14 @@ npm run lint
 - Fix all errors and warnings properly (see Code Quality Guidelines below)
 - Do not commit code with linter failures
 
-### 2. Run the Build
+### 2. Run the Unit Tests
+```bash
+npm run test
+```
+- Pure modules under `lib/` (crypto primitives, codecs, parsers) have Vitest specs next to them as `*.test.ts`
+- Add or extend a spec when touching one of these modules; anything that needs the SDK or a browser belongs in `e2e/`
+
+### 3. Run the Build
 ```bash
 npm run build
 ```
@@ -34,7 +43,7 @@ npm run build
 - Catches missing imports, type errors, and build-time issues
 - Do not commit code that fails to build
 
-### 3. Run the End-to-End Tests
+### 4. Run the End-to-End Tests
 ```bash
 npm run build:testing   # build the /testing bundle the tests run against
 npm run test:e2e
@@ -44,7 +53,7 @@ npm run test:e2e
 - The full suite needs `E2E_SEED_PHRASE` (in gitignored `.env.local`) and performs real state transitions against the dedicated test contracts in `.env.testing` — never production
 - See `docs/TESTING.md` for the identity pool, provisioning, and known quirks
 
-### 4. Code Review for Complex Changes
+### 5. Code Review for Complex Changes
 For complex or multi-file changes, use a code review sub-agent to identify potential issues:
 
 ```
@@ -58,7 +67,7 @@ Use the Task tool with subagent_type=Plan to review the changes for:
 
 **Trust but verify**: The review agent may flag potential issues that aren't actually problems, or miss real issues. Treat its output as suggestions to investigate, not definitive judgments. Verify each finding before acting on it.
 
-### 5. Manual Verification (when applicable)
+### 6. Manual Verification (when applicable)
 - For UI changes: Run `npm run dev` and visually verify the changes
 - For new features: Test the happy path and common error cases
 - For bug fixes: Confirm the original issue is resolved
@@ -67,7 +76,9 @@ Use the Task tool with subagent_type=Plan to review the changes for:
 | Check | Command | Required |
 |-------|---------|----------|
 | Linter | `npm run lint` | Always |
+| Unit tests | `npm run test` | Always |
 | Build | `npm run build` | Always |
+| Dead code | `npm run lint:dead` | When adding or removing modules/exports |
 | End-to-End | `npm run build:testing && npm run test:e2e` | Changes touching feeds, posts, or auth flows |
 | Code Review | Task sub-agent | Complex changes |
 | Dev Server | `npm run dev` | UI changes |
@@ -167,7 +178,7 @@ Additional contracts back specific features: storefront (7 types), DM, blog, vau
 1. **State Management**: Zustand store in `lib/store.ts`
 2. **Styling**: Tailwind CSS with custom design system in `tailwind.config.js`
 3. **UI Components**: Radix UI primitives in `components/ui/`
-4. **Mock Data**: `lib/mock-data.ts` for development when not connected to Dash Platform
+4. **Default avatars**: `lib/mock-data.ts` generates the DiceBear placeholder used when a profile has no avatar
 
 ### Known Issues
 

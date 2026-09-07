@@ -50,6 +50,47 @@ jobs:
       - name: Run TypeScript compiler
         run: npx tsc --noEmit
 
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Vitest
+        run: npm run test
+
+  dead-code:
+    name: Dead Code (knip)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Unused files and dependencies fail the job. Unused exports are reported
+      # but not yet enforced: the backlog is being worked down and a clean
+      # `knip` run is the target state before this becomes strict.
+      - name: Run knip (files + dependencies)
+        run: npx knip --include files,dependencies,unlisted
+
   build:
     name: Build
     runs-on: ubuntu-latest
