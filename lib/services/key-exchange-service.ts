@@ -94,7 +94,6 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
     const result = await this.query(options)
     return result.documents[0] || null
   }
-
 }
 
 // Singleton instance

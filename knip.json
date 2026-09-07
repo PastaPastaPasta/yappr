@@ -20,8 +20,6 @@
   ],
   "ignoreExportsUsedInFile": true,
   "ignoreMembers": [
-    "cause",
-    "isRetryable",
     "getDerivedStateFromError",
     "componentDidCatch",
     "render"

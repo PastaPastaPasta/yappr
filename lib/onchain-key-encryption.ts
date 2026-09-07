@@ -1,7 +1,6 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { base64ToBytes } from '@/lib/bytes'
 /**
  * On-chain key encryption utilities for encrypted key backup feature.
  *
@@ -9,6 +8,8 @@ import { base64ToBytes } from '@/lib/bytes'
  *   Uses PBKDF2 for key derivation (user-configurable iterations) and AES-GCM for encryption.
  *   Salt is derived from identity ID to ensure uniqueness without storing separately.
  */
+
+import { base64ToBytes } from '@/lib/bytes'
 
 // Iteration limits (1M to 1B)
 export const MIN_KDF_ITERATIONS = 1_000_000

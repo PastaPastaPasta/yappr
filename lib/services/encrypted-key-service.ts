@@ -157,7 +157,6 @@ class EncryptedKeyService extends BaseDocumentService<EncryptedKeyBackupDocument
       storachaCredentials: decrypted.storachaCredentials
     };
   }
-
 }
 
 export const encryptedKeyService = new EncryptedKeyService();

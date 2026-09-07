@@ -1,7 +1,5 @@
 'use client'
 
-import { } from '@heroicons/react/24/outline'
-
 // Payment scheme to display name mapping
 export const PAYMENT_SCHEME_LABELS: Record<string, string> = {
   'dash:': 'Dash',

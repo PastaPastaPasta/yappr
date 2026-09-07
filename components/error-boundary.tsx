@@ -152,5 +152,4 @@ function DefaultErrorFallback({ error, retry, level }: DefaultErrorFallbackProps
   )
 }
 
-// Higher-order component for easy wrapping
 export default ErrorBoundary

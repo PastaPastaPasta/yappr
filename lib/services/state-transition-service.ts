@@ -855,7 +855,6 @@ class StateTransitionService {
       };
     }
   }
-
 }
 
 // Singleton instance
