@@ -58,6 +58,7 @@ import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { hashtagsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
+import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
 
 export function ComposeModal() {
   const {
@@ -940,13 +941,7 @@ export function ComposeModal() {
                   logger.info(`Post ${i + 1}: Created ${successCount}/${hashtags.length} hashtag documents`)
 
                   results.forEach((success, tagIndex) => {
-                    if (success) {
-                      window.dispatchEvent(
-                        new CustomEvent('hashtag-registered', {
-                          detail: { postId, hashtag: hashtags[tagIndex] },
-                        })
-                      )
-                    }
+                    if (success) dispatchFieldRegistered('hashtag', { postId, value: hashtags[tagIndex] })
                   })
                 })
                 .catch((err) => {
@@ -968,15 +963,8 @@ export function ComposeModal() {
                   const successCount = results.filter((r) => r).length
                   logger.info(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
 
-                  // Dispatch event for each successful mention to trigger cache invalidation
                   results.forEach((success, mentionIndex) => {
-                    if (success) {
-                      window.dispatchEvent(
-                        new CustomEvent('mention-registered', {
-                          detail: { postId, username: mentions[mentionIndex] },
-                        })
-                      )
-                    }
+                    if (success) dispatchFieldRegistered('mention', { postId, value: mentions[mentionIndex] })
                   })
                 })
                 .catch((err) => {

@@ -1,105 +1,115 @@
 'use client'
 
-import { logger } from '@/lib/logger';
-import { useCallback, useState, useEffect } from 'react'
+import { logger } from '@/lib/logger'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, ExclamationTriangleIcon, AtSymbolIcon } from '@heroicons/react/24/outline'
 import { ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
+import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
+import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useAuth } from '@/contexts/auth-context'
+import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
-import { mentionValidationService } from '@/lib/services/mention-validation-service'
 import { dpnsService } from '@/lib/services/dpns-service'
-import toast from 'react-hot-toast'
+import { dispatchFieldRegistered, type PostFieldKind } from '@/lib/services/post-field-validation'
 
-export function MentionRecoveryModal() {
-  const { isOpen, post, username, isRegistering, error, close, setRegistering, setError } =
-    useMentionRecoveryModal()
+const COPY: Record<PostFieldKind, { noun: string; title: string; prefix: string; consequence: string }> = {
+  hashtag: {
+    noun: 'hashtag',
+    title: 'Hashtag Not Registered',
+    prefix: '#',
+    consequence: "this post won't appear in hashtag searches for",
+  },
+  mention: {
+    noun: 'mention',
+    title: 'Mention Not Registered',
+    prefix: '@',
+    consequence: "this post won't appear when viewing posts that mention",
+  },
+}
+
+/**
+ * Offers the post author a retry when a hashtag or mention index document
+ * failed to write alongside the post. A mention must first resolve to an
+ * identity, since the index document stores the mentioned identity's id.
+ */
+export function RecoveryModal() {
+  const { isOpen, kind, post, value, isRegistering, error, close, setRegistering, setError } = useRecoveryModal()
   const { user } = useAuth()
+  const copy = COPY[kind]
 
   const [resolvedIdentityId, setResolvedIdentityId] = useState<string | null>(null)
   const [isResolving, setIsResolving] = useState(false)
 
   const isOwner = user?.identityId === post?.author.id
+  const needsResolution = kind === 'mention'
+  const canRegister = isOwner && (!needsResolution || resolvedIdentityId !== null)
 
-  // Resolve username to identity ID when modal opens
   useEffect(() => {
-    if (!username || !isOpen) {
+    if (!isOpen || kind !== 'mention' || !value) {
       setResolvedIdentityId(null)
       return
     }
-
     let cancelled = false
     setIsResolving(true)
-
-    dpnsService.resolveIdentity(username)
-      .then(id => {
-        if (!cancelled) {
-          setResolvedIdentityId(id)
-        }
+    dpnsService
+      .resolveIdentity(value)
+      .then((id) => {
+        if (!cancelled) setResolvedIdentityId(id)
       })
-      .catch(err => {
+      .catch((err) => {
         logger.error('Failed to resolve username:', err)
-        if (!cancelled) {
-          setResolvedIdentityId(null)
-        }
+        if (!cancelled) setResolvedIdentityId(null)
       })
       .finally(() => {
-        if (!cancelled) {
-          setIsResolving(false)
-        }
+        if (!cancelled) setIsResolving(false)
       })
-
-    return () => { cancelled = true }
-  }, [username, isOpen])
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, kind, value])
 
   const handleRegister = useCallback(async () => {
-    if (!post || !username || !user || !resolvedIdentityId) return
-
+    if (!post || !value || !user || !canRegister) return
     setRegistering(true)
     setError(null)
-
     try {
-      const success = await mentionService.createPostMention(
-        post.id,
-        user.identityId,
-        resolvedIdentityId
-      )
-
-      if (success) {
-        // Invalidate validation cache for this post
-        mentionValidationService.invalidateCache(post.id)
-
-        // Dispatch event so the post can revalidate
-        window.dispatchEvent(
-          new CustomEvent('mention-registered', {
-            detail: { postId: post.id, username }
-          })
-        )
-
-        toast.success(`Mention @${username} registered successfully!`)
-        close()
-      } else {
-        setError('Failed to register mention. Please try again.')
+      const success =
+        kind === 'hashtag'
+          ? await hashtagService.createPostHashtag(post.id, user.identityId, value)
+          : await mentionService.createPostMention(post.id, user.identityId, resolvedIdentityId as string)
+      if (!success) {
+        setError(`Failed to register ${copy.noun}. Please try again.`)
+        return
       }
+      dispatchFieldRegistered(kind, { postId: post.id, value })
+      toast.success(`${copy.noun[0].toUpperCase()}${copy.noun.slice(1)} ${copy.prefix}${value} registered successfully!`)
+      close()
     } catch (err) {
-      logger.error('Error registering mention:', err)
+      logger.error(`Error registering ${copy.noun}:`, err)
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setRegistering(false)
     }
-  }, [post, username, user, resolvedIdentityId, close, setRegistering, setError])
+  }, [post, value, user, canRegister, kind, resolvedIdentityId, copy, close, setRegistering, setError])
 
   const handleClose = () => {
-    if (isRegistering) return // Don't allow closing during registration
-    close()
+    if (!isRegistering) close()
   }
 
-  if (!post || !username) return null
+  if (!post || !value) return null
+
+  const valueHref =
+    kind === 'hashtag'
+      ? `/hashtag?tag=${encodeURIComponent(value)}`
+      : resolvedIdentityId
+        ? `/user?id=${encodeURIComponent(resolvedIdentityId)}`
+        : null
+  const valueLabel = kind === 'hashtag' ? `#${value}` : value
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={handleClose}>
@@ -123,11 +133,11 @@ export function MentionRecoveryModal() {
                   >
                     <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
                       <ExclamationTriangleIcon className="h-6 w-6 text-amber-500" />
-                      Mention Not Registered
+                      {copy.title}
                     </Dialog.Title>
 
                     <Dialog.Description className="sr-only">
-                      The mention @{username} was not properly registered for this post
+                      The {copy.noun} {copy.prefix}{value} was not properly registered for this post
                     </Dialog.Description>
 
                     <button
@@ -138,44 +148,30 @@ export function MentionRecoveryModal() {
                       <XMarkIcon className="h-5 w-5" />
                     </button>
 
-                    {/* Content */}
                     {!isRegistering && !error && (
                       <div className="space-y-4">
-                        {/* Mention display */}
                         <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-neutral-800 rounded-lg">
-                          <AtSymbolIcon className="h-5 w-5 text-yappr-500" />
-                          {resolvedIdentityId ? (
-                            <Link
-                              href={`/user?id=${encodeURIComponent(resolvedIdentityId)}`}
-                              className="font-mono text-lg font-medium text-yappr-500 hover:underline"
-                              onClick={close}
-                            >
-                              {username}
+                          {kind === 'mention' && <AtSymbolIcon className="h-5 w-5 text-yappr-500" />}
+                          {valueHref ? (
+                            <Link href={valueHref} className="font-mono text-lg font-medium text-yappr-500 hover:underline" onClick={close}>
+                              {valueLabel}
                             </Link>
                           ) : (
-                            <span className="font-mono text-lg font-medium text-yappr-500">
-                              {username}
-                            </span>
+                            <span className="font-mono text-lg font-medium text-yappr-500">{valueLabel}</span>
                           )}
                         </div>
 
-                        {/* Explanation */}
                         <div className="text-gray-600 dark:text-gray-400 space-y-2">
                           <p>
-                            This mention wasn&apos;t properly registered when the post was
-                            created. This can happen due to network issues.
+                            This {copy.noun} wasn&apos;t properly registered when the post was created. This can happen
+                            due to network issues.
                           </p>
                           <p className="text-sm">
-                            Without registration, this post won&apos;t appear when viewing
-                            posts that mention{' '}
-                            <span className="font-medium text-yappr-500">
-                              @{username}
-                            </span>
-                            .
+                            Without registration, {copy.consequence}{' '}
+                            <span className="font-medium text-yappr-500">{copy.prefix}{value}</span>.
                           </p>
                         </div>
 
-                        {/* Resolving state */}
                         {isResolving && (
                           <div className="text-sm text-gray-500 flex items-center gap-2">
                             <Spinner size="sm" />
@@ -183,41 +179,32 @@ export function MentionRecoveryModal() {
                           </div>
                         )}
 
-                        {/* Username not found */}
-                        {!isResolving && !resolvedIdentityId && (
+                        {needsResolution && !isResolving && !resolvedIdentityId && (
                           <div className="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg">
-                            Could not resolve @{username} to a user. The username may not exist on DPNS.
+                            Could not resolve @{value} to a user. The username may not exist on DPNS.
                           </div>
                         )}
 
-                        {/* Action - owner with resolved identity can register */}
-                        {isOwner && resolvedIdentityId && (
+                        {canRegister ? (
                           <div className="space-y-3 pt-2">
-                            <p className="text-sm text-gray-500">
-                              Since you own this post, you can register the mention now.
-                            </p>
-                            <Button
-                              onClick={handleRegister}
-                              className="w-full bg-yappr-500 hover:bg-yappr-600 text-white"
-                            >
-                              Register Mention
+                            <p className="text-sm text-gray-500">Since you own this post, you can register the {copy.noun} now.</p>
+                            <Button onClick={handleRegister} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
+                              Register {copy.noun[0].toUpperCase()}{copy.noun.slice(1)}
                             </Button>
                           </div>
-                        )}
-                        {/* Owner but username not found - just close */}
-                        {isOwner && !resolvedIdentityId && !isResolving && (
-                          <div className="pt-2">
-                            <Button onClick={close} variant="outline" className="w-full">
-                              Close
-                            </Button>
-                          </div>
-                        )}
-                        {/* Non-owner - can't register */}
-                        {!isOwner && (
+                        ) : isOwner ? (
+                          !isResolving && (
+                            <div className="pt-2">
+                              <Button onClick={close} variant="outline" className="w-full">
+                                Close
+                              </Button>
+                            </div>
+                          )
+                        ) : (
                           <div className="pt-2">
                             <p className="text-sm text-gray-500 bg-gray-50 dark:bg-neutral-800 p-3 rounded-lg">
-                              Only the post author can register this mention. They can
-                              click the warning icon on their post to fix it.
+                              Only the post author can register this {copy.noun}. They can click the warning icon on
+                              their post to fix it.
                             </p>
                             <Button onClick={close} variant="outline" className="w-full mt-3">
                               Got it
@@ -227,20 +214,14 @@ export function MentionRecoveryModal() {
                       </div>
                     )}
 
-                    {/* Registering State */}
                     {isRegistering && (
                       <div className="py-8 text-center space-y-4">
                         <Spinner size="lg" className="mx-auto" />
-                        <p className="text-gray-600 dark:text-gray-400">
-                          Registering mention...
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          Please wait, this may take a moment.
-                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">Registering {copy.noun}...</p>
+                        <p className="text-xs text-gray-500">Please wait, this may take a moment.</p>
                       </div>
                     )}
 
-                    {/* Error State */}
                     {error && !isRegistering && (
                       <div className="py-4 text-center space-y-4">
                         <ExclamationCircleIcon className="h-16 w-16 text-red-500 mx-auto" />
@@ -252,10 +233,7 @@ export function MentionRecoveryModal() {
                           <Button onClick={close} variant="outline" className="flex-1">
                             Close
                           </Button>
-                          <Button
-                            onClick={() => setError(null)}
-                            className="flex-1 bg-yappr-500 hover:bg-yappr-600 text-white"
-                          >
+                          <Button onClick={() => setError(null)} className="flex-1 bg-yappr-500 hover:bg-yappr-600 text-white">
                             Try Again
                           </Button>
                         </div>

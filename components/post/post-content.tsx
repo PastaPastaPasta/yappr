@@ -3,8 +3,7 @@
 import Link from 'next/link'
 import { Fragment, useMemo } from 'react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
-import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
-import { MentionValidationStatus } from '@/hooks/use-mention-validation'
+import type { FieldValidationStatus } from '@/hooks/use-post-field-validation'
 import { LinkPreview, LinkPreviewSkeleton, LinkPreviewInfoIcon } from './link-preview'
 import { GatedMediaPlaceholder } from './gated-media'
 import type { MediaGate } from '@/hooks/use-media-gate'
@@ -20,11 +19,11 @@ interface PostContentProps {
   content: string
   className?: string
   /** Optional: validation status per tag (normalized storage format, no # or $) */
-  hashtagValidations?: Map<string, HashtagValidationStatus>
+  hashtagValidations?: Map<string, FieldValidationStatus>
   /** Optional: callback when failed hashtag/cashtag warning is clicked */
   onFailedHashtagClick?: (hashtag: string) => void
   /** Optional: validation status per mention (normalized, no @) */
-  mentionValidations?: Map<string, MentionValidationStatus>
+  mentionValidations?: Map<string, FieldValidationStatus>
   /** Optional: callback when failed mention warning is clicked */
   onFailedMentionClick?: (username: string) => void
   /** Optional: disable link preview */
