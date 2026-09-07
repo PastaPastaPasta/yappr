@@ -28,8 +28,6 @@ export enum UploadErrorCode {
   SPACE_CREATION_FAILED = 'SPACE_CREATION_FAILED',
   /** Credential storage/retrieval failed */
   CREDENTIAL_ERROR = 'CREDENTIAL_ERROR',
-  /** Unknown error */
-  UNKNOWN = 'UNKNOWN',
 }
 
 /**

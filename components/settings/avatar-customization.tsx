@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { useAvatarSettings, invalidateAvatarCache } from '@/hooks/use-avatar'
+import { useAvatarSettings } from '@/hooks/use-avatar'
+import { invalidateAvatarImageCache } from '@/components/ui/avatar-image'
 import {
   unifiedProfileService,
   DICEBEAR_STYLES,
@@ -111,7 +112,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
 
     if (success) {
       // Invalidate cache to refresh avatars across the app
-      invalidateAvatarCache(user.identityId)
+      invalidateAvatarImageCache(user.identityId)
       toast.success('Avatar saved!')
       onSave?.()
     } else {

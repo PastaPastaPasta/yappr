@@ -9,7 +9,6 @@ import {
   getBlockStatus,
   setBlockStatus,
   deleteBlockStatus,
-  clearBlockCache as clearSharedBlockCache,
   seedBlockStatusCache
 } from '@/lib/caches/user-status-cache'
 
@@ -180,13 +179,6 @@ export async function filterBlockedAuthors<T extends { author: { id: string } }>
   const authorIds = Array.from(new Set(posts.map((post) => post.author.id)))
   const blocked = await checkBlockedForAuthors(viewerId, authorIds)
   return posts.filter((post) => !blocked.get(post.author.id))
-}
-
-/**
- * Clear all block caches
- */
-export function clearBlockCache(): void {
-  clearSharedBlockCache()
 }
 
 // Re-export for convenience

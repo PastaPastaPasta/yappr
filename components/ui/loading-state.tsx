@@ -138,5 +138,3 @@ export function useAsyncState<T>(initialData: T | null = null): UseAsyncStateRes
     reset
   }
 }
-
-export default LoadingState

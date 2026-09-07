@@ -68,13 +68,6 @@ export function extractYapprPostId(url: string, currentOrigin?: string): string 
 }
 
 /**
- * Returns true when a URL points to an internal Yappr post route and includes a valid post ID.
- */
-export function isYapprPostUrl(url: string, currentOrigin?: string): boolean {
-  return extractYapprPostId(url, currentOrigin) !== null
-}
-
-/**
  * Extract YouTube video ID from various YouTube URL formats.
  * Returns null if the URL is not a YouTube video URL.
  *
@@ -751,45 +744,4 @@ export function extractFirstUrl(content: string): string | null {
   url = stripTrailingPunctuation(url)
 
   return url
-}
-
-/**
- * Extract all URLs from content text.
- * Supports http://, https://, ipfs://, and www. URLs.
- */
-export function extractAllUrls(content: string): string[] {
-  // Match http(s)://, ipfs://, or www. URLs
-  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/gi
-  const matches = content.match(urlPattern)
-  if (!matches) return []
-
-  return matches.map(url => {
-    // Add protocol if missing (for www. URLs)
-    if (url.toLowerCase().startsWith('www.')) {
-      url = `https://${url}`
-    }
-    // Clean trailing punctuation while preserving balanced parens
-    return stripTrailingPunctuation(url)
-  })
-}
-
-/**
- * Prefetch link previews for multiple URLs (useful for feed)
- * Only works when rich previews are enabled
- */
-export function prefetchLinkPreviews(urls: string[]): void {
-  urls.forEach(url => {
-    if (!shouldSkipUrl(url) && !previewCache.has(url)) {
-      fetchRichPreview(url).catch(() => {
-        // Ignore errors during prefetch
-      })
-    }
-  })
-}
-
-/**
- * Clear the preview cache (useful for testing)
- */
-export function clearPreviewCache(): void {
-  previewCache.clear()
 }

@@ -19,28 +19,6 @@ import {
   type TargetKind,
 } from '../contract-topology';
 
-export interface ReplyDocument {
-  $id: string;
-  $ownerId: string;
-  $createdAt: number;
-  $updatedAt?: number;
-  content: string;
-  mediaUrl?: string;
-  /** v2 only — the polymorphic direct parent. */
-  parentId?: string;
-  /** v3 only — the post the whole thread hangs off. */
-  rootPostId?: string;
-  /** v3 only — the reply this one is nested under. */
-  replyToReplyId?: string;
-  parentOwnerId: string;
-  sensitive?: boolean;
-  deleted?: boolean;
-  // Private feed fields
-  encryptedContent?: Uint8Array;
-  epoch?: number;
-  nonce?: Uint8Array;
-}
-
 /**
  * Replies per page in a thread view. v2 keeps its historical 20 (one level of a
  * tree); on v3 one query covers the whole thread, so the page is larger.

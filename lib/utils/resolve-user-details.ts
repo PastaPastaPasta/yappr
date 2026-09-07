@@ -50,10 +50,3 @@ export async function resolveUserDetails(identityId: string): Promise<UserDetail
     hasDpns,
   }
 }
-
-/**
- * Resolves user details for multiple identity IDs in parallel.
- */
-export async function resolveMultipleUserDetails(identityIds: string[]): Promise<UserDetails[]> {
-  return Promise.all(identityIds.map(resolveUserDetails))
-}

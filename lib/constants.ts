@@ -53,14 +53,10 @@ export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (lea
 // Testnet pollr v3: count trees plus a per-mode ballot doctype, maker-owned
 // (Yappr only reads/writes documents).
 export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
-// Superseded pollr contracts, abandoned in place. Recorded so the ids stay
-// documented and are never reused; their documents are NOT readable by the v3
-// services. v1 stored options as JSON in byte arrays; v2 had a single `vote`
-// doctype whose uniqueness rule could not enforce single-choice ballots.
-export const LEGACY_POLLR_CONTRACT_IDS = [
-  '7Xye3k1MuVYTpLuTnein5GLwR1NUjmt5gtLLp4pGhhRf', // v1
-  '8R4SgHyxrEZCb5yBb6p4gtT3g1CSRv5GAM4Rehc1vQJq', // v2
-] as const
+// Two superseded pollr contracts were abandoned in place (v1 stored options as
+// JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
+// not enforce single-choice ballots). Their ids are recorded in git history and
+// must never be reused; their documents are not readable by the v3 services.
 export const POLLR_APP_URL = 'https://pastapastapasta.github.io/pollr'
 // The contract the standalone app at POLLR_APP_URL reads (the testnet v3
 // deployment above). External poll permalinks only resolve when our polls live

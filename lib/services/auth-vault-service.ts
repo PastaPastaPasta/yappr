@@ -20,7 +20,7 @@ import {
   authVaultAccessService,
   type AuthVaultAccessDocument,
 } from '@/lib/services/auth-vault-access-service'
-import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
+import { bytesToBase64 } from '@/lib/bytes'
 
 export interface AuthVaultDocument {
   $id: string
@@ -454,43 +454,6 @@ function mergeBundle(current: AuthVaultBundle, partialSecrets: MergeSecretsInput
   }
 
   return next
-}
-
-export function createAuthVaultBundle(params: {
-  identityId: string
-  network: 'testnet' | 'mainnet'
-  source: AuthVaultSource
-  loginKey?: Uint8Array | string
-  authKeyWif?: string
-  encryptionKeyWif?: string
-  transferKeyWif?: string
-}): AuthVaultBundle {
-  const loginKey = normalizeLoginKey(params.loginKey)
-  const secretKind: AuthVaultSecretKind = loginKey ? 'login-key' : 'auth-key'
-
-  return {
-    version: DEFAULT_VERSION,
-    identityId: params.identityId,
-    network: params.network,
-    secretKind,
-    loginKey,
-    authKeyWif: params.authKeyWif,
-    encryptionKeyWif: params.encryptionKeyWif,
-    transferKeyWif: params.transferKeyWif,
-    source: params.source,
-    updatedAt: Date.now(),
-  }
-}
-
-export function getLoginKeyBytesFromBundle(bundle: AuthVaultBundle): Uint8Array | null {
-  return bundle.loginKey ? base64ToBytes(bundle.loginKey) : null
-}
-
-export function bundleContainsSecondaryKeys(bundle: AuthVaultBundle): { hasEncryptionKey: boolean; hasTransferKey: boolean } {
-  return {
-    hasEncryptionKey: Boolean(bundle.encryptionKeyWif),
-    hasTransferKey: Boolean(bundle.transferKeyWif),
-  }
 }
 
 export const authVaultService = new AuthVaultService()

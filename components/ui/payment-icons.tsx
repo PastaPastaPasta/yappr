@@ -1,6 +1,6 @@
 'use client'
 
-import { CurrencyDollarIcon } from '@heroicons/react/24/outline'
+import { } from '@heroicons/react/24/outline'
 
 // Payment scheme to display name mapping
 export const PAYMENT_SCHEME_LABELS: Record<string, string> = {
@@ -103,25 +103,6 @@ function getSchemeAbbreviation(scheme: string): string {
     case 'lightning:': return 'LN'
     default: return '?'
   }
-}
-
-// Fallback generic payment icon
-export function GenericPaymentIcon({
-  className = '',
-  size = 'md',
-}: {
-  className?: string
-  size?: 'sm' | 'md' | 'lg'
-}) {
-  const sizeClasses = {
-    sm: 'w-4 h-4',
-    md: 'w-5 h-5',
-    lg: 'w-6 h-6',
-  }
-
-  return (
-    <CurrencyDollarIcon className={`${sizeClasses[size]} text-gray-500 ${className}`} />
-  )
 }
 
 // Get display label for a payment URI

@@ -35,13 +35,6 @@ export function cashtagDisplayToStorage(tag: string): string {
 }
 
 /**
- * Get the display symbol for a tag (# or $)
- */
-export function getTagSymbol(tag: string): string {
-  return isCashtagStorage(tag) ? '$' : '#'
-}
-
-/**
  * Get the display text for a stored tag
  * e.g., "dash_cashtag" -> "$DASH", "dash" -> "#dash"
  */

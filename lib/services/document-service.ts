@@ -392,16 +392,4 @@ export abstract class BaseDocumentService<T> {
       this.cache.clear();
     }
   }
-
-  /**
-   * Clean up expired cache entries
-   */
-  cleanupCache(): void {
-    const now = Date.now();
-    for (const [key, value] of Array.from(this.cache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.cache.delete(key);
-      }
-    }
-  }
 }

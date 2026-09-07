@@ -13,12 +13,3 @@ export interface PinataCredentials {
   /** Custom gateway domain (optional, e.g., "my-gateway.mypinata.cloud") */
   gateway?: string
 }
-
-/**
- * Pinata-specific provider status (simpler than Storacha - no email verification)
- */
-export type PinataProviderStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'error'

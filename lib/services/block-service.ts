@@ -942,13 +942,6 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     }
   }
 
-  /**
-   * Count blocked users.
-   */
-  async countUserBlocks(userId: string): Promise<number> {
-    const blocks = await this.getUserBlocks(userId)
-    return blocks.length
-  }
 }
 
 // Singleton instance

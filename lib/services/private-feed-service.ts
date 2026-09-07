@@ -63,15 +63,6 @@ export interface PrivateFeedRekeyDocument {
 }
 
 /**
- * Result of creating a private post
- */
-export interface PrivatePostResult {
-  success: boolean;
-  postId?: string;
-  error?: string;
-}
-
-/**
  * Convert string to UTF-8 bytes
  */
 function utf8Encode(str: string): Uint8Array {

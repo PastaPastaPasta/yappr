@@ -21,23 +21,16 @@ const browserSecretStore = createBrowserSecretStore({
 
 export type KeyType = BrowserStoredKeyType
 
-export default browserSecretStore.secureStorage
-
 export const {
   storePrivateKey,
   getPrivateKey,
   clearPrivateKey,
   hasPrivateKey,
-  clearAllPrivateKeys,
   storeLoginKey,
-  getLoginKey,
   getLoginKeyBytes,
-  hasLoginKey,
   clearLoginKey,
   storeAuthVaultDek,
-  getAuthVaultDek,
   getAuthVaultDekBytes,
-  hasAuthVaultDek,
   clearAuthVaultDek,
   storeEncryptionKey,
   getEncryptionKey,
@@ -49,7 +42,6 @@ export const {
   clearEncryptionKeyType,
   storeTransferKey,
   getTransferKey,
-  getTransferKeyBytes,
   hasTransferKey,
   clearTransferKey,
 } = browserSecretStore

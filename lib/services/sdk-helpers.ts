@@ -160,12 +160,6 @@ export function requireDocumentIdentifierBytes(id: string, fieldName: string): U
   return bytes
 }
 
-/**
- * Backwards-compatible alias for older call sites.
- * Prefer `requireDocumentIdentifierBytes` in new code so the typed-write intent stays obvious.
- */
-export const requireIdentifierBytes = requireDocumentIdentifierBytes
-
 const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
 
 /**
@@ -238,55 +232,6 @@ export function documentToPlainObject(doc: unknown): Record<string, unknown> {
       normalizeDocumentField(field, value),
     ])
   );
-}
-
-/**
- * Convert an array of identifier strings to raw bytes.
- *
- * This is for low-level binary handling only. Raw queries on system identifier fields usually
- * pass the base58 strings directly (`$id`, `$ownerId`, or identifier-typed custom fields).
- *
- * Handles base58, base64, and hex formats. Filters out invalid values.
- */
-export function base58ArrayToBytes(values: string[]): Uint8Array[] {
-  const result: Uint8Array[] = [];
-  for (const v of values) {
-    if (!v || typeof v !== 'string') continue;
-
-    // Try base58 first
-    try {
-      result.push(bs58.decode(v));
-      continue;
-    } catch {
-      // Not base58
-    }
-
-    // Try base64 (SDK v3 sometimes returns identifiers as base64)
-    if (v.includes('+') || v.includes('/') || v.endsWith('=')) {
-      try {
-        const bytes = base64ToBytes(v);
-        if (bytes.length === 32) {
-          result.push(bytes);
-          continue;
-        }
-      } catch {
-        // Not base64
-      }
-    }
-
-    // Try hex
-    if (/^[0-9a-fA-F]+$/.test(v) && v.length === 64) {
-      try {
-        result.push(hexToBytes(v));
-        continue;
-      } catch {
-        // Not hex
-      }
-    }
-
-    logger.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
-  }
-  return result;
 }
 
 
@@ -488,14 +433,6 @@ export function identifierStringToLegacyNumberArray(value: string): number[] {
  */
 export function bytesToBase64QueryOperand(value: Uint8Array): string {
   return bytesToBase64(value);
-}
-
-/**
- * Convert a base58 identifier string into the base64 operand used by raw queries on ordinary
- * byte-array fields that store identifier bytes but are not modeled as identifier-typed fields.
- */
-export function identifierStringToBase64QueryOperand(value: string): string {
-  return bytesToBase64QueryOperand(identifierStringToDocumentBytes(value));
 }
 
 /**

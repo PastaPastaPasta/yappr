@@ -353,13 +353,6 @@ class TipService {
   }
 
   /**
-   * Get minimum tip in DASH
-   */
-  getMinTipDash(): number {
-    return this.creditsToDash(MIN_TIP_CREDITS);
-  }
-
-  /**
    * Parse tip content from post content
    * Returns TipInfo if the content is a tip post, null otherwise
    *
@@ -383,16 +376,6 @@ class TipService {
     return TIP_CONTENT_REGEX.test(content);
   }
 
-  /**
-   * Get tip amount from a transition ID
-   * TODO: Implement actual lookup via SDK when available
-   */
-  async getTransitionAmount(transitionId: string): Promise<number | null> {
-    // For now, return null - amount display is optional
-    // In the future, we could look up the transition to get the actual amount
-    logger.info('getTransitionAmount not yet implemented for:', transitionId);
-    return null;
-  }
 }
 
 export const tipService = new TipService();

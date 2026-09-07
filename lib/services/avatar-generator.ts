@@ -86,17 +86,3 @@ export function generateAvatarDataUri(style: string, seed: string): string {
 
   return dataUri;
 }
-
-/**
- * Check if a style is valid/supported
- */
-export function isValidStyle(style: string): boolean {
-  return style in styleMap;
-}
-
-/**
- * Get all available style names
- */
-export function getAvailableStyles(): string[] {
-  return Object.keys(styleMap);
-}

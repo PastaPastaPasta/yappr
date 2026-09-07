@@ -160,17 +160,3 @@ export async function retryPostCreation<T>(
     ...options
   })
 }
-
-/**
- * Check if an error appears to be a network error
- */
-export function isNetworkError(error: unknown): boolean {
-  return defaultRetryCondition(error)
-}
-
-/**
- * Check if an error is retryable
- */
-export function isRetryableError(error: unknown): boolean {
-  return defaultRetryCondition(error)
-}

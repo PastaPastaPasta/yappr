@@ -87,15 +87,3 @@ export interface StorachaCredentials {
   /** Space DID used for uploads */
   spaceDid: string
 }
-
-/**
- * Extended backup data structure that includes Storacha credentials
- */
-export interface ExtendedBackupData {
-  /** Backup format version */
-  version: 2
-  /** The encrypted login key (from v1) */
-  loginKey: string
-  /** Optional Storacha credentials */
-  storachaCredentials?: StorachaCredentials
-}

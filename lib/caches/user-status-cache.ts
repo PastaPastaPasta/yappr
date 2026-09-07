@@ -25,10 +25,6 @@ export function deleteBlockStatus(cacheKey: string): void {
   blockCache.delete(cacheKey)
 }
 
-export function clearBlockCache(): void {
-  blockCache.clear()
-}
-
 /**
  * Seed block status cache from batch results.
  * Call this after batch fetching to pre-populate before hooks mount.
@@ -64,10 +60,6 @@ export function deleteFollowStatus(cacheKey: string): void {
   followCache.delete(cacheKey)
 }
 
-export function clearFollowCache(): void {
-  followCache.clear()
-}
-
 /**
  * Seed follow status cache from batch results.
  * Call this after batch fetching to pre-populate before hooks mount.
@@ -97,14 +89,6 @@ export function getBlogFollowStatus(cacheKey: string): boolean | null {
 
 export function setBlogFollowStatus(cacheKey: string, isFollowing: boolean): void {
   blogFollowCache.set(cacheKey, { isFollowing, timestamp: Date.now() })
-}
-
-export function deleteBlogFollowStatus(cacheKey: string): void {
-  blogFollowCache.delete(cacheKey)
-}
-
-export function clearBlogFollowCache(): void {
-  blogFollowCache.clear()
 }
 
 export function seedBlogFollowStatusCache(
@@ -142,12 +126,6 @@ export function setPrivateFeedRequestStatus(cacheKey: string, status: PrivateFee
 
 export function deletePrivateFeedRequestStatus(cacheKey: string): void {
   privateFeedRequestCache.delete(cacheKey)
-  privateFeedRequestListeners.forEach(listener => listener())
-}
-
-export function clearPrivateFeedRequestCache(): void {
-  privateFeedRequestCache.clear()
-  // Notify all listeners that cache was cleared
   privateFeedRequestListeners.forEach(listener => listener())
 }
 

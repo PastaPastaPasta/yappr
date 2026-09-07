@@ -9,29 +9,9 @@ import { authorFieldIsRequired, groupByInteractionSurface, hashtagIsOptional, ha
 import { firstHashtag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
-import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchQuotesOfMyPosts, fetchTopPostsByLikes } from './post-query-helpers';
+import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
-
-export interface PostDocument {
-  $id: string;
-  $ownerId: string;
-  $createdAt: number;
-  $updatedAt?: number;
-  content: string;
-  mediaUrl?: string;
-  quotedPostId?: string;
-  quotedPostOwnerId?: string;
-  language?: string;
-  sensitive?: boolean;
-  embedContractId?: string;
-  embedDocType?: string;
-  embedId?: string;
-  // Private feed fields
-  encryptedContent?: Uint8Array;
-  epoch?: number;
-  nonce?: Uint8Array;
-}
 
 /**
  * Encryption options for creating private posts
@@ -308,16 +288,6 @@ class PostService extends BaseDocumentService<Post> {
     const { attachQuotedPosts } = await import('@/lib/feed/resolve-quoted-posts');
     await attachQuotedPosts(enriched);
     return enriched;
-  }
-
-  /**
-   * Get a fully enriched post by ID.
-   * Convenience method that fetches and enriches in one call.
-   */
-  async getEnrichedPostById(postId: string): Promise<Post | null> {
-    const post = await this.get(postId);
-    if (!post) return null;
-    return this.enrichPostFull(post);
   }
 
   /**
@@ -771,23 +741,6 @@ class PostService extends BaseDocumentService<Post> {
       { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: quoteField },
       quotedPostIds,
       (id) => this.countQuotes(id, kind)
-    );
-  }
-
-  /**
-   * Get quotes of posts owned by a specific user (for notification queries).
-   * Uses the quotedPostOwnerAndTime index: [quotedPostOwnerId, $createdAt]
-   * Returns posts with non-empty content (quote tweets, not pure reposts).
-   * Limited to 100 most recent quotes for notification purposes.
-   * @param userId - Identity ID of the post owner
-   * @param since - Only return quotes created after this timestamp (optional)
-   */
-  async getQuotesOfMyPosts(userId: string, since?: Date): Promise<Post[]> {
-    return fetchQuotesOfMyPosts(
-      userId,
-      this.contractId,
-      (doc) => this.transformDocument(doc),
-      since
     );
   }
 

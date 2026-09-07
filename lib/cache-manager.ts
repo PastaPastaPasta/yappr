@@ -278,38 +278,3 @@ if (typeof window !== 'undefined') {
     cacheManager.stopCleanup()
   })
 }
-
-/**
- * Cache decorator for methods
- */
-export function cached(
-  cacheName: string,
-  keyGenerator?: (...args: unknown[]) => string,
-  options: CacheOptions = {}
-) {
-  return function (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) {
-    const originalMethod = descriptor.value
-
-    descriptor.value = async function (...args: unknown[]) {
-      const key = keyGenerator ? keyGenerator(...args) : JSON.stringify(args)
-      
-      // Try to get from cache
-      const cached = cacheManager.get(cacheName, key)
-      if (cached !== null) {
-        return cached
-      }
-
-      // Execute original method
-      const result = await originalMethod.apply(this, args)
-      
-      // Cache the result
-      cacheManager.set(cacheName, key, result, options)
-      
-      return result
-    }
-
-    return descriptor
-  }
-}
-
-export default cacheManager

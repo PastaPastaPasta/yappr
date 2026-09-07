@@ -7,26 +7,15 @@
 
 export * from './types'
 export * from './errors'
-export { providerRegistry } from './provider-registry'
 // getLocalImageUrl is deliberately not re-exported: its consumers are display
 // components, which import ./local-image-cache directly to avoid pulling the
 // provider SDKs in through this barrel.
 export { cacheLocalImage } from './local-image-cache'
 
 // Storacha provider
-export { getStorachaProvider, StorachaProvider } from './providers/storacha/storacha-provider'
+export { getStorachaProvider } from './providers/storacha/storacha-provider'
 export type { StorachaCredentials } from './providers/storacha/storacha-provider'
-export {
-  hasStorachaCredentials,
-  getStorachaCredentials,
-  clearStorachaCredentials,
-} from './providers/storacha/credential-storage'
 
 // Pinata provider
-export { getPinataProvider, PinataProvider } from './providers/pinata/pinata-provider'
+export { getPinataProvider } from './providers/pinata/pinata-provider'
 export type { PinataCredentials } from './providers/pinata/pinata-provider'
-export {
-  hasPinataCredentials,
-  getPinataCredentials,
-  clearPinataCredentials,
-} from './providers/pinata/credential-storage'

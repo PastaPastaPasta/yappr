@@ -97,13 +97,3 @@ export function loadStoreViewCache(storeId: string): StoreViewCacheData | null {
     return null
   }
 }
-
-/**
- * Remove cached store view state.
- */
-export function invalidateStoreViewCache(storeId: string): void {
-  if (typeof window === 'undefined') return
-
-  const key = getCacheKey(storeId)
-  sessionStorage.removeItem(key)
-}

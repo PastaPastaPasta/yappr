@@ -191,26 +191,3 @@ export function clearStorachaCredentials(identityId: string): void {
   remove(`agent_${identityId}`)
   remove(`space_${identityId}`)
 }
-
-/**
- * Clear all Storacha credentials (for all identities)
- */
-export function clearAllStorachaCredentials(): void {
-  if (!isStorageAvailable()) return
-
-  const clearFromStorage = (storage: Storage) => {
-    const keysToRemove: string[] = []
-    for (let i = 0; i < storage.length; i++) {
-      const key = storage.key(i)
-      if (key?.startsWith(PREFIX)) {
-        keysToRemove.push(key)
-      }
-    }
-    for (const key of keysToRemove) {
-      storage.removeItem(key)
-    }
-  }
-
-  clearFromStorage(localStorage)
-  clearFromStorage(sessionStorage)
-}

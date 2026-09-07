@@ -85,11 +85,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Unused files and dependencies fail the job. Unused exports are reported
-      # but not yet enforced: the backlog is being worked down and a clean
-      # `knip` run is the target state before this becomes strict.
-      - name: Run knip (files + dependencies)
-        run: npx knip --include files,dependencies,unlisted
+      # Everything knip reports fails the job: unused files, dependencies,
+      # exports, types and class members. Exports that are only used inside
+      # their own file are exempt (knip.json: ignoreExportsUsedInFile).
+      - name: Run knip
+        run: npx knip
 
   build:
     name: Build

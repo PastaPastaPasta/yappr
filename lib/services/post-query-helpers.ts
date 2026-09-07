@@ -320,32 +320,3 @@ export async function fetchQuotePosts(
     return [];
   }
 }
-
-export async function fetchQuotesOfMyPosts(
-  userId: string,
-  contractId: string,
-  transformDocument: (doc: Record<string, unknown>) => Post,
-  since?: Date
-): Promise<Post[]> {
-  try {
-    const sinceTimestamp = since?.getTime() || 0;
-
-    const documents = await queryRawDocuments({
-      dataContractId: contractId,
-      documentTypeName: 'post',
-      where: [
-        ['quotedPostOwnerId', '==', userId],
-        ['$createdAt', '>', sinceTimestamp],
-      ],
-      orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'asc']],
-      limit: 100,
-    });
-
-    return documents
-      .map((doc) => transformDocument(doc))
-      .filter((post) => post.content && post.content.trim() !== '');
-  } catch (error) {
-    logger.error('Error getting quotes of my posts:', error);
-    return [];
-  }
-}
