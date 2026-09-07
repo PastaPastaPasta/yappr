@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
-import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
@@ -263,7 +263,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       const doc = documents[0]
       const data = (doc.data || doc) as Record<string, unknown>
-      const bytes = toUint8Array(data.filterData)
+      const bytes = normalizeBytes(data.filterData)
       if (!bytes) {
         logger.error('Unknown filterData format:', typeof data.filterData)
         return null
@@ -307,7 +307,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       for (const doc of documents) {
         const data = (doc.data || doc) as Record<string, unknown>
         const ownerId = (doc.$ownerId || doc.ownerId) as string
-        const bytes = toUint8Array(data.filterData)
+        const bytes = normalizeBytes(data.filterData)
         if (!bytes) continue
 
         result.set(ownerId, new BloomFilter(bytes, (data.itemCount as number) || 0))
@@ -423,7 +423,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Each user ID is 32 bytes.
    */
   private decodeUserIdArray(data: unknown): string[] {
-    const bytes = toUint8Array(data)
+    const bytes = normalizeBytes(data)
     if (!bytes) return []
 
     const userIds: string[] = []

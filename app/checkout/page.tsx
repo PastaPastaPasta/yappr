@@ -30,41 +30,20 @@ import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
+import { normalizeBytes } from '@/lib/bytes'
 
 /**
- * Normalize key data from various formats to Uint8Array
+ * The seller's encryption public key as bytes, or null if the identity key
+ * data does not decode to a secp256k1 point (33-byte compressed or 65-byte
+ * uncompressed).
  */
 function normalizeKeyData(data: unknown): Uint8Array | null {
-  if (!data) return null
-  if (data instanceof Uint8Array) return data
-  if (Array.isArray(data)) return new Uint8Array(data)
-  if (typeof data === 'string') {
-    const isValidSecpPublicKey = (bytes: Uint8Array) =>
-      (bytes.length === 33 && (bytes[0] === 0x02 || bytes[0] === 0x03)) ||
-      (bytes.length === 65 && bytes[0] === 0x04)
-
-    // Hex (common for stored keys)
-    if (/^[0-9a-fA-F]+$/.test(data) && (data.length === 66 || data.length === 130)) {
-      const bytes = new Uint8Array(data.length / 2)
-      for (let i = 0; i < bytes.length; i++) {
-        const byte = parseInt(data.substr(i * 2, 2), 16)
-        if (Number.isNaN(byte)) return null
-        bytes[i] = byte
-      }
-      if (isValidSecpPublicKey(bytes)) return bytes
-    }
-
-    // Base64
-    try {
-      const binaryString = atob(data)
-      const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
-      if (isValidSecpPublicKey(bytes)) return bytes
-      return null
-    } catch {
-      return null
-    }
-  }
-  return null
+  const bytes = normalizeBytes(data)
+  if (!bytes) return null
+  const isSecpPoint =
+    (bytes.length === 33 && (bytes[0] === 0x02 || bytes[0] === 0x03)) ||
+    (bytes.length === 65 && bytes[0] === 0x04)
+  return isSecpPoint ? bytes : null
 }
 
 type CheckoutReadinessBlocker =

@@ -23,24 +23,7 @@ import { identityService } from '@/lib/services/identity-service'
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload } from '@/lib/types'
-
-/**
- * Normalize key data from various formats to Uint8Array
- */
-function normalizeKeyData(data: unknown): Uint8Array | null {
-  if (!data) return null
-  if (data instanceof Uint8Array) return data
-  if (Array.isArray(data)) return new Uint8Array(data)
-  if (typeof data === 'string') {
-    try {
-      const binaryString = atob(data)
-      return Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
-    } catch {
-      return null
-    }
-  }
-  return null
-}
+import { normalizeBytes } from '@/lib/bytes'
 
 function OrdersPage() {
   const router = useRouter()
@@ -130,7 +113,7 @@ function OrdersPage() {
                   const sellerIdentity = await identityService.getIdentity(order.sellerId)
                   const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
                   const sellerPubKey = sellerEncryptionKey?.data
-                    ? normalizeKeyData(sellerEncryptionKey.data)
+                    ? normalizeBytes(sellerEncryptionKey.data)
                     : null
 
                   // Skip decryption if seller public key is missing

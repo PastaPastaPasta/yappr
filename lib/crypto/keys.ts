@@ -1,6 +1,7 @@
 import * as secp256k1 from '@noble/secp256k1'
 import { hash160 } from './hash'
 import { wifToPrivateKey, validateWifNetwork } from './wif'
+import { bytesEqual } from '@/lib/bytes'
 
 export interface IdentityPublicKeyInfo {
   id: number
@@ -22,17 +23,6 @@ export interface KeyMatchResult {
  */
 export function getPublicKey(privateKey: Uint8Array): Uint8Array {
   return secp256k1.getPublicKey(privateKey, true)
-}
-
-/**
- * Compare two Uint8Arrays for equality
- */
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false
-  }
-  return true
 }
 
 /**

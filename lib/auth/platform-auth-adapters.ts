@@ -54,7 +54,8 @@ import {
   getPrfAssertionForCredentials,
   selectDiscoverablePasskey,
 } from '@/lib/webauthn/passkey-prf'
-import { decodeBinaryFromBase64, wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
+import { wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -85,14 +86,6 @@ async function ensureSdk(): Promise<void> {
     network: getConfiguredNetwork(),
     contractId: YAPPR_CONTRACT_ID,
   })
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index])
-  }
-  return btoa(binary)
 }
 
 function fromSessionUser(savedUser: Record<string, unknown>): AuthUser | null {
@@ -136,7 +129,7 @@ function fromLegacyBundle(bundle: LegacyAuthVaultBundle): AuthVaultBundle {
     identityId: bundle.identityId,
     network: bundle.network,
     secretKind: bundle.secretKind,
-    loginKey: bundle.loginKey ? decodeBinaryFromBase64(bundle.loginKey) : undefined,
+    loginKey: bundle.loginKey ? base64ToBytes(bundle.loginKey) : undefined,
     authKeyWif: bundle.authKeyWif,
     encryptionKeyWif: bundle.encryptionKeyWif,
     transferKeyWif: bundle.transferKeyWif,

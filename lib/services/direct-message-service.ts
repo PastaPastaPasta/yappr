@@ -24,6 +24,7 @@ import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID } from '../constants'
 import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
+import { normalizeBytes } from '@/lib/bytes'
 
 /**
  * Direct Message Service for v3 contract
@@ -53,7 +54,7 @@ class DirectMessageService {
     try {
       // 1. Generate 10-byte conversation ID (10 bytes >= platform's byte detection threshold)
       const conversationIdBytes = await generateConversationId(senderId, recipientId)
-      const conversationId = bs58.encode(Buffer.from(conversationIdBytes))
+      const conversationId = bs58.encode(conversationIdBytes)
 
       // 2. Get sender's private key
       const privateKey = getPrivateKey(senderId)
@@ -182,7 +183,7 @@ class DirectMessageService {
       for (const invite of receivedInvites) {
         const inviteData = invite.data as Record<string, unknown> | undefined
         const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-        const convId = bs58.encode(Buffer.from(convIdBytes))
+        const convId = bs58.encode(convIdBytes)
         const senderId = invite.$ownerId
 
         const existingConv = conversationMap.get(convId)
@@ -200,9 +201,9 @@ class DirectMessageService {
       for (const invite of sentInvites) {
         const inviteData = invite.data as Record<string, unknown> | undefined
         const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-        const convId = bs58.encode(Buffer.from(convIdBytes))
+        const convId = bs58.encode(convIdBytes)
         const recipientIdBytes = this.extractByteArray(invite.recipientId || inviteData?.recipientId)
-        const recipientId = bs58.encode(Buffer.from(recipientIdBytes))
+        const recipientId = bs58.encode(recipientIdBytes)
 
         const existingSentConv = conversationMap.get(convId)
         if (!existingSentConv) {
@@ -446,7 +447,7 @@ class DirectMessageService {
     participantId: string
   ): Promise<{ conversationId: string; isNew: boolean }> {
     const conversationIdBytes = await generateConversationId(userId, participantId)
-    const conversationId = bs58.encode(Buffer.from(conversationIdBytes))
+    const conversationId = bs58.encode(conversationIdBytes)
 
     // Check if conversation exists by looking for invites
     const invite = await this.getMyInviteToRecipient(userId, participantId)
@@ -496,7 +497,7 @@ class DirectMessageService {
     const convIdBytes = this.extractByteArray(
       doc.conversationId || docData?.conversationId
     )
-    const conversationId = bs58.encode(Buffer.from(convIdBytes))
+    const conversationId = bs58.encode(convIdBytes)
 
     // Decrypt
     const content = await decryptFromBinary(
@@ -751,81 +752,41 @@ class DirectMessageService {
   }
 
   /**
-   * Extract byte array from various formats
+   * Bytes of a document field. Platform hands identifier-typed fields back as
+   * base58 while plain byte arrays come as base64/number[]/Uint8Array, so
+   * base58 is tried first and the generic codec covers the rest. Absent or
+   * undecodable values yield an empty array, matching the field being unset.
    */
   private extractByteArray(value: unknown): Uint8Array {
     if (!value) return new Uint8Array(0)
-    if (value instanceof Uint8Array) return value
-    if (Array.isArray(value)) return new Uint8Array(value)
     if (typeof value === 'string') {
       try {
         return bs58.decode(value)
       } catch {
-        return new Uint8Array(Buffer.from(value, 'base64'))
+        return normalizeBytes(value) ?? new Uint8Array(0)
       }
     }
-    const typedValue = value as { buffer?: ArrayBuffer; byteOffset?: number; byteLength?: number }
-    if (typedValue.buffer && typedValue.byteLength !== undefined) {
-      return new Uint8Array(typedValue.buffer, typedValue.byteOffset ?? 0, typedValue.byteLength)
-    }
-    return new Uint8Array(0)
+    return normalizeBytes(value) ?? new Uint8Array(0)
   }
 
   /**
-   * Extract public key bytes from identity public key object
+   * Public-key bytes from an identity key object, whichever of the field names
+   * the SDK surface used (`data`, `publicKey`, `key`) or the raw value itself.
    */
   private extractPublicKeyBytes(publicKey: unknown): Uint8Array {
-    if (publicKey instanceof Uint8Array) return publicKey
-    if (Array.isArray(publicKey)) return new Uint8Array(publicKey)
-
-    if (publicKey && typeof publicKey === 'object') {
+    const isBytesLike = (v: unknown) => v instanceof Uint8Array || Array.isArray(v) || typeof v === 'string'
+    const candidates: unknown[] = []
+    if (publicKey && typeof publicKey === 'object' && !isBytesLike(publicKey)) {
       const pkObj = publicKey as Record<string, unknown>
-      // Try 'data' field (common in Dash Platform)
-      if (pkObj.data) {
-        if (Array.isArray(pkObj.data)) return new Uint8Array(pkObj.data)
-        if (typeof pkObj.data === 'string') {
-          try {
-            return bs58.decode(pkObj.data)
-          } catch {
-            return new Uint8Array(Buffer.from(pkObj.data, 'base64'))
-          }
-        }
-        if (pkObj.data instanceof Uint8Array) return pkObj.data
-      }
-
-      // Try 'publicKey' field
-      if (pkObj.publicKey) {
-        if (Array.isArray(pkObj.publicKey)) return new Uint8Array(pkObj.publicKey)
-        if (typeof pkObj.publicKey === 'string') {
-          try {
-            return bs58.decode(pkObj.publicKey)
-          } catch {
-            return new Uint8Array(Buffer.from(pkObj.publicKey, 'base64'))
-          }
-        }
-      }
-
-      // Try 'key' field
-      if (pkObj.key) {
-        if (Array.isArray(pkObj.key)) return new Uint8Array(pkObj.key)
-        if (typeof pkObj.key === 'string') {
-          try {
-            return bs58.decode(pkObj.key)
-          } catch {
-            return new Uint8Array(Buffer.from(pkObj.key, 'base64'))
-          }
-        }
-      }
+      candidates.push(pkObj.data, pkObj.publicKey, pkObj.key)
+    } else {
+      candidates.push(publicKey)
     }
-
-    if (typeof publicKey === 'string') {
-      try {
-        return bs58.decode(publicKey)
-      } catch {
-        return new Uint8Array(Buffer.from(publicKey, 'base64'))
-      }
+    for (const candidate of candidates) {
+      if (!isBytesLike(candidate)) continue
+      const bytes = this.extractByteArray(candidate)
+      if (bytes.length > 0) return bytes
     }
-
     throw new Error('Unknown public key format: ' + JSON.stringify(publicKey))
   }
 }

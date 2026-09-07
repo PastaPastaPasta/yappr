@@ -2,7 +2,6 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { signerService, KeyPurpose } from './signer-service';
-import { wallet } from '@dashevo/evo-sdk';
 import { TipInfo } from '../../types';
 import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import { isInsufficientTokenError } from '@/lib/error-utils';
@@ -164,61 +163,6 @@ class TipService {
       }
 
       const sdk = await getEvoSdk();
-
-      // Log transfer details for debugging
-      logger.info('=== Credit Transfer Debug ===');
-      logger.info(`Sender ID: ${senderId}`);
-      logger.info(`Recipient ID: ${recipientId}`);
-      logger.info(`Amount: ${amountCredits} credits`);
-      logger.info(`Key ID: ${keyId !== undefined ? keyId : 'auto-detect'}`);
-      logger.info(`Private key length: ${transferKeyWif.trim().length}`);
-      logger.info(`Private key starts with: ${transferKeyWif.trim().substring(0, 4)}...`);
-
-      // Fetch sender identity to see available keys
-      try {
-        const identity = await sdk.identities.fetch(senderId);
-        if (identity) {
-          const identityJson = identity.toJSON();
-          logger.info('Sender identity public keys:', JSON.stringify(identityJson.publicKeys, null, 2));
-
-          // Try to derive public key from the provided private key and compare
-          try {
-            const keyPair = await wallet.keyPairFromWif(transferKeyWif.trim());
-            logger.info('Derived key pair from WIF:', keyPair);
-
-            // Find transfer keys (purpose 3) on the identity
-            interface IdentityPublicKey { id: number; purpose: number; data?: string }
-            const transferKeys = identityJson.publicKeys.filter((k: IdentityPublicKey) => k.purpose === 3);
-            logger.info('Transfer keys on identity:', transferKeys);
-
-            if (keyPair?.publicKey) {
-              // public_key is a hex string, convert to base64 for comparison
-              const hexToBytes = (hex: string) => {
-                const bytes = [];
-                for (let i = 0; i < hex.length; i += 2) {
-                  bytes.push(parseInt(hex.substr(i, 2), 16));
-                }
-                return bytes;
-              };
-              const pubKeyBytes = hexToBytes(keyPair.publicKey);
-              const pubKeyBase64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
-              logger.info('Derived public key (hex):', keyPair.publicKey);
-              logger.info('Derived public key (base64):', pubKeyBase64);
-
-              // Compare with key 3's public key
-              const key3 = identityJson.publicKeys.find((k: IdentityPublicKey) => k.id === 3);
-              if (key3) {
-                logger.info('Key 3 public key (from identity):', key3.data);
-                logger.info('Keys match:', pubKeyBase64 === key3.data);
-              }
-            }
-          } catch (keyError) {
-            logger.info('Error deriving key pair:', keyError);
-          }
-        }
-      } catch (e) {
-        logger.info('Could not fetch identity for debugging:', e);
-      }
 
       // Fetch sender identity WASM object
       const identity = await sdk.identities.fetch(senderId);

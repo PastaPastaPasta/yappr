@@ -16,6 +16,8 @@
 
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
+import { getPublicKey } from './keys'
+import { bytesEqual, normalizeBytes } from '@/lib/bytes'
 
 // Key type indicates whether a key was derived from auth key or externally provided
 export type KeyType = 'derived' | 'external'
@@ -75,10 +77,9 @@ export async function validateDerivedKeyMatchesIdentity(
   identityId: string,
 ): Promise<boolean> {
   // Get the public key from derived private key
-  const { privateFeedCryptoService } = await import('@/lib/services')
   let derivedPubKey: Uint8Array
   try {
-    derivedPubKey = privateFeedCryptoService.getPublicKey(derivedPrivateKey)
+    derivedPubKey = getPublicKey(derivedPrivateKey)
   } catch {
     return false
   }
@@ -99,37 +100,12 @@ export async function validateDerivedKeyMatchesIdentity(
     return false
   }
 
-  // Parse on-chain public key data
-  let onChainPubKeyBytes: Uint8Array | null = null
-  if (targetKey.data instanceof Uint8Array) {
-    onChainPubKeyBytes = targetKey.data
-  } else if (typeof targetKey.data === 'string') {
-    // Could be hex or base64
-    if (/^[0-9a-fA-F]+$/.test(targetKey.data)) {
-      // Hex
-      onChainPubKeyBytes = new Uint8Array(targetKey.data.length / 2)
-      for (let i = 0; i < onChainPubKeyBytes.length; i++) {
-        onChainPubKeyBytes[i] = parseInt(targetKey.data.substr(i * 2, 2), 16)
-      }
-    } else {
-      // Assume base64
-      const binary = atob(targetKey.data)
-      onChainPubKeyBytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        onChainPubKeyBytes[i] = binary.charCodeAt(i)
-      }
-    }
-  }
-
+  const onChainPubKeyBytes = normalizeBytes(targetKey.data)
   if (!onChainPubKeyBytes) {
     return false
   }
 
-  // Compare derived public key with on-chain public key
-  return (
-    derivedPubKey.length === onChainPubKeyBytes.length &&
-    derivedPubKey.every((b, i) => b === onChainPubKeyBytes[i])
-  )
+  return bytesEqual(derivedPubKey, onChainPubKeyBytes)
 }
 
 /**

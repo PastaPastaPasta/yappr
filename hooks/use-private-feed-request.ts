@@ -10,6 +10,8 @@ import {
   subscribeToPrivateFeedRequestStatus,
   type PrivateFeedRequestStatus as CacheStatus,
 } from '@/lib/caches/user-status-cache'
+import { normalizeBytes } from '@/lib/bytes'
+import { getPublicKey } from '@/lib/crypto/keys'
 
 export type PrivateFeedRequestStatus = 'none' | 'pending' | 'loading' | 'error'
 
@@ -163,7 +165,7 @@ export function usePrivateFeedRequest({
     updateStatus('loading')
 
     try {
-      const { privateFeedFollowerService, privateFeedCryptoService, identityService } = await import('@/lib/services')
+      const { privateFeedFollowerService, identityService } = await import('@/lib/services')
       const { followService } = await import('@/lib/services/follow-service')
       const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
 
@@ -174,7 +176,7 @@ export function usePrivateFeedRequest({
       const privateKeyBytes = getEncryptionKeyBytes(currentUserId)
       if (privateKeyBytes) {
         // Derive public key from stored private key
-        encryptionPublicKey = privateFeedCryptoService.getPublicKey(privateKeyBytes)
+        encryptionPublicKey = getPublicKey(privateKeyBytes)
       } else {
         // Try to get from identity
         const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
@@ -182,34 +184,9 @@ export function usePrivateFeedRequest({
         if (identity?.publicKeys) {
           const encryptionKey = findEncryptionKey(identity.publicKeys)
           if (encryptionKey?.data) {
-            // Convert to Uint8Array
-            if (typeof encryptionKey.data === 'string') {
-              const keyStr = encryptionKey.data
-              // Use length to differentiate hex vs base64:
-              // 33-byte key: hex = 66 chars, base64 = 44 chars
-              const isLikelyHex = keyStr.length === 66 && /^[0-9a-fA-F]+$/.test(keyStr)
-
-              if (isLikelyHex) {
-                const hexPairs = keyStr.match(/.{1,2}/g) || []
-                encryptionPublicKey = new Uint8Array(
-                  hexPairs.map(byte => parseInt(byte, 16))
-                )
-              } else {
-                // Try base64 decode
-                try {
-                  const binary = atob(keyStr)
-                  encryptionPublicKey = new Uint8Array(binary.length)
-                  for (let i = 0; i < binary.length; i++) {
-                    encryptionPublicKey[i] = binary.charCodeAt(i)
-                  }
-                } catch {
-                  logger.error('Failed to decode encryption key as base64:', keyStr.substring(0, 20) + '...')
-                }
-              }
-            } else if (encryptionKey.data instanceof Uint8Array) {
-              encryptionPublicKey = encryptionKey.data
-            } else if (Array.isArray(encryptionKey.data)) {
-              encryptionPublicKey = new Uint8Array(encryptionKey.data)
+            encryptionPublicKey = normalizeBytes(encryptionKey.data) ?? undefined
+            if (!encryptionPublicKey) {
+              logger.error('Failed to decode encryption key data on identity')
             }
           }
         }
@@ -280,7 +257,7 @@ export function usePrivateFeedRequest({
     updateStatus('loading')
 
     try {
-      const { privateFeedFollowerService, privateFeedCryptoService } = await import('@/lib/services')
+      const { privateFeedFollowerService } = await import('@/lib/services')
       const { followService } = await import('@/lib/services/follow-service')
       const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
 
@@ -294,7 +271,7 @@ export function usePrivateFeedRequest({
       }
 
       // Derive public key from stored private key
-      const encryptionPublicKey = privateFeedCryptoService.getPublicKey(privateKeyBytes)
+      const encryptionPublicKey = getPublicKey(privateKeyBytes)
 
       // Auto-follow the owner if not already following
       const isFollowing = await followService.isFollowing(ownerId, currentUserId)

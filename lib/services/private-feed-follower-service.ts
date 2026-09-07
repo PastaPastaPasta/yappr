@@ -29,6 +29,7 @@ import type { NodeKey } from './private-feed-crypto-service';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
+import { requireBytes } from '@/lib/bytes';
 
 /**
  * FollowRequest document from platform
@@ -71,18 +72,6 @@ export interface EncryptedPostFields {
   epoch: number;
   nonce: Uint8Array;
   $ownerId: string;
-}
-
-/**
- * Convert base64 to Uint8Array
- */
-function fromBase64(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 class PrivateFeedFollowerService {
@@ -227,7 +216,7 @@ class PrivateFeedFollowerService {
           $ownerId: doc.$ownerId as string,
           $createdAt: doc.$createdAt as number,
           targetId: doc.targetId as string,
-          publicKey: doc.publicKey ? this.normalizeBytes(doc.publicKey) : undefined,
+          publicKey: doc.publicKey ? requireBytes(doc.publicKey, 'publicKey') : undefined,
         }),
         { maxResults: 1024 } // SPEC allows up to 1024 followers
       );
@@ -279,7 +268,7 @@ class PrivateFeedFollowerService {
         $ownerId: doc.$ownerId as string,
         $createdAt: doc.$createdAt as number,
         targetId: doc.targetId as string,
-        publicKey: doc.publicKey ? this.normalizeBytes(doc.publicKey) : undefined,
+        publicKey: doc.publicKey ? requireBytes(doc.publicKey, 'publicKey') : undefined,
       };
     } catch (error) {
       logger.error('Error fetching follow request:', error);
@@ -317,7 +306,7 @@ class PrivateFeedFollowerService {
         recipientId: identifierToBase58(doc.recipientId) || '',
         leafIndex: doc.leafIndex as number,
         epoch: doc.epoch as number,
-        encryptedPayload: this.normalizeBytes(doc.encryptedPayload),
+        encryptedPayload: requireBytes(doc.encryptedPayload, 'encryptedPayload'),
       };
     } catch (error) {
       logger.error('Error fetching grant:', error);
@@ -695,8 +684,8 @@ class PrivateFeedFollowerService {
           $createdAt: doc.$createdAt as number,
           epoch: doc.epoch as number,
           revokedLeaf: doc.revokedLeaf as number,
-          packets: this.normalizeBytes(doc.packets),
-          encryptedCEK: this.normalizeBytes(doc.encryptedCEK),
+          packets: requireBytes(doc.packets, 'packets'),
+          encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
         }),
         { maxResults: 2000 } // SPEC allows up to 2000 epochs
       );
@@ -1041,33 +1030,6 @@ class PrivateFeedFollowerService {
   // ============================================================
   // Utility Methods
   // ============================================================
-
-  /**
-   * Normalize bytes from SDK response (may be base64 string or array)
-   */
-  private normalizeBytes(value: unknown): Uint8Array {
-    if (value instanceof Uint8Array) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return new Uint8Array(value);
-    }
-    if (typeof value === 'string') {
-      try {
-        return fromBase64(value);
-      } catch {
-        if (/^[0-9a-fA-F]+$/.test(value)) {
-          const bytes = new Uint8Array(value.length / 2);
-          for (let i = 0; i < bytes.length; i++) {
-            bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-          }
-          return bytes;
-        }
-      }
-    }
-    logger.warn('Unable to normalize bytes:', value);
-    return new Uint8Array(0);
-  }
 }
 
 // Export singleton instance

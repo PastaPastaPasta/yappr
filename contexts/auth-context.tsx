@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
+import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -100,15 +101,6 @@ function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'pas
   return error instanceof Error ? error : new Error(message)
 }
 
-function decodeBase64ToBytes(value: string): Uint8Array {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
@@ -186,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loginKey: partialSecrets.loginKey
         ? partialSecrets.loginKey instanceof Uint8Array
           ? partialSecrets.loginKey
-          : decodeBase64ToBytes(partialSecrets.loginKey)
+          : base64ToBytes(partialSecrets.loginKey)
         : undefined,
       authKeyWif: partialSecrets.authKeyWif,
       encryptionKeyWif: partialSecrets.encryptionKeyWif,

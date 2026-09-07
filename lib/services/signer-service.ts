@@ -17,6 +17,7 @@ import {
 } from '@dashevo/evo-sdk';
 import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { bytesToBase64 } from '@/lib/bytes'
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -137,7 +138,7 @@ class SignerService {
       purpose: keyData.purpose,
       securityLevel: keyData.securityLevel ?? SecurityLevel.HIGH,
       readOnly: keyData.readOnly ?? (keyData.purpose === KeyPurpose.TRANSFER),
-      data: typeof keyData.data === 'string' ? keyData.data : Buffer.from(keyData.data).toString('base64'),
+      data: typeof keyData.data === 'string' ? keyData.data : bytesToBase64(keyData.data),
       disabledAt: keyData.disabledAt,
       contractBounds: keyData.contractBounds as object | undefined,
     };

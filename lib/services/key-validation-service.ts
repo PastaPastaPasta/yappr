@@ -10,6 +10,7 @@ import {
 } from '@/lib/crypto/keys'
 import { wifToPrivateKey, validateWifNetwork } from '@/lib/crypto/wif'
 import bs58 from 'bs58'
+import { normalizeBytes } from '@/lib/bytes'
 
 export type KeyValidationErrorType =
   | 'INVALID_WIF'
@@ -47,23 +48,12 @@ function extractPublicKeyBytes(data: unknown): Uint8Array | null {
     return new Uint8Array(data)
   }
 
-  // String - try base58 first (common for Dash), then base64
+  // String - try base58 first (common for Dash), then hex/base64
   if (typeof data === 'string') {
     try {
-      // Try base58 decode
       return bs58.decode(data)
     } catch {
-      try {
-        // Try base64 decode
-        const binary = atob(data)
-        const bytes = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i)
-        }
-        return bytes
-      } catch {
-        return null
-      }
+      return normalizeBytes(data)
     }
   }
 
