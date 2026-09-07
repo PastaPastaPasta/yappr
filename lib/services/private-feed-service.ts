@@ -33,6 +33,7 @@ import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
+import { getPublicKey } from '@/lib/crypto/keys';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { bytesEqual, normalizeBytes, requireBytes } from '@/lib/bytes';
@@ -213,7 +214,7 @@ class PrivateFeedService {
       }
 
       // 2. Derive public key and verify it matches the identity's registered encryption key
-      const encryptionPubKey = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
+      const encryptionPubKey = getPublicKey(encryptionPrivateKey);
 
       // Verify the derived public key is registered on the identity
       const identity = await identityService.getIdentity(ownerId);
@@ -911,7 +912,7 @@ class PrivateFeedService {
       }
 
       // 2. Verify user has the encryption key by deriving public key
-      const encryptionPubKey = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
+      const encryptionPubKey = getPublicKey(encryptionPrivateKey);
 
       // 3. Delete all existing PrivateFeedGrant documents
       // These are now useless since they're encrypted to old seed's epoch keys
