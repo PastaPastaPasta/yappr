@@ -3,7 +3,7 @@ import { BaseDocumentService, QueryOptions, DocumentResult } from './document-se
 import { Reply, PostQueryOptions } from '../../types';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser, documentToPlainObject } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 
 export interface ReplyDocument {
@@ -52,6 +52,8 @@ class ReplyService extends BaseDocumentService<Reply> {
     const id = (doc.$id || doc.id) as string;
     const ownerId = (doc.$ownerId || doc.ownerId) as string;
     const createdAt = (doc.$createdAt || doc.createdAt) as number;
+    const updatedAt = (doc.$updatedAt || doc.updatedAt) as number | undefined;
+    const revision = (doc.$revision || doc.revision) as number | undefined;
 
     // Content and other fields may be in data or at root level
     const content = (data.content || doc.content || '') as string;
@@ -79,6 +81,8 @@ class ReplyService extends BaseDocumentService<Reply> {
       author: createDefaultUser(ownerId),
       content,
       createdAt: new Date(createdAt),
+      updatedAt: updatedAt ? new Date(updatedAt) : undefined,
+      isEdited: typeof revision === 'number' && revision > 1, // Base revision is 1 on Dash Platform
       likes: 0,
       reposts: 0,
       replies: 0,
@@ -188,6 +192,80 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     return this.create(ownerId, data);
+  }
+
+  /**
+   * Update an existing reply's content.
+   *
+   * Only the content field changes — parentId, parentOwnerId, mediaUrl and other
+   * stored fields are preserved from the current document, since Dash Platform
+   * document replacement requires the full document payload.
+   *
+   * Encrypted (private) replies cannot be edited: a content-only replacement
+   * would desync the stored ciphertext from the public placeholder.
+   */
+  async updateReply(replyId: string, ownerId: string, content: string): Promise<Reply> {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      throw new Error('Reply content cannot be empty');
+    }
+    if (trimmed.length > 500) {
+      throw new Error('Reply content exceeds 500 character limit');
+    }
+
+    // Fetch the raw document (bypassing the lossy Reply transform) so the
+    // replacement payload preserves every stored field and the current revision.
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.get(this.contractId, this.documentType, replyId);
+    if (!response) {
+      throw new Error('Reply not found');
+    }
+    const raw = documentToPlainObject(response);
+
+    if (raw.encryptedContent) {
+      throw new Error('Encrypted replies cannot be edited');
+    }
+
+    // parentId and parentOwnerId are required by the contract — preserve them
+    const parentId = identifierToBase58(raw.parentId);
+    const parentOwnerId = identifierToBase58(raw.parentOwnerId);
+    if (!parentId || !parentOwnerId) {
+      throw new Error('Reply document is missing parent references');
+    }
+
+    const data: Record<string, unknown> = {
+      content: trimmed,
+      parentId: identifierStringToDocumentBytes(parentId),
+      parentOwnerId: identifierStringToDocumentBytes(parentOwnerId),
+    };
+    if (raw.mediaUrl != null) data.mediaUrl = raw.mediaUrl;
+    if (raw.sensitive != null) data.sensitive = raw.sensitive;
+
+    const revision = Number(raw.$revision ?? raw.revision);
+    if (!Number.isFinite(revision) || revision < 1) {
+      throw new Error('Reply could not be edited: current document revision is unavailable');
+    }
+
+    const { stateTransitionService } = await import('./state-transition-service');
+    const result = await stateTransitionService.updateDocument(
+      this.contractId,
+      this.documentType,
+      replyId,
+      ownerId,
+      data,
+      revision
+    );
+
+    if (!result.success || !result.document) {
+      throw new Error(result.error || 'Failed to update reply');
+    }
+
+    // Drop any cached copy so subsequent reads see the new content and revision
+    this.clearCache(replyId);
+
+    // The update result has no $createdAt — carry it over from the fetched document
+    return this.transformDocument({ $createdAt: raw.$createdAt, ...result.document });
   }
 
   /**
