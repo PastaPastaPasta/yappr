@@ -23,7 +23,6 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     initialValue: options.initialValue,
     cache: blockStatusCache,
     label: 'useBlock',
-    loginAction: 'block',
     selfError: 'You cannot block yourself',
     check: async (viewerId, subjectId) => {
       const { blockService } = await import('@/lib/services/block-service')

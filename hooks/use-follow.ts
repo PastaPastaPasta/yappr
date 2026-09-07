@@ -23,7 +23,6 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
     initialValue: options.initialValue,
     cache: followStatusCache,
     label: 'useFollow',
-    loginAction: 'follow',
     selfError: 'You cannot follow yourself',
     check: async (viewerId, subjectId) => {
       const { followService } = await import('@/lib/services/follow-service')

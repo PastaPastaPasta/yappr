@@ -410,7 +410,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
       return
     }
 
-    const authedUser = requireAuth('like')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     if (likeLoading) return
@@ -460,7 +460,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleRepost = async () => {
-    const authedUser = requireAuth('repost')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     // The topology may forbid reposting this kind entirely (v3 replies), in which
@@ -512,13 +512,13 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleQuote = () => {
-    if (!requireAuth('quote')) return
+    if (!requireAuth()) return
     setQuotingPost(enrichedPost)
     setComposeOpen(true)
   }
 
   const handleBookmark = async () => {
-    const authedUser = requireAuth('bookmark')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     // Same guard as handleRepost: on v3 replies have no bookmark doctype.
@@ -557,7 +557,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleReply = () => {
-    if (!requireAuth('reply')) return
+    if (!requireAuth()) return
     // Check if user can reply to private posts (PRD §5.5)
     if (!canReplyToPrivate) {
       toast.error(cantReplyReason || "Can't reply to this post")
@@ -574,7 +574,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   }
 
   const handleTip = () => {
-    if (!requireAuth('tip')) return
+    if (!requireAuth()) return
     openTipModal(enrichedPost)
   }
 
@@ -582,7 +582,7 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const handleFailedMentionClick = (username: string) => openRecoveryModal('mention', post, username)
 
   const handleDelete = () => {
-    const authedUser = requireAuth('delete')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     openDeleteModal(post, async () => {

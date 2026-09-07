@@ -1,10 +1,10 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal';
+import { useLoginModal } from '@/hooks/use-login-modal';
 
 export function FeedLoginPrompt() {
-  const { open: openLoginPrompt } = useLoginPromptModal();
+  const openLoginPrompt = useLoginModal((s) => s.open);
 
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4">
