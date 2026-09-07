@@ -26,7 +26,6 @@
     "@dicebear/core": "^9.2.4",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
-    "@headlessui/react": "^1.7.18",
     "@heroicons/react": "^2.1.1",
     "@mantine/core": "^8.3.11",
     "@mantine/hooks": "^8.3.11",

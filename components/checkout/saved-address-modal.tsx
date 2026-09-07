@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Modal } from '@/components/ui/modal'
 import {
   XMarkIcon,
   PencilIcon,
@@ -16,7 +16,6 @@ import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { useSettingsStore } from '@/lib/store'
 import toast from 'react-hot-toast'
 import type { SavedAddress, ShippingAddress, BuyerContact } from '@/lib/types'
 
@@ -41,7 +40,6 @@ export function SavedAddressModal({
   onDelete,
   onSetDefault
 }: SavedAddressModalProps) {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [mode, setMode] = useState<ModalMode>('list')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -393,28 +391,7 @@ export function SavedAddressModal({
 
   return (
     <>
-      <Dialog.Root open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-        <AnimatePresence>
-          {isOpen && (
-            <Dialog.Portal forceMount>
-              <Dialog.Overlay asChild>
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className={`fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-4 ${
-                    potatoMode ? '' : 'backdrop-blur-sm'
-                  }`}
-                >
-                  <Dialog.Content asChild>
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                      transition={{ duration: 0.2, ease: 'easeOut' }}
-                      className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+      <Modal open={isOpen} onOpenChange={(open) => !open && handleClose()} variant="sheet" className="max-w-md">
                       {/* Header */}
                       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
                         <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
@@ -429,14 +406,7 @@ export function SavedAddressModal({
 
                       {mode === 'list' && renderList()}
                       {(mode === 'add' || mode === 'edit') && renderForm()}
-                    </motion.div>
-                  </Dialog.Content>
-                </motion.div>
-              </Dialog.Overlay>
-            </Dialog.Portal>
-          )}
-        </AnimatePresence>
-      </Dialog.Root>
+      </Modal>
 
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog
