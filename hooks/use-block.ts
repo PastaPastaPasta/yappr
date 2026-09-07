@@ -78,7 +78,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
   }, [user?.identityId, targetUserId, cacheKey, initialValue])
 
   useEffect(() => {
-    checkBlockStatus()
+    checkBlockStatus().catch((error) => logger.error('useBlock: status check failed:', error))
   }, [checkBlockStatus])
 
   const toggleBlock = useCallback(async (message?: string) => {
@@ -140,7 +140,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     if (cacheKey) {
       deleteBlockStatus(cacheKey)
     }
-    checkBlockStatus(true)
+    checkBlockStatus(true).catch((error) => logger.error('useBlock: refresh failed:', error))
   }, [cacheKey, checkBlockStatus])
 
   return { isBlocked, isLoading, toggleBlock, refresh }

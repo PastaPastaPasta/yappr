@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useState } from 'react'
+import { logger } from '@/lib/logger'
 
 interface UseFileDropOptions {
   /** When true, drag events are accepted but no file processing occurs */
@@ -44,7 +45,7 @@ export function useFileDrop({ disabled, onDrop, accept }: UseFileDropOptions): U
     if (!file) return
     if (accept && !file.type.startsWith(accept)) return
 
-    onDrop(file)
+    Promise.resolve(onDrop(file)).catch((error) => logger.error('useFileDrop: onDrop failed:', error))
   }, [disabled, onDrop, accept])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {

@@ -377,7 +377,6 @@ function VideoEmbedPlayer({ url }: { url: string }) {
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsPlaying(true) }}
             className="relative w-full aspect-video bg-black cursor-pointer group"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumbnailUrl}
               alt="YouTube video thumbnail"
@@ -734,7 +733,6 @@ const imageBlock = createReactBlockSpec(
                 fallback={imageUnavailableFallback}
               />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={url}
                 alt={altText}

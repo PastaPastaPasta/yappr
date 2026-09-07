@@ -1,8 +1,8 @@
 import { logger } from '@/lib/logger';
-import { getDashPlatformClient } from '@/lib/dash-platform-client';
+import { postService } from '@/lib/services/post-service';
 import { Post } from '@/lib/types';
 import { enrichPostsWithRepostsAndQuotes } from './enrich-posts';
-import { sortFeedByTimestamp, transformRawPost } from './transform-raw-post';
+import { sortFeedByTimestamp } from './transform-raw-post';
 
 export async function loadForYouFeed(options: {
   startAfter?: string;
@@ -15,7 +15,7 @@ export async function loadForYouFeed(options: {
 }): Promise<{ posts: Post[]; cursor: string | null; hasMore: boolean }> {
   const MIN_NON_REPLY_POSTS = 20;
   const MAX_FETCH_ITERATIONS = 5;
-  const dashClient = getDashPlatformClient();
+  const PAGE_SIZE = 20;
 
   const currentStartAfter = options.startAfter;
 
@@ -25,12 +25,11 @@ export async function loadForYouFeed(options: {
     '(iteration 1)'
   );
 
-  const firstBatchRaw = await dashClient.queryPosts({
-    limit: 20,
-    forceRefresh: options.forceRefresh,
+  const firstBatchRaw = (await postService.getTimeline({
+    limit: PAGE_SIZE,
     startAfter: currentStartAfter,
     language: options.feedLanguage,
-  });
+  })).documents;
 
   if (firstBatchRaw.length === 0) {
     logger.info('Feed: No posts available');
@@ -42,16 +41,13 @@ export async function loadForYouFeed(options: {
   // enrichment merge falls back to the ORIGINAL post for ids missing from the
   // enriched result, so filtering only inside enrichPostsWithRepostsAndQuotes
   // would let deleted posts reappear. `deleted` is never set on v2.
-  const firstBatchPosts = firstBatchRaw
-    .map((doc) => transformRawPost(doc as Record<string, unknown>))
-    .filter((post) => !post.deleted);
-  const firstBatchCursor = (firstBatchRaw[firstBatchRaw.length - 1].$id ||
-    firstBatchRaw[firstBatchRaw.length - 1].id) as string;
+  const firstBatchPosts = firstBatchRaw.filter((post) => !post.deleted);
+  const firstBatchCursor = firstBatchRaw[firstBatchRaw.length - 1].id;
 
   logger.info(`Feed: First batch has ${firstBatchPosts.length} posts`);
 
   const forYouNextCursor: string | null = firstBatchCursor;
-  const forYouHasMore = firstBatchRaw.length === 20;
+  const forYouHasMore = firstBatchRaw.length === PAGE_SIZE;
 
   enrichPostsWithRepostsAndQuotes(firstBatchPosts)
     .then((enrichedPosts) => {
@@ -79,17 +75,16 @@ export async function loadForYouFeed(options: {
       while (
         allPostCount < MIN_NON_REPLY_POSTS &&
         bgFetchIteration < MAX_FETCH_ITERATIONS &&
-        bgLastBatchSize === 20
+        bgLastBatchSize === PAGE_SIZE
       ) {
         bgFetchIteration++;
         logger.info(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
 
-        const bgRawPosts = await dashClient.queryPosts({
-          limit: 20,
-          forceRefresh: false,
+        const bgRawPosts = (await postService.getTimeline({
+          limit: PAGE_SIZE,
           startAfter: bgCurrentStartAfter,
           language: options.feedLanguage,
-        });
+        })).documents;
 
         bgLastBatchSize = bgRawPosts.length;
 
@@ -99,9 +94,7 @@ export async function loadForYouFeed(options: {
           break;
         }
 
-        const bgPosts = bgRawPosts
-          .map((doc) => transformRawPost(doc as Record<string, unknown>))
-          .filter((post) => !post.deleted);
+        const bgPosts = bgRawPosts.filter((post) => !post.deleted);
 
         enrichPostsWithRepostsAndQuotes(bgPosts)
           .then((enrichedPosts) => {
@@ -117,8 +110,7 @@ export async function loadForYouFeed(options: {
 
         allPostCount += bgPosts.length;
 
-        const lastPost = bgRawPosts[bgRawPosts.length - 1];
-        bgCurrentStartAfter = (lastPost.$id || lastPost.id) as string;
+        bgCurrentStartAfter = bgRawPosts[bgRawPosts.length - 1].id;
 
         options.setData((currentItems) => {
           if (!currentItems) return bgPosts;
@@ -139,7 +131,7 @@ export async function loadForYouFeed(options: {
         }
       }
 
-      options.setHasMore(bgLastBatchSize === 20);
+      options.setHasMore(bgLastBatchSize === PAGE_SIZE);
       logger.info(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
     };
 

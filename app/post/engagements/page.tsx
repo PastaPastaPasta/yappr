@@ -52,19 +52,18 @@ async function resolveEngagementUsers(
       : Promise.resolve(new Map<string, boolean>())
   ])
 
-  const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+  const profileMap = new Map(profiles.map((p) => [p.$ownerId, p]))
 
   return ownerIds.map((id) => {
     const username = dpnsNamesMap.get(id) || null
     const profile = profileMap.get(id)
-    const profileData = (profile as any)?.data || profile
-    const profileDisplayName = profileData?.displayName
+    const profileDisplayName = profile?.displayName
 
     return {
       id,
       username: username || id.slice(-8),
       displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-      bio: profileData?.bio,
+      bio: profile?.bio,
       hasDpnsName: !!username,
       hasProfile: !!profileDisplayName,
       isFollowing: followStatus.get(id) || false

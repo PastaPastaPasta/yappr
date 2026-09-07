@@ -58,7 +58,6 @@ import { decodeBinaryFromBase64, wrapDekWithPassword, wrapDekWithPrf } from '@/l
 import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
-import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { invalidateBlockCache } from '@/lib/caches/block-cache'
 import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
 import { extractErrorMessage } from '@/lib/error-utils'
@@ -339,11 +338,6 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         if (unifiedProfile) return true
         const legacyProfile = await profileService.getProfile(identityId, username)
         return Boolean(legacyProfile)
-      },
-    },
-    clientIdentity: {
-      setIdentity(identityId) {
-        getDashPlatformClient().setIdentity(identityId)
       },
     },
     sideEffects: {

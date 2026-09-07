@@ -16,12 +16,13 @@ export function VariantSelector({ item, selections, onChange, className }: Varia
   const axes = useMemo(() => {
     if (!item.variants?.axes) return []
 
-    return item.variants.axes.map((axis, index) => {
+    const allAxes = item.variants.axes
+    return allAxes.map((axis, index) => {
       // For first axis, all options are available
       // For subsequent axes, filter based on prior selections
       const priorSelections: Record<string, string> = {}
       for (let i = 0; i < index; i++) {
-        const priorAxis = item.variants!.axes[i]
+        const priorAxis = allAxes[i]
         if (selections[priorAxis.name]) {
           priorSelections[priorAxis.name] = selections[priorAxis.name]
         }

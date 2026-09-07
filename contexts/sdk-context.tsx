@@ -20,7 +20,7 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
     const initializeSdk = async () => {
       try {
         // This provider is the app-wide SDK bootstrap and usually wins the race
-        // against the on-demand callers (DashPlatformClient, platform-auth), so
+        // against the on-demand callers (services, platform-auth), so
         // it has to agree with them on the network. Hardcoding it would leave a
         // /devnet build reading testnet through every `useSdk()` consumer until
         // some later caller forced a reinit.
@@ -45,7 +45,7 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
     // Only initialize in browser
     if (typeof window !== 'undefined') {
       logger.info('SdkProvider: Running in browser, starting initialization...')
-      initializeSdk()
+      initializeSdk().catch((err) => logger.error('SdkProvider: initialization failed:', err))
     } else {
       logger.info('SdkProvider: Not in browser, skipping initialization')
     }

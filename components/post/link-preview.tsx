@@ -333,7 +333,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
               className="relative w-full aspect-video bg-black cursor-pointer group"
             >
               {/* Thumbnail */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={thumbnailUrl}
                 alt="YouTube video thumbnail"
@@ -399,7 +398,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           {/* Large image display */}
           {!imageError ? (
             <div className="relative bg-neutral-100 dark:bg-neutral-800">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={safeUrl}
                 alt="Image preview"
@@ -480,7 +478,6 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
         {/* Small thumbnail on the right - use img tag to check naturalWidth/Height */}
         {showImage && (
           <div className="relative w-24 h-24 flex-shrink-0 bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={data.image}
               alt={data.title || 'Link preview'}

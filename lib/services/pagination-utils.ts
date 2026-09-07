@@ -32,9 +32,17 @@ export interface PaginateFetchResult<T> {
   reachedLimit: boolean;
 }
 
-// Use any for SDK type since EvoSDK has complex generic typing
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SDK = any;
+/**
+ * The slice of the SDK these helpers touch. The grouped-count and raw-where
+ * shapes built here predate the SDK's query typings, so the surface is kept
+ * structural: any EvoSDK instance satisfies it, and nothing else is assumed.
+ */
+interface SDK {
+  documents: {
+    count(query: unknown): Promise<unknown>;
+    query(query: unknown): Promise<unknown>;
+  };
+}
 
 /**
  * Dash Platform caps `in` clauses (and per-query limits) at 100 values —
@@ -98,7 +106,9 @@ export async function documentCount(
 ): Promise<number> {
   const result = await sdk.documents.count(query);
   // SDK returns Map<string, bigint>; '' is the grand total when no groupBy is set.
-  const total = result instanceof Map ? result.get('') : result?.['']; // tolerate plain-object shape
+  const total = result instanceof Map
+    ? result.get('')
+    : (result as Record<string, unknown> | null | undefined)?.['']; // tolerate plain-object shape
   if (total === undefined || total === null) {
     // Zero-count branches aren't materialized in the platform's count trees, so
     // a genuine 0 comes back as an EMPTY map with no grand-total key. Only warn

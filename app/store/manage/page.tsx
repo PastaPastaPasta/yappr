@@ -645,8 +645,9 @@ function StoreManagePage() {
                         value={store.status}
                         onChange={async (e) => {
                           const newStatus = e.target.value as 'active' | 'paused' | 'closed'
+                          if (!user?.identityId) return
                           try {
-                            const updated = await storeService.patchStore(store.id, user!.identityId, {
+                            const updated = await storeService.patchStore(store.id, user.identityId, {
                               status: newStatus
                             })
                             setStore(updated)

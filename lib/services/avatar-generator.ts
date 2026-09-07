@@ -6,10 +6,9 @@ import * as collection from '@dicebear/collection';
 const avatarCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 500; // Limit cache to prevent memory bloat
 
-// Map of style names to their DiceBear collection modules
-// Using Style<object> as the generic type since each style has different options
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const styleMap: Record<string, Style<any>> = {
+// Map of style names to their DiceBear collection modules. Every style is a
+// Style<SomeOptions>; only the seed is passed, so the common shape suffices.
+const styleMap: Record<string, Style<object>> = {
   'adventurer': collection.adventurer,
   'adventurer-neutral': collection.adventurerNeutral,
   'avataaars': collection.avataaars,

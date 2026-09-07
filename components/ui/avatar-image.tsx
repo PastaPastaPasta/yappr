@@ -151,7 +151,6 @@ export const UserAvatar = memo(function UserAvatar({
       className={`rounded-full object-cover ${sizeClass} ${showPresence ? '' : className}`}
     />
   ) : (
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={avatarUrl}
       alt={alt}

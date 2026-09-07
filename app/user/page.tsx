@@ -47,6 +47,7 @@ import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
 import { replyToPost } from '@/lib/services/post-service'
+import type { RepostDocument } from '@/lib/services/repost-service'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
@@ -499,7 +500,7 @@ function UserProfileContent() {
                 ...post.author,
                 username: sortedUsernames[0],
                 hasDpns: true
-              } as any
+              }
             })))
           } else {
             // Reset DPNS state when no usernames found
@@ -605,7 +606,7 @@ function UserProfileContent() {
 
       const newPosts: Post[] = []
       let newPostDocs: Post[] = []
-      let newRepostDocs: any[] = []
+      let newRepostDocs: RepostDocument[] = []
 
       // Fetch more posts using cursor-based pagination
       if (canLoadMorePosts) {
@@ -709,7 +710,7 @@ function UserProfileContent() {
       // Update pagination state for reposts (only if reposts were fetched)
       if (canLoadMoreReposts) {
         if (newRepostDocs.length > 0) {
-          const lastRepost = newRepostDocs[newRepostDocs.length - 1] as any
+          const lastRepost = newRepostDocs[newRepostDocs.length - 1]
           setLastRepostId(lastRepost.$id)
         }
         setHasMoreReposts(newRepostDocs.length >= 50)

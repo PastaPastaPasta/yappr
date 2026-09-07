@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
+import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
@@ -86,8 +86,7 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // SDK query types are incomplete, cast needed for valid query options
-      const response = await sdk.documents.query({
+      const documents = await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'follow',
         where: [
@@ -96,15 +95,13 @@ class NotificationService {
         ],
         orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-
-      return documents.map((doc: any) => ({
-        id: doc.$id,
+      return documents.map((doc) => ({
+        id: doc.$id as string,
         type: 'follow' as const,
-        fromUserId: doc.$ownerId, // The follower
-        createdAt: doc.$createdAt
+        fromUserId: doc.$ownerId as string, // The follower
+        createdAt: doc.$createdAt as number
       }));
     } catch (error) {
       logger.error('Error fetching new followers:', error);
@@ -130,7 +127,7 @@ class NotificationService {
 
       // Query followRequest documents where this user is the target (feed owner)
       // This discovers incoming private feed access requests
-      const response = await sdk.documents.query({
+      const documents = await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'followRequest',
         where: [
@@ -139,15 +136,13 @@ class NotificationService {
         ],
         orderBy: [['targetId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-
-      return documents.map((doc: any) => ({
-        id: doc.$id,
+      return documents.map((doc) => ({
+        id: doc.$id as string,
         type: 'privateFeedRequest' as const,
-        fromUserId: doc.$ownerId, // The requester
-        createdAt: doc.$createdAt
+        fromUserId: doc.$ownerId as string, // The requester
+        createdAt: doc.$createdAt as number
       }));
     } catch (error) {
       logger.error('Error fetching private feed request notifications:', error);
@@ -259,8 +254,7 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // SDK query types are incomplete, cast needed for valid query options
-      const response = await sdk.documents.query({
+      const documents = await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'postMention',
         where: [
@@ -269,20 +263,17 @@ class NotificationService {
         ],
         orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-
-      return documents.map((doc: any) => {
-        const rawPostId = doc.postId || (doc.data?.postId);
-        const postId = rawPostId ? identifierToBase58(rawPostId) : undefined;
+      return documents.map((doc) => {
+        const postId = doc.postId ? identifierToBase58(doc.postId) : undefined;
 
         return {
-          id: doc.$id,
+          id: doc.$id as string,
           type: 'mention' as const,
-          fromUserId: doc.$ownerId, // The post author who mentioned the user
+          fromUserId: doc.$ownerId as string, // The post author who mentioned the user
           postId: postId || undefined,
-          createdAt: doc.$createdAt
+          createdAt: doc.$createdAt as number
         };
       });
     } catch (error) {
@@ -353,9 +344,7 @@ class NotificationService {
     // Collect unique user IDs and post IDs
     const userIds = Array.from(new Set(rawNotifications.map(n => n.fromUserId)));
     const postIds = Array.from(new Set(
-      rawNotifications
-        .filter(n => n.postId)
-        .map(n => n.postId!)
+      rawNotifications.flatMap(n => (n.postId ? [n.postId] : []))
     ));
 
     // Batch fetch all required data in parallel with fault tolerance

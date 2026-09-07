@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   waitForUtxo,
@@ -91,6 +92,10 @@ export function useDashTransactionWatcher({
       } else if (result.error) {
         setStatus('error')
       }
+    }).catch((error) => {
+      if (watchCountRef.current !== watchId) return
+      logger.error('useDashTransactionWatcher: watcher failed:', error)
+      setStatus('error')
     })
   }, [scheme, address, onDetected, onTimeout])
 

@@ -465,10 +465,12 @@ function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
 
   for (const row of rows) {
     const groupId = row.group || `__ungrouped_${ungroupedIndex++}`
-    if (!groups.has(groupId)) {
-      groups.set(groupId, [])
+    let group = groups.get(groupId)
+    if (!group) {
+      group = []
+      groups.set(groupId, group)
     }
-    groups.get(groupId)!.push(row)
+    group.push(row)
   }
 
   const items: GroupedInventoryItem[] = []

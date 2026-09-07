@@ -75,7 +75,7 @@ export function useHashtagValidation(post: Post | null): HashtagValidationState 
     return () => {
       cancelled = true
     }
-  }, [postId, hashtags.join(','), post?.content])
+  }, [postId, hashtags, post?.content])
 
   // Revalidate function to clear cache and re-fetch
   const revalidate = useCallback(() => {

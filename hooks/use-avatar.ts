@@ -90,12 +90,12 @@ export function useAvatar(userId: string): UseAvatarResult {
   }, [userId])
 
   useEffect(() => {
-    loadAvatar()
+    loadAvatar().catch((error) => logger.error('useAvatar: load failed:', error))
   }, [loadAvatar])
 
   const refresh = useCallback(() => {
     avatarCache.delete(userId)
-    loadAvatar(true)
+    loadAvatar(true).catch((error) => logger.error('useAvatar: refresh failed:', error))
   }, [userId, loadAvatar])
 
   return { avatarUrl, loading, refresh }
@@ -114,7 +114,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadSettings = useCallback(async (forceRefresh = false) => {
+  const loadSettings = useCallback(async () => {
     if (!userId) {
       setLoading(false)
       return
@@ -129,7 +129,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
       // Get profile to extract avatar settings
       const profile = await unifiedProfileService.getProfile(userId)
 
-      if (profile && profile.avatar) {
+      if (profile?.avatar) {
         // Parse the avatar field to extract settings
         // Could be JSON {"style":"bottts","seed":"xyz"} or a URI (ipfs://, https://, data:)
         try {
@@ -202,7 +202,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   }, [userId])
 
   useEffect(() => {
-    loadSettings()
+    loadSettings().catch((error) => logger.error('useAvatarSettings: load failed:', error))
   }, [loadSettings])
 
   const save = useCallback(async (style: DiceBearStyle, seed: string): Promise<boolean> => {
@@ -225,7 +225,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
       if (result) {
         // Clear cache and reload
         avatarCache.delete(userId)
-        await loadSettings(true)
+        await loadSettings()
         return true
       } else {
         setError('Failed to save avatar')
@@ -257,7 +257,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
       if (result) {
         // Clear cache and reload
         avatarCache.delete(userId)
-        await loadSettings(true)
+        await loadSettings()
         return true
       } else {
         setError('Failed to save avatar')
@@ -273,7 +273,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   }, [userId, loadSettings])
 
   const refresh = useCallback(() => {
-    loadSettings(true)
+    loadSettings().catch((error) => logger.error('useAvatarSettings: refresh failed:', error))
   }, [loadSettings])
 
   return { settings, isCustomImage, customImageUrl, loading, saving, error, save, saveCustomUrl, refresh }

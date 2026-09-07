@@ -158,7 +158,6 @@ export const BannerImage = memo(function BannerImage({
 
     // Regular URL - use normal img tag
     return (
-      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={bannerUrl}
         alt="Profile banner"
