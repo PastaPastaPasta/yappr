@@ -3,9 +3,9 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
-import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -296,29 +296,11 @@ export function TipModal() {
 
   return (
     <>
-    <Dialog.Root open={isOpen} onOpenChange={handleClose}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-xl relative"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                <Dialog.Title className="text-xl font-bold mb-4 flex items-center gap-2">
+    <Modal open={isOpen} onOpenChange={handleClose} className="w-[420px] max-w-[90vw]">
+                <ModalTitle className="mb-4">
                   <CurrencyDollarIcon className="h-6 w-6 text-amber-500" />
                   {state === 'success' ? 'Tip Sent!' : state === 'error' ? 'Transfer Failed' : 'Send Tip'}
-                </Dialog.Title>
+                </ModalTitle>
 
                 <Dialog.Description className="sr-only">
                   Send a Dash tip to {recipientName}
@@ -658,14 +640,7 @@ export function TipModal() {
                     </div>
                   </div>
                 )}
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
 
     {/* QR Code Dialog - opens on top of the tip modal */}
     <PaymentQRCodeDialog

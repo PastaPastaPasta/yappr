@@ -3,8 +3,8 @@
 import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, KeyIcon, ExclamationTriangleIcon, CheckCircleIcon, ClipboardIcon, EyeIcon, EyeSlashIcon, ShieldCheckIcon, CheckIcon } from '@heroicons/react/24/outline'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
@@ -376,10 +376,10 @@ export function AddEncryptionKeyModal({
       case 'checking':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
               Checking Identity...
-            </Dialog.Title>
+            </ModalTitle>
 
             <div className="flex flex-col items-center justify-center py-8">
               <Spinner size="lg" className="mb-4" />
@@ -393,10 +393,10 @@ export function AddEncryptionKeyModal({
       case 'existing-key':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
               Encryption Key Already Set Up
-            </Dialog.Title>
+            </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
               Your identity already has an encryption key registered on Dash Platform.
@@ -449,10 +449,10 @@ export function AddEncryptionKeyModal({
       case 'enter-existing':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
               Enter Your Encryption Key
-            </Dialog.Title>
+            </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
               Your encryption key could not be automatically recovered. Enter it manually below.
@@ -528,10 +528,10 @@ export function AddEncryptionKeyModal({
       case 'intro':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
               Add Encryption Key
-            </Dialog.Title>
+            </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
               {messages.description}
@@ -578,10 +578,10 @@ export function AddEncryptionKeyModal({
       case 'generate':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
               Save Your Encryption Key
-            </Dialog.Title>
+            </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
               Your encryption key has been created. Save it securely as backup.
@@ -680,10 +680,10 @@ export function AddEncryptionKeyModal({
       case 'critical-key':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <ShieldCheckIcon className="h-6 w-6 text-yappr-500" />
               Confirm with Master Key
-            </Dialog.Title>
+            </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
               Enter your Master key to confirm this change to your identity.
@@ -768,10 +768,10 @@ export function AddEncryptionKeyModal({
       case 'adding':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
               Adding Encryption Key
-            </Dialog.Title>
+            </ModalTitle>
 
             <div className="flex flex-col items-center justify-center py-8">
               <Spinner size="lg" className="mb-4" />
@@ -788,10 +788,10 @@ export function AddEncryptionKeyModal({
       case 'success':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <CheckCircleIcon className="h-6 w-6 text-green-500" />
               {isEnterExistingPath ? 'Encryption Key Restored' : 'Encryption Key Added'}
-            </Dialog.Title>
+            </ModalTitle>
 
             <div className="space-y-4 mb-6">
               <div className="bg-green-50 dark:bg-green-950 p-4 rounded-lg">
@@ -828,10 +828,10 @@ export function AddEncryptionKeyModal({
       case 'error':
         return (
           <>
-            <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+            <ModalTitle>
               <ExclamationTriangleIcon className="h-6 w-6 text-red-500" />
               Error
-            </Dialog.Title>
+            </ModalTitle>
 
             <div className="space-y-4 mb-6">
               <div className="bg-red-50 dark:bg-red-950 p-4 rounded-lg">
@@ -863,25 +863,7 @@ export function AddEncryptionKeyModal({
   }
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={handleClose}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+    <Modal open={isOpen} onOpenChange={handleClose} className="w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
                     {step !== 'adding' && (
                       <button
                         onClick={handleClose}
@@ -892,13 +874,6 @@ export function AddEncryptionKeyModal({
                     )}
 
                     {renderStepContent()}
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
   )
 }
