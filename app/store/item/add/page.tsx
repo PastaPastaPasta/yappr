@@ -22,7 +22,7 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
-import { PageHeader } from '@/components/layout/page-shell'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 
 function AddItemPage() {
   const router = useRouter()
@@ -236,11 +236,7 @@ function AddItemPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
@@ -571,11 +567,7 @@ function AddItemPage() {
             </div>
           </form>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 
