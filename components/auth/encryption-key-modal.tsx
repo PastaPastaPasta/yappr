@@ -31,7 +31,7 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  */
 export function EncryptionKeyModal() {
   const { user, mergeSecretsIntoAuthVault } = useAuth()
-  const { isOpen, action, onSuccess, close, closeWithSuccess } = useEncryptionKeyModal()
+  const { isOpen, action, onSuccess, close } = useEncryptionKeyModal()
   const [encryptionKeyInput, setEncryptionKeyInput] = useState('')
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -114,11 +114,11 @@ export function EncryptionKeyModal() {
         storeEncryptionKeyType(user.identityId, 'derived')
         await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: derivedKeyWif })
 
-        // Brief success message, then close (use closeWithSuccess to avoid calling onCancel)
+        // Brief success message, then close
         setTimeout(() => {
           if (!isModalActiveRef.current) return
           toast.success('Encryption key recovered automatically')
-          closeWithSuccess()
+          close()
           if (onSuccess) {
             onSuccess()
           }
@@ -136,7 +136,7 @@ export function EncryptionKeyModal() {
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
     }
-  }, [closeWithSuccess, mergeSecretsIntoAuthVault, user, onSuccess])
+  }, [close, mergeSecretsIntoAuthVault, user, onSuccess])
 
   // Trigger auto-recovery when modal opens
   useEffect(() => {
@@ -193,7 +193,7 @@ export function EncryptionKeyModal() {
 
       toast.success('Encryption key saved')
       setEncryptionKeyInput('')
-      closeWithSuccess()
+      close()
 
       // Call success callback if provided
       if (onSuccess) {
@@ -205,7 +205,7 @@ export function EncryptionKeyModal() {
     } finally {
       setIsValidating(false)
     }
-  }, [closeWithSuccess, mergeSecretsIntoAuthVault, user, encryptionKeyInput, onSuccess])
+  }, [close, mergeSecretsIntoAuthVault, user, encryptionKeyInput, onSuccess])
 
   const handleClose = useCallback(() => {
     // State is reset by the useEffect when isOpen becomes false
@@ -235,11 +235,11 @@ export function EncryptionKeyModal() {
     // (unless they just generated it, in which case it was stored)
     // Call onSuccess since the key was added and stored
     toast.success('You can now use private feed features!')
-    closeWithSuccess()
+    close()
     if (onSuccess) {
       onSuccess()
     }
-  }, [closeWithSuccess, onSuccess])
+  }, [close, onSuccess])
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={handleClose}>

@@ -97,7 +97,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   }, [setTheme])
 
   const handleQuote = () => {
-    if (!requireAuth('quote')) return
+    if (!requireAuth()) return
 
     setQuotingPost({
       id: post.id,

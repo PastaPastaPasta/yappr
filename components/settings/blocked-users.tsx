@@ -53,7 +53,7 @@ export function BlockedUsersSettings() {
   }, [loadBlockedUsers])
 
   const handleUnblock = async (blockedUserId: string) => {
-    const authedUser = requireAuth('block')
+    const authedUser = requireAuth()
     if (!authedUser || unblockingId) return
 
     setUnblockingId(blockedUserId)

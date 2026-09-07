@@ -208,7 +208,7 @@ function FollowersPage() {
   }, [loadFollowers])
 
   const handleFollow = async (userId: string) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
@@ -242,7 +242,7 @@ function FollowersPage() {
   }
 
   const handleUnfollow = async (userId: string) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))

@@ -162,7 +162,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     if (!poll || selected.length === 0) return
     const authedUser = user
     if (!authedUser) {
-      openLoginPrompt('generic')
+      openLoginPrompt()
       return
     }
 
@@ -390,7 +390,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         </span>
         {!user && !isClosed && (
           <button
-            onClick={() => openLoginPrompt('generic')}
+            onClick={() => openLoginPrompt()}
             className="font-medium text-yappr-500 hover:underline"
           >
             Sign in to vote

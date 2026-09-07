@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
-import { useLoginPromptModal, type LoginPromptAction } from '@/hooks/use-login-prompt-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
 import type { StatusCache } from '@/lib/caches/status-cache'
 
 export interface ToggleResult {
@@ -20,8 +20,6 @@ export interface ToggleRelationOptions<TArg, TResult extends ToggleResult> {
   cache: StatusCache
   /** Prefix for log lines, e.g. `useFollow`. */
   label: string
-  /** Which login prompt to show a logged-out viewer. */
-  loginAction: LoginPromptAction
   /** When set, the viewer cannot target themself and sees this error if they try. */
   selfError?: string
   check: (viewerId: string, subjectId: string) => Promise<boolean>
@@ -54,9 +52,9 @@ export interface ToggleRelationResult<TArg> {
 export function useToggleRelation<TArg = void, TResult extends ToggleResult = ToggleResult>(
   options: ToggleRelationOptions<TArg, TResult>
 ): ToggleRelationResult<TArg> {
-  const { subjectId, initialValue, cache, label, loginAction, selfError } = options
+  const { subjectId, initialValue, cache, label, selfError } = options
   const { user } = useAuth()
-  const { open: openLoginPrompt } = useLoginPromptModal()
+  const openLoginPrompt = useLoginModal((s) => s.open)
   const viewerId = user?.identityId
   const isSelf = Boolean(selfError && viewerId && viewerId === subjectId)
 
@@ -127,7 +125,7 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
   const toggle = useCallback(
     async (arg: TArg) => {
       if (!viewerId) {
-        openLoginPrompt(loginAction)
+        openLoginPrompt()
         return
       }
       if (!subjectId || isLoading) return
@@ -162,7 +160,7 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         setIsLoading(false)
       }
     },
-    [viewerId, subjectId, isLoading, isSelf, isOn, cache, label, loginAction, selfError, openLoginPrompt]
+    [viewerId, subjectId, isLoading, isSelf, isOn, cache, label, selfError, openLoginPrompt]
   )
 
   const refresh = useCallback(() => {

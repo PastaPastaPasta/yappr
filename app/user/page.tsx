@@ -914,7 +914,7 @@ function UserProfileContent() {
   }, [userId])
 
   const handleFollow = async () => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
     if (!userId) return
 
@@ -966,7 +966,7 @@ function UserProfileContent() {
   }
 
   const handleTipUser = () => {
-    const authedUser = requireAuth('tip')
+    const authedUser = requireAuth()
     if (!authedUser || !userId) return
     openTipModal({
       id: userId,
@@ -1300,7 +1300,7 @@ function UserProfileContent() {
                         ownerId={userId}
                         currentUserId={currentUser?.identityId || null}
                         isFollowing={isFollowing}
-                        onRequireAuth={() => requireAuth('follow')}
+                        onRequireAuth={() => requireAuth()}
                       />
                     </div>
                   )}

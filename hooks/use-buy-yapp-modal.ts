@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createModalStore } from '@/lib/modal-store'
 import { isInsufficientTokenError } from '@/lib/error-utils'
 
 /**
@@ -12,22 +12,16 @@ import { isInsufficientTokenError } from '@/lib/error-utils'
  */
 export type BuyYappSigning = 'local' | 'wallet'
 
-interface BuyYappModalStore {
-  isOpen: boolean
+interface BuyYappPayload {
   /** Optional reason shown at the top (e.g. "You need YAPP to post"). */
   reason: string | null
   signing: BuyYappSigning
-  open: (reason?: string, signing?: BuyYappSigning) => void
-  close: () => void
 }
 
-export const useBuyYappModal = create<BuyYappModalStore>((set) => ({
-  isOpen: false,
-  reason: null,
-  signing: 'local',
-  open: (reason, signing) => set({ isOpen: true, reason: reason ?? null, signing: signing ?? 'local' }),
-  close: () => set({ isOpen: false, reason: null, signing: 'local' }),
-}))
+export const useBuyYappModal = createModalStore<BuyYappPayload, [reason?: string, signing?: BuyYappSigning]>(
+  { reason: null, signing: 'local' },
+  (reason, signing) => ({ reason: reason ?? null, signing: signing ?? 'local' })
+)
 
 /**
  * If `error` is an insufficient-YAPP failure, open the Buy-YAPP modal with

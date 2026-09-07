@@ -1,27 +1,23 @@
-import { create } from 'zustand'
-import { Post } from '@/lib/types'
+import type { Post } from '@/lib/types'
+import { createModalStore } from '@/lib/modal-store'
 
-// Recipient data for user-only tipping (when no post is involved)
+/** Who receives a tip when no post is involved. */
 export interface TipRecipient {
   id: string
   displayName?: string
   username?: string
 }
 
-interface TipModalStore {
-  isOpen: boolean
+interface TipPayload {
   post: Post | null
-  recipient: TipRecipient | null  // For user-only tipping
-  open: (post: Post) => void
-  openForUser: (recipient: TipRecipient) => void  // Open modal to tip a user directly
-  close: () => void
+  recipient: TipRecipient | null
 }
 
-export const useTipModal = create<TipModalStore>((set) => ({
-  isOpen: false,
-  post: null,
-  recipient: null,
-  open: (post) => set({ isOpen: true, post, recipient: null }),
-  openForUser: (recipient) => set({ isOpen: true, post: null, recipient }),
-  close: () => set({ isOpen: false, post: null, recipient: null }),
-}))
+export const useTipModal = createModalStore<TipPayload, [post: Post], { openForUser: (recipient: TipRecipient) => void }>(
+  { post: null, recipient: null },
+  (post) => ({ post }),
+  (set) => ({
+    /** Tip a user directly rather than through one of their posts. */
+    openForUser: (recipient) => set({ isOpen: true, post: null, recipient }),
+  })
+)

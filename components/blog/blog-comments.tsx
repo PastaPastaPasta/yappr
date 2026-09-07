@@ -89,7 +89,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   const canSubmit = trimmedContent.length > 0 && trimmedContent.length <= MAX_COMMENT_LENGTH && !isSubmitting
 
   const handleSubmit = async () => {
-    const authedUser = requireAuth('reply')
+    const authedUser = requireAuth()
     if (!authedUser || !canSubmit) return
 
     try {

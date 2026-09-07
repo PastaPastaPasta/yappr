@@ -24,7 +24,6 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     initialValue: initialFollowing,
     cache: blogFollowStatusCache,
     label: 'useBlogFollow',
-    loginAction: 'follow',
     check: async (viewerId, subjectId) => {
       const { blogFollowService } = await import('@/lib/services/blog-follow-service')
       return blogFollowService.isFollowingBlog(viewerId, subjectId)

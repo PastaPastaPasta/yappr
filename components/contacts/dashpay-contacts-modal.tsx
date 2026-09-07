@@ -55,7 +55,7 @@ export function DashPayContactsModal() {
   }, [isOpen, user, loadContacts])
 
   const handleFollowOne = async (contact: DashPayContact) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
     setFollowing(contact.identityId)
 
@@ -77,7 +77,7 @@ export function DashPayContactsModal() {
   }
 
   const handleFollowAll = async () => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser || contacts.length === 0) return
     setFollowAll()
 

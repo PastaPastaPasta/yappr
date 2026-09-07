@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/auth-context'
 import type { FieldValidationStatus } from '@/hooks/use-post-field-validation'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { usePrivateFeedRequest } from '@/hooks/use-private-feed-request'
-import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 
@@ -192,7 +192,7 @@ export function PrivatePostContent({
   const { user } = useAuth()
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
-  const { open: openLoginPrompt } = useLoginPromptModal()
+  const openLoginPrompt = useLoginModal((s) => s.open)
 
   // Use the private feed request hook for requesting access from feed posts
   const {
@@ -208,7 +208,7 @@ export function PrivatePostContent({
     // encryption — the root author for an inherited-encrypted reply.
     ownerId: encryptionSourceOwnerId,
     currentUserId: user?.identityId ?? null,
-    onRequireAuth: () => openLoginPrompt('generic'),
+    onRequireAuth: () => openLoginPrompt(),
   })
 
   // State for showing cancel option when pending is clicked

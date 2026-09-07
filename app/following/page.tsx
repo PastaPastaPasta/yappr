@@ -224,7 +224,7 @@ function FollowingPage() {
   }, [loadFollowing])
 
   const handleUnfollow = async (userId: string) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     // Add to in-progress set for UI feedback
@@ -264,7 +264,7 @@ function FollowingPage() {
   }
 
   const handleFollow = async (userId: string) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     // Add to in-progress set

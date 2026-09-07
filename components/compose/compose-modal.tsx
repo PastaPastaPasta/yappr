@@ -591,7 +591,7 @@ export function ComposeModal() {
   }, [attachedImage, isProviderConnected, upload])
 
   const handlePost = async () => {
-    const authedUser = requireAuth('post')
+    const authedUser = requireAuth()
     if (!authedUser || !canPost) return
 
     setIsPosting(true)

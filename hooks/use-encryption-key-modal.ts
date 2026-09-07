@@ -1,6 +1,6 @@
 'use client'
 
-import { create } from 'zustand'
+import { createModalStore } from '@/lib/modal-store'
 
 export type EncryptionKeyAction =
   | 'view_private_posts'
@@ -11,45 +11,22 @@ export type EncryptionKeyAction =
   | 'sync_state'
   | 'generic'
 
-interface EncryptionKeyModalStore {
-  isOpen: boolean
+interface EncryptionKeyPayload {
   action: EncryptionKeyAction
+  /** Runs after the key has been entered and stored, not on dismissal. */
   onSuccess?: () => void
-  onCancel?: () => void
-  open: (action?: EncryptionKeyAction, onSuccess?: () => void, onCancel?: () => void) => void
-  close: () => void
-  /** Close the modal after successful key entry (doesn't call onCancel) */
-  closeWithSuccess: () => void
 }
 
 /**
- * Global store for the encryption key entry modal.
- * Use this to prompt users to enter their encryption key when they try to perform
- * private feed operations that require it.
+ * Prompts the user for their encryption key when a private-feed operation
+ * needs it. `action` picks the explanatory copy.
  */
-export const useEncryptionKeyModal = create<EncryptionKeyModalStore>((set, get) => ({
-  isOpen: false,
-  action: 'generic',
-  onSuccess: undefined,
-  onCancel: undefined,
-  open: (action = 'generic', onSuccess?: () => void, onCancel?: () => void) => set({ isOpen: true, action, onSuccess, onCancel }),
-  close: () => {
-    const { onCancel } = get()
-    // Call onCancel if modal is being closed without success (user cancelled/dismissed)
-    if (onCancel) {
-      onCancel()
-    }
-    set({ isOpen: false, action: 'generic', onSuccess: undefined, onCancel: undefined })
-  },
-  closeWithSuccess: () => {
-    // Close without calling onCancel (used after successful key entry)
-    set({ isOpen: false, action: 'generic', onSuccess: undefined, onCancel: undefined })
-  },
-}))
+export const useEncryptionKeyModal = createModalStore<EncryptionKeyPayload, [action?: EncryptionKeyAction, onSuccess?: () => void]>(
+  { action: 'generic', onSuccess: undefined },
+  (action = 'generic', onSuccess) => ({ action, onSuccess })
+)
 
-/**
- * Get a human-readable description for each action type
- */
+/** A human-readable phrase for what the key unlocks. */
 export function getEncryptionKeyActionDescription(action: EncryptionKeyAction): string {
   switch (action) {
     case 'view_private_posts':
