@@ -4,7 +4,8 @@ import { signerService } from './signer-service';
 import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
 import { keyNetwork } from '@/lib/constants'
 import { requireBytes } from '@/lib/bytes'
-import { getPublicKey } from '@/lib/crypto/keys'
+import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
+import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
 
 export interface IdentityPublicKey {
   id: number;
@@ -37,63 +38,10 @@ type IdentityPublicKeyLike = {
   type?: unknown;
 };
 
-const IDENTITY_KEY_PURPOSE = {
-  ENCRYPTION: 1,
-  TRANSFER: 3,
-} as const;
-
-const IDENTITY_KEY_TYPE = {
-  ECDSA_SECP256K1: 0,
-} as const;
-
-function normalizeIdentityKeyEnum(value: unknown, names: Record<string, number>): number | null {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  if (typeof value === 'bigint') {
-    const asNumber = Number(value);
-    return Number.isSafeInteger(asNumber) ? asNumber : null;
-  }
-
-  if (typeof value === 'string') {
-    const numeric = Number(value);
-    if (Number.isInteger(numeric)) {
-      return numeric;
-    }
-
-    return names[value.toLowerCase()] ?? null;
-  }
-
-  return null;
-}
-
-function getIdentityKeyPurpose(key: IdentityPublicKeyLike): number | null {
-  return normalizeIdentityKeyEnum(key.purposeNumber ?? key.purpose, {
-    authentication: 0,
-    encryption: IDENTITY_KEY_PURPOSE.ENCRYPTION,
-    decryption: 2,
-    transfer: IDENTITY_KEY_PURPOSE.TRANSFER,
-    system: 4,
-    voting: 5,
-  });
-}
-
-function getIdentityKeyType(key: IdentityPublicKeyLike): number | null {
-  return normalizeIdentityKeyEnum(key.keyTypeNumber ?? key.keyType ?? key.type, {
-    ecdsa_secp256k1: IDENTITY_KEY_TYPE.ECDSA_SECP256K1,
-    ecdsa: IDENTITY_KEY_TYPE.ECDSA_SECP256K1,
-    bls12_381: 1,
-    ecdsa_hash160: 2,
-    bip13_script_hash: 3,
-    eddsa_25519_hash160: 4,
-  });
-}
-
 function isIdentityKeyForPurpose(key: IdentityPublicKeyLike, purpose: number): boolean {
   return (
-    getIdentityKeyPurpose(key) === purpose &&
-    getIdentityKeyType(key) === IDENTITY_KEY_TYPE.ECDSA_SECP256K1
+    resolveKeyPurpose(key.purposeNumber ?? key.purpose) === purpose &&
+    resolveKeyType(key.keyTypeNumber ?? key.keyType ?? key.type) === KeyType.ECDSA_SECP256K1
   );
 }
 
@@ -312,33 +260,28 @@ class IdentityService {
     error?: string;
   }> {
     try {
-      const { findMatchingKeyIndex, getSecurityLevelName } = await import('@/lib/crypto/keys');
       const identity = await this.getIdentity(identityId);
 
       if (!identity) {
         return { isValid: false, error: 'Identity not found' };
       }
 
-      // Convert identity public keys to the format expected by findMatchingKeyIndex
-      // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
-      const publicKeys = identity.publicKeys.map(key => ({
+      // Match against every key first so a non-MASTER match can be named in
+      // the error, then require MASTER: identity updates accept nothing less.
+      const keyInfos = identity.publicKeys.map(key => ({
         id: key.id,
         type: key.type,
         purpose: key.purpose,
         securityLevel: key.securityLevel,
         data: requireBytes(key.data, 'identity key data')
       }));
-
-      const network = keyNetwork();
-      const match = findMatchingKeyIndex(privateKeyWif, publicKeys, network);
+      const match = findMatchingKeyIndex(privateKeyWif, keyInfos, keyNetwork());
 
       if (!match) {
         return { isValid: false, error: 'Private key does not match any key on this identity' };
       }
 
-      // Identity modifications REQUIRE MASTER (0) security level
-      // CRITICAL (1) and below are NOT sufficient for identity updates
-      if (match.securityLevel !== 0) {
+      if (match.securityLevel !== SecurityLevel.MASTER) {
         const levelName = getSecurityLevelName(match.securityLevel);
         return {
           isValid: false,
@@ -394,7 +337,7 @@ class IdentityService {
 
       // Check if encryption key already exists
       const existingKey = identity.publicKeys.find(
-        (key) => isIdentityKeyForPurpose(key, IDENTITY_KEY_PURPOSE.ENCRYPTION)
+        (key) => isIdentityKeyForPurpose(key, KeyPurpose.ENCRYPTION)
       );
       if (existingKey) {
         return { success: false, error: 'Identity already has an encryption key' };

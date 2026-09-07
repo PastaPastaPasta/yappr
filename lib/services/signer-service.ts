@@ -20,32 +20,6 @@ async function ensureWasmReady(): Promise<void> {
   await getEvoSdk();
 }
 
-/**
- * Purpose enum values
- * Matches KeyPurpose from @dashevo/wasm-sdk
- * Note: SYSTEM and VOTING are official SDK values.
- * OWNER is included for forward compatibility.
- */
-export const KeyPurpose = {
-  AUTHENTICATION: 0,
-  ENCRYPTION: 1,
-  DECRYPTION: 2,
-  TRANSFER: 3,
-  SYSTEM: 4,
-  VOTING: 5,
-  OWNER: 6,
-} as const;
-
-/**
- * Security level enum values
- */
-export const SecurityLevel = {
-  MASTER: 0,
-  CRITICAL: 1,
-  HIGH: 2,
-  MEDIUM: 3,
-} as const;
-
 class SignerService {
   /**
    * Create an IdentitySigner from a private key WIF
