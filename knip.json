@@ -3,12 +3,7 @@
   "entry": [
     "app/**/*.{ts,tsx}",
     "e2e/**/*.ts",
-    "scripts/**/*.mjs",
-    "playwright.config.ts",
-    "vitest.config.ts",
-    "next.config.js",
-    "tailwind.config.js",
-    "postcss.config.js"
+    "scripts/**/*.mjs"
   ],
   "project": [
     "app/**",
@@ -20,17 +15,7 @@
     "e2e/**",
     "scripts/**"
   ],
-  "ignore": [
-    "vendor/**",
-    "ipfs/**",
-    "worktrees/**"
-  ],
   "ignoreDependencies": [
-    "@mantine/core",
-    "@mantine/hooks",
     "platform-auth"
-  ],
-  "ignoreBinaries": [
-    "playwright"
   ]
 }

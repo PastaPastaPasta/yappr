@@ -4,9 +4,22 @@ import { Post } from '@/lib/types';
 import { enrichPostsWithRepostsAndQuotes } from './enrich-posts';
 import { sortFeedByTimestamp } from './transform-raw-post';
 
+/**
+ * Timeline documents arrive with `createDefaultUser` placeholders
+ * (`hasDpns: false`, "Unknown User"). The feed renders before enrichment, and
+ * PostCard reads `hasDpns === undefined` as "still resolving" (skeleton) versus
+ * `false` as "no DPNS name" (identity-id button), so the placeholder is reset
+ * to the loading shape here to avoid a flash of identity ids on every card.
+ */
+function withLoadingAuthor(post: Post): Post {
+  return {
+    ...post,
+    author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
+  };
+}
+
 export async function loadForYouFeed(options: {
   startAfter?: string;
-  forceRefresh: boolean;
   feedLanguage?: string;
   setData: (updater: (prev: Post[] | null) => Post[] | null) => void;
   setHasMore: (value: boolean) => void;
@@ -41,7 +54,7 @@ export async function loadForYouFeed(options: {
   // enrichment merge falls back to the ORIGINAL post for ids missing from the
   // enriched result, so filtering only inside enrichPostsWithRepostsAndQuotes
   // would let deleted posts reappear. `deleted` is never set on v2.
-  const firstBatchPosts = firstBatchRaw.filter((post) => !post.deleted);
+  const firstBatchPosts = firstBatchRaw.filter((post) => !post.deleted).map(withLoadingAuthor);
   const firstBatchCursor = firstBatchRaw[firstBatchRaw.length - 1].id;
 
   logger.info(`Feed: First batch has ${firstBatchPosts.length} posts`);
@@ -94,7 +107,7 @@ export async function loadForYouFeed(options: {
           break;
         }
 
-        const bgPosts = bgRawPosts.filter((post) => !post.deleted);
+        const bgPosts = bgRawPosts.filter((post) => !post.deleted).map(withLoadingAuthor);
 
         enrichPostsWithRepostsAndQuotes(bgPosts)
           .then((enrichedPosts) => {
