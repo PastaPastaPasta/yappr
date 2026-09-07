@@ -18,7 +18,7 @@ interface RecoveryPayload {
 export const useRecoveryModal = createModalStore<
   RecoveryPayload,
   [kind: PostFieldKind, post: Post, value: string],
-  { setRegistering: (value: boolean) => void; setError: (error: string | null) => void }
+  { setRegistering: (registering: boolean) => void; setError: (error: string | null) => void }
 >(
   { kind: 'hashtag', post: null, value: null, isRegistering: false, error: null },
   (kind, post, value) => ({ kind, post, value }),

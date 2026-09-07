@@ -13,11 +13,13 @@ interface TipPayload {
   recipient: TipRecipient | null
 }
 
+const closed: TipPayload = { post: null, recipient: null }
+
 export const useTipModal = createModalStore<TipPayload, [post: Post], { openForUser: (recipient: TipRecipient) => void }>(
-  { post: null, recipient: null },
+  closed,
   (post) => ({ post }),
   (set) => ({
     /** Tip a user directly rather than through one of their posts. */
-    openForUser: (recipient) => set({ isOpen: true, post: null, recipient }),
+    openForUser: (recipient) => set({ ...closed, recipient, isOpen: true }),
   })
 )

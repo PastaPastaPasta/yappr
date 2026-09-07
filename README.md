@@ -166,11 +166,10 @@ yappr/
 │   ├── use-dpns-registration.ts         # DPNS name registration
 │   ├── use-encryption-key-modal.ts      # Encryption key modal
 │   ├── use-follow.ts               # Follow/unfollow actions
-│   ├── use-hashtag-validation.ts        # Hashtag validation
 │   ├── use-homepage-data.ts        # Homepage stats aggregation
 │   ├── use-link-preview.ts         # Link preview fetching
-│   ├── use-login-prompt-modal.ts        # Login prompt modal
-│   ├── use-mention-validation.ts        # Mention validation
+│   ├── use-login-modal.ts               # Login modal
+│   ├── use-post-field-validation.ts     # Hashtag/mention index checks
 │   ├── use-post-detail.ts          # Post detail with thread loading
 │   ├── use-post-enrichment.ts      # Post stats with deduplication
 │   ├── use-private-feed-request.ts      # Private feed access requests

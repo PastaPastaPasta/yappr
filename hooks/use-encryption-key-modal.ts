@@ -1,5 +1,3 @@
-'use client'
-
 import { createModalStore } from '@/lib/modal-store'
 
 export type EncryptionKeyAction =
