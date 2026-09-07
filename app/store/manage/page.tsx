@@ -22,8 +22,7 @@ import {
   TableCellsIcon
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Spinner } from '@/components/ui/spinner'
@@ -33,7 +32,6 @@ import { formatPrice } from '@/lib/utils/format'
 import { getStoreStatusLabel, getStoreStatusDescription } from '@/lib/utils/store-status'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
@@ -48,7 +46,6 @@ function StoreManagePage() {
   const storeId = searchParams.get('id')
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [store, setStore] = useState<Store | null>(null)
   const [items, setItems] = useState<StoreItem[]>([])
@@ -297,15 +294,9 @@ function StoreManagePage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+      <PageShell mainClassName="flex items-center justify-center">
             <Spinner />
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
@@ -314,12 +305,9 @@ function StoreManagePage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
@@ -411,7 +399,7 @@ function StoreManagePage() {
                 )}
               </button>
             </div>
-          </header>
+          </PageHeader>
 
           {/* Setup Warnings */}
           {(hasEncryptionKey === false || (store && (!store.paymentUris || store.paymentUris.length === 0))) && (
@@ -719,10 +707,7 @@ function StoreManagePage() {
 
             </div>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Modals */}
       <ShippingZoneModal
@@ -807,7 +792,7 @@ function StoreManagePage() {
         variant="danger"
         isLoading={isDeleting}
       />
-    </div>
+    </>
   )
 }
 

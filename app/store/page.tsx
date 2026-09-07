@@ -10,15 +10,13 @@ import {
   PlusIcon,
   ClipboardDocumentListIcon
 } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { MobileCartFab } from '@/components/store/mobile-cart-fab'
 import { RatingStars } from '@/components/store/rating-stars'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import type { Store, StoreRatingSummary } from '@/lib/types'
@@ -27,7 +25,6 @@ export default function StoreBrowsePage() {
   const router = useRouter()
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [stores, setStores] = useState<Store[]>([])
   const [storeRatings, setStoreRatings] = useState<Map<string, StoreRatingSummary>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
@@ -92,12 +89,9 @@ export default function StoreBrowsePage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center justify-between p-4">
               <h1 className="text-xl font-bold flex items-center gap-2">
                 <BuildingStorefrontIcon className="h-6 w-6 text-yappr-500" />
@@ -145,7 +139,7 @@ export default function StoreBrowsePage() {
                 />
               </div>
             </div>
-          </header>
+          </PageHeader>
 
           {/* Store List */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
@@ -242,13 +236,10 @@ export default function StoreBrowsePage() {
               })
             )}
           </div>
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Mobile floating cart button */}
       <MobileCartFab />
-    </div>
+    </>
   )
 }

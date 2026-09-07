@@ -14,8 +14,7 @@ import {
   ShoppingCartIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay } from '@/components/store'
@@ -23,7 +22,6 @@ import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { identityService } from '@/lib/services/identity-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
@@ -35,15 +33,9 @@ import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy } f
 
 function LoadingFallback() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+    <PageShell mainClassName="flex items-center justify-center">
           <Spinner />
-        </main>
-      </div>
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 
@@ -61,7 +53,6 @@ function StoreDetailContent() {
   const storeId = searchParams.get('id')
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [store, setStore] = useState<Store | null>(null)
   const [items, setItems] = useState<StoreItem[]>([])
@@ -323,46 +314,31 @@ function StoreDetailContent() {
 
   if (isLoading) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+      <PageShell mainClassName="flex items-center justify-center">
             <Spinner />
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   if (!store) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-8">
+      <PageShell mainClassName="flex flex-col items-center justify-center p-8">
             <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mb-4" />
             <p className="text-gray-500 font-medium">Store not found</p>
             <Button className="mt-4" onClick={() => router.push('/store')}>
               Browse Stores
             </Button>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   const isOwner = user?.identityId === store.ownerId
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <>
+    <PageShell>
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <PageHeader>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
@@ -417,7 +393,7 @@ function StoreDetailContent() {
                 </button>
               </div>
             </div>
-          </header>
+          </PageHeader>
 
           {/* Store Banner & Info */}
           <div>
@@ -670,13 +646,10 @@ function StoreDetailContent() {
           ) : (
             <PoliciesDisplay policies={storePolicies} />
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Mobile floating cart button */}
       <MobileCartFab />
-    </div>
+    </>
   )
 }

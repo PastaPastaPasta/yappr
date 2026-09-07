@@ -3,8 +3,7 @@
 import { useState } from 'react';
 import { logger } from '@/lib/logger';
 import { readScoped, writeScoped } from '@/lib/storage-scope';
-import { Sidebar } from '@/components/layout/sidebar';
-import { RightSidebar } from '@/components/layout/right-sidebar';
+import { PageShell } from '@/components/layout/page-shell';
 import { withAuth, useAuth } from '@/contexts/auth-context';
 import { useSettingsStore } from '@/lib/store';
 import { likesAreIndexOnly } from '@/lib/contract-topology';
@@ -29,7 +28,6 @@ function readSavedSortMode(): FeedSortMode {
 
 function FeedPage() {
   const { user } = useAuth();
-  const potatoMode = useSettingsStore((state) => state.potatoMode);
   const feedLanguage = useSettingsStore((state) => state.feedLanguage);
 
   const [activeTab, setActiveTab] = useState<FeedTab>(readSavedTab);
@@ -71,17 +69,12 @@ function FeedPage() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           <FeedHeader
             activeTab={activeTab}
             onTabChange={handleTabChange}
             onRefresh={handleRefresh}
             isLoading={showTop ? topFeed.isLoading : isLoading}
-            potatoMode={potatoMode}
           />
 
           {topAvailable && (
@@ -122,11 +115,7 @@ function FeedPage() {
               getPostEnrichment={getPostEnrichment}
             />
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   );
 }
 

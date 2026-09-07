@@ -8,14 +8,12 @@ import {
   ArrowLeftIcon,
   ShoppingCartIcon
 } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { CartStoreSection } from '@/components/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { cartService } from '@/lib/services/cart-service'
 import { storeService } from '@/lib/services/store-service'
 import type { Cart, Store } from '@/lib/types'
@@ -24,7 +22,6 @@ export default function CartPage() {
   const router = useRouter()
   useAuth() // For route protection
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [cart, setCart] = useState<Cart>({ items: [], updatedAt: new Date() })
   const [stores, setStores] = useState<Map<string, Store>>(new Map())
@@ -76,12 +73,8 @@ export default function CartPage() {
   const isEmpty = cart.items.length === 0
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -94,7 +87,7 @@ export default function CartPage() {
                 Cart ({cartService.getItemCount()})
               </h1>
             </div>
-          </header>
+          </PageHeader>
 
           {isLoading ? (
             <div className="p-8 text-center">
@@ -126,10 +119,6 @@ export default function CartPage() {
 
             </div>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }

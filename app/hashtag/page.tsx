@@ -5,8 +5,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
@@ -27,7 +26,6 @@ function HashtagPageContent() {
   const searchParams = useSearchParams()
   const tag = searchParams.get('tag') || ''
   const { user } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const [posts, setPosts] = useState<Post[]>([])
@@ -183,10 +181,7 @@ function HashtagPageContent() {
 
   if (!tag) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <PageShell>
             <div className="p-12 text-center">
               <HashtagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">No hashtag specified</h2>
@@ -194,21 +189,14 @@ function HashtagPageContent() {
                 Search for a hashtag to see related posts
               </p>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -226,7 +214,7 @@ function HashtagPageContent() {
                 </p>
               </div>
             </div>
-          </header>
+          </PageHeader>
 
           {/* Latest|Top sort toggle — Top rides the v4 ranked like axes. */}
           {likesAreIndexOnly() && (
@@ -300,11 +288,7 @@ function HashtagPageContent() {
               ))
             )}
           </div>
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 
