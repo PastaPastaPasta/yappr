@@ -8,7 +8,7 @@ export class StatusCache {
 
   constructor(private readonly ttlMs: number) {}
 
-  key(viewerId: string, subjectId: string): string {
+  private key(viewerId: string, subjectId: string): string {
     return `${viewerId}:${subjectId}`
   }
 

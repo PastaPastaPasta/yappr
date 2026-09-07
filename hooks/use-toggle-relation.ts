@@ -74,10 +74,19 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
       const isCurrent = () => requestRef.current === request
 
       if (!viewerId || !subjectId || isSelf) {
+        // Logged out, or no subject yet: the relation cannot hold.
+        setIsOn(false)
         setIsLoading(false)
         return
       }
-      if (initialValue !== undefined && !force) return
+      if (initialValue !== undefined && !force) {
+        // A prefetched value may arrive after this hook already started its
+        // own query; the cleanup above orphaned that query, so settle here.
+        // A newer cache entry (e.g. from a toggle in another row) wins.
+        setIsOn(cache.get(viewerId, subjectId) ?? initialValue)
+        setIsLoading(false)
+        return
+      }
 
       if (!force) {
         const cached = cache.get(viewerId, subjectId)
@@ -118,8 +127,8 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         return
       }
       if (!subjectId || isLoading) return
-      if (isSelf) {
-        toast.error(selfError as string)
+      if (isSelf && selfError) {
+        toast.error(selfError)
         return
       }
 
