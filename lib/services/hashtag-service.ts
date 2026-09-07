@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
@@ -19,13 +20,8 @@ export interface TrendingHashtag {
 }
 
 class HashtagService extends BaseDocumentService<PostHashtagDocument> {
-  private trendingCache: {
-    data: TrendingHashtag[];
-    timestamp: number;
-  } | null = null;
   /** v6: the all-time and today rankings are different indexes, cached separately. */
-  private trendingCacheByWindow = new Map<'all' | 'today', { data: TrendingHashtag[]; timestamp: number }>();
-  private readonly TRENDING_CACHE_TTL = 300000; // 5 minutes
+  private trendingCacheByWindow = new TtlMap<'all' | 'today', TrendingHashtag[]>(5 * 60 * 1000);
 
   constructor() {
     super('postHashtag');
@@ -94,7 +90,6 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       );
 
       // Invalidate trending cache when new hashtag is created
-      this.trendingCache = null;
       this.trendingCacheByWindow.clear();
 
       return result.success;
@@ -292,9 +287,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
     // Check cache (per window)
     const cached = this.trendingCacheByWindow.get(window);
-    if (cached && Date.now() - cached.timestamp < this.TRENDING_CACHE_TTL) {
-      return cached.data.slice(0, limit);
-    }
+    if (cached) return cached.slice(0, limit);
 
     // v5: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
     // `like.byHashtagPost {at: hashtag}` (skipIfAbsent, so only tagged likes
@@ -312,7 +305,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         const trending: TrendingHashtag[] = ranked
           .filter((entry) => entry.count >= minPosts)
           .map((entry) => ({ hashtag: entry.key, postCount: entry.count }));
-        this.trendingCacheByWindow.set(window, { data: trending, timestamp: Date.now() });
+        this.trendingCacheByWindow.set(window, trending);
         return trending.slice(0, limit);
       } catch (error) {
         logger.error('Error fetching proved trending hashtags:', error);
@@ -328,7 +321,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     if (hashtagsAreInline()) {
       try {
         const trending = await this.deriveTrendingFromRecentPosts(minPosts);
-        this.trendingCacheByWindow.set('all', { data: trending, timestamp: Date.now() });
+        this.trendingCacheByWindow.set('all', trending);
         return trending.slice(0, limit);
       } catch (error) {
         logger.error('Error deriving trending hashtags from recent posts:', error);
@@ -359,7 +352,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       trending.sort((a, b) => b.postCount - a.postCount);
 
       // Cache the full result (pre-v5 derivations are all-time by construction)
-      this.trendingCacheByWindow.set('all', { data: trending, timestamp: Date.now() });
+      this.trendingCacheByWindow.set('all', trending);
 
       return trending.slice(0, limit);
     } catch (error) {

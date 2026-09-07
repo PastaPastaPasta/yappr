@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
@@ -80,8 +81,8 @@ export async function queryPostsSince(
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
-  protected cache: Map<string, { data: T; timestamp: number }> = new Map();
-  protected readonly CACHE_TTL = 120000; // 2 minutes cache (reduced query frequency)
+  /** Documents by id, held for two minutes. */
+  protected cache = new TtlMap<string, T>(2 * 60 * 1000);
 
   constructor(documentType: string, contractId?: string) {
     this.contractId = contractId ?? YAPPR_CONTRACT_ID;
@@ -134,9 +135,7 @@ export abstract class BaseDocumentService<T> {
     try {
       // Check cache
       const cached = this.cache.get(documentId);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.data;
-      }
+      if (cached !== undefined) return cached;
 
       const sdk = await getEvoSdk();
 
@@ -155,10 +154,7 @@ export abstract class BaseDocumentService<T> {
       const transformed = this.transformDocument(docData);
 
       // Cache the result
-      this.cache.set(documentId, {
-        data: transformed,
-        timestamp: Date.now()
-      });
+      this.cache.set(documentId, transformed);
 
       return transformed;
     } catch (error) {
@@ -181,8 +177,8 @@ export abstract class BaseDocumentService<T> {
     const uncachedIds: string[] = [];
     for (const id of uniqueIds) {
       const cached = this.cache.get(id);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        results.push(cached.data);
+      if (cached !== undefined) {
+        results.push(cached);
       } else {
         uncachedIds.push(id);
       }
@@ -208,7 +204,7 @@ export abstract class BaseDocumentService<T> {
             const transformed = this.transformDocument(doc);
             const id = doc.$id as string | undefined;
             if (id) {
-              this.cache.set(id, { data: transformed, timestamp: Date.now() });
+              this.cache.set(id, transformed);
             }
             results.push(transformed);
           }

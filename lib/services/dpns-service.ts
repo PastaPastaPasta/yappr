@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
@@ -38,17 +39,18 @@ function extractDocuments(response: unknown): Record<string, unknown>[] {
 }
 
 class DpnsService {
-  private cache: Map<string, { value: string; timestamp: number }> = new Map();
-  private reverseCache: Map<string, { value: string; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 3600000; // 1 hour cache for DPNS
+  private static readonly CACHE_TTL_MS = 60 * 60 * 1000;
+  /** lower-cased username -> identity id */
+  private cache = new TtlMap<string, string>(DpnsService.CACHE_TTL_MS);
+  /** identity id -> primary username */
+  private reverseCache = new TtlMap<string, string>(DpnsService.CACHE_TTL_MS);
 
   /**
    * Helper method to cache entries in both directions
    */
   private _cacheEntry(username: string, identityId: string): void {
-    const now = Date.now();
-    this.cache.set(username.toLowerCase(), { value: identityId, timestamp: now });
-    this.reverseCache.set(identityId, { value: username, timestamp: now });
+    this.cache.set(username.toLowerCase(), identityId);
+    this.reverseCache.set(identityId, username);
   }
 
   /**
@@ -118,8 +120,8 @@ class DpnsService {
     const uncachedIds: string[] = [];
     for (const id of identityIds) {
       const cached = this.reverseCache.get(id);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        results.set(id, cached.value);
+      if (cached !== undefined) {
+        results.set(id, cached);
       } else {
         uncachedIds.push(id);
       }
@@ -184,9 +186,7 @@ class DpnsService {
     try {
       // Check cache
       const cached = this.reverseCache.get(identityId);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.value;
-      }
+      if (cached !== undefined) return cached;
 
       // Get all usernames for this identity and pick the primary one
       const allUsernames = await this.getAllUsernames(identityId);
@@ -214,9 +214,7 @@ class DpnsService {
 
       // Check cache first
       const cached = this.cache.get(normalizedUsername);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.value;
-      }
+      if (cached !== undefined) return cached;
 
       const sdk = await getEvoSdk();
 
@@ -595,21 +593,8 @@ class DpnsService {
    * Clean up expired cache entries
    */
   cleanupCache(): void {
-    const now = Date.now();
-    
-    // Clean forward cache
-    for (const [key, value] of Array.from(this.cache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.cache.delete(key);
-      }
-    }
-    
-    // Clean reverse cache
-    for (const [key, value] of Array.from(this.reverseCache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.reverseCache.delete(key);
-      }
-    }
+    this.cache.prune();
+    this.reverseCache.prune();
   }
 }
 

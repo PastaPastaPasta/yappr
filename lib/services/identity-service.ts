@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
@@ -77,9 +78,9 @@ function safeStringify(value: unknown): string {
 }
 
 class IdentityService {
-  private identityCache: Map<string, { data: IdentityInfo; timestamp: number }> = new Map();
-  private balanceCache: Map<string, { data: IdentityBalance; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 60000; // 1 minute cache
+  private static readonly CACHE_TTL_MS = 60_000;
+  private identityCache = new TtlMap<string, IdentityInfo>(IdentityService.CACHE_TTL_MS);
+  private balanceCache = new TtlMap<string, IdentityBalance>(IdentityService.CACHE_TTL_MS);
 
   /**
    * Fetch identity information
@@ -88,9 +89,7 @@ class IdentityService {
     try {
       // Check cache
       const cached = this.identityCache.get(identityId);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.data;
-      }
+      if (cached) return cached;
 
       const sdk = await getEvoSdk();
 
@@ -131,10 +130,7 @@ class IdentityService {
       };
 
       // Cache the result
-      this.identityCache.set(identityId, {
-        data: identityInfo,
-        timestamp: Date.now()
-      });
+      this.identityCache.set(identityId, identityInfo);
 
       return identityInfo;
     } catch (error) {
@@ -150,9 +146,7 @@ class IdentityService {
     try {
       // Check cache
       const cached = this.balanceCache.get(identityId);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.data;
-      }
+      if (cached) return cached;
 
       const sdk = await getEvoSdk();
 
@@ -178,10 +172,7 @@ class IdentityService {
       };
 
       // Cache the result
-      this.balanceCache.set(identityId, {
-        data: balanceInfo,
-        timestamp: Date.now()
-      });
+      this.balanceCache.set(identityId, balanceInfo);
 
       return balanceInfo;
     } catch (error) {
@@ -210,21 +201,8 @@ class IdentityService {
    * Clear expired cache entries
    */
   cleanupCache(): void {
-    const now = Date.now();
-    
-    // Clean identity cache
-    for (const [key, value] of Array.from(this.identityCache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.identityCache.delete(key);
-      }
-    }
-    
-    // Clean balance cache
-    for (const [key, value] of Array.from(this.balanceCache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.balanceCache.delete(key);
-      }
-    }
+    this.identityCache.prune();
+    this.balanceCache.prune();
   }
 
   /**

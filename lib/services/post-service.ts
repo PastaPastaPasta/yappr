@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
@@ -154,7 +155,7 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
 }
 
 class PostService extends BaseDocumentService<Post> {
-  private statsCache: Map<string, { data: PostStats; timestamp: number }> = new Map();
+  private statsCache = new TtlMap<string, PostStats>(60_000);
 
   // Request deduplicators for batch/count operations
   private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();

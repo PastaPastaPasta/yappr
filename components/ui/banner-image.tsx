@@ -1,14 +1,15 @@
 'use client'
 
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map'
 import { useState, useEffect, memo } from 'react'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from './ipfs-image'
 
 // Module-level cache for banner URLs to prevent redundant fetches
 // Stores the raw URL (ipfs:// or https://)
-const bannerCache = new Map<string, { url: string | null; timestamp: number }>()
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+// `null` is a cached "no banner", distinct from a miss.
+const bannerCache = new TtlMap<string, string | null>(5 * 60 * 1000)
 const pendingRequests = new Map<string, Promise<string | null>>()
 
 async function fetchBannerUrl(userId: string): Promise<string | null> {
@@ -16,9 +17,7 @@ async function fetchBannerUrl(userId: string): Promise<string | null> {
 
   // Check cache first
   const cached = bannerCache.get(userId)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.url
-  }
+  if (cached !== undefined) return cached
 
   // Check if there's already a pending request for this user
   const pending = pendingRequests.get(userId)
@@ -35,11 +34,11 @@ async function fetchBannerUrl(userId: string): Promise<string | null> {
       // Store raw URL (ipfs:// or https://) - conversion happens at display time
       const bannerUri = profile?.bannerUri || null
 
-      bannerCache.set(userId, { url: bannerUri, timestamp: Date.now() })
+      bannerCache.set(userId, bannerUri)
       return bannerUri
     } catch (error) {
       logger.error('BannerImage: Error fetching banner:', error)
-      bannerCache.set(userId, { url: null, timestamp: Date.now() })
+      bannerCache.set(userId, null)
       return null
     } finally {
       pendingRequests.delete(userId)
@@ -77,17 +76,12 @@ export const BannerImage = memo(function BannerImage({
       return preloadedUrl || null
     }
     if (!userId) return null
-    const cached = bannerCache.get(userId)
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      return cached.url
-    }
-    return null
+    return bannerCache.get(userId) ?? null
   })
   const [isLoading, setIsLoading] = useState(() => {
     if (preloadedUrl !== undefined) return false
     if (!userId) return false
-    const cached = bannerCache.get(userId)
-    return !(cached && Date.now() - cached.timestamp < CACHE_TTL)
+    return !bannerCache.has(userId)
   })
   const [imageLoaded, setImageLoaded] = useState(false)
 

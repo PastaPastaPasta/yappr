@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger'
+import { TtlMap } from '@/lib/caches/ttl-map'
 import { hashtagService } from './hashtag-service'
 import { mentionService } from './mention-service'
 import { dpnsService } from './dpns-service'
@@ -43,7 +44,7 @@ export class PostFieldValidator {
   private readonly fetchRegistered: (postId: string) => Promise<Set<string>>
   private readonly isInline: () => boolean
 
-  private cache = new Map<string, { registered: Set<string>; timestamp: number }>()
+  private cache = new TtlMap<string, Set<string>>(CACHE_TTL)
   /** `null` is delivered to waiters when the fetch failed. */
   private pending = new Map<string, Array<(registered: Set<string> | null) => void>>()
   private batchTimer: ReturnType<typeof setTimeout> | null = null
@@ -84,9 +85,7 @@ export class PostFieldValidator {
 
   private registeredFor(postId: string): Promise<Set<string> | null> {
     const cached = this.cache.get(postId)
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      return Promise.resolve(cached.registered)
-    }
+    if (cached) return Promise.resolve(cached)
     const inFlight = this.inFlight.get(postId)
     if (inFlight) return inFlight
 
@@ -117,7 +116,7 @@ export class PostFieldValidator {
         this.inFlight.set(postId, promise)
         try {
           const registered = await promise
-          if (registered) this.cache.set(postId, { registered, timestamp: Date.now() })
+          if (registered) this.cache.set(postId, registered)
           waiters.forEach((resolve) => resolve(registered))
         } finally {
           setTimeout(() => {

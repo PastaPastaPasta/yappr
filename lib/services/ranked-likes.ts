@@ -25,6 +25,7 @@
  */
 
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
@@ -234,8 +235,7 @@ export interface HydratedTopPostsOptions {
  * results are held for a minute per pin. Session-scoped: module state lives
  * exactly as long as the page load.
  */
-const HYDRATED_CACHE_TTL_MS = 60_000;
-const hydratedCache = new Map<string, { posts: Post[]; timestamp: number }>();
+const hydratedCache = new TtlMap<string, Post[]>(60_000);
 
 /**
  * A ranked top-liked page hydrated into renderable posts: the proved ranking
@@ -318,15 +318,13 @@ async function hydrateRankedCached(
   force: boolean,
   rank: () => Promise<RankedLikedPost[]>
 ): Promise<Post[]> {
-  const cached = hydratedCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.timestamp < HYDRATED_CACHE_TTL_MS) {
-    return cached.posts;
-  }
+  const cached = force ? undefined : hydratedCache.get(cacheKey);
+  if (cached) return cached;
 
   try {
     const ranked = await rank();
     const posts = await hydrateRankedPosts(ranked);
-    hydratedCache.set(cacheKey, { posts, timestamp: Date.now() });
+    hydratedCache.set(cacheKey, posts);
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);
