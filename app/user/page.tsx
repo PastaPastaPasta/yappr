@@ -1,145 +1,47 @@
 'use client'
 
-import { logger } from '@/lib/logger';
-import { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
+import { logger } from '@/lib/logger'
+import { useState, useEffect, Suspense, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import {
-  ArrowLeftIcon,
-  BuildingStorefrontIcon,
-  CalendarIcon,
-  MapPinIcon,
-  LinkIcon,
-  ShareIcon,
-  NoSymbolIcon,
-  Cog6ToothIcon,
-  PencilIcon,
-  CurrencyDollarIcon,
-  QrCodeIcon,
-  EnvelopeIcon,
-  UserPlusIcon,
-  LockClosedIcon,
-  CheckIcon,
-  EyeSlashIcon,
-} from '@heroicons/react/24/outline'
-import { PaymentUriInput } from '@/components/profile/payment-uri-input'
-import { SocialLinksInput } from '@/components/profile/social-links-input'
-import { PrivateFeedAccessButton } from '@/components/profile/private-feed-access-button'
-import { PageShell, PageHeader } from '@/components/layout/page-shell'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
-import { PostCard } from '@/components/post/post-card'
-import { formatNumber } from '@/lib/utils'
-import { likesAreIndexOnly } from '@/lib/contract-topology'
-import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
-import type { RankingWindow } from '@/lib/services/ranked-likes'
-import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
-import { BannerImage, invalidateBannerCache } from '@/components/ui/banner-image'
-import { AvatarCustomization } from '@/components/settings/avatar-customization'
-import { BannerCustomization } from '@/components/settings/banner-customization'
+import { ArrowLeftIcon, EyeSlashIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
+import toast from 'react-hot-toast'
+import type { Post, ParsedPaymentUri, Store } from '@/lib/types'
+import { useSettingsStore } from '@/lib/store'
+import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
+import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
-import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
-import toast from 'react-hot-toast'
-import * as Tooltip from '@radix-ui/react-tooltip'
-import type { Post, ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
-import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
-import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
-import { replyToPost } from '@/lib/services/post-service'
-import type { RepostDocument } from '@/lib/services/repost-service'
-import { PaymentSchemeIcon, getPaymentLabel, truncateAddress } from '@/components/ui/payment-icons'
-import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
-import { AtSymbolIcon } from '@heroicons/react/24/outline'
-import { mentionService } from '@/lib/services/mention-service'
-import { cn } from '@/lib/utils'
-import { UsernameDropdown } from '@/components/dpns/username-dropdown'
+import { useProfileTabs } from '@/hooks/use-profile-tabs'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
+import { Button } from '@/components/ui/button'
+import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
+import { BannerImage, invalidateBannerCache } from '@/components/ui/banner-image'
+import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
+import { AvatarCustomization } from '@/components/settings/avatar-customization'
+import { BannerCustomization } from '@/components/settings/banner-customization'
 import { UsernameModal } from '@/components/dpns/username-modal'
-import { useSettingsStore } from '@/lib/store'
-import { filterHiddenSensitive } from '@/lib/sensitive-content'
+import { ProfileHeader, type ProfileData } from '@/components/profile/profile-header'
+import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
+import { ImageCustomizationModal } from '@/components/profile/image-customization-modal'
+import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edit-form'
 
-interface ProfileData {
-  displayName: string
-  bio?: string
-  location?: string
-  website?: string
-  followersCount: number
-  followingCount: number
-  pronouns?: string
-  paymentUris?: ParsedPaymentUri[]
-  socialLinks?: SocialLink[]
-  nsfw?: boolean
-  bannerUri?: string
-  joinedAt?: Date
+const PAGE_SIZE = 50
+
+/** Strip the author display fields so progressive enrichment fills them in. */
+function withBlankAuthor(post: Post): Post {
+  return { ...post, author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined } }
 }
 
-interface ProfileBlog {
-  id: string
-  name: string
-  description?: string
-  postCount: number
-}
-
-function getSocialLinkUrl(platform: string, handle: string): string | null {
-  const trimmedHandle = handle.trim()
-  if (!trimmedHandle) return null
-
-  const cleanHandle = encodeURIComponent(trimmedHandle.replace(/^@/, ''))
-
-  switch (platform) {
-    case 'twitter':
-      return `https://x.com/${cleanHandle}`
-    case 'github':
-      return `https://github.com/${cleanHandle}`
-    case 'telegram':
-      return `https://t.me/${cleanHandle}`
-    case 'youtube':
-      if (!cleanHandle) return null
-      return `https://www.youtube.com/@${cleanHandle}`
-    case 'twitch':
-      return `https://twitch.tv/${cleanHandle}`
-    case 'instagram':
-      return `https://instagram.com/${cleanHandle}`
-    case 'linkedin':
-      return `https://linkedin.com/in/${cleanHandle}`
-    case 'email': {
-      const emailOnly = trimmedHandle.split('?')[0]
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOnly)) return null
-      return `mailto:${encodeURIComponent(emailOnly)}`
-    }
-    case 'mastodon': {
-      const match = trimmedHandle.match(/^@?([^@]+)@([a-zA-Z0-9.-]+)$/)
-      if (match) {
-        return `https://${match[2]}/@${encodeURIComponent(match[1])}`
-      }
-      return null
-    }
-    case 'other':
-      if (trimmedHandle.startsWith('http://') || trimmedHandle.startsWith('https://')) {
-        try {
-          const url = new URL(trimmedHandle)
-          if (['http:', 'https:'].includes(url.protocol)) {
-            return trimmedHandle
-          }
-        } catch {
-          return null
-        }
-      }
-      return null
-    default:
-      return null
-  }
-}
-
-function isValidHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return ['http:', 'https:'].includes(url.protocol)
-  } catch {
-    return false
-  }
+/** Replace the `tip` query parameter without a navigation. */
+function setTipParam(uri: string | null) {
+  const url = new URL(window.location.href)
+  if (uri) url.searchParams.set('tip', uri)
+  else url.searchParams.delete('tip')
+  window.history.replaceState({}, '', url.toString())
 }
 
 function UserProfileContent() {
@@ -147,10 +49,10 @@ function UserProfileContent() {
   const searchParams = useSearchParams()
   const userId = searchParams.get('id')
   const { user: currentUser, logout } = useAuth()
+  const viewerId = currentUser?.identityId
   const { requireAuth } = useRequireAuth()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
-
-  const isOwnProfile = currentUser?.identityId === userId
+  const isOwnProfile = viewerId === userId
 
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [username, setUsername] = useState<string | null>(null)
@@ -158,107 +60,57 @@ function UserProfileContent() {
   const [hasDpns, setHasDpns] = useState(false)
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [isFollowing, setIsFollowing] = useState(false)
-  // NSFW-profile interstitial acknowledgement — per visit, not persisted.
-  const [nsfwAcknowledged, setNsfwAcknowledged] = useState(false)
-  useEffect(() => {
-    setNsfwAcknowledged(false)
-  }, [userId])
-  // Consent screen before any profile content renders. Applies in both 'blur'
-  // and 'hide' modes — hiding is a browsing preference, and navigating here is
-  // deliberate, so a warning beats a dead end. 'show' viewers skip it.
-  const showNsfwInterstitial =
-    profile?.nsfw === true && !isOwnProfile && sensitiveContentMode !== 'show' && !nsfwAcknowledged
-  const [followLoading, setFollowLoading] = useState(false)
   const [postCount, setPostCount] = useState<number | null>(null)
   const [profileDocumentMissing, setProfileDocumentMissing] = useState(false)
+  const [isFollowing, setIsFollowing] = useState(false)
+  const [followLoading, setFollowLoading] = useState(false)
+  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const [isPrivateFollower, setIsPrivateFollower] = useState(false)
+  const [userStore, setUserStore] = useState<Store | null>(null)
+  const [blogs, setBlogs] = useState<ProfileBlog[]>([])
+  const [blogsLoading, setBlogsLoading] = useState(false)
 
-  // Pagination state
+  // Consent screen before any profile content renders, per visit. Applies in
+  // both 'blur' and 'hide' modes: navigating here is deliberate, so a warning
+  // beats a dead end. 'show' viewers skip it.
+  const [nsfwAcknowledged, setNsfwAcknowledged] = useState(false)
+  const showNsfwInterstitial = profile?.nsfw === true && !isOwnProfile && sensitiveContentMode !== 'show' && !nsfwAcknowledged
+
+  // Posts-tab pagination: posts and reposts have separate cursors.
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
   const [lastRepostId, setLastRepostId] = useState<string | null>(null)
   const [hasMoreReposts, setHasMoreReposts] = useState(true)
 
-  // Edit profile state
-  const [isEditingProfile, setIsEditingProfile] = useState(false)
+  // Editing (own profile only)
+  const [isEditing, setIsEditing] = useState(false)
+  const [draft, setDraft] = useState<ProfileDraft>(EMPTY_DRAFT)
+  const [isSaving, setIsSaving] = useState(false)
   const [isEditingAvatar, setIsEditingAvatar] = useState(false)
   const [isEditingBanner, setIsEditingBanner] = useState(false)
   const [avatarKey, setAvatarKey] = useState(0)
   const [bannerKey, setBannerKey] = useState(0)
-  const [editDisplayName, setEditDisplayName] = useState('')
-  const [editBio, setEditBio] = useState('')
-  const [editLocation, setEditLocation] = useState('')
-  const [editWebsite, setEditWebsite] = useState('')
-  const [editPronouns, setEditPronouns] = useState('')
-  const [editNsfw, setEditNsfw] = useState(false)
-  const [editPaymentUris, setEditPaymentUris] = useState<string[]>([])
-  const [editSocialLinks, setEditSocialLinks] = useState<SocialLink[]>([])
-  const [isSaving, setIsSaving] = useState(false)
 
-  // QR code dialog state for tip addresses
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
-
-  // Username registration modal state
   const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
 
-  // Block state - only check if viewing another user's profile
   const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
-
-  // Tip modal
   const { openForUser: openTipModal } = useTipModal()
-
-  // Single X-style tab row: Posts / Replies / Top / Mentions / Blog
-  const [activeTab, setActiveTab] = useState<'posts' | 'replies' | 'top' | 'mentions' | 'blog'>('posts')
-  const [mentions, setMentions] = useState<Post[]>([])
-  const [mentionsLoading, setMentionsLoading] = useState(false)
-  const [mentionsLoaded, setMentionsLoaded] = useState(false)
-  const [blogs, setBlogs] = useState<ProfileBlog[]>([])
-  const [blogsLoading, setBlogsLoading] = useState(false)
-
-  // User replies state (for replies tab)
-  const [userReplies, setUserReplies] = useState<Post[]>([])
-  const [repliesLoading, setRepliesLoading] = useState(false)
-  const [repliesLoaded, setRepliesLoaded] = useState(false)
-  // What each of those replies answers, keyed by reply id — loaded after the
-  // replies themselves so the list isn't held back by the extra lookups.
-  const [replyParents, setReplyParents] = useState<Map<string, Post>>(new Map())
-  const [replyParentsLoading, setReplyParentsLoading] = useState(false)
-
-  // Top posts state (v4 only — server-ranked by like count via byAuthorPost)
-  const [topPosts, setTopPosts] = useState<Post[]>([])
-  const [topLoading, setTopLoading] = useState(false)
-  const [topLoaded, setTopLoaded] = useState(false)
-  /** v6: today's top posts by this author (like.byDayAuthorPost) or all-time. */
-  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
-
-  // Private feed state
-  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
-  const [isPrivateFollower, setIsPrivateFollower] = useState(false)
-
-  // Store state
-  const [userStore, setUserStore] = useState<Store | null>(null)
-
-  // Progressive enrichment for post metadata (likes, reposts, etc.)
-  const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({
-    currentUserId: currentUser?.identityId
-  })
-
-  // Filter posts - all posts are now top-level (replies are a separate document type)
-  const filteredPosts = useMemo(() => {
-    if (activeTab === 'top') {
-      return topPosts
-    }
-    if (activeTab === 'replies') {
-      return userReplies
-    }
-    return posts.filter(p => !p.repostedBy)
-  }, [posts, activeTab, userReplies, topPosts])
+  const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({ currentUserId: viewerId })
+  const tabs = useProfileTabs(userId, enrichProgressively)
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
-
-  // Check if display name is still in loading/fallback state
   const isDisplayNameLoading = isLoading || !profile?.displayName
+
+  useEffect(() => {
+    setNsfwAcknowledged(false)
+    setHasPrivateFeed(false)
+    setIsPrivateFollower(false)
+    setUserStore(null)
+    setBlogs([])
+    setBlogsLoading(false)
+  }, [userId])
 
   useEffect(() => {
     if (!userId) return
@@ -267,126 +119,88 @@ function UserProfileContent() {
       try {
         setIsLoading(true)
         setProfileDocumentMissing(false)
-
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
 
-        // Fetch profile from unified service, posts, and post count in parallel
         let profileFetchErrored = false
         const [profileResult, postsResult, totalPostCount] = await Promise.all([
-          unifiedProfileService.getProfile(userId).catch(() => { profileFetchErrored = true; return null }),
-          postService.getUserPosts(userId, { limit: 50 }).catch(() => ({ documents: [], hasMore: false })),
-          postService.countUserPosts(userId).catch(() => 0)
+          unifiedProfileService.getProfile(userId).catch(() => {
+            profileFetchErrored = true
+            return null
+          }),
+          postService.getUserPosts(userId, { limit: PAGE_SIZE }).catch(() => ({ documents: [] as Post[], hasMore: false })),
+          postService.countUserPosts(userId).catch(() => 0),
         ])
-
         setPostCount(totalPostCount)
-
-        // Track whether profile document is genuinely missing (not just a network error)
+        // Genuinely absent, as opposed to a failed fetch.
         setProfileDocumentMissing(!profileResult && !profileFetchErrored)
 
-        // Process profile
-        let profileDisplayName = `User ${userId.slice(-6)}`
+        const [followersCount, followingCount] = await Promise.all([followService.countFollowers(userId), followService.countFollowing(userId)])
+        const profileDisplayName = profileResult?.displayName || `User ${userId.slice(-6)}`
+        setProfile(
+          profileResult
+            ? {
+                displayName: profileDisplayName,
+                bio: profileResult.bio,
+                location: profileResult.location,
+                website: profileResult.website,
+                followersCount,
+                followingCount,
+                pronouns: profileResult.pronouns,
+                paymentUris: profileResult.paymentUris,
+                socialLinks: profileResult.socialLinks,
+                nsfw: profileResult.nsfw,
+                bannerUri: profileResult.bannerUri,
+                joinedAt: profileResult.joinedAt,
+              }
+            : { displayName: profileDisplayName, followersCount, followingCount }
+        )
 
-        // Load follower/following counts
-        const [followersCount, followingCount] = await Promise.all([
-          followService.countFollowers(userId),
-          followService.countFollowing(userId)
-        ])
-
-        if (profileResult) {
-          profileDisplayName = profileResult.displayName || profileDisplayName
-          setProfile({
-            displayName: profileDisplayName,
-            bio: profileResult.bio,
-            location: profileResult.location,
-            website: profileResult.website,
-            followersCount,
-            followingCount,
-            pronouns: profileResult.pronouns,
-            paymentUris: profileResult.paymentUris,
-            socialLinks: profileResult.socialLinks,
-            nsfw: profileResult.nsfw,
-            bannerUri: profileResult.bannerUri,
-            joinedAt: profileResult.joinedAt,
-          })
-        } else {
-          // Even without a Yappr profile, show follow counts
-          setProfile({
-            displayName: profileDisplayName,
-            followersCount,
-            followingCount,
-          })
+        if (viewerId && viewerId !== userId) {
+          setIsFollowing(await followService.isFollowing(userId, viewerId))
         }
 
-        // Check if current user follows this user
-        if (currentUser?.identityId && currentUser.identityId !== userId) {
-          const following = await followService.isFollowing(userId, currentUser.identityId)
-          setIsFollowing(following)
-        }
-
-        // Check if user has a private feed (for profile indicator)
+        // The private-feed, store and blog lookups decorate the header; none may fail the page.
         try {
           const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
           const hasPF = await privateFeedService.hasPrivateFeed(userId)
           setHasPrivateFeed(hasPF)
-
-          // If they have a private feed and we're viewing someone else's profile,
-          // check if we're an approved private follower
-          if (hasPF && currentUser?.identityId && currentUser.identityId !== userId) {
+          if (hasPF && viewerId && viewerId !== userId) {
             try {
-              const accessStatus = await privateFeedFollowerService.getAccessStatus(userId, currentUser.identityId)
-              // User is a private follower if approved (with or without local keys)
-              setIsPrivateFollower(accessStatus === 'approved' || accessStatus === 'approved-no-keys')
+              const access = await privateFeedFollowerService.getAccessStatus(userId, viewerId)
+              setIsPrivateFollower(access === 'approved' || access === 'approved-no-keys')
             } catch (accessErr) {
-              // Access status check is non-critical
               logger.error('Failed to check private feed access status:', accessErr)
               setIsPrivateFollower(false)
             }
           } else {
-            // No private feed or viewing own profile - reset private follower state
             setIsPrivateFollower(false)
           }
         } catch (e) {
-          // Private feed check is non-critical
           logger.error('Failed to check private feed status:', e)
           setHasPrivateFeed(false)
           setIsPrivateFollower(false)
         }
 
-        // Check if user has a store
         try {
           const { storeService } = await import('@/lib/services/store-service')
-          const store = await storeService.getByOwner(userId)
-          setUserStore(store)
+          setUserStore(await storeService.getByOwner(userId))
         } catch (e) {
-          // Store check is non-critical
           logger.error('Failed to check store status:', e)
           setUserStore(null)
         }
 
-        // Check if user has blogs and load counts for Blog tab
         setBlogsLoading(true)
         try {
           const { blogService, blogPostService } = await import('@/lib/services')
           const ownerBlogs = await blogService.getBlogsByOwner(userId)
-
-          if (ownerBlogs.length > 0) {
-            // Dash Platform has no count API; fetching up to 100 posts is an intentional cap for Phase 1
-            const results = await Promise.allSettled(ownerBlogs.map(async (blog) => {
+          // Dash Platform has no count API; 100 posts is an intentional cap.
+          const results = await Promise.allSettled(
+            ownerBlogs.map(async (blog): Promise<ProfileBlog> => {
               const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
-              return {
-                id: blog.id,
-                name: blog.name,
-                description: blog.description,
-                postCount: blogPosts.length,
-              } as ProfileBlog
-            }))
-            const blogsWithCounts = results
-              .filter((r): r is PromiseFulfilledResult<ProfileBlog> => r.status === 'fulfilled')
-              .map(r => r.value)
-            setBlogs(blogsWithCounts)
-          } else {
-            setBlogs([])
-          }
+              return { id: blog.id, name: blog.name, description: blog.description, postCount: blogPosts.length }
+            })
+          )
+          setBlogs(results.filter((r): r is PromiseFulfilledResult<ProfileBlog> => r.status === 'fulfilled').map((r) => r.value))
         } catch (blogError) {
           logger.error('Failed to load blogs for profile:', blogError)
           setBlogs([])
@@ -394,125 +208,42 @@ function UserProfileContent() {
           setBlogsLoading(false)
         }
 
-        // Process posts - postService.getUserPosts() returns already-transformed Post objects
-        // We just need to update author display info for progressive enrichment
-        const transformedPosts: Post[] = (postsResult.documents || []).map((post: Post) => ({
-          ...post,
-          author: {
-            ...post.author,
-            // Clear display fields - will be populated by progressive enrichment
-            username: '',
-            displayName: '',
-            avatar: '',
-            // undefined = still loading, will show skeleton in PostCard
-            hasDpns: undefined,
-          },
-        }))
-
-        // Fetch user's reposts and merge with their posts
+        const merged: Post[] = (postsResult.documents || []).map(withBlankAuthor)
         try {
           const { repostService } = await import('@/lib/services/repost-service')
-          const userReposts = await repostService.getUserReposts(userId)
-
-          // Track repost pagination
-          if (userReposts.length > 0) {
-            const lastRepost = userReposts[userReposts.length - 1]
-            setLastRepostId(lastRepost.$id)
-          }
-          setHasMoreReposts(userReposts.length >= 50)
-
-          if (userReposts.length > 0) {
-            // Get unique post IDs that this user has reposted
-            const repostedPostIds = userReposts.map(r => r.postId).filter(id => id)
-            const repostedPosts = await postService.getPostsByIds(repostedPostIds)
-
-            // Try to resolve DPNS username for reposter display
-            let reposterUsername: string | undefined
-            try {
-              const { dpnsService } = await import('@/lib/services/dpns-service')
-              reposterUsername = await dpnsService.resolveUsername(userId) || undefined
-            } catch (e) {
-              // DPNS resolution is optional
-            }
-
-            // Create repost entries with repostedBy info
-            for (const repost of userReposts) {
-              const originalPost = repostedPosts.find(p => p.id === repost.postId)
-              if (originalPost && originalPost.author.id !== userId) {
-                // Add as a reposted post
-                const repostEntry: Post = {
-                  ...originalPost,
-                  repostedBy: {
-                    id: userId,
-                    displayName: profileDisplayName,
-                    username: reposterUsername
-                  },
-                  repostTimestamp: new Date(repost.$createdAt)
-                }
-                transformedPosts.push(repostEntry)
-              }
-            }
-
-            // Sort by timestamp (repostTimestamp for reposts, createdAt for original posts)
-            transformedPosts.sort((a, b) => {
-              const aTime = a.repostTimestamp?.getTime() || a.createdAt.getTime()
-              const bTime = b.repostTimestamp?.getTime() || b.createdAt.getTime()
-              return bTime - aTime
-            })
-          }
+          const reposts = await repostService.getUserReposts(userId)
+          if (reposts.length > 0) setLastRepostId(reposts[reposts.length - 1].$id)
+          setHasMoreReposts(reposts.length >= PAGE_SIZE)
+          merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
+          merged.sort(byNewestActivity)
         } catch (repostError) {
           logger.error('Failed to fetch user reposts:', repostError)
-          // Continue without reposts - non-critical
         }
 
-        // Resolve whatever each post quotes (post, reply, or blog-post embed).
-        await attachQuotedPosts(transformedPosts)
-
-        if (transformedPosts.length > 0) {
-          setPosts(transformedPosts)
-          // Start progressive enrichment for post metadata
-          enrichProgressively(transformedPosts)
+        await attachQuotedPosts(merged)
+        if (merged.length > 0) {
+          setPosts(merged)
+          enrichProgressively(merged)
         }
 
-        // Set pagination state based on original posts (not reposts)
-        const originalPosts = postsResult.documents || []
-        if (originalPosts.length > 0) {
-          const lastPost = originalPosts[originalPosts.length - 1]
-          setLastPostId(lastPost.id)
-        }
-        // If we got fewer posts than requested, there are no more to load
-        setHasMore(originalPosts.length >= 50)
+        const originals = postsResult.documents || []
+        if (originals.length > 0) setLastPostId(originals[originals.length - 1].id)
+        setHasMore(originals.length >= PAGE_SIZE)
 
-        // Try to resolve DPNS usernames (canonically sorted, first entry is the primary)
         try {
           const { dpnsService } = await import('@/lib/services/dpns-service')
-          const sortedUsernames = await dpnsService.getAllUsernamesSorted(userId)
-          if (sortedUsernames.length > 0) {
-            setAllUsernames(sortedUsernames)
-            setUsername(sortedUsernames[0])
-            setHasDpns(true)
-            // Update posts with hasDpns flag
-            setPosts(currentPosts => currentPosts.map(post => ({
-              ...post,
-              author: {
-                ...post.author,
-                username: sortedUsernames[0],
-                hasDpns: true
-              }
-            })))
-          } else {
-            // Reset DPNS state when no usernames found
-            setAllUsernames([])
-            setUsername(null)
-            setHasDpns(false)
+          const sorted = await dpnsService.getAllUsernamesSorted(userId)
+          setAllUsernames(sorted)
+          setUsername(sorted[0] ?? null)
+          setHasDpns(sorted.length > 0)
+          if (sorted.length > 0) {
+            setPosts((current) => current.map((post) => ({ ...post, author: { ...post.author, username: sorted[0], hasDpns: true } })))
           }
-        } catch (e) {
-          // Reset DPNS state on error to avoid stale data
+        } catch {
           setAllUsernames([])
           setUsername(null)
           setHasDpns(false)
         }
-
       } catch (error) {
         logger.error('Failed to load profile:', error)
       } finally {
@@ -520,79 +251,70 @@ function UserProfileContent() {
       }
     }
 
-    loadProfileData().catch(err => logger.error('Failed to load profile:', err))
-  // currentUser is intentionally not a dependency - we only want to reload on userId change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadProfileData().catch((err) => logger.error('Failed to load profile:', err))
+    // Reload on a profile change only; the viewer changing mid-visit is not worth a refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
 
-  // If own profile document is missing after load, verify identity and redirect
+  // An owner whose profile document is missing is sent to create one, unless
+  // the identity itself is gone, in which case the session is stale.
   useEffect(() => {
-    if (!profileDocumentMissing || !isOwnProfile || !currentUser?.identityId || isLoading) return
-
-    const checkIdentityAndRedirect = async () => {
+    if (!profileDocumentMissing || !isOwnProfile || !viewerId || isLoading) return
+    const check = async () => {
       try {
         const { identityService } = await import('@/lib/services/identity-service')
-        const identity = await identityService.getIdentity(currentUser.identityId)
-
-        if (!identity) {
+        if (!(await identityService.getIdentity(viewerId))) {
           toast.error('Your identity was not found on the network. Please log in again.')
           await logout()
           return
         }
-
         router.push('/profile/create')
       } catch (error) {
-        // Network error checking identity - don't take drastic action
         logger.error('Failed to verify identity for profile check:', error)
       }
     }
+    check().catch((err) => logger.error('Identity check failed:', err))
+  }, [profileDocumentMissing, isOwnProfile, viewerId, isLoading, logout, router])
 
-    checkIdentityAndRedirect().catch(err => logger.error('Identity check failed:', err))
-  }, [profileDocumentMissing, isOwnProfile, currentUser?.identityId, isLoading, logout, router])
-
-  // Define handleStartEdit before the useEffect that uses it
-  const handleStartEdit = useCallback(() => {
-    setEditDisplayName(profile?.displayName || '')
-    setEditBio(profile?.bio || '')
-    setEditLocation(profile?.location || '')
-    setEditWebsite(profile?.website || '')
-    setEditPronouns(profile?.pronouns || '')
-    setEditNsfw(profile?.nsfw || false)
-    setEditPaymentUris(profile?.paymentUris?.map(p => p.uri) || [])
-    setEditSocialLinks(profile?.socialLinks || [])
-    setIsEditingProfile(true)
+  const startEdit = useCallback(() => {
+    setDraft({
+      displayName: profile?.displayName || '',
+      bio: profile?.bio || '',
+      location: profile?.location || '',
+      website: profile?.website || '',
+      pronouns: profile?.pronouns || '',
+      nsfw: profile?.nsfw || false,
+      paymentUris: profile?.paymentUris?.map((p) => p.uri) || [],
+      socialLinks: profile?.socialLinks || [],
+    })
+    setIsEditing(true)
   }, [profile])
 
-  // Handle edit URL parameter for deep linking to edit mode
+  const cancelEdit = () => {
+    setIsEditing(false)
+    setDraft(EMPTY_DRAFT)
+  }
+
+  // `?edit=true` deep-links into edit mode once, then drops the parameter.
   useEffect(() => {
     if (!isOwnProfile || isLoading) return
-
-    const editParam = searchParams.get('edit')
-    if (editParam === 'true' && !isEditingProfile) {
-      handleStartEdit()
-      // Remove edit param from URL after triggering edit mode
+    if (searchParams.get('edit') === 'true' && !isEditing) {
+      startEdit()
       const url = new URL(window.location.href)
       url.searchParams.delete('edit')
       window.history.replaceState({}, '', url.toString())
     }
-  }, [isOwnProfile, isLoading, searchParams, isEditingProfile, handleStartEdit])
+  }, [isOwnProfile, isLoading, searchParams, isEditing, startEdit])
 
-  // Handle tip URL parameter for deep linking
+  // `?tip=<uri>` deep-links to one of the profile's payment addresses.
   useEffect(() => {
-    if (!profile?.paymentUris || profile.paymentUris.length === 0) return
-
     const tipUri = searchParams.get('tip')
-    if (!tipUri) return
-
-    // Find matching payment URI
-    const matchingPayment = profile.paymentUris.find(p => p.uri === tipUri)
-    if (matchingPayment) {
-      setSelectedQrPayment(matchingPayment)
-    }
+    if (!tipUri || !profile?.paymentUris?.length) return
+    const match = profile.paymentUris.find((p) => p.uri === tipUri)
+    if (match) setSelectedQrPayment(match)
   }, [profile?.paymentUris, searchParams])
 
   const loadMorePosts = useCallback(async () => {
-    // Check if there's more content to load (either posts or reposts)
     const canLoadMorePosts = hasMore && lastPostId
     const canLoadMoreReposts = hasMoreReposts && lastRepostId
     if (!userId || isLoadingMore || (!canLoadMorePosts && !canLoadMoreReposts)) return
@@ -601,117 +323,43 @@ function UserProfileContent() {
     try {
       const { postService } = await import('@/lib/services')
       const { repostService } = await import('@/lib/services/repost-service')
-
-      const newPosts: Post[] = []
+      const fresh: Post[] = []
       let newPostDocs: Post[] = []
-      let newRepostDocs: RepostDocument[] = []
 
-      // Fetch more posts using cursor-based pagination
       if (canLoadMorePosts) {
-        const postsResult = await postService.getUserPosts(userId, {
-          limit: 50,
-          startAfter: lastPostId
-        })
-
-        newPostDocs = postsResult.documents || []
-
-        // postService.getUserPosts() returns already-transformed Post objects
-        // We just update author display info (username/displayName already resolved for this profile)
-        for (const post of newPostDocs) {
-          newPosts.push({
+        const result = await postService.getUserPosts(userId, { limit: PAGE_SIZE, startAfter: lastPostId })
+        newPostDocs = result.documents || []
+        // Author display fields are already resolved for this profile.
+        fresh.push(
+          ...newPostDocs.map((post) => ({
             ...post,
-            author: {
-              ...post.author,
-              // Use already-resolved username and displayName from profile
-              username: username || '',
-              displayName: profile?.displayName || '',
-              avatar: '',
-              hasDpns: hasDpns,
-            },
-          })
-        }
+            author: { ...post.author, username: username || '', displayName: profile?.displayName || '', avatar: '', hasDpns },
+          }))
+        )
       }
 
-      // Fetch more reposts using cursor-based pagination
       if (canLoadMoreReposts) {
         try {
-          newRepostDocs = await repostService.getUserReposts(userId)
-
-          if (newRepostDocs.length > 0) {
-            // Get unique post IDs that this user has reposted
-            const repostedPostIds = newRepostDocs.map(r => r.postId).filter((id: string) => id)
-            const repostedPosts = await postService.getPostsByIds(repostedPostIds)
-
-            // Try to resolve DPNS username for reposter display
-            let reposterUsername: string | undefined
-            try {
-              const { dpnsService } = await import('@/lib/services/dpns-service')
-              reposterUsername = await dpnsService.resolveUsername(userId) || undefined
-            } catch (e) {
-              // DPNS resolution is optional
-            }
-
-            // Create repost entries with repostedBy info
-            for (const repost of newRepostDocs) {
-              const originalPost = repostedPosts.find(p => p.id === repost.postId)
-              if (originalPost && originalPost.author.id !== userId) {
-                newPosts.push({
-                  ...originalPost,
-                  repostedBy: {
-                    id: userId,
-                    // Empty string shows "Someone reposted" instead of "User XKSFJL reposted"
-                    displayName: profile?.displayName || '',
-                    username: reposterUsername
-                  },
-                  repostTimestamp: new Date(repost.$createdAt)
-                })
-              }
-            }
-          }
+          const reposts = await repostService.getUserReposts(userId)
+          // An empty display name reads as "Someone reposted" on the card.
+          fresh.push(...(await resolveUserReposts(userId, reposts, profile?.displayName || '')))
+          if (reposts.length > 0) setLastRepostId(reposts[reposts.length - 1].$id)
+          setHasMoreReposts(reposts.length >= PAGE_SIZE)
         } catch (repostError) {
           logger.error('Failed to fetch more reposts:', repostError)
-          // Continue without reposts - non-critical
         }
       }
 
-      // Resolve whatever each post quotes (post, reply, or blog-post embed).
-      await attachQuotedPosts(newPosts)
-
-      // Append to existing posts and sort
-      setPosts(currentPosts => {
-        const existingIds = new Set(currentPosts.map(p => p.id))
-        const uniqueNewPosts = newPosts.filter(p => !existingIds.has(p.id))
-        const allPosts = [...currentPosts, ...uniqueNewPosts]
-        // Sort by timestamp (repostTimestamp for reposts, createdAt for original posts)
-        allPosts.sort((a, b) => {
-          const aTime = a.repostTimestamp?.getTime() || a.createdAt.getTime()
-          const bTime = b.repostTimestamp?.getTime() || b.createdAt.getTime()
-          return bTime - aTime
-        })
-        return allPosts
+      await attachQuotedPosts(fresh)
+      setPosts((current) => {
+        const seen = new Set(current.map((p) => p.id))
+        return [...current, ...fresh.filter((p) => !seen.has(p.id))].sort(byNewestActivity)
       })
+      if (fresh.length > 0) enrichProgressively(fresh)
 
-      // Start progressive enrichment for new posts
-      if (newPosts.length > 0) {
-        enrichProgressively(newPosts)
-      }
-
-      // Update pagination state for posts (only if posts were fetched)
       if (canLoadMorePosts) {
-        if (newPostDocs.length > 0) {
-          const lastPost = newPostDocs[newPostDocs.length - 1] as Post
-          setLastPostId(lastPost.id)
-        }
-        setHasMore(newPostDocs.length >= 50)
-      }
-
-      // Update pagination state for reposts (only if reposts were fetched)
-      if (canLoadMoreReposts) {
-        if (newRepostDocs.length > 0) {
-          const lastRepost = newRepostDocs[newRepostDocs.length - 1]
-          setLastRepostId(lastRepost.$id)
-        }
-        setHasMoreReposts(newRepostDocs.length >= 50)
+        if (newPostDocs.length > 0) setLastPostId(newPostDocs[newPostDocs.length - 1].id)
+        setHasMore(newPostDocs.length >= PAGE_SIZE)
       }
     } catch (error) {
       logger.error('Failed to load more posts:', error)
@@ -720,229 +368,27 @@ function UserProfileContent() {
     }
   }, [userId, isLoadingMore, hasMore, hasMoreReposts, lastPostId, lastRepostId, username, profile?.displayName, hasDpns, enrichProgressively])
 
-  // Only the Posts tab paginates, so infinite scroll is off elsewhere.
   const hasMorePosts = hasMore || hasMoreReposts
-  const {
-    sentinelRef: postsSentinelRef,
-    isSuspended: postsAutoLoadSuspended,
-    loadMore: loadMorePostsManually
-  } = useInfiniteScroll({
+  const infiniteScroll = useInfiniteScroll({
     hasMore: hasMorePosts,
     isLoading: isLoadingMore,
     onLoadMore: loadMorePosts,
-    disabled: activeTab !== 'posts',
-    resetKey: userId
+    disabled: tabs.activeTab !== 'posts',
+    resetKey: userId,
   })
-
-  // Load mentions for this user (lazy load when tab is selected)
-  const loadMentions = useCallback(async () => {
-    if (!userId || mentionsLoaded) return
-
-    setMentionsLoading(true)
-    try {
-      const mentionDocs = await mentionService.getPostsMentioningUser(userId)
-
-      if (mentionDocs.length === 0) {
-        setMentions([])
-        setMentionsLoaded(true)
-        return
-      }
-
-      const { postService } = await import('@/lib/services/post-service')
-      const postIds = Array.from(new Set(mentionDocs.map(m => m.postId)))
-
-      // Fetch posts and validate ownership
-      const fetchedPosts: Post[] = []
-      for (const postId of postIds) {
-        try {
-          const post = await postService.get(postId)
-          if (post) {
-            // Verify mention was created by post owner (security filter)
-            const mentionDoc = mentionDocs.find(m => m.postId === postId)
-            if (mentionDoc && mentionDoc.$ownerId === post.author.id) {
-              fetchedPosts.push(post)
-            }
-          }
-        } catch (error) {
-          logger.error('Failed to fetch post:', postId, error)
-        }
-      }
-
-      // Sort by creation date (newest first)
-      fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-
-      // Enrich posts with author data
-      const enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
-
-      setMentions(enrichedPosts)
-    } catch (error) {
-      logger.error('Failed to load mentions:', error)
-      setMentions([])
-    } finally {
-      setMentionsLoading(false)
-      setMentionsLoaded(true)
-    }
-  }, [userId, mentionsLoaded])
-
-  // Load user's replies (lazy load when filter is selected)
-  const loadUserReplies = useCallback(async () => {
-    if (!userId || repliesLoaded) return
-
-    setRepliesLoading(true)
-    try {
-      const { replyService } = await import('@/lib/services/reply-service')
-
-      const result = await replyService.getUserReplies(userId, { limit: 50 })
-
-      if (result.documents.length === 0) {
-        setUserReplies([])
-        setRepliesLoaded(true)
-        return
-      }
-
-      // Convert Reply objects to Post-compatible objects for PostCard display
-      const replyPosts: Post[] = result.documents.map(replyToPost)
-
-      setUserReplies(replyPosts)
-
-      // Enrich with progressive data (author info, etc.)
-      enrichProgressively(replyPosts)
-
-      // Resolve what each reply answers in the background: the cards render
-      // immediately and fill their context in, the way enrichment does.
-      setReplyParentsLoading(true)
-      fetchReplyParents(replyPosts)
-        .then(parents => setReplyParents(parents))
-        .catch(err => logger.error('Failed to load reply parents:', err))
-        .finally(() => setReplyParentsLoading(false))
-    } catch (error) {
-      logger.error('Failed to load user replies:', error)
-      setUserReplies([])
-    } finally {
-      setRepliesLoading(false)
-      setRepliesLoaded(true)
-    }
-  }, [userId, repliesLoaded, enrichProgressively])
-
-  /**
-   * Load the author's top posts by like count (lazy, v4 only).
-   *
-   * One proved server-side ranked query on `like.byAuthorPost` pinned to this
-   * profile — the ranking (order AND counts) comes out of the count trees, not
-   * from fetching posts and sorting client-side.
-   */
-  const loadTopPosts = useCallback(async () => {
-    if (!userId || topLoaded) return
-
-    setTopLoading(true)
-    try {
-      const [{ topLikedPosts }, { postService }] = await Promise.all([
-        import('@/lib/services/ranked-likes'),
-        import('@/lib/services/post-service'),
-      ])
-
-      const ranked = await topLikedPosts({ postAuthor: userId, limit: 10, window: rankingWindow })
-      if (ranked.length === 0) {
-        setTopPosts([])
-        return
-      }
-
-      const fetched = await postService.getPostsByIds(ranked.map(r => r.postId))
-      const byId = new Map(fetched.map(p => [p.id, p]))
-      // Preserve the proved ranking order; drop ids that failed to load.
-      const ordered = ranked
-        .map(r => byId.get(r.postId))
-        .filter((p): p is Post => p !== undefined)
-
-      await attachQuotedPosts(ordered)
-
-      setTopPosts(ordered)
-      enrichProgressively(ordered)
-    } catch (error) {
-      logger.error('Failed to load top posts:', error)
-      setTopPosts([])
-    } finally {
-      setTopLoading(false)
-      setTopLoaded(true)
-    }
-  }, [userId, topLoaded, enrichProgressively, rankingWindow])
-
-  // A window change reads a different index: drop the loaded Top list.
-  useEffect(() => {
-    setTopLoaded(false)
-  }, [rankingWindow])
-
-  // Load mentions when tab is activated
-  useEffect(() => {
-    if (activeTab === 'mentions' && !mentionsLoaded) {
-      loadMentions().catch(err => logger.error('Failed to load mentions:', err))
-    }
-  }, [activeTab, mentionsLoaded, loadMentions])
-
-  // Load ranked top posts when the Top tab is selected (v4 only)
-  useEffect(() => {
-    if (activeTab === 'top' && !topLoaded) {
-      loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
-    }
-  }, [activeTab, topLoaded, loadTopPosts])
-
-  // Load user replies when the Replies tab is selected
-  useEffect(() => {
-    if (activeTab === 'replies' && !repliesLoaded) {
-      loadUserReplies().catch(err => logger.error('Failed to load user replies:', err))
-    }
-  }, [activeTab, repliesLoaded, loadUserReplies])
-
-  // Reset mentions, replies, active tab, private feed, and store state when user changes
-  useEffect(() => {
-    setMentions([])
-    setMentionsLoaded(false)
-    setUserReplies([])
-    setRepliesLoaded(false)
-    setReplyParents(new Map())
-    setReplyParentsLoading(false)
-    setTopPosts([])
-    setTopLoaded(false)
-    setActiveTab('posts')
-    setHasPrivateFeed(false)
-    setIsPrivateFollower(false)
-    setUserStore(null)
-    setBlogs([])
-    setBlogsLoading(false)
-  }, [userId])
 
   const handleFollow = async () => {
     const authedUser = requireAuth()
-    if (!authedUser) return
-    if (!userId) return
-
+    if (!authedUser || !userId) return
     setFollowLoading(true)
     try {
       const { followService } = await import('@/lib/services')
-
-      if (isFollowing) {
-        // Unfollow
-        const result = await followService.unfollowUser(authedUser.identityId, userId)
-        if (result.success) {
-          setIsFollowing(false)
-          // Update follower count in profile
-          setProfile(prev => prev ? { ...prev, followersCount: Math.max(0, prev.followersCount - 1) } : null)
-          toast.success('Unfollowed')
-        } else {
-          throw new Error(result.error || 'Failed to unfollow')
-        }
-      } else {
-        // Follow
-        const result = await followService.followUser(authedUser.identityId, userId)
-        if (result.success) {
-          setIsFollowing(true)
-          // Update follower count in profile
-          setProfile(prev => prev ? { ...prev, followersCount: prev.followersCount + 1 } : null)
-          toast.success('Following!')
-        } else {
-          throw new Error(result.error || 'Failed to follow')
-        }
-      }
+      const result = isFollowing ? await followService.unfollowUser(authedUser.identityId, userId) : await followService.followUser(authedUser.identityId, userId)
+      if (!result.success) throw new Error(result.error || 'Follow failed')
+      const delta = isFollowing ? -1 : 1
+      setIsFollowing(!isFollowing)
+      setProfile((prev) => (prev ? { ...prev, followersCount: Math.max(0, prev.followersCount + delta) } : null))
+      toast.success(isFollowing ? 'Unfollowed' : 'Following!')
     } catch (error) {
       logger.error('Follow error:', error)
       toast.error('Failed to update follow status')
@@ -951,50 +397,23 @@ function UserProfileContent() {
     }
   }
 
-  const handleCancelEdit = () => {
-    setIsEditingProfile(false)
-    setEditDisplayName('')
-    setEditBio('')
-    setEditLocation('')
-    setEditWebsite('')
-    setEditPronouns('')
-    setEditNsfw(false)
-    setEditPaymentUris([])
-    setEditSocialLinks([])
-  }
-
   const handleTipUser = () => {
     const authedUser = requireAuth()
     if (!authedUser || !userId) return
-    openTipModal({
-      id: userId,
-      displayName: profile?.displayName,
-      username: username || undefined,
-    })
+    openTipModal({ id: userId, displayName: profile?.displayName, username: username || undefined })
   }
 
-  // Refresh DPNS usernames after registration
   const refreshUsernames = useCallback(async () => {
     if (!userId) return
     try {
       const { dpnsService } = await import('@/lib/services/dpns-service')
-      // Clear cache to get fresh data (pass undefined for username, userId for identityId)
       dpnsService.clearCache(undefined, userId)
-      // Canonically sorted: the first entry is the primary username
-      const sortedUsernames = await dpnsService.getAllUsernamesSorted(userId)
-      if (sortedUsernames.length > 0) {
-        setAllUsernames(sortedUsernames)
-        setUsername(sortedUsernames[0])
-        setHasDpns(true)
-      } else {
-        // No usernames found, reset state
-        setAllUsernames([])
-        setUsername('')
-        setHasDpns(false)
-      }
+      const sorted = await dpnsService.getAllUsernamesSorted(userId)
+      setAllUsernames(sorted)
+      setUsername(sorted[0] ?? '')
+      setHasDpns(sorted.length > 0)
     } catch (e) {
       logger.error('Failed to refresh usernames:', e)
-      // On error, reset to safe state
       setAllUsernames([])
       setUsername('')
       setHasDpns(false)
@@ -1002,39 +421,21 @@ function UserProfileContent() {
   }, [userId])
 
   const handleSaveProfile = async () => {
-    if (!currentUser?.identityId) return
-
+    if (!viewerId) return
     setIsSaving(true)
     try {
       const { unifiedProfileService } = await import('@/lib/services')
-      await unifiedProfileService.updateProfile(currentUser.identityId, {
-        displayName: editDisplayName,
-        bio: editBio,
-        location: editLocation,
-        website: editWebsite,
-        pronouns: editPronouns,
-        nsfw: editNsfw,
-        paymentUris: editPaymentUris,
-        socialLinks: editSocialLinks,
-      })
-
-      // Update local profile state
-      setProfile(prev => prev ? {
-        ...prev,
-        displayName: editDisplayName,
-        bio: editBio,
-        location: editLocation,
-        website: editWebsite,
-        pronouns: editPronouns,
-        nsfw: editNsfw,
-        paymentUris: editPaymentUris.map(uri => ({
-          scheme: uri.split(':')[0] + ':',
-          uri,
-        })),
-        socialLinks: editSocialLinks,
-      } : null)
-
-      setIsEditingProfile(false)
+      await unifiedProfileService.updateProfile(viewerId, draft)
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...draft,
+              paymentUris: draft.paymentUris.map((uri) => ({ scheme: uri.split(':')[0] + ':', uri })),
+            }
+          : null
+      )
+      setIsEditing(false)
       toast.success('Profile updated!')
     } catch (error) {
       logger.error('Failed to update profile:', error)
@@ -1044,25 +445,27 @@ function UserProfileContent() {
     }
   }
 
+  const closeQrDialog = () => {
+    setSelectedQrPayment(null)
+    setTipParam(null)
+  }
+
   if (!userId) {
     return (
       <PageShell>
-            <div className="p-8 text-center text-gray-500">
-              <p>User not found</p>
-            </div>
+        <div className="p-8 text-center text-gray-500">
+          <p>User not found</p>
+        </div>
       </PageShell>
     )
   }
 
   return (
     <>
-    <PageShell>
-          <PageHeader borderless>
+      <PageShell>
+        <PageHeader borderless>
           <div className="flex items-center gap-4 px-4 py-3">
-            <button
-              onClick={() => router.back()}
-              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
-            >
+            <button onClick={() => router.back()} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900">
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
             <div className="flex-1">
@@ -1079,21 +482,13 @@ function UserProfileContent() {
         {isLoading ? (
           <div>
             <div className="h-48 overflow-hidden blur-sm opacity-60">
-              <BannerImage
-                userId={userId || ''}
-                className="w-full h-full"
-                fallbackGradient
-              />
+              <BannerImage userId={userId} className="w-full h-full" fallbackGradient />
             </div>
             <div className="px-4 pb-4">
               <div className="relative -mt-16 mb-4">
                 <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
                   <div className="h-full w-full rounded-full overflow-hidden blur-sm opacity-60">
-                    <UserAvatar
-                      userId={userId || 'default'}
-                      alt="Loading..."
-                      size="full"
-                    />
+                    <UserAvatar userId={userId} alt="Loading..." size="full" />
                   </div>
                 </div>
               </div>
@@ -1102,16 +497,11 @@ function UserProfileContent() {
             </div>
           </div>
         ) : showNsfwInterstitial ? (
-          <div
-            data-testid="nsfw-interstitial"
-            className="flex flex-col items-center justify-center gap-4 px-8 py-24 text-center"
-          >
+          <div data-testid="nsfw-interstitial" className="flex flex-col items-center justify-center gap-4 px-8 py-24 text-center">
             <EyeSlashIcon className="h-12 w-12 text-gray-400" />
             <div>
               <h2 className="text-xl font-semibold mb-1">This profile may contain adult content</h2>
-              <p className="text-sm text-gray-500">
-                {profile?.displayName || 'This user'} marked their profile as NSFW.
-              </p>
+              <p className="text-sm text-gray-500">{profile?.displayName || 'This user'} marked their profile as NSFW.</p>
             </div>
             <div className="flex items-center gap-3">
               <Button variant="outline" onClick={() => router.back()}>
@@ -1124,518 +514,44 @@ function UserProfileContent() {
           </div>
         ) : (
           <>
-            {/* Banner */}
-            <div className="relative h-48">
-              <BannerImage
-                key={bannerKey}
-                userId={userId || ''}
-                preloadedUrl={profile?.bannerUri}
-                className="w-full h-full"
-                fallbackGradient
-              />
-              {isOwnProfile && isEditingProfile && (
-                <button
-                  onClick={() => setIsEditingBanner(true)}
-                  className="absolute bottom-3 right-3 z-10 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
-                  title="Edit banner"
-                >
-                  <PencilIcon className="h-4 w-4 text-white" />
-                </button>
-              )}
-            </div>
+            <ProfileHeader
+              userId={userId}
+              profile={profile}
+              displayName={displayName}
+              isDisplayNameLoading={isDisplayNameLoading}
+              username={username}
+              allUsernames={allUsernames}
+              hasDpns={hasDpns}
+              isOwnProfile={isOwnProfile}
+              viewerId={viewerId || null}
+              avatarKey={avatarKey}
+              bannerKey={bannerKey}
+              userStore={userStore}
+              hasPrivateFeed={hasPrivateFeed}
+              isPrivateFollower={isPrivateFollower}
+              isFollowing={isFollowing}
+              followLoading={followLoading}
+              onFollow={handleFollow}
+              onTip={handleTipUser}
+              onRequireAuth={() => requireAuth()}
+              onOpenUsernameModal={() => setIsUsernameModalOpen(true)}
+              onSelectPayment={(payment) => {
+                setSelectedQrPayment(payment)
+                setTipParam(payment.uri)
+              }}
+              edit={{
+                active: isEditing,
+                draft,
+                onChange: setDraft,
+                isSaving,
+                onStart: startEdit,
+                onCancel: cancelEdit,
+                onSave: handleSaveProfile,
+                onEditAvatar: () => setIsEditingAvatar(true),
+                onEditBanner: () => setIsEditingBanner(true),
+              }}
+            />
 
-            <div className="px-4 pb-4">
-              <div className="relative flex justify-between items-start -mt-16 mb-4">
-                <div className="relative">
-                  <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
-                    <UserAvatar
-                      key={avatarKey}
-                      userId={userId || 'default'}
-                      alt={displayName}
-                      size="full"
-                    />
-                  </div>
-                  {isOwnProfile && isEditingProfile && (
-                    <button
-                      onClick={() => setIsEditingAvatar(true)}
-                      className="absolute bottom-1 right-1 p-2 bg-yappr-500 rounded-full hover:bg-yappr-600 transition-colors shadow-lg"
-                      title="Edit avatar"
-                    >
-                      <PencilIcon className="h-4 w-4 text-white" />
-                    </button>
-                  )}
-                </div>
-
-                <div className="mt-20 flex items-center gap-2">
-                  <Tooltip.Provider>
-                    <Tooltip.Root>
-                      <Tooltip.Trigger asChild>
-                        <button
-                          onClick={() => {
-                            const profileUrl = `${window.location.origin}/user?id=${userId}`
-                            navigator.clipboard.writeText(profileUrl).catch((error) => logger.error(error))
-                            toast.success('Profile link copied!')
-                          }}
-                          className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                        >
-                          <ShareIcon className="h-4 w-4" />
-                        </button>
-                      </Tooltip.Trigger>
-                      <Tooltip.Portal>
-                        <Tooltip.Content
-                          className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                          sideOffset={5}
-                        >
-                          Share profile
-                        </Tooltip.Content>
-                      </Tooltip.Portal>
-                    </Tooltip.Root>
-                  </Tooltip.Provider>
-                  {isOwnProfile && (
-                    <Tooltip.Provider>
-                      <Tooltip.Root>
-                        <Tooltip.Trigger asChild>
-                          <button
-                            onClick={() => router.push('/settings')}
-                            className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                          >
-                            <Cog6ToothIcon className="h-4 w-4" />
-                          </button>
-                        </Tooltip.Trigger>
-                        <Tooltip.Portal>
-                          <Tooltip.Content
-                            className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                            sideOffset={5}
-                          >
-                            Settings
-                          </Tooltip.Content>
-                        </Tooltip.Portal>
-                      </Tooltip.Root>
-                    </Tooltip.Provider>
-                  )}
-                  {isOwnProfile ? (
-                    isEditingProfile ? (
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="ghost" onClick={handleCancelEdit} disabled={isSaving}>
-                          Cancel
-                        </Button>
-                        <Button size="sm" onClick={handleSaveProfile} disabled={isSaving}>
-                          {isSaving ? 'Saving...' : 'Save'}
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        onClick={handleStartEdit}
-                        className="font-bold"
-                      >
-                        Edit profile
-                      </Button>
-                    )
-                  ) : (
-                    <div className="flex gap-2 items-center">
-                      <Tooltip.Provider>
-                        <Tooltip.Root>
-                          <Tooltip.Trigger asChild>
-                            <button
-                              onClick={handleTipUser}
-                              aria-label={`Tip ${profile?.displayName || username || 'user'}`}
-                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 transition-colors group"
-                            >
-                              <CurrencyDollarIcon className="h-4 w-4 group-hover:text-amber-500" />
-                            </button>
-                          </Tooltip.Trigger>
-                          <Tooltip.Portal>
-                            <Tooltip.Content
-                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                              sideOffset={5}
-                            >
-                              Tip with credits
-                            </Tooltip.Content>
-                          </Tooltip.Portal>
-                        </Tooltip.Root>
-                      </Tooltip.Provider>
-                      <Tooltip.Provider>
-                        <Tooltip.Root>
-                          <Tooltip.Trigger asChild>
-                            <button
-                              onClick={() => router.push(`/messages?startConversation=${userId}`)}
-                              aria-label={`Message ${profile?.displayName || username || 'user'}`}
-                              className="p-2 rounded-full border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                            >
-                              <EnvelopeIcon className="h-4 w-4" />
-                            </button>
-                          </Tooltip.Trigger>
-                          <Tooltip.Portal>
-                            <Tooltip.Content
-                              className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-                              sideOffset={5}
-                            >
-                              Message
-                            </Tooltip.Content>
-                          </Tooltip.Portal>
-                        </Tooltip.Root>
-                      </Tooltip.Provider>
-                      <Button
-                        variant={isFollowing ? "outline" : "default"}
-                        onClick={handleFollow}
-                        disabled={followLoading}
-                        className="font-bold px-5"
-                      >
-                        {isFollowing ? 'Following' : 'Follow'}
-                      </Button>
-                      {/* Private Feed Access Button - only shown when following */}
-                      <PrivateFeedAccessButton
-                        ownerId={userId}
-                        currentUserId={currentUser?.identityId || null}
-                        isFollowing={isFollowing}
-                        onRequireAuth={() => requireAuth()}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {isOwnProfile && isEditingProfile ? (
-                <div className="space-y-4">
-                  {/* Basic Info */}
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
-                    <input
-                      type="text"
-                      value={editDisplayName}
-                      onChange={(e) => setEditDisplayName(e.target.value)}
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      maxLength={50}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Pronouns</label>
-                    <input
-                      type="text"
-                      value={editPronouns}
-                      onChange={(e) => setEditPronouns(e.target.value)}
-                      placeholder="e.g. she/her"
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      maxLength={20}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Bio</label>
-                    <textarea
-                      value={editBio}
-                      onChange={(e) => setEditBio(e.target.value)}
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
-                      rows={3}
-                      maxLength={160}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">{editBio.length}/160</p>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Location</label>
-                    <input
-                      type="text"
-                      value={editLocation}
-                      onChange={(e) => setEditLocation(e.target.value)}
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      maxLength={50}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Website</label>
-                    <input
-                      type="text"
-                      value={editWebsite}
-                      onChange={(e) => setEditWebsite(e.target.value)}
-                      placeholder="https://example.com"
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      maxLength={200}
-                    />
-                  </div>
-
-                  {/* Payment Addresses */}
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <PaymentUriInput
-                      uris={editPaymentUris}
-                      onChange={setEditPaymentUris}
-                      disabled={isSaving}
-                    />
-                  </div>
-
-                  {/* Social Links */}
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <SocialLinksInput
-                      links={editSocialLinks}
-                      onChange={setEditSocialLinks}
-                      disabled={isSaving}
-                    />
-                  </div>
-
-                  {/* Content Settings */}
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editNsfw}
-                        onChange={(e) => setEditNsfw(e.target.checked)}
-                        className="w-4 h-4 text-yappr-500 rounded focus:ring-yappr-500"
-                      />
-                      <div>
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">NSFW Content</span>
-                        <p className="text-xs text-gray-500">Mark your profile as containing adult content</p>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="mb-3">
-                    {isDisplayNameLoading ? (
-                      <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
-                    ) : (
-                      <h2 className="text-xl font-extrabold">{displayName}</h2>
-                    )}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {hasDpns && username ? (
-                        <UsernameDropdown username={username} allUsernames={allUsernames} />
-                      ) : (
-                        <Tooltip.Provider>
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <button
-                                onClick={() => {
-                                  if (userId) {
-                                    navigator.clipboard.writeText(userId).catch((error) => logger.error(error))
-                                    toast.success('Identity ID copied')
-                                  }
-                                }}
-                                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono text-sm"
-                              >
-                                {userId?.slice(0, 8)}...{userId?.slice(-6)}
-                              </button>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content
-                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                                sideOffset={5}
-                              >
-                                Click to copy full identity ID
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                        </Tooltip.Provider>
-                      )}
-                      {isOwnProfile && (
-                        <button
-                          onClick={() => setIsUsernameModalOpen(true)}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
-                        >
-                          <UserPlusIcon className="h-3 w-3" />
-                          {hasDpns ? 'Register More' : 'Register Username'}
-                        </button>
-                      )}
-                      {/* Store Badge */}
-                      {userStore && userStore.status === 'active' && (
-                        <Tooltip.Provider>
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <button
-                                onClick={() => router.push(`/store/view?id=${userStore.id}`)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
-                              >
-                                <BuildingStorefrontIcon className="h-3 w-3" />
-                                {userStore.name}
-                              </button>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content
-                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                                sideOffset={5}
-                              >
-                                Visit {displayName}&apos;s store
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                        </Tooltip.Provider>
-                      )}
-                      {/* Private Feed Badge */}
-                      {hasPrivateFeed && (
-                        <Tooltip.Provider>
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-full">
-                                <LockClosedIcon className="h-3 w-3" />
-                                Private Feed
-                              </span>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content
-                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                                sideOffset={5}
-                              >
-                                This user has a private feed. Follow them to request access.
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                        </Tooltip.Provider>
-                      )}
-                      {/* Private Follower Badge - shown when you have access to their private feed */}
-                      {isPrivateFollower && (
-                        <Tooltip.Provider>
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full">
-                                <CheckIcon className="h-3 w-3" />
-                                Private Follower
-                              </span>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content
-                                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                                sideOffset={5}
-                              >
-                                You have access to this user&apos;s private feed
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                        </Tooltip.Provider>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Pronouns */}
-                  {profile?.pronouns && (
-                    <p className="text-gray-500 text-sm mb-2">{profile.pronouns}</p>
-                  )}
-
-                  {profile?.bio && <p className="mb-3">{profile.bio}</p>}
-
-                  <div className="flex flex-wrap gap-3 text-sm text-gray-500 mb-3">
-                    {profile?.location && (
-                      <span className="flex items-center gap-1">
-                        <MapPinIcon className="h-4 w-4" />
-                        {profile.location}
-                      </span>
-                    )}
-                    {profile?.website && isValidHttpUrl(profile.website) && (
-                      <a
-                        href={profile.website}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-yappr-500 hover:underline"
-                      >
-                        <LinkIcon className="h-4 w-4" />
-                        {profile.website.replace(/^https?:\/\//, '')}
-                      </a>
-                    )}
-                    <span className="flex items-center gap-1">
-                      <CalendarIcon className="h-4 w-4" />
-                      Joined {profile?.joinedAt
-                        ? profile.joinedAt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-                        : 'recently'}
-                    </span>
-                  </div>
-
-                  <div className="flex gap-4 text-sm">
-                    <button
-                      onClick={() => router.push(`/following?id=${userId}`)}
-                      className="hover:underline"
-                    >
-                      <span className="font-bold">{formatNumber(profile?.followingCount || 0)}</span>
-                      <span className="text-gray-500"> Following</span>
-                    </button>
-                    <button
-                      onClick={() => router.push(`/followers?id=${userId}`)}
-                      className="hover:underline"
-                    >
-                      <span className="font-bold">{formatNumber(profile?.followersCount || 0)}</span>
-                      <span className="text-gray-500"> Followers</span>
-                    </button>
-                  </div>
-
-                  {/* Social Links */}
-                  {profile?.socialLinks && profile.socialLinks.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Social</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {profile.socialLinks.map((link, index) => {
-                          const url = getSocialLinkUrl(link.platform, link.handle)
-                          const content = (
-                            <>
-                              <span className="font-medium capitalize">{link.platform}:</span>
-                              <span className="text-gray-600 dark:text-gray-400">{link.handle}</span>
-                            </>
-                          )
-
-                          if (url) {
-                            return (
-                              <a
-                                key={index}
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                              >
-                                {content}
-                              </a>
-                            )
-                          }
-
-                          return (
-                            <span
-                              key={index}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm"
-                            >
-                              {content}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Payment Addresses */}
-                  {profile?.paymentUris && profile.paymentUris.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                        <CurrencyDollarIcon className="h-3 w-3 inline mr-1" />
-                        Tip Addresses
-                      </h4>
-                      <div className="space-y-2">
-                        {profile.paymentUris.map((payment, index) => (
-                          <button
-                            key={index}
-                            onClick={() => {
-                              setSelectedQrPayment(payment)
-                              // Update URL with tip param for deep linking
-                              const url = new URL(window.location.href)
-                              url.searchParams.set('tip', payment.uri)
-                              window.history.replaceState({}, '', url.toString())
-                            }}
-                            className="w-full flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
-                          >
-                            <PaymentSchemeIcon scheme={payment.scheme} />
-                            <div className="flex-1 min-w-0">
-                              <span className="text-sm font-medium">{getPaymentLabel(payment.uri)}</span>
-                              <p className="text-xs text-gray-500 font-mono truncate">
-                                {truncateAddress(payment.uri, 24)}
-                              </p>
-                            </div>
-                            <QrCodeIcon className="w-4 h-4 text-gray-400" />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Blocked User Notice */}
             {isBlockedByMe && !isOwnProfile && (
               <div className="p-4 bg-gray-50 dark:bg-gray-950 border-y border-gray-200 dark:border-gray-800">
                 <div className="flex items-center justify-between">
@@ -1648,250 +564,72 @@ function UserProfileContent() {
                       <p className="text-sm text-gray-500">You won&apos;t see their posts in your feeds</p>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => toggleBlock()}
-                    disabled={blockLoading}
-                  >
+                  <Button variant="outline" size="sm" onClick={() => toggleBlock()} disabled={blockLoading}>
                     Unblock
                   </Button>
                 </div>
               </div>
             )}
 
-            <div className="border-t border-gray-200 dark:border-gray-800">
-              {/* Tab Navigation — single X-style row */}
-              <div className="flex border-b border-gray-200 dark:border-gray-800">
-                {([
-                  { key: 'posts' as const, label: 'Posts' },
-                  { key: 'replies' as const, label: 'Replies' },
-                  // Server-ranked top posts need the v4 ranked like axes.
-                  ...(likesAreIndexOnly() ? [{ key: 'top' as const, label: 'Top', testId: 'profile-top-filter' }] : []),
-                  { key: 'mentions' as const, label: 'Mentions' },
-                  ...(blogs.length > 0 ? [{ key: 'blog' as const, label: 'Blog' }] : []),
-                ]).map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key)}
-                    data-testid={'testId' in tab ? tab.testId : undefined}
-                    className="flex-1 flex justify-center transition-colors hover:bg-gray-100/50 dark:hover:bg-gray-900/50"
-                  >
-                    <span
-                      className={cn(
-                        'relative py-4 text-[15px]',
-                        activeTab === tab.key
-                          ? 'font-bold text-gray-900 dark:text-white'
-                          : 'font-medium text-gray-500'
-                      )}
-                    >
-                      {tab.label}
-                      {activeTab === tab.key && (
-                        <span className="absolute inset-x-0 bottom-0 h-1 rounded-full bg-yappr-500" />
-                      )}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Tab Content */}
-              {activeTab === 'top' && (
-                <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="profile-top" />
-              )}
-              {activeTab === 'posts' || activeTab === 'replies' || activeTab === 'top' ? (
-                <>
-                  {(activeTab === 'replies' && repliesLoading) || (activeTab === 'top' && topLoading) ? (
-                    <div className="p-8 text-center">
-                      <Spinner size="md" className="mx-auto mb-4" />
-                      <p className="text-gray-500">{activeTab === 'top' ? 'Loading top posts...' : 'Loading replies...'}</p>
-                    </div>
-                  ) : filteredPosts.length === 0 ? (
-                    <div className="p-8 text-center text-gray-500" data-testid={activeTab === 'top' ? 'profile-top-empty' : undefined}>
-                      <p>
-                        {activeTab === 'posts'
-                          ? 'No original posts yet'
-                          : activeTab === 'top'
-                            ? 'No liked posts yet'
-                            : 'No replies yet'}
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      {filterHiddenSensitive(filteredPosts, sensitiveContentMode, currentUser?.identityId).map((post) => (
-                        <PostCard
-                          key={post.id}
-                          post={post}
-                          enrichment={getPostEnrichment(post)}
-                          parentPost={activeTab === 'replies' ? replyParents.get(post.id) : undefined}
-                          parentPostLoading={activeTab === 'replies' && replyParentsLoading}
-                        />
-                      ))}
-
-                    {/* Infinite scroll sentinel — only the Posts tab paginates */}
-                    {activeTab === 'posts' && hasMorePosts && (
-                      <InfiniteScrollSentinel
-                        sentinelRef={postsSentinelRef}
-                        isLoading={isLoadingMore}
-                        isSuspended={postsAutoLoadSuspended}
-                        onLoadMore={loadMorePostsManually}
-                        label="Load more posts"
-                        className="border-t border-gray-200 dark:border-gray-800"
-                      />
-                    )}
-                    </div>
-                  )}
-                </>
-              ) : activeTab === 'mentions' ? (
-                // Mentions Tab
-                mentionsLoading ? (
-                  <div className="p-8 text-center">
-                    <Spinner size="md" className="mx-auto mb-4" />
-                    <p className="text-gray-500">Loading mentions...</p>
-                  </div>
-                ) : mentions.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500">
-                    <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                    <p>No mentions yet</p>
-                    <p className="text-sm mt-2">Posts that mention this user will appear here</p>
-                  </div>
-                ) : (
-                  <div>
-                    {filterHiddenSensitive(mentions, sensitiveContentMode, currentUser?.identityId).map((post) => (
-                      <PostCard
-                        key={post.id}
-                        post={post}
-                      />
-                    ))}
-                  </div>
-                )
-              ) : blogsLoading ? (
-                <div className="p-8 text-center">
-                  <Spinner size="md" className="mx-auto mb-4" />
-                  <p className="text-gray-500">Loading blogs...</p>
-                </div>
-              ) : blogs.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <p>No blogs yet</p>
-                </div>
-              ) : (
-                <div className="p-4 space-y-3">
-                  {blogs.map((blog) => (
-                    <button
-                      key={blog.id}
-                      onClick={() => {
-                        router.push(`/blog?blog=${encodeURIComponent(blog.id)}`)
-                      }}
-                      className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      <p className="text-lg font-semibold">{blog.name}</p>
-                      {blog.description && (
-                        <p className="mt-1 text-sm text-gray-500">{blog.description}</p>
-                      )}
-                      <p className="mt-2 text-xs text-gray-500">{blog.postCount} posts</p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ProfileTabs
+              activeTab={tabs.activeTab}
+              onTabChange={tabs.setActiveTab}
+              viewerId={viewerId}
+              getPostEnrichment={getPostEnrichment}
+              posts={posts.filter((p) => !p.repostedBy)}
+              replies={tabs.replies}
+              top={tabs.top}
+              mentions={tabs.mentions}
+              blogs={{ blogs, loading: blogsLoading }}
+              pagination={{
+                hasMore: hasMorePosts,
+                isLoading: isLoadingMore,
+                isSuspended: infiniteScroll.isSuspended,
+                sentinelRef: infiniteScroll.sentinelRef,
+                onLoadMore: infiniteScroll.loadMore,
+              }}
+            />
           </>
-          )}
-    </PageShell>
+        )}
+      </PageShell>
 
-      {/* Avatar Customization Modal */}
-      {isEditingAvatar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setIsEditingAvatar(false)}
-          />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Customize Avatar</h2>
-              <button
-                onClick={() => setIsEditingAvatar(false)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <AvatarCustomization
-              compact
-              onSave={() => {
-                setIsEditingAvatar(false)
-                if (userId) {
-                  invalidateAvatarImageCache(userId)
-                }
-                setAvatarKey(prev => prev + 1)
-              }}
-            />
-          </div>
-        </div>
-      )}
+      <ImageCustomizationModal open={isEditingAvatar} title="Customize Avatar" onClose={() => setIsEditingAvatar(false)}>
+        <AvatarCustomization
+          compact
+          onSave={() => {
+            setIsEditingAvatar(false)
+            invalidateAvatarImageCache(userId)
+            setAvatarKey((k) => k + 1)
+          }}
+        />
+      </ImageCustomizationModal>
 
-      {/* Banner Customization Modal */}
-      {isEditingBanner && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setIsEditingBanner(false)}
-          />
-          <div className="relative bg-white dark:bg-neutral-900 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Customize Banner</h2>
-              <button
-                onClick={() => setIsEditingBanner(false)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <BannerCustomization
-              initialBannerUrl={profile?.bannerUri}
-              onSave={(newBannerUrl) => {
-                setIsEditingBanner(false)
-                if (userId) {
-                  invalidateBannerCache(userId)
-                }
-                setBannerKey(prev => prev + 1)
-                // Update profile state with new banner URL
-                setProfile(prev => prev ? { ...prev, bannerUri: newBannerUrl || undefined } : null)
-              }}
-            />
-          </div>
-        </div>
-      )}
+      <ImageCustomizationModal open={isEditingBanner} title="Customize Banner" onClose={() => setIsEditingBanner(false)}>
+        <BannerCustomization
+          initialBannerUrl={profile?.bannerUri}
+          onSave={(newBannerUrl) => {
+            setIsEditingBanner(false)
+            invalidateBannerCache(userId)
+            setBannerKey((k) => k + 1)
+            setProfile((prev) => (prev ? { ...prev, bannerUri: newBannerUrl || undefined } : null))
+          }}
+        />
+      </ImageCustomizationModal>
 
-      {/* Payment QR Code Dialog */}
       <PaymentQRCodeDialog
         isOpen={!!selectedQrPayment}
-        onClose={() => {
-          setSelectedQrPayment(null)
-          // Remove tip param from URL
-          const url = new URL(window.location.href)
-          url.searchParams.delete('tip')
-          window.history.replaceState({}, '', url.toString())
-        }}
+        onClose={closeQrDialog}
         paymentUri={selectedQrPayment}
         recipientName={username || displayName}
         watchForTransaction={true}
-        onDone={() => {
-          setSelectedQrPayment(null)
-          const url = new URL(window.location.href)
-          url.searchParams.delete('tip')
-          window.history.replaceState({}, '', url.toString())
-        }}
+        onDone={closeQrDialog}
       />
 
-      {/* Username Registration Modal */}
       <UsernameModal
         isOpen={isUsernameModalOpen}
         onClose={() => {
           setIsUsernameModalOpen(false)
-          refreshUsernames().catch(err => logger.error('Failed to refresh usernames:', err))
+          refreshUsernames().catch((err) => logger.error('Failed to refresh usernames:', err))
         }}
         hasExistingUsernames={hasDpns}
       />
@@ -1902,18 +640,18 @@ function UserProfileContent() {
 function LoadingFallback() {
   return (
     <PageShell>
-          <div>
-            <div className="h-48 bg-gradient-yappr opacity-50" />
-            <div className="px-4 pb-4">
-              <div className="relative -mt-16 mb-4">
-                <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
-                  <div className="h-full w-full rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
-                </div>
-              </div>
-              <div className="h-6 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-2" />
-              <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+      <div>
+        <div className="h-48 bg-gradient-yappr opacity-50" />
+        <div className="px-4 pb-4">
+          <div className="relative -mt-16 mb-4">
+            <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+              <div className="h-full w-full rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
             </div>
           </div>
+          <div className="h-6 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-2" />
+          <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        </div>
+      </div>
     </PageShell>
   )
 }
