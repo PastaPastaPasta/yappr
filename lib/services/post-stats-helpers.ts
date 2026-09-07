@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import type { TtlMap } from '@/lib/caches/ttl-map';
 import {
   bookmarkIndexFor,
   groupByInteractionSurface,
@@ -13,8 +14,6 @@ export interface PostInteractionState {
   bookmarked: boolean;
 }
 
-const STATS_CACHE_TTL_MS = 60_000;
-
 /**
  * Stats and interactions are cached and deduplicated per (surface, id): a `post`
  * id and a `reply` id are drawn from the same keyspace but, on the v3 topology,
@@ -26,14 +25,12 @@ function statsCacheKey(target: KindedTarget): string {
 
 export async function fetchPostStats(
   target: KindedTarget,
-  statsCache: Map<string, { data: PostStats; timestamp: number }>
+  statsCache: TtlMap<string, PostStats>
 ): Promise<PostStats> {
   const { id: postId, kind } = target;
   const cacheKey = statsCacheKey(target);
   const cached = statsCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < STATS_CACHE_TTL_MS) {
-    return cached.data;
-  }
+  if (cached) return cached;
 
   try {
     const [{ likeService }, { repostService }, { replyService }, { postService }] = await Promise.all([
@@ -62,10 +59,7 @@ export async function fetchPostStats(
       views: 0,
     };
 
-    statsCache.set(cacheKey, {
-      data: stats,
-      timestamp: Date.now(),
-    });
+    statsCache.set(cacheKey, stats);
 
     return stats;
   } catch (error) {

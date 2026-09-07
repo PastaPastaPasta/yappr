@@ -1,6 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map'
 import { useState, useEffect, memo } from 'react'
 import { PresenceIndicator } from './presence-indicator'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
@@ -8,8 +9,7 @@ import { IpfsImage } from './ipfs-image'
 
 // Module-level cache for avatar URLs to prevent redundant fetches
 // Stores raw URLs (ipfs:// or data: or https://) - conversion happens at display time
-const avatarCache = new Map<string, { url: string; timestamp: number }>()
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const avatarCache = new TtlMap<string, string>(5 * 60 * 1000)
 const pendingRequests = new Map<string, Promise<string>>()
 
 async function fetchAvatarUrl(userId: string): Promise<string> {
@@ -21,9 +21,7 @@ async function fetchAvatarUrl(userId: string): Promise<string> {
 
   // Check cache first
   const cached = avatarCache.get(userId)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.url
-  }
+  if (cached !== undefined) return cached
 
   // Check if there's already a pending request for this user
   const pending = pendingRequests.get(userId)
@@ -37,7 +35,7 @@ async function fetchAvatarUrl(userId: string): Promise<string> {
       const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
       // Get raw URL - conversion to gateway happens at display time
       const url = await unifiedProfileService.getAvatarUrl(userId)
-      avatarCache.set(userId, { url, timestamp: Date.now() })
+      avatarCache.set(userId, url)
       return url
     } catch (error) {
       logger.error('AvatarImage: Error fetching avatar:', error)
@@ -106,11 +104,7 @@ export const UserAvatar = memo(function UserAvatar({
     if (preloadedUrl) return preloadedUrl
     // Guard against empty userId
     if (!userId) return null
-    const cached = avatarCache.get(userId)
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      return cached.url
-    }
-    return null
+    return avatarCache.get(userId) ?? null
   })
 
   useEffect(() => {

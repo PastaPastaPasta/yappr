@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 /**
  * Dash Pay Contacts Service
  *
@@ -46,8 +47,7 @@ export interface UnfollowedContactsResult {
 }
 
 class DashPayContactsService {
-  private cache: Map<string, { data: UnfollowedContactsResult; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 300000; // 5 minutes
+  private cache = new TtlMap<string, UnfollowedContactsResult>(5 * 60 * 1000);
 
   /**
    * Convert base64 string to base58 for identifier consistency
@@ -218,9 +218,9 @@ class DashPayContactsService {
   async getUnfollowedContacts(userId: string): Promise<UnfollowedContactsResult> {
     // Check cache first
     const cached = this.cache.get(userId);
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+    if (cached) {
       logger.info('DashPayContactsService: Returning cached result');
-      return cached.data;
+      return cached;
     }
 
     try {
@@ -233,7 +233,7 @@ class DashPayContactsService {
           totalMutualContacts: 0,
           alreadyFollowedCount: 0
         };
-        this.cache.set(userId, { data: result, timestamp: Date.now() });
+        this.cache.set(userId, result);
         return result;
       }
 
@@ -253,7 +253,7 @@ class DashPayContactsService {
           totalMutualContacts: mutualContactIds.length,
           alreadyFollowedCount: mutualContactIds.length
         };
-        this.cache.set(userId, { data: result, timestamp: Date.now() });
+        this.cache.set(userId, result);
         return result;
       }
 
@@ -296,7 +296,7 @@ class DashPayContactsService {
       };
 
       // Cache the result
-      this.cache.set(userId, { data: result, timestamp: Date.now() });
+      this.cache.set(userId, result);
 
       logger.info(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
       return result;

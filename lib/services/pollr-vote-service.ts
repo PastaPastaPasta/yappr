@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import {
@@ -106,7 +107,7 @@ export function isDuplicateVoteError(error: unknown): boolean {
  * documents written to the doctype a poll doesn't use are never read.
  */
 class PollrVoteService {
-  private tallyCache = new Map<string, { data: PollTally; timestamp: number }>();
+  private tallyCache = new TtlMap<string, PollTally>(TALLY_CACHE_TTL_MS);
 
   /**
    * Cast a ballot: one immutable document per selected choice, in the doctype
@@ -237,7 +238,7 @@ class PollrVoteService {
     }
 
     const tally: PollTally = { counts, total: baseline.total + added };
-    this.tallyCache.set(pollId, { data: tally, timestamp: Date.now() });
+    this.tallyCache.set(pollId, tally);
     return tally;
   }
 
@@ -287,9 +288,7 @@ class PollrVoteService {
     const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
 
     const cached = this.tallyCache.get(poll.id);
-    if (cached && Date.now() - cached.timestamp < TALLY_CACHE_TTL_MS) {
-      return { total: cached.data.total, counts: resize(cached.data.counts, size) };
-    }
+    if (cached) return { total: cached.total, counts: resize(cached.counts, size) };
 
     const sdk = await getEvoSdk();
     const docType = pollrVoteDocType(poll.multiChoice);
@@ -316,7 +315,7 @@ class PollrVoteService {
     const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
 
     const tally: PollTally = { counts, total };
-    this.tallyCache.set(poll.id, { data: tally, timestamp: Date.now() });
+    this.tallyCache.set(poll.id, tally);
 
     return { total: tally.total, counts: resize(tally.counts, size) };
   }
