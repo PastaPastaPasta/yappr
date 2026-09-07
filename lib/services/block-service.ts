@@ -27,6 +27,20 @@ import bs58 from 'bs58'
 const MAX_BLOCK_FOLLOWS = 100
 
 /**
+ * Why a target user is blocked from the viewer's perspective.
+ * A target can be blocked by the viewer's own block document, by a block
+ * inherited from a followed block list, or by both at the same time.
+ */
+export interface BlockProvenance {
+  /** Whether the target is blocked at all (own or inherited) */
+  isBlocked: boolean
+  /** Whether the viewer's own block document exists */
+  isOwnBlock: boolean
+  /** Identity of the followed blocker whose list blocks the target, if any */
+  inheritedFrom: string | null
+}
+
+/**
  * Block Service - Manages enhanced blocking with bloom filters and block following.
  *
  * Features:
@@ -620,6 +634,48 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
     addConfirmedBlock(viewerId, targetUserId, '', false)
     return false
+  }
+
+  /**
+   * Resolve full block provenance for a target: whether the viewer's own block
+   * document exists and/or a block is inherited from a followed block list.
+   * Unlike isBlocked(), this always checks both sources so callers can offer
+   * the correct remedy (delete own block vs. manage block list follows).
+   */
+  async getBlockProvenance(targetUserId: string, viewerId: string): Promise<BlockProvenance> {
+    if (!viewerId || !targetUserId || viewerId === targetUserId) {
+      return { isBlocked: false, isOwnBlock: false, inheritedFrom: null }
+    }
+
+    try {
+      const [ownBlock, followedBlockers] = await Promise.all([
+        this.getBlock(targetUserId, viewerId),
+        this.getBlockFollows(viewerId)
+      ])
+
+      const inherited = followedBlockers.length > 0
+        ? await this.checkInheritedBlocks(targetUserId, followedBlockers)
+        : null
+
+      // Keep the confirmed-block cache in sync (own block takes precedence,
+      // matching isBlocked() behavior)
+      if (ownBlock) {
+        addConfirmedBlock(viewerId, targetUserId, viewerId, true, ownBlock.message)
+      } else if (inherited) {
+        addConfirmedBlock(viewerId, targetUserId, inherited.blockedBy, true, inherited.message)
+      } else {
+        addConfirmedBlock(viewerId, targetUserId, '', false)
+      }
+
+      return {
+        isBlocked: Boolean(ownBlock) || inherited !== null,
+        isOwnBlock: Boolean(ownBlock),
+        inheritedFrom: inherited?.blockedBy ?? null
+      }
+    } catch (error) {
+      logger.error('Error getting block provenance:', error)
+      return { isBlocked: false, isOwnBlock: false, inheritedFrom: null }
+    }
   }
 
   /**
