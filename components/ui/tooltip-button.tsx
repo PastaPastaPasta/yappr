@@ -42,13 +42,13 @@ export function TooltipButton({ label, 'aria-label': ariaLabel, onClick, childre
   )
 }
 
-/** A small inline pill with a tooltip, for the badges under a display name. */
+/** A tooltip on an inline element; the badges under a display name pass their own pill classes. */
 export function TooltipBadge({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
     <Tooltip.Provider>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
-          <span className={cn('inline-flex items-center gap-1 px-2 py-1 text-xs font-medium', className)}>{children}</span>
+          <span className={cn('inline-flex items-center', className)}>{children}</span>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs" sideOffset={5}>

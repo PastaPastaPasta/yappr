@@ -31,16 +31,16 @@ import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edi
 
 const PAGE_SIZE = 50
 
-/** Strip the author display fields so progressive enrichment fills them in. */
-function withBlankAuthor(post: Post): Post {
-  return { ...post, author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined } }
+/** Override the author display fields; blanks make progressive enrichment fill them in. */
+function withAuthor(post: Post, fields: Partial<Post['author']>): Post {
+  return { ...post, author: { ...post.author, ...fields } }
 }
 
-/** Replace the `tip` query parameter without a navigation. */
-function setTipParam(uri: string | null) {
+/** Set or clear a query parameter without a navigation. */
+function replaceQueryParam(key: string, value: string | null) {
   const url = new URL(window.location.href)
-  if (uri) url.searchParams.set('tip', uri)
-  else url.searchParams.delete('tip')
+  if (value) url.searchParams.set(key, value)
+  else url.searchParams.delete(key)
   window.history.replaceState({}, '', url.toString())
 }
 
@@ -57,7 +57,7 @@ function UserProfileContent() {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [username, setUsername] = useState<string | null>(null)
   const [allUsernames, setAllUsernames] = useState<string[]>([])
-  const [hasDpns, setHasDpns] = useState(false)
+  const hasDpns = allUsernames.length > 0
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [postCount, setPostCount] = useState<number | null>(null)
@@ -208,7 +208,9 @@ function UserProfileContent() {
           setBlogsLoading(false)
         }
 
-        const merged: Post[] = (postsResult.documents || []).map(withBlankAuthor)
+        const merged: Post[] = (postsResult.documents || []).map((post) =>
+          withAuthor(post, { username: '', displayName: '', avatar: '', hasDpns: undefined })
+        )
         try {
           const { repostService } = await import('@/lib/services/repost-service')
           const reposts = await repostService.getUserReposts(userId)
@@ -235,14 +237,12 @@ function UserProfileContent() {
           const sorted = await dpnsService.getAllUsernamesSorted(userId)
           setAllUsernames(sorted)
           setUsername(sorted[0] ?? null)
-          setHasDpns(sorted.length > 0)
           if (sorted.length > 0) {
-            setPosts((current) => current.map((post) => ({ ...post, author: { ...post.author, username: sorted[0], hasDpns: true } })))
+            setPosts((current) => current.map((post) => withAuthor(post, { username: sorted[0], hasDpns: true })))
           }
         } catch {
           setAllUsernames([])
           setUsername(null)
-          setHasDpns(false)
         }
       } catch (error) {
         logger.error('Failed to load profile:', error)
@@ -300,9 +300,7 @@ function UserProfileContent() {
     if (!isOwnProfile || isLoading) return
     if (searchParams.get('edit') === 'true' && !isEditing) {
       startEdit()
-      const url = new URL(window.location.href)
-      url.searchParams.delete('edit')
-      window.history.replaceState({}, '', url.toString())
+      replaceQueryParam('edit', null)
     }
   }, [isOwnProfile, isLoading, searchParams, isEditing, startEdit])
 
@@ -330,12 +328,7 @@ function UserProfileContent() {
         const result = await postService.getUserPosts(userId, { limit: PAGE_SIZE, startAfter: lastPostId })
         newPostDocs = result.documents || []
         // Author display fields are already resolved for this profile.
-        fresh.push(
-          ...newPostDocs.map((post) => ({
-            ...post,
-            author: { ...post.author, username: username || '', displayName: profile?.displayName || '', avatar: '', hasDpns },
-          }))
-        )
+        fresh.push(...newPostDocs.map((post) => withAuthor(post, { username: username || '', displayName: profile?.displayName || '', avatar: '', hasDpns })))
       }
 
       if (canLoadMoreReposts) {
@@ -410,13 +403,11 @@ function UserProfileContent() {
       dpnsService.clearCache(undefined, userId)
       const sorted = await dpnsService.getAllUsernamesSorted(userId)
       setAllUsernames(sorted)
-      setUsername(sorted[0] ?? '')
-      setHasDpns(sorted.length > 0)
+      setUsername(sorted[0] ?? null)
     } catch (e) {
       logger.error('Failed to refresh usernames:', e)
       setAllUsernames([])
-      setUsername('')
-      setHasDpns(false)
+      setUsername(null)
     }
   }, [userId])
 
@@ -447,7 +438,7 @@ function UserProfileContent() {
 
   const closeQrDialog = () => {
     setSelectedQrPayment(null)
-    setTipParam(null)
+    replaceQueryParam('tip', null)
   }
 
   if (!userId) {
@@ -521,8 +512,6 @@ function UserProfileContent() {
               isDisplayNameLoading={isDisplayNameLoading}
               username={username}
               allUsernames={allUsernames}
-              hasDpns={hasDpns}
-              isOwnProfile={isOwnProfile}
               viewerId={viewerId || null}
               avatarKey={avatarKey}
               bannerKey={bannerKey}
@@ -537,7 +526,7 @@ function UserProfileContent() {
               onOpenUsernameModal={() => setIsUsernameModalOpen(true)}
               onSelectPayment={(payment) => {
                 setSelectedQrPayment(payment)
-                setTipParam(payment.uri)
+                replaceQueryParam('tip', payment.uri)
               }}
               edit={{
                 active: isEditing,

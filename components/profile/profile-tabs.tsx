@@ -46,12 +46,6 @@ interface ProfileTabsProps {
   }
 }
 
-const EMPTY_COPY: Record<'posts' | 'replies' | 'top', string> = {
-  posts: 'No original posts yet',
-  replies: 'No replies yet',
-  top: 'No liked posts yet',
-}
-
 function Loading({ text }: { text: string }) {
   return (
     <div className="p-8 text-center">
@@ -75,22 +69,24 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
     ...(blogs.blogs.length > 0 ? [{ key: 'blog' as const, label: 'Blog' }] : []),
   ]
 
-  const renderPostList = () => {
-    const tab = activeTab as 'posts' | 'replies' | 'top'
-    const list = tab === 'top' ? top.posts : tab === 'replies' ? replies.posts : posts
-    if ((tab === 'replies' && replies.loading) || (tab === 'top' && top.loading)) {
-      return <Loading text={tab === 'top' ? 'Loading top posts...' : 'Loading replies...'} />
+  const renderPostList = (tab: 'posts' | 'replies' | 'top') => {
+    const lists = {
+      posts: { items: posts, loading: false, loadingText: '', empty: 'No original posts yet' },
+      replies: { items: replies.posts, loading: replies.loading, loadingText: 'Loading replies...', empty: 'No replies yet' },
+      top: { items: top.posts, loading: top.loading, loadingText: 'Loading top posts...', empty: 'No liked posts yet' },
     }
-    if (list.length === 0) {
+    const list = lists[tab]
+    if (list.loading) return <Loading text={list.loadingText} />
+    if (list.items.length === 0) {
       return (
         <div className="p-8 text-center text-gray-500" data-testid={tab === 'top' ? 'profile-top-empty' : undefined}>
-          <p>{EMPTY_COPY[tab]}</p>
+          <p>{list.empty}</p>
         </div>
       )
     }
     return (
       <div>
-        {filterHiddenSensitive(list, sensitiveContentMode, viewerId).map((post) => (
+        {filterHiddenSensitive(list.items, sensitiveContentMode, viewerId).map((post) => (
           <PostCard
             key={post.id}
             post={post}
@@ -179,7 +175,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
       </div>
 
       {activeTab === 'top' && <RankingWindowToggle value={top.window} onChange={top.onWindowChange} testIdPrefix="profile-top" />}
-      {activeTab === 'mentions' ? renderMentions() : activeTab === 'blog' ? renderBlogs() : renderPostList()}
+      {activeTab === 'mentions' ? renderMentions() : activeTab === 'blog' ? renderBlogs() : renderPostList(activeTab)}
     </div>
   )
 }

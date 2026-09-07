@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
-import { replyToPost } from '@/lib/services/post-service'
+import { postService, replyToPost } from '@/lib/services/post-service'
 import { mentionService } from '@/lib/services/mention-service'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import type { ProfileTab } from '@/components/profile/profile-tabs'
@@ -42,7 +42,6 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
         setMentions([])
         return
       }
-      const { postService } = await import('@/lib/services/post-service')
       const postIds = Array.from(new Set(mentionDocs.map((m) => m.postId)))
       const fetched: Post[] = []
       for (const postId of postIds) {
@@ -104,7 +103,7 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
     if (!userId || topLoaded) return
     setTopLoading(true)
     try {
-      const [{ topLikedPosts }, { postService }] = await Promise.all([import('@/lib/services/ranked-likes'), import('@/lib/services/post-service')])
+      const { topLikedPosts } = await import('@/lib/services/ranked-likes')
       const ranked = await topLikedPosts({ postAuthor: userId, limit: 10, window: rankingWindow })
       if (ranked.length === 0) {
         setTopPosts([])
@@ -131,15 +130,11 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
     setTopLoaded(false)
   }, [rankingWindow])
 
+  // Each loader is a no-op once its list is loaded, so this may fire freely.
   useEffect(() => {
-    if (activeTab === 'mentions' && !mentionsLoaded) loadMentions().catch((err) => logger.error('Failed to load mentions:', err))
-  }, [activeTab, mentionsLoaded, loadMentions])
-  useEffect(() => {
-    if (activeTab === 'top' && !topLoaded) loadTop().catch((err) => logger.error('Failed to load top posts:', err))
-  }, [activeTab, topLoaded, loadTop])
-  useEffect(() => {
-    if (activeTab === 'replies' && !repliesLoaded) loadReplies().catch((err) => logger.error('Failed to load user replies:', err))
-  }, [activeTab, repliesLoaded, loadReplies])
+    const load = activeTab === 'mentions' ? loadMentions : activeTab === 'top' ? loadTop : activeTab === 'replies' ? loadReplies : null
+    load?.().catch((err) => logger.error(`Failed to load ${activeTab}:`, err))
+  }, [activeTab, loadMentions, loadTop, loadReplies])
 
   // A new profile starts on Posts with nothing loaded.
   useEffect(() => {

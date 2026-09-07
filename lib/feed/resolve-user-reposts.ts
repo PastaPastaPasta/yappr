@@ -16,7 +16,7 @@ export function byNewestActivity(a: Post, b: Post): number {
 export async function resolveUserReposts(userId: string, reposts: RepostDocument[], displayName: string): Promise<Post[]> {
   if (reposts.length === 0) return []
   const { postService } = await import('@/lib/services/post-service')
-  const originals = await postService.getPostsByIds(reposts.map((r) => r.postId).filter(Boolean))
+  const originals = new Map((await postService.getPostsByIds(reposts.map((r) => r.postId).filter(Boolean))).map((p) => [p.id, p]))
 
   let username: string | undefined
   try {
@@ -28,7 +28,7 @@ export async function resolveUserReposts(userId: string, reposts: RepostDocument
 
   const entries: Post[] = []
   for (const repost of reposts) {
-    const original = originals.find((p) => p.id === repost.postId)
+    const original = originals.get(repost.postId)
     if (original && original.author.id !== userId) {
       entries.push({
         ...original,

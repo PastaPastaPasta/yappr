@@ -29,6 +29,10 @@ import { UsernameDropdown } from '@/components/dpns/username-dropdown'
 import { PrivateFeedAccessButton } from '@/components/profile/private-feed-access-button'
 import { ProfileEditForm, type ProfileDraft } from '@/components/profile/profile-edit-form'
 
+const YAPPR_PILL =
+  'inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors'
+const GRAY_PILL = 'inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm'
+
 export interface ProfileData {
   displayName: string
   bio?: string
@@ -51,8 +55,6 @@ interface ProfileHeaderProps {
   isDisplayNameLoading: boolean
   username: string | null
   allUsernames: string[]
-  hasDpns: boolean
-  isOwnProfile: boolean
   viewerId: string | null
   /** Bumped after an avatar/banner save so the images refetch. */
   avatarKey: number
@@ -89,8 +91,6 @@ export function ProfileHeader({
   isDisplayNameLoading,
   username,
   allUsernames,
-  hasDpns,
-  isOwnProfile,
   viewerId,
   avatarKey,
   bannerKey,
@@ -108,6 +108,8 @@ export function ProfileHeader({
 }: ProfileHeaderProps) {
   const router = useRouter()
   const copy = useCopy()
+  const hasDpns = allUsernames.length > 0
+  const isOwnProfile = viewerId === userId
   const editing = isOwnProfile && edit.active
   const subject = profile?.displayName || username || 'user'
 
@@ -203,7 +205,7 @@ export function ProfileHeader({
                 {hasDpns && username ? (
                   <UsernameDropdown username={username} allUsernames={allUsernames} />
                 ) : (
-                  <TooltipBadge label="Click to copy full identity ID" className="p-0">
+                  <TooltipBadge label="Click to copy full identity ID">
                     <button
                       onClick={() => copy(userId, 'Identity ID copied')}
                       className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono text-sm"
@@ -215,17 +217,17 @@ export function ProfileHeader({
                 {isOwnProfile && (
                   <button
                     onClick={onOpenUsernameModal}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
+                    className={YAPPR_PILL}
                   >
                     <UserPlusIcon className="h-3 w-3" />
                     {hasDpns ? 'Register More' : 'Register Username'}
                   </button>
                 )}
                 {userStore && userStore.status === 'active' && (
-                  <TooltipBadge label={`Visit ${displayName}'s store`} className="p-0">
+                  <TooltipBadge label={`Visit ${displayName}'s store`}>
                     <button
                       onClick={() => router.push(`/store/view?id=${userStore.id}`)}
-                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yappr-600 dark:text-yappr-400 bg-yappr-50 dark:bg-yappr-950/30 hover:bg-yappr-100 dark:hover:bg-yappr-950/50 rounded-full transition-colors"
+                      className={YAPPR_PILL}
                     >
                       <BuildingStorefrontIcon className="h-3 w-3" />
                       {userStore.name}
@@ -235,7 +237,7 @@ export function ProfileHeader({
                 {hasPrivateFeed && (
                   <TooltipBadge
                     label="This user has a private feed. Follow them to request access."
-                    className="text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-full"
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-full"
                   >
                     <LockClosedIcon className="h-3 w-3" />
                     Private Feed
@@ -244,7 +246,7 @@ export function ProfileHeader({
                 {isPrivateFollower && (
                   <TooltipBadge
                     label="You have access to this user's private feed"
-                    className="text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full"
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full"
                   >
                     <CheckIcon className="h-3 w-3" />
                     Private Follower
@@ -292,7 +294,6 @@ export function ProfileHeader({
                 <div className="flex flex-wrap gap-2">
                   {profile.socialLinks.map((link, index) => {
                     const url = getSocialLinkUrl(link.platform, link.handle)
-                    const pill = 'inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-sm'
                     const content = (
                       <>
                         <span className="font-medium capitalize">{link.platform}:</span>
@@ -300,11 +301,11 @@ export function ProfileHeader({
                       </>
                     )
                     return url ? (
-                      <a key={index} href={url} target="_blank" rel="noopener noreferrer" className={`${pill} hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors`}>
+                      <a key={index} href={url} target="_blank" rel="noopener noreferrer" className={`${GRAY_PILL} hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors`}>
                         {content}
                       </a>
                     ) : (
-                      <span key={index} className={pill}>
+                      <span key={index} className={GRAY_PILL}>
                         {content}
                       </span>
                     )
