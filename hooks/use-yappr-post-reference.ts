@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useEffect, useMemo, useState } from 'react'
 import type { Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
-import { extractYapprPostId } from './use-link-preview'
+import { extractYapprPostId } from '@/lib/link-preview/urls'
 
 interface UseYapprPostReferenceOptions {
   disabled?: boolean

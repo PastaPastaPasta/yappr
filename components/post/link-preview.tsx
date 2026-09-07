@@ -5,7 +5,9 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { LinkIcon, PlayIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/solid'
 import { useSettingsStore } from '@/lib/store'
-import { CORS_PROXY_INFO, isDirectImageUrl, isYouTubeUrl } from '@/hooks/use-link-preview'
+import { CORS_PROXY_INFO } from '@/lib/link-preview/fetch'
+import { isDirectImageUrl, isYouTubeUrl } from '@/lib/link-preview/urls'
+import type { LinkPreviewData } from '@/lib/link-preview/types'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 
 // Context for managing the link preview modal state
@@ -233,21 +235,6 @@ export function LinkPreviewInfoIcon() {
 
 // Note: We use next/image for favicon (small, fixed size) but regular img
 // for preview images so we can check naturalWidth/Height on load
-
-export interface LinkPreviewData {
-  url: string
-  title?: string
-  description?: string
-  image?: string
-  imageWidth?: number
-  imageHeight?: number
-  siteName?: string
-  favicon?: string
-  /** True if URL points directly to an image (detected via Content-Type or extension) */
-  isDirectImage?: boolean
-  /** YouTube video ID for embedded player (when URL is a YouTube video) */
-  youtubeVideoId?: string
-}
 
 interface LinkPreviewProps {
   data: LinkPreviewData

@@ -49,7 +49,7 @@ import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
+import { CORS_PROXY_INFO } from '@/lib/link-preview/fetch'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'

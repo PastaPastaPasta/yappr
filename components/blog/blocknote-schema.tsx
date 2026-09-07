@@ -31,7 +31,7 @@ import {
   ViewColumnsIcon,
 } from '@heroicons/react/24/outline'
 import { PlayIcon } from '@heroicons/react/24/solid'
-import { extractYouTubeVideoId } from '@/hooks/use-link-preview'
+import { extractYouTubeVideoId } from '@/lib/link-preview/urls'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
