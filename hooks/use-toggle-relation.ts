@@ -64,6 +64,8 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
   const [isLoading, setIsLoading] = useState(initialValue === undefined)
   // Bumped per load so a slow response cannot overwrite a newer one.
   const requestRef = useRef(0)
+  // While a write is pending, `load` must not settle state underneath it.
+  const toggleInFlightRef = useRef(false)
   // The latest callbacks, so `load` does not have to depend on them.
   const optionsRef = useRef(options)
   optionsRef.current = options
@@ -73,6 +75,8 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
       const request = ++requestRef.current
       const isCurrent = () => requestRef.current === request
 
+      // The write's own finally block settles isLoading with the real value.
+      if (toggleInFlightRef.current) return
       if (!viewerId || !subjectId || isSelf) {
         // Logged out, or no subject yet: the relation cannot hold.
         setIsOn(false)
@@ -135,6 +139,7 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
       const wasOn = isOn
       const { turnOn, turnOff, onMessage, offMessage, failedMessage, onOptimistic, onRollback } = optionsRef.current
 
+      toggleInFlightRef.current = true
       setIsOn(!wasOn)
       setIsLoading(true)
       cache.set(viewerId, subjectId, !wasOn)
@@ -153,6 +158,7 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         logger.error(`${label}: toggle failed:`, error)
         toast.error(failedMessage(error))
       } finally {
+        toggleInFlightRef.current = false
         setIsLoading(false)
       }
     },
