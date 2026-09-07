@@ -10,8 +10,7 @@ import type { MediaGate } from '@/hooks/use-media-gate'
 import { cn } from '@/lib/utils'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { useAuth } from '@/contexts/auth-context'
-import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
-import { MentionValidationStatus } from '@/hooks/use-mention-validation'
+import type { FieldValidationStatus } from '@/hooks/use-post-field-validation'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { usePrivateFeedRequest } from '@/hooks/use-private-feed-request'
 import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
@@ -30,9 +29,9 @@ interface PrivatePostContentProps {
    */
   rootPostOwnerId?: string
   className?: string
-  hashtagValidations?: Map<string, HashtagValidationStatus>
+  hashtagValidations?: Map<string, FieldValidationStatus>
   onFailedHashtagClick?: (hashtag: string) => void
-  mentionValidations?: Map<string, MentionValidationStatus>
+  mentionValidations?: Map<string, FieldValidationStatus>
   onFailedMentionClick?: (username: string) => void
   /** @deprecated Use authorId instead. This prop is kept for backwards compatibility. */
   onRequestAccess?: () => void
@@ -128,9 +127,9 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
  */
 interface TeaserProps {
   content: string
-  hashtagValidations?: Map<string, HashtagValidationStatus>
+  hashtagValidations?: Map<string, FieldValidationStatus>
   onFailedHashtagClick?: (hashtag: string) => void
-  mentionValidations?: Map<string, MentionValidationStatus>
+  mentionValidations?: Map<string, FieldValidationStatus>
   onFailedMentionClick?: (username: string) => void
   mediaGate?: MediaGate
 }

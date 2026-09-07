@@ -48,10 +48,8 @@ import { useFollow } from '@/hooks/use-follow'
 import { useMediaGate } from '@/hooks/use-media-gate'
 import { useQuotedPost } from '@/hooks/use-quoted-post'
 import { GatedPostMedia } from './gated-media'
-import { useHashtagValidation } from '@/hooks/use-hashtag-validation'
-import { useHashtagRecoveryModal } from '@/hooks/use-hashtag-recovery-modal'
-import { useMentionValidation } from '@/hooks/use-mention-validation'
-import { useMentionRecoveryModal } from '@/hooks/use-mention-recovery-modal'
+import { usePostFieldValidation } from '@/hooks/use-post-field-validation'
+import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { tipService } from '@/lib/services/tip-service'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
@@ -336,15 +334,12 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
   const { setReplyingTo, setComposeOpen, setQuotingPost } = useAppStore()
   const { open: openTipModal } = useTipModal()
-  const { open: openHashtagRecoveryModal } = useHashtagRecoveryModal()
-  const { open: openMentionRecoveryModal } = useMentionRecoveryModal()
+  const { open: openRecoveryModal } = useRecoveryModal()
   const { open: openDeleteModal } = useDeleteConfirmationModal()
 
-  // Validate hashtags for all posts (checks if hashtag documents exist on platform)
-  const { validations: hashtagValidations, revalidate: revalidateHashtags } = useHashtagValidation(post)
-
-  // Validate mentions for all posts (checks if mention documents exist on platform)
-  const { validations: mentionValidations, revalidate: revalidateMentions } = useMentionValidation(post)
+  // Whether each hashtag/mention index document actually landed on Platform.
+  const { validations: hashtagValidations } = usePostFieldValidation('hashtag', post)
+  const { validations: mentionValidations } = usePostFieldValidation('mention', post)
 
   // Use pre-fetched enrichment data to avoid N+1 queries
   const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id, {
@@ -383,34 +378,6 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     setReposts(statsReposts)
     setBookmarked(initialBookmarked)
   }, [initialLiked, statsLikes, initialReposted, statsReposts, initialBookmarked])
-
-  // Listen for hashtag registration events to revalidate
-  useEffect(() => {
-    const handleHashtagRegistered = (event: CustomEvent<{ postId: string; hashtag: string }>) => {
-      if (event.detail.postId === post.id) {
-        revalidateHashtags()
-      }
-    }
-
-    window.addEventListener('hashtag-registered', handleHashtagRegistered as EventListener)
-    return () => {
-      window.removeEventListener('hashtag-registered', handleHashtagRegistered as EventListener)
-    }
-  }, [post.id, revalidateHashtags])
-
-  // Listen for mention registration events to revalidate
-  useEffect(() => {
-    const handleMentionRegistered = (event: CustomEvent<{ postId: string; username: string }>) => {
-      if (event.detail.postId === post.id) {
-        revalidateMentions()
-      }
-    }
-
-    window.addEventListener('mention-registered', handleMentionRegistered as EventListener)
-    return () => {
-      window.removeEventListener('mention-registered', handleMentionRegistered as EventListener)
-    }
-  }, [post.id, revalidateMentions])
 
   // Check if this post is a tip and parse tip info
   const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
@@ -611,13 +578,8 @@ export function PostCard({ post, hideAvatar = false, isOwnPost: isOwnPostProp, e
     openTipModal(enrichedPost)
   }
 
-  const handleFailedHashtagClick = (hashtag: string) => {
-    openHashtagRecoveryModal(post, hashtag)
-  }
-
-  const handleFailedMentionClick = (username: string) => {
-    openMentionRecoveryModal(post, username)
-  }
+  const handleFailedHashtagClick = (hashtag: string) => openRecoveryModal('hashtag', post, hashtag)
+  const handleFailedMentionClick = (username: string) => openRecoveryModal('mention', post, username)
 
   const handleDelete = () => {
     const authedUser = requireAuth('delete')
