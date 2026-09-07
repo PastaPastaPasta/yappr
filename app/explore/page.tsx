@@ -4,8 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon, TrophyIcon, UserGroupIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
@@ -29,7 +28,6 @@ type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
@@ -218,12 +216,8 @@ export default function ExplorePage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button
@@ -340,7 +334,7 @@ export default function ExplorePage() {
                 </button>
               </div>
             )}
-          </header>
+          </PageHeader>
 
           <AnimatePresence mode="wait">
             {searchQuery ? (
@@ -553,10 +547,6 @@ export default function ExplorePage() {
               </motion.div>
             )}
           </AnimatePresence>
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }

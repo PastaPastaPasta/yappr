@@ -7,8 +7,7 @@ import { MagnifyingGlassIcon, XMarkIcon, ArrowPathIcon, ArrowLeftIcon } from '@h
 import toast from 'react-hot-toast'
 import { WasmSdk } from '@dashevo/wasm-sdk'
 import { logger } from '@/lib/logger'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useCopy } from '@/hooks/use-copy'
@@ -26,7 +25,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { formatNumber } from '@/lib/utils'
-import { useSettingsStore } from '@/lib/store'
 
 export type ConnectionKind = 'following' | 'followers'
 
@@ -135,7 +133,6 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const { user: viewer } = useAuth()
   const viewerId = viewer?.identityId
   const { requireAuth } = useRequireAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const { data, loading, error, setLoading, setError, setData } = useAsyncState<ConnectionUser[]>(null)
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
@@ -355,12 +352,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   )
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader>
             <div className="px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -410,7 +403,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                 {searchError && <p className="text-sm text-red-500 mt-2">{searchError}</p>}
               </div>
             )}
-          </header>
+          </PageHeader>
 
           <ErrorBoundary level="component">
             {searchQuery ? (
@@ -443,11 +436,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
               </LoadingState>
             )}
           </ErrorBoundary>
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

@@ -24,8 +24,7 @@ import {
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
 import { PrivateFeedAccessButton } from '@/components/profile/private-feed-access-button'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { PostCard } from '@/components/post/post-card'
@@ -149,7 +148,6 @@ function UserProfileContent() {
   const userId = searchParams.get('id')
   const { user: currentUser, logout } = useAuth()
   const { requireAuth } = useRequireAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const isOwnProfile = currentUser?.identityId === userId
@@ -1048,27 +1046,18 @@ function UserProfileContent() {
 
   if (!userId) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <PageShell>
             <div className="p-8 text-center text-gray-500">
               <p>User not found</p>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+          <PageHeader borderless>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
@@ -1085,7 +1074,7 @@ function UserProfileContent() {
               <p className="text-sm text-gray-500">{postCount !== null ? postCount : '–'} posts</p>
             </div>
           </div>
-        </header>
+        </PageHeader>
 
         {isLoading ? (
           <div>
@@ -1806,10 +1795,7 @@ function UserProfileContent() {
             </div>
           </>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Avatar Customization Modal */}
       {isEditingAvatar && (
@@ -1909,16 +1895,13 @@ function UserProfileContent() {
         }}
         hasExistingUsernames={hasDpns}
       />
-    </div>
+    </>
   )
 }
 
 function LoadingFallback() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           <div>
             <div className="h-48 bg-gradient-yappr opacity-50" />
             <div className="px-4 pb-4">
@@ -1931,10 +1914,7 @@ function LoadingFallback() {
               <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
             </div>
           </div>
-        </main>
-      </div>
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

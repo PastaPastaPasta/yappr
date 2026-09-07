@@ -5,8 +5,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon, AtSymbolIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
@@ -23,7 +22,6 @@ function MentionsPageContent() {
   const searchParams = useSearchParams()
   const userId = searchParams.get('user')
   const { user: currentUser } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const [posts, setPosts] = useState<Post[]>([])
@@ -113,10 +111,7 @@ function MentionsPageContent() {
   // If not logged in and no user specified
   if (!targetUserId) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <PageShell>
             <div className="p-12 text-center">
               <AtSymbolIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">No user specified</h2>
@@ -124,10 +119,7 @@ function MentionsPageContent() {
                 Log in to see posts that mention you
               </p>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
@@ -139,13 +131,9 @@ function MentionsPageContent() {
       : 'Mentions'
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -163,7 +151,7 @@ function MentionsPageContent() {
                 </p>
               </div>
             </div>
-          </header>
+          </PageHeader>
 
           {/* Content */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
@@ -196,11 +184,7 @@ function MentionsPageContent() {
               ))
             )}
           </div>
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

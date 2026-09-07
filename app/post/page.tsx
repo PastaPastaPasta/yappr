@@ -3,15 +3,14 @@
 import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { ReplyThreadItem, flattenReplyThreads } from '@/components/post/reply-thread'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { usePostDetail } from '@/hooks/use-post-detail'
-import { useAppStore, useSettingsStore } from '@/lib/store'
+import { useAppStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
@@ -26,7 +25,6 @@ function PostDetailContent() {
   const postId = searchParams.get('id')
   const { user } = useAuth()
   const { setReplyingTo, setComposeOpen } = useAppStore()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const openLoginModal = useLoginModal((s) => s.open)
 
   // All post loading and enrichment handled by hook
@@ -112,27 +110,17 @@ function PostDetailContent() {
 
   if (!postId) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <PageShell>
             <div className="p-8 text-center text-gray-500">
               <p>Post not found</p>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+        <PageHeader>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
@@ -142,7 +130,7 @@ function PostDetailContent() {
             </button>
             <h1 className="text-xl font-bold">Post</h1>
           </div>
-        </header>
+        </PageHeader>
 
         {isLoading && !post ? (
           <div className="p-8 text-center">
@@ -246,28 +234,18 @@ function PostDetailContent() {
             <p className="text-gray-500">Post not found</p>
           </div>
         )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 
 function LoadingFallback() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           <div className="p-8 text-center">
             <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading post...</p>
           </div>
-        </main>
-      </div>
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

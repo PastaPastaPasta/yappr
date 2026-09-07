@@ -23,8 +23,7 @@ import {
   NoSymbolIcon,
   CommandLineIcon,
 } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useTheme } from 'next-themes'
@@ -807,12 +806,9 @@ function SettingsPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+        <PageHeader>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}
@@ -822,7 +818,7 @@ function SettingsPage() {
             </button>
             <h1 className="text-xl font-bold">{getSectionTitle()}</h1>
           </div>
-        </header>
+        </PageHeader>
 
         <motion.div
           key={activeSection}
@@ -833,10 +829,7 @@ function SettingsPage() {
         >
           {renderSection()}
         </motion.div>
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Username Registration Modal */}
       <UsernameModal
@@ -847,7 +840,7 @@ function SettingsPage() {
         }}
         hasExistingUsernames={dpnsUsernames.length > 0}
       />
-    </div>
+    </>
   )
 }
 
