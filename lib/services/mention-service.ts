@@ -255,18 +255,6 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     }
   }
 
-  /**
-   * Count posts that mention a specific user
-   */
-  async countMentionsForUser(userId: string): Promise<number> {
-    try {
-      const mentions = await this.getPostsMentioningUser(userId);
-      return mentions.length;
-    } catch (error) {
-      logger.error('Error counting mentions for user:', error);
-      return 0;
-    }
-  }
 }
 
 // Singleton instance

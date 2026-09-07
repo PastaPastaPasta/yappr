@@ -146,22 +146,6 @@ export interface ReplyThread {
   hiddenReplyCount?: number     // known descendants past the depth cap (reachable via "Continue thread")
 }
 
-export interface Comment {
-  id: string
-  author: User
-  content: string
-  createdAt: Date
-  likes: number
-  liked?: boolean
-  postId: string
-}
-
-export interface Trend {
-  topic: string
-  posts: number
-  category?: string
-}
-
 // Query options for post service methods
 export interface PostQueryOptions {
   /** Skip automatic enrichment - caller will handle enrichment manually */

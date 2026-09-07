@@ -113,14 +113,6 @@ class MentionValidationService {
   }
 
   /**
-   * Invalidate a specific mention entry (after registration).
-   * Since we cache at post level, this invalidates the whole post cache.
-   */
-  invalidateCacheEntry(postId: string, _username: string): void {
-    this.cache.delete(postId)
-  }
-
-  /**
    * Clear all cached data.
    */
   clearCache(): void {

@@ -13,13 +13,6 @@
 
 import * as secp256k1 from '@noble/secp256k1'
 import bs58 from 'bs58'
-import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
-
-export interface EncryptedMessage {
-  ciphertext: string  // base64 encoded
-  iv: string  // base64 encoded
-  senderPublicKey: string  // base64 encoded - sender's public key for ECDH decryption
-}
 
 /**
  * Generate a deterministic conversation ID from two participant IDs
@@ -86,84 +79,6 @@ async function deriveAesKey(sharedSecret: Uint8Array): Promise<CryptoKey> {
     false,
     ['encrypt', 'decrypt']
   )
-}
-
-/**
- * Encrypt a message for a recipient using ECDH + AES-GCM
- *
- * @param message - Plain text message
- * @param senderPrivateKeyWif - Sender's private key in WIF format
- * @param recipientPublicKeyBytes - Recipient's public key bytes (33 or 65 bytes)
- * @returns Encrypted message object with ciphertext and IV
- */
-export async function encryptMessage(
-  message: string,
-  senderPrivateKeyWif: string,
-  recipientPublicKeyBytes: Uint8Array
-): Promise<EncryptedMessage> {
-  // 1. Convert WIF to raw private key
-  const privateKey = wifToPrivateKey(senderPrivateKeyWif)
-
-  // 2. Get sender's public key (to include in message for decryption)
-  const senderPublicKey = secp256k1.getPublicKey(privateKey, true) // compressed 33 bytes
-
-  // 3. Derive shared secret using ECDH
-  const sharedSecret = deriveSharedSecret(privateKey, recipientPublicKeyBytes)
-
-  // 4. Derive AES key from shared secret
-  const aesKey = await deriveAesKey(sharedSecret)
-
-  // 5. Generate random IV (12 bytes for AES-GCM)
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-
-  // 6. Encrypt the message
-  const encoder = new TextEncoder()
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-    aesKey,
-    encoder.encode(message)
-  )
-
-  return {
-    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
-    iv: bytesToBase64(iv),
-    senderPublicKey: bytesToBase64(senderPublicKey)
-  }
-}
-
-/**
- * Decrypt a message using ECDH + AES-GCM
- *
- * @param encrypted - The encrypted message object
- * @param recipientPrivateKeyWif - Recipient's private key in WIF format
- * @param senderPublicKeyBytes - Sender's public key bytes (33 or 65 bytes)
- * @returns Decrypted plain text message
- */
-export async function decryptMessage(
-  encrypted: EncryptedMessage,
-  recipientPrivateKeyWif: string,
-  senderPublicKeyBytes: Uint8Array
-): Promise<string> {
-  // 1. Convert WIF to raw private key
-  const privateKey = wifToPrivateKey(recipientPrivateKeyWif)
-
-  // 2. Derive shared secret using ECDH (same as sender derived)
-  const sharedSecret = deriveSharedSecret(privateKey, senderPublicKeyBytes)
-
-  // 3. Derive AES key from shared secret
-  const aesKey = await deriveAesKey(sharedSecret)
-
-  // 4. Decrypt
-  const iv = base64ToBytes(encrypted.iv)
-  const ciphertext = base64ToBytes(encrypted.ciphertext)
-
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-    aesKey,
-    ciphertext
-  )
-
-  return new TextDecoder().decode(decrypted)
 }
 
 /**
@@ -241,27 +156,4 @@ export async function decryptFromBinary(
   )
 
   return new TextDecoder().decode(decrypted)
-}
-
-/**
- * Parse encrypted content string (format: "senderPubKey:iv:ciphertext") into EncryptedMessage
- * Also handles legacy format "iv:ciphertext" for backwards compatibility
- */
-export function parseEncryptedContent(encryptedContent: string): EncryptedMessage {
-  const parts = encryptedContent.split(':')
-  if (parts.length === 3) {
-    // New format: senderPubKey:iv:ciphertext
-    return { senderPublicKey: parts[0], iv: parts[1], ciphertext: parts[2] }
-  } else if (parts.length === 2) {
-    // Legacy format: iv:ciphertext (no sender public key)
-    return { senderPublicKey: '', iv: parts[0], ciphertext: parts[1] }
-  }
-  throw new Error('Invalid encrypted content format')
-}
-
-/**
- * Format EncryptedMessage as a string for storage (format: "senderPubKey:iv:ciphertext")
- */
-export function formatEncryptedContent(encrypted: EncryptedMessage): string {
-  return `${encrypted.senderPublicKey}:${encrypted.iv}:${encrypted.ciphertext}`
 }

@@ -434,14 +434,6 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   }
 
   /**
-   * Clear trending cache (call when new posts are created)
-   */
-  invalidateTrendingCache(): void {
-    this.trendingCache = null;
-    this.trendingCacheByWindow.clear();
-  }
-
-  /**
    * Normalize hashtag: lowercase, strip #, validate pattern
    */
   private normalizeHashtag(hashtag: string): string | null {

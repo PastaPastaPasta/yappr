@@ -9,15 +9,8 @@
  * is initialized before creating any WASM objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import {
-  IdentitySigner,
-  PrivateKey,
-  IdentityPublicKey,
-  PlatformVersion,
-} from '@dashevo/evo-sdk';
-import type { IdentityPublicKey as IdentityPublicKeyType } from './identity-service';
+import { IdentitySigner } from '@dashevo/evo-sdk';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { bytesToBase64 } from '@/lib/bytes'
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -53,18 +46,6 @@ export const SecurityLevel = {
   MEDIUM: 3,
 } as const;
 
-/**
- * Key type enum values
- * Matches KeyType from @dashevo/wasm-sdk
- */
-export const KeyType = {
-  ECDSA_SECP256K1: 0,
-  BLS12_381: 1,
-  ECDSA_HASH160: 2,
-  BIP13_SCRIPT_HASH: 3,
-  EDDSA_25519_HASH160: 4,
-} as const;
-
 class SignerService {
   /**
    * Create an IdentitySigner from a private key WIF
@@ -87,150 +68,6 @@ class SignerService {
     signer.addKeyFromWif(privateKeyWif);
 
     return signer;
-  }
-
-  /**
-   * Create an IdentitySigner from a hex-encoded private key
-   *
-   * @param privateKeyHex - The private key as a hex string (64 characters)
-   * @param network - The network ('testnet' or 'mainnet')
-   * @returns A configured IdentitySigner instance
-   */
-  async createSignerFromHex(
-    privateKeyHex: string,
-    network: 'testnet' | 'mainnet' = 'testnet'
-  ): Promise<InstanceType<typeof IdentitySigner>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
-
-    // Create a new signer instance using imported class
-    const signer = new IdentitySigner();
-
-    // Create PrivateKey from hex and add to signer
-    // Note: fromHex requires network parameter
-    const privateKey = PrivateKey.fromHex(privateKeyHex, network);
-    signer.addKey(privateKey);
-
-    return signer;
-  }
-
-  /**
-   * Create an IdentityPublicKey WASM object from identity key data
-   *
-   * This creates the WASM IdentityPublicKey object needed for signing
-   * state transitions.
-   *
-   * @param keyData - Key data from identity.publicKeys
-   * @returns A WASM IdentityPublicKey object
-   */
-  async createIdentityPublicKey(
-    keyData: IdentityPublicKeyType
-  ): Promise<InstanceType<typeof IdentityPublicKey>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
-
-    // Normalize the key data to match the expected JSON format
-    // v3.1: SDK consistently returns camelCase, requires $formatVersion field
-    const normalizedKeyData = {
-      $formatVersion: '0',
-      id: keyData.id,
-      type: keyData.type,
-      purpose: keyData.purpose,
-      securityLevel: keyData.securityLevel ?? SecurityLevel.HIGH,
-      readOnly: keyData.readOnly ?? (keyData.purpose === KeyPurpose.TRANSFER),
-      data: typeof keyData.data === 'string' ? keyData.data : bytesToBase64(keyData.data),
-      disabledAt: keyData.disabledAt,
-      contractBounds: keyData.contractBounds as object | undefined,
-    };
-
-    // Use the fromJSON method which handles proper deserialization
-    // Cast needed: TS can't narrow the ternary on data to string
-    const identityKey = IdentityPublicKey.fromJSON(
-      normalizedKeyData as Parameters<typeof IdentityPublicKey.fromJSON>[0],
-      PlatformVersion.current()
-    );
-
-    return identityKey;
-  }
-
-  /**
-   * Get a signing key from an identity's public keys
-   *
-   * Finds an appropriate key for signing state transitions.
-   * Document operations typically require at least HIGH security level.
-   * Identity operations require CRITICAL or MASTER level.
-   *
-   * @param publicKeys - Array of public keys from the identity
-   * @param requiredSecurityLevel - Minimum security level required (default: HIGH = 2)
-   * @param keyId - Specific key ID to use (optional)
-   * @returns The matching key data, or null if none found
-   */
-  getSigningKeyData(
-    publicKeys: IdentityPublicKeyType[],
-    requiredSecurityLevel: number = SecurityLevel.HIGH,
-    keyId?: number
-  ): IdentityPublicKeyType | null {
-    // Filter out disabled keys
-    // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
-    const activeKeys = publicKeys.filter(k => !k.disabledAt);
-
-    if (keyId !== undefined) {
-      // Find specific key by ID
-      const key = activeKeys.find(k => k.id === keyId);
-      if (key) {
-        const level = key.securityLevel ?? SecurityLevel.MEDIUM;
-        if (level <= requiredSecurityLevel) {
-          return key;
-        }
-      }
-      return null;
-    }
-
-    // Find key with appropriate security level
-    // Look for AUTHENTICATION purpose keys first
-    const authKeys = activeKeys.filter(k => k.purpose === KeyPurpose.AUTHENTICATION);
-
-    // Sort by security level (lower = more secure) and find first that meets requirement
-    // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
-    const sortedKeys = authKeys.sort((a, b) => {
-      const levelA = a.securityLevel ?? SecurityLevel.MEDIUM;
-      const levelB = b.securityLevel ?? SecurityLevel.MEDIUM;
-      return levelA - levelB;
-    });
-
-    for (const key of sortedKeys) {
-      const level = key.securityLevel ?? SecurityLevel.MEDIUM;
-      if (level <= requiredSecurityLevel) {
-        return key;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Create both signer and identity key for a state transition
-   *
-   * This is a convenience method that creates both objects needed
-   * for the new typed state transition API.
-   *
-   * @param privateKeyWif - The private key in WIF format
-   * @param keyData - The public key data from the identity
-   * @returns Object containing signer and identityKey
-   */
-  async createSignerAndKey(
-    privateKeyWif: string,
-    keyData: IdentityPublicKeyType
-  ): Promise<{
-    signer: InstanceType<typeof IdentitySigner>;
-    identityKey: InstanceType<typeof IdentityPublicKey>;
-  }> {
-    const [signer, identityKey] = await Promise.all([
-      this.createSigner(privateKeyWif),
-      this.createIdentityPublicKey(keyData),
-    ]);
-
-    return { signer, identityKey };
   }
 
   /**

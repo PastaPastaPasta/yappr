@@ -281,17 +281,6 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     });
   }
 
-  /**
-   * Check mutual follow (both users follow each other)
-   */
-  async areMutualFollowers(userId1: string, userId2: string): Promise<boolean> {
-    const [follows1to2, follows2to1] = await Promise.all([
-      this.isFollowing(userId2, userId1),
-      this.isFollowing(userId1, userId2)
-    ]);
-
-    return follows1to2 && follows2to1;
-  }
 }
 
 // Singleton instance

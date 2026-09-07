@@ -19,9 +19,6 @@ import { hkdf } from '@noble/hashes/hkdf.js'
 import { getPublicKey } from './keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
 
-// Key type indicates whether a key was derived from auth key or externally provided
-export type KeyType = 'derived' | 'external'
-
 // HKDF info string for encryption key derivation
 const INFO_ENCRYPTION_KEY = 'yappr/encryption-key/v1'
 
@@ -106,35 +103,4 @@ export async function validateDerivedKeyMatchesIdentity(
   }
 
   return bytesEqual(derivedPubKey, onChainPubKeyBytes)
-}
-
-/**
- * Determine the encryption key type by attempting derivation and checking match.
- *
- * @param authPrivateKey - The 32-byte auth private key
- * @param identityId - The user's identity ID
- * @returns The key type ('derived' if matches, 'external' if not, or null if no key on identity)
- */
-export async function determineKeyType(
-  authPrivateKey: Uint8Array,
-  identityId: string,
-): Promise<KeyType | null> {
-  // First check if identity has an encryption key
-  const { identityService } = await import('@/lib/services/identity-service')
-  const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup')
-  const identityData = await identityService.getIdentity(identityId)
-  if (!identityData) {
-    return null
-  }
-
-  if (!hasEncryptionKeyOnIdentity(identityData.publicKeys)) {
-    return null
-  }
-
-  // Derive the encryption key
-  const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
-
-  // Check if derived matches identity
-  const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId)
-  return matches ? 'derived' : 'external'
 }

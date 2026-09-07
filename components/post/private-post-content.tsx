@@ -781,24 +781,6 @@ export function PrivatePostContent({
 }
 
 /**
- * Helper component to show the private badge on posts
- */
-export function PrivatePostBadge({ className }: { className?: string }) {
-  return (
-    <span
-      data-testid="private-post-badge"
-      className={cn(
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs',
-        className
-      )}
-    >
-      <LockClosedIcon className="h-3 w-3" />
-      <span>Private</span>
-    </span>
-  )
-}
-
-/**
  * Check if a post is a private post (has encrypted content)
  */
 export function isPrivatePost(post: Post): boolean {

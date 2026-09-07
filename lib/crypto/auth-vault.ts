@@ -159,14 +159,6 @@ export function generateDek(): Uint8Array {
   return randomBytes(32)
 }
 
-export function generatePrfInput(): Uint8Array {
-  return randomBytes(32)
-}
-
-export function getBundleHash(bundle: AuthVaultBundle): Uint8Array {
-  return sha256(encodeBundle(bundle))
-}
-
 
 export async function encryptBundle(bundle: AuthVaultBundle, dek: Uint8Array, vaultId: string): Promise<EncryptResult & { bundleHash: Uint8Array }> {
   const aad = buildBundleAad(bundle.identityId, vaultId, bundle.secretKind, bundle.version)

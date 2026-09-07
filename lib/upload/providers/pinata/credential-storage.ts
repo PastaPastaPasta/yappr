@@ -150,19 +150,3 @@ export function clearPinataCredentials(identityId: string): void {
   remove(`jwt_${identityId}`)
   remove(`gateway_${identityId}`)
 }
-
-/**
- * Clear all Pinata credentials (for all identities)
- */
-export function clearAllPinataCredentials(): void {
-  if (!isStorageAvailable()) return
-
-  const keysToRemove: string[] = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key?.startsWith(PREFIX)) {
-      keysToRemove.push(key)
-    }
-  }
-  keysToRemove.forEach(key => localStorage.removeItem(key))
-}

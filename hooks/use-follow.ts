@@ -10,7 +10,6 @@ import {
   getFollowStatus,
   setFollowStatus,
   deleteFollowStatus,
-  clearFollowCache as clearSharedFollowCache,
   seedFollowStatusCache
 } from '@/lib/caches/user-status-cache'
 
@@ -142,13 +141,6 @@ export function useFollow(targetUserId: string, options: UseFollowOptions = {}):
   }, [cacheKey, checkFollowStatus])
 
   return { isFollowing, isLoading, toggleFollow, refresh }
-}
-
-/**
- * Clear all follow caches
- */
-export function clearFollowCache(): void {
-  clearSharedFollowCache()
 }
 
 // Re-export for convenience

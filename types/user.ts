@@ -11,19 +11,6 @@ export interface SocialLink {
 }
 
 // Profile payload (shared between profile forms/services)
-export interface Profile {
-  displayName: string
-  bio?: string
-  location?: string
-  website?: string
-  avatar?: string
-  bannerUri?: string
-  paymentUris?: ParsedPaymentUri[]
-  pronouns?: string
-  nsfw?: boolean
-  socialLinks?: SocialLink[]
-}
-
 export interface User {
   id: string
   documentId?: string  // The profile document $id (for updates)

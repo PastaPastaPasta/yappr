@@ -343,13 +343,6 @@ class EvoSdkService {
   }
 
   /**
-   * Get current configuration
-   */
-  getConfig(): EvoSdkConfig | null {
-    return this.config;
-  }
-
-  /**
    * Reinitialize with new configuration
    */
   async reinitialize(config: EvoSdkConfig): Promise<void> {

@@ -1,7 +1,6 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 /**
  * On-chain key encryption utilities for encrypted key backup feature.
  *
@@ -9,6 +8,8 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
  *   Uses PBKDF2 for key derivation (user-configurable iterations) and AES-GCM for encryption.
  *   Salt is derived from identity ID to ensure uniqueness without storing separately.
  */
+
+import { base64ToBytes } from '@/lib/bytes'
 
 // Iteration limits (1M to 1B)
 export const MIN_KDF_ITERATIONS = 1_000_000
@@ -204,44 +205,6 @@ export async function deriveOnchainKey(
 }
 
 /**
- * Encrypt private key for on-chain storage.
- * Returns data suitable for storing in the encryptedKeyBackup contract document.
- */
-export async function encryptKeyForOnchain(
-  privateKeyWif: string,
-  identityId: string,
-  password: string,
-  iterations: number
-): Promise<OnchainEncryptedData> {
-  // Validate password
-  const validation = validateBackupPassword(password)
-  if (!validation.valid) {
-    throw new Error(validation.error)
-  }
-
-  // Generate random IV (12 bytes for AES-GCM)
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-
-  // Derive key from identity ID + password
-  const key = await deriveOnchainKey(identityId, password, iterations)
-
-  // Encrypt the private key
-  const encoder = new TextEncoder()
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-    key,
-    encoder.encode(privateKeyWif)
-  )
-
-  return {
-    encryptedKey: bytesToBase64(new Uint8Array(ciphertext)),
-    iv: bytesToBase64(iv),
-    version: ENCRYPTION_VERSION,
-    kdfIterations: iterations
-  }
-}
-
-/**
  * Decrypt private key from on-chain backup.
  * Uses the stored iteration count for decryption.
  */
@@ -263,26 +226,13 @@ export async function decryptKeyFromOnchain(
   const ciphertext = base64ToBytes(data.encryptedKey)
 
   try {
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-      key,
-      ciphertext
-    )
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
 
     const decoder = new TextDecoder()
     return decoder.decode(decrypted)
   } catch {
     throw new Error('Invalid password')
   }
-}
-
-/**
- * Estimate decryption time for a given iteration count based on benchmark
- */
-export async function estimateDecryptionTime(iterations: number): Promise<number> {
-  const benchmark = await benchmarkPbkdf2(1000) // Quick benchmark
-  const iterationsPerMs = benchmark.iterations / benchmark.estimatedMs
-  return Math.round(iterations / iterationsPerMs)
 }
 
 // --- Extended Backup (v2) Functions ---
@@ -294,45 +244,6 @@ export function isExtendedBackupPayload(data: unknown): data is ExtendedBackupPa
   if (typeof data !== 'object' || data === null) return false
   const obj = data as Record<string, unknown>
   return obj.formatVersion === 2 && typeof obj.loginKey === 'string'
-}
-
-/**
- * Encrypt extended backup payload for on-chain storage.
- * Uses the same encryption scheme as v1 but with JSON payload.
- */
-export async function encryptExtendedBackup(
-  payload: ExtendedBackupPayload,
-  identityId: string,
-  password: string,
-  iterations: number
-): Promise<OnchainEncryptedData> {
-  // Validate password
-  const validation = validateBackupPassword(password)
-  if (!validation.valid) {
-    throw new Error(validation.error)
-  }
-
-  // Generate random IV (12 bytes for AES-GCM)
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-
-  // Derive key from identity ID + password
-  const key = await deriveOnchainKey(identityId, password, iterations)
-
-  // Encrypt the JSON payload
-  const encoder = new TextEncoder()
-  const payloadJson = JSON.stringify(payload)
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-    key,
-    encoder.encode(payloadJson)
-  )
-
-  return {
-    encryptedKey: bytesToBase64(new Uint8Array(ciphertext)),
-    iv: bytesToBase64(iv),
-    version: ENCRYPTION_VERSION,
-    kdfIterations: iterations
-  }
 }
 
 /**

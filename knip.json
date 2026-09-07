@@ -17,5 +17,11 @@
   ],
   "ignoreDependencies": [
     "platform-auth"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "ignoreMembers": [
+    "getDerivedStateFromError",
+    "componentDidCatch",
+    "render"
   ]
 }

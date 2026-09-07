@@ -13,10 +13,10 @@ const HEX_PATTERN = /^[0-9a-fA-F]*$/
 
 /**
  * A `Uint8Array` known to sit on a plain (non-shared) `ArrayBuffer`. Web Crypto
- * and `Blob` accept only this variant, so the decoders here return it and
- * callers can hand the result straight to `crypto.subtle` without a cast.
+ * and `Blob` accept only this variant, so the decoders return it and callers
+ * can hand the result straight to `crypto.subtle` without a cast.
  */
-export type Bytes = Uint8Array<ArrayBuffer>
+type Bytes = Uint8Array<ArrayBuffer>
 
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''

@@ -111,18 +111,6 @@ export function invalidateBlockCache(userId: string): void {
 }
 
 /**
- * Update own blocks in the cache.
- */
-export function setOwnBlocks(userId: string, blockedIds: string[]): void {
-  const cache = loadBlockCache(userId) || getEmptyCache()
-  cache.ownBlocks = {
-    blockedIds,
-    timestamp: Date.now()
-  }
-  saveBlockCache(userId, cache)
-}
-
-/**
  * Add a block to own blocks cache.
  */
 export function addOwnBlock(userId: string, blockedId: string): void {

@@ -11,16 +11,10 @@
  * Spec: YAPPR_DET_SIGNER_SPEC.md
  */
 
-import { logger } from '@/lib/logger'
 import bs58 from 'bs58'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { KEY_EXCHANGE_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
 import { bytesToBase64, requireBytes } from '@/lib/bytes'
-import {
-  deriveSharedSecret,
-  decryptLoginKey,
-  clearKeyMaterial
-} from '../crypto/key-exchange'
 
 /**
  * Login key response document from the key exchange contract.
@@ -42,34 +36,6 @@ export interface LoginKeyResponse {
   encryptedPayload: Uint8Array
   /** The derivation index used for this login key */
   keyIndex: number
-}
-
-/**
- * Result of a successful key exchange decryption
- */
-export interface DecryptedKeyExchangeResult {
-  /** The decrypted 32-byte login key */
-  loginKey: Uint8Array
-  /** The key derivation index */
-  keyIndex: number
-  /** The wallet's ephemeral public key (for verification) */
-  walletEphemeralPubKey: Uint8Array
-  /** The identity ID discovered from the response document's $ownerId */
-  identityId: string
-}
-
-/**
- * Options for polling for a key exchange response
- */
-export interface PollOptions {
-  /** Polling interval in milliseconds (default: 3000) */
-  pollIntervalMs?: number
-  /** Timeout in milliseconds (default: 120000) */
-  timeoutMs?: number
-  /** AbortSignal for cancellation */
-  signal?: AbortSignal
-  /** Callback for each poll attempt */
-  onPoll?: () => void
 }
 
 /**
@@ -127,132 +93,6 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
 
     const result = await this.query(options)
     return result.documents[0] || null
-  }
-
-  /**
-   * Poll for a response and attempt to decrypt it.
-   *
-   * Polls using the unique (contractId, appEphemeralPubKeyHash) index.
-   * Identity is discovered from the response document's $ownerId field.
-   *
-   * @param contractIdBytes - The application's contract ID (32 bytes)
-   * @param appEphemeralPubKeyHash - Hash160 of app's ephemeral public key (20 bytes)
-   * @param appEphemeralPrivateKey - The application's ephemeral private key (32 bytes)
-   * @param options - Polling options
-   * @returns The decrypted login key, metadata, and discovered identity ID
-   * @throws If timeout or cancelled
-   */
-  async pollForResponse(
-    contractIdBytes: Uint8Array,
-    appEphemeralPubKeyHash: Uint8Array,
-    appEphemeralPrivateKey: Uint8Array,
-    options: PollOptions = {}
-  ): Promise<DecryptedKeyExchangeResult> {
-    const {
-      pollIntervalMs = 3000,
-      timeoutMs = 120000,
-      signal,
-      onPoll
-    } = options
-
-    const startTime = Date.now()
-
-    while (Date.now() - startTime < timeoutMs) {
-      if (signal?.aborted) {
-        throw new Error('Cancelled')
-      }
-
-      onPoll?.()
-
-      try {
-        const response = await this.getResponse(
-          contractIdBytes,
-          appEphemeralPubKeyHash
-        )
-
-        logger.info('Key exchange: Poll result', {
-          hasResponse: !!response,
-          ownerId: response?.$ownerId
-        })
-
-        if (response) {
-          logger.info('Key exchange: Found response, attempting decryption', {
-            walletEphemeralPubKeyLength: response.walletEphemeralPubKey?.length,
-            encryptedPayloadLength: response.encryptedPayload?.length,
-            keyIndex: response.keyIndex,
-            ownerId: response.$ownerId
-          })
-
-          try {
-            const sharedSecret = deriveSharedSecret(
-              appEphemeralPrivateKey,
-              response.walletEphemeralPubKey
-            )
-
-            const loginKey = await decryptLoginKey(
-              response.encryptedPayload,
-              sharedSecret
-            )
-
-            logger.info('Key exchange: Decryption successful!', {
-              loginKeyLength: loginKey?.length,
-              keyIndex: response.keyIndex,
-              identityId: response.$ownerId
-            })
-
-            clearKeyMaterial(sharedSecret)
-
-            return {
-              loginKey,
-              keyIndex: response.keyIndex,
-              walletEphemeralPubKey: response.walletEphemeralPubKey,
-              identityId: response.$ownerId
-            }
-          } catch (decryptError) {
-            logger.info('Key exchange: Decryption failed, waiting for new response...', decryptError)
-          }
-        }
-      } catch (queryError) {
-        logger.warn('Key exchange: Poll query error:', queryError)
-      }
-
-      await this.sleep(pollIntervalMs, signal)
-    }
-
-    throw new Error('Timeout waiting for key exchange response')
-  }
-
-  /**
-   * Sleep helper that respects AbortSignal.
-   */
-  private sleep(ms: number, signal?: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new Error('Cancelled'))
-        return
-      }
-
-      const cleanup = () => {
-        if (signal) {
-          signal.removeEventListener('abort', onAbort)
-        }
-      }
-
-      const onAbort = () => {
-        clearTimeout(timeout)
-        cleanup()
-        reject(new Error('Cancelled'))
-      }
-
-      const timeout = setTimeout(() => {
-        cleanup()
-        resolve()
-      }, ms)
-
-      if (signal) {
-        signal.addEventListener('abort', onAbort)
-      }
-    })
   }
 }
 

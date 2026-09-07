@@ -337,14 +337,6 @@ class DpnsService {
   }
 
   /**
-   * Search for usernames by prefix
-   */
-  async searchUsernames(prefix: string, limit: number = 10): Promise<string[]> {
-    const results = await this.searchUsernamesWithDetails(prefix, limit);
-    return results.map(r => r.username);
-  }
-
-  /**
    * Find the WASM identity public key that matches the stored private key.
    *
    * This is critical for the typed API: we must use the key that matches our signer's private key.

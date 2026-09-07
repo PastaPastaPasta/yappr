@@ -8,7 +8,6 @@ import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
 import {
   getBlogFollowStatus,
   setBlogFollowStatus,
-  clearBlogFollowCache as clearSharedBlogFollowCache,
   seedBlogFollowStatusCache
 } from '@/lib/caches/user-status-cache'
 
@@ -130,10 +129,6 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
   }, [user?.identityId, blogId, isFollowing, isLoading, followerCount, cacheKey, openLoginPrompt])
 
   return { isFollowing, isLoading, followerCount, toggleFollow }
-}
-
-export function clearBlogFollowCache(): void {
-  clearSharedBlogFollowCache()
 }
 
 export { seedBlogFollowStatusCache as seedBlogFollowCache }

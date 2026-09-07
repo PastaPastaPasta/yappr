@@ -28,8 +28,6 @@ export enum UploadErrorCode {
   SPACE_CREATION_FAILED = 'SPACE_CREATION_FAILED',
   /** Credential storage/retrieval failed */
   CREDENTIAL_ERROR = 'CREDENTIAL_ERROR',
-  /** Unknown error */
-  UNKNOWN = 'UNKNOWN',
 }
 
 /**
@@ -37,27 +35,15 @@ export enum UploadErrorCode {
  */
 export class UploadException extends Error {
   public readonly code: UploadErrorCode
-  public readonly cause?: Error
 
   constructor(code: UploadErrorCode, message: string, cause?: Error) {
-    super(message)
+    super(message, { cause })
     this.name = 'UploadException'
     this.code = code
-    this.cause = cause
     // Maintain proper stack trace for where our error was thrown
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, UploadException)
     }
-  }
-
-  /**
-   * Check if the error is retryable
-   */
-  isRetryable(): boolean {
-    return [
-      UploadErrorCode.NETWORK_ERROR,
-      UploadErrorCode.VERIFICATION_TIMEOUT,
-    ].includes(this.code)
   }
 
   /**

@@ -131,14 +131,6 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   }
 
   /**
-   * Count bookmarks for a user
-   */
-  async countUserBookmarks(userId: string): Promise<number> {
-    const bookmarks = await this.getUserBookmarks(userId);
-    return bookmarks.length;
-  }
-
-  /**
    * Get user's bookmarks for specific posts.
    * Uses the ownerAndPost index: [$ownerId, postId]
    *

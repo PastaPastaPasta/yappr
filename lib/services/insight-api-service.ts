@@ -149,11 +149,3 @@ export function getNetworkFromScheme(scheme: string): AppNetwork {
 export function satoshisToDash(satoshis: number): number {
   return satoshis / 100000000
 }
-
-export const insightApiService = {
-  fetchUtxos,
-  waitForUtxo,
-  isDashScheme,
-  getNetworkFromScheme,
-  satoshisToDash
-}

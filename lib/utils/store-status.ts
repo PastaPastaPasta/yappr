@@ -32,6 +32,3 @@ export function getStoreStatusDescription(status: StoreStatus): string {
   return STORE_STATUS_CONFIG[status].description
 }
 
-export function getStoreStatusBadgeClasses(status: StoreStatus): string {
-  return STORE_STATUS_CONFIG[status].badgeClasses
-}

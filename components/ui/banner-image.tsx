@@ -184,10 +184,3 @@ export const BannerImage = memo(function BannerImage({
 export function invalidateBannerCache(userId: string): void {
   bannerCache.delete(userId)
 }
-
-/**
- * Clear all banner cache.
- */
-export function clearBannerCache(): void {
-  bannerCache.clear()
-}

@@ -6,32 +6,6 @@ export * from '../types/notification'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 
 // V3 DM contract document types (raw from platform)
-export interface ConversationInviteDocument {
-  $id: string
-  $ownerId: string  // sender
-  $createdAt: number
-  recipientId: Uint8Array  // 32 bytes
-  conversationId: Uint8Array  // 10 bytes
-  senderPubKey?: Uint8Array  // 33 bytes, optional (for hash160 identities)
-}
-
-export interface DirectMessageDocument {
-  $id: string
-  $ownerId: string  // sender
-  $createdAt: number
-  conversationId: Uint8Array  // 10 bytes
-  encryptedContent: Uint8Array  // binary: [12 bytes IV | ciphertext], max 5KB
-}
-
-export interface ReadReceiptDocument {
-  $id: string
-  $ownerId: string  // reader (who owns this receipt)
-  $createdAt: number
-  $updatedAt: number  // v3: use this as "last read" timestamp
-  $revision?: number
-  conversationId: Uint8Array  // 10 bytes
-}
-
 // Decrypted message for UI display
 export interface DirectMessage {
   id: string
@@ -59,26 +33,6 @@ export interface BlockDocument {
   $createdAt: number
   blockedId: string // Who is blocked (base58 format after transformation)
   message?: string // Optional public reason for blocking
-}
-
-export interface BlockFilterDocument {
-  $id: string
-  $ownerId: string
-  $createdAt: number
-  $updatedAt: number
-  $revision?: number
-  filterData: Uint8Array // Serialized bloom filter (up to 5KB)
-  itemCount: number // Number of items in the filter
-  version: number // Bloom filter version for forward compatibility
-}
-
-export interface BlockFollowDocument {
-  $id: string
-  $ownerId: string
-  $createdAt: number
-  $updatedAt: number
-  $revision?: number
-  followedBlockers: Uint8Array // Encoded array of user IDs (max 100 * 32 bytes)
 }
 
 // Parsed block follow data (after decoding followedBlockers)

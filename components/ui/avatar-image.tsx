@@ -185,10 +185,3 @@ export const UserAvatar = memo(function UserAvatar({
 export function invalidateAvatarImageCache(userId: string): void {
   avatarCache.delete(userId)
 }
-
-/**
- * Clear all avatar cache
- */
-export function clearAvatarImageCache(): void {
-  avatarCache.clear()
-}
