@@ -4,7 +4,7 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
+import { blockStatusCache, followStatusCache } from '../caches/user-status-cache';
 import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
@@ -99,8 +99,8 @@ export async function enrichPostsBatch(
     ]);
 
     if (currentUserId) {
-      seedBlockStatusCache(currentUserId, blockStatusMap);
-      seedFollowStatusCache(currentUserId, followStatusMap);
+      blockStatusCache.seed(currentUserId, blockStatusMap);
+      followStatusCache.seed(currentUserId, followStatusMap);
     }
 
     const profileMap = profileDataByOwnerId(profiles);

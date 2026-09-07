@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
-import { getFollowStatus } from '@/lib/caches/user-status-cache'
+import { followStatusCache } from '@/lib/caches/user-status-cache'
 
 export interface MediaGate {
   /** True when the author's media must not be fetched and a placeholder shows instead */
@@ -46,6 +46,6 @@ export function useMediaGate(authorId: string, isFollowingHint?: boolean): Media
   if (!viewerId) return { gated: true, reveal }
   if (viewerId === authorId) return { gated: false, reveal }
 
-  const isFollowedAuthor = getFollowStatus(`${viewerId}:${authorId}`) ?? isFollowingHint
+  const isFollowedAuthor = followStatusCache.get(viewerId, authorId) ?? isFollowingHint
   return { gated: isFollowedAuthor !== true, reveal }
 }

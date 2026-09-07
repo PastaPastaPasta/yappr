@@ -1,17 +1,8 @@
 'use client'
 
-import { categorizeError, isReferenceNotFoundError } from '@/lib/error-utils';
-import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
-import { useAuth } from '@/contexts/auth-context'
-import toast from 'react-hot-toast'
-import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
-import {
-  getFollowStatus,
-  setFollowStatus,
-  deleteFollowStatus,
-  seedFollowStatusCache
-} from '@/lib/caches/user-status-cache'
+import { categorizeError, isReferenceNotFoundError } from '@/lib/error-utils'
+import { followStatusCache } from '@/lib/caches/user-status-cache'
+import { useToggleRelation } from './use-toggle-relation'
 
 export interface UseFollowResult {
   isFollowing: boolean
@@ -25,123 +16,32 @@ export interface UseFollowOptions {
   initialValue?: boolean
 }
 
-/**
- * Hook to manage follow state for a target user
- */
+/** Whether the viewer follows `targetUserId`, with an optimistic toggle. */
 export function useFollow(targetUserId: string, options: UseFollowOptions = {}): UseFollowResult {
-  const { initialValue } = options
-  const { user } = useAuth()
-  const { open: openLoginPrompt } = useLoginPromptModal()
-  const [isFollowing, setIsFollowing] = useState(initialValue ?? false)
-  // Only show loading if no initial value was provided
-  const [isLoading, setIsLoading] = useState(initialValue === undefined)
-
-  const cacheKey = user?.identityId ? `${user.identityId}:${targetUserId}` : ''
-
-  const checkFollowStatus = useCallback(async (forceRefresh = false) => {
-    if (!user?.identityId || !targetUserId || user.identityId === targetUserId) {
-      setIsLoading(false)
-      return
-    }
-
-    // Skip initial fetch if initialValue was provided (unless force refresh)
-    if (initialValue !== undefined && !forceRefresh) {
-      return
-    }
-
-    // Check shared cache unless forcing refresh
-    if (!forceRefresh && cacheKey) {
-      const cached = getFollowStatus(cacheKey)
-      if (cached !== null) {
-        setIsFollowing(cached)
-        setIsLoading(false)
-        return
-      }
-    }
-
-    setIsLoading(true)
-
-    try {
+  const { isOn, isLoading, toggle, refresh } = useToggleRelation({
+    subjectId: targetUserId,
+    initialValue: options.initialValue,
+    cache: followStatusCache,
+    label: 'useFollow',
+    loginAction: 'follow',
+    selfError: 'You cannot follow yourself',
+    check: async (viewerId, subjectId) => {
       const { followService } = await import('@/lib/services/follow-service')
-      const following = await followService.isFollowing(targetUserId, user.identityId)
-
-      // Cache the result
-      if (cacheKey) {
-        setFollowStatus(cacheKey, following)
-      }
-      setIsFollowing(following)
-    } catch (error) {
-      logger.error('useFollow: Error checking follow status:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [user?.identityId, targetUserId, cacheKey, initialValue])
-
-  useEffect(() => {
-    checkFollowStatus().catch((error) => logger.error('useFollow: status check failed:', error))
-  }, [checkFollowStatus])
-
-  const toggleFollow = useCallback(async () => {
-    if (!user?.identityId) {
-      openLoginPrompt('follow')
-      return
-    }
-    if (!targetUserId || isLoading) return
-
-    if (user.identityId === targetUserId) {
-      toast.error('You cannot follow yourself')
-      return
-    }
-
-    const wasFollowing = isFollowing
-
-    // Optimistic update
-    setIsFollowing(!wasFollowing)
-    setIsLoading(true)
-
-    // Update cache optimistically
-    if (cacheKey) {
-      setFollowStatus(cacheKey, !wasFollowing)
-    }
-
-    try {
+      return followService.isFollowing(subjectId, viewerId)
+    },
+    turnOn: async (viewerId, subjectId) => {
       const { followService } = await import('@/lib/services/follow-service')
-
-      const result = wasFollowing
-        ? await followService.unfollowUser(user.identityId, targetUserId)
-        : await followService.followUser(user.identityId, targetUserId)
-
-      if (!result.success) {
-        throw new Error(result.error || 'Follow operation failed')
-      }
-
-      toast.success(wasFollowing ? 'Unfollowed' : 'Following')
-    } catch (error) {
-      // Rollback
-      setIsFollowing(wasFollowing)
-      if (cacheKey) {
-        setFollowStatus(cacheKey, wasFollowing)
-      }
-      logger.error('useFollow: Error toggling follow:', error)
-      // A refersTo rejection means the target identity is not on chain — say so
-      // rather than implying a transient failure the user should retry.
-      toast.error(
-        isReferenceNotFoundError(error) ? categorizeError(error) : 'Failed to update follow status'
-      )
-    } finally {
-      setIsLoading(false)
-    }
-  }, [user?.identityId, targetUserId, isFollowing, isLoading, cacheKey, openLoginPrompt])
-
-  const refresh = useCallback(() => {
-    if (cacheKey) {
-      deleteFollowStatus(cacheKey)
-    }
-    checkFollowStatus(true).catch((error) => logger.error('useFollow: refresh failed:', error))
-  }, [cacheKey, checkFollowStatus])
-
-  return { isFollowing, isLoading, toggleFollow, refresh }
+      return followService.followUser(viewerId, subjectId)
+    },
+    turnOff: async (viewerId, subjectId) => {
+      const { followService } = await import('@/lib/services/follow-service')
+      return followService.unfollowUser(viewerId, subjectId)
+    },
+    onMessage: () => 'Following',
+    offMessage: 'Unfollowed',
+    // A refersTo rejection means the target identity is not on chain; say so
+    // rather than implying a transient failure the user should retry.
+    failedMessage: (error) => (isReferenceNotFoundError(error) ? categorizeError(error) : 'Failed to update follow status'),
+  })
+  return { isFollowing: isOn, isLoading, toggleFollow: toggle, refresh }
 }
-
-// Re-export for convenience
-export { seedFollowStatusCache }
