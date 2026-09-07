@@ -6,7 +6,7 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { blockService } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
-import { seedBlockStatusCache, seedFollowStatusCache } from '@/lib/caches/user-status-cache'
+import { blockStatusCache, followStatusCache } from '@/lib/caches/user-status-cache'
 import { targetOf, type KindedTarget } from '@/lib/contract-topology'
 
 export interface PostStats {
@@ -252,7 +252,7 @@ export function useProgressiveEnrichment(
       const blockPromise = blockService.checkBlockedBatch(currentUserId, authorIds)
       blockPromise.then(blockStatus => {
         if (!isValid()) return
-        seedBlockStatusCache(currentUserId, blockStatus)
+        blockStatusCache.seed(currentUserId, blockStatus)
         setEnrichmentState(prev => ({
           ...prev,
           blockStatus: mergeMaps(prev.blockStatus, blockStatus)
@@ -264,7 +264,7 @@ export function useProgressiveEnrichment(
         const followPromise = followService.getFollowStatusBatch(followLookupIds, currentUserId)
         followPromise.then(followStatus => {
           if (!isValid()) return
-          seedFollowStatusCache(currentUserId, followStatus)
+          followStatusCache.seed(currentUserId, followStatus)
           setEnrichmentState(prev => ({
             ...prev,
             followStatus: mergeMaps(prev.followStatus, followStatus)
@@ -274,7 +274,7 @@ export function useProgressiveEnrichment(
         // On Following tab, mark all authors as followed
         const followStatus = new Map<string, boolean>()
         authorIds.forEach(id => followStatus.set(id, true))
-        seedFollowStatusCache(currentUserId, followStatus)
+        followStatusCache.seed(currentUserId, followStatus)
         setEnrichmentState(prev => ({
           ...prev,
           followStatus: mergeMaps(prev.followStatus, followStatus)

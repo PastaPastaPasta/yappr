@@ -8,7 +8,8 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import type { Blog } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { useAuth } from '@/contexts/auth-context'
-import { useBlogFollow, seedBlogFollowCache } from '@/hooks/use-blog-follow'
+import { useBlogFollow } from '@/hooks/use-blog-follow'
+import { blogFollowStatusCache } from '@/lib/caches/user-status-cache'
 
 interface BlogWithUsername extends Blog {
   username: string | null
@@ -43,7 +44,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
             const { blogFollowService } = await import('@/lib/services/blog-follow-service')
             const blogIds = allBlogs.map((b) => b.id)
             const statusMap = await blogFollowService.getFollowStatusBatch(blogIds, user.identityId)
-            if (!cancelled) seedBlogFollowCache(user.identityId, statusMap)
+            if (!cancelled) blogFollowStatusCache.seed(user.identityId, statusMap)
           } catch {
             // Non-critical, individual hooks will query on their own
           }

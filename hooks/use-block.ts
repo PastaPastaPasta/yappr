@@ -1,16 +1,8 @@
 'use client'
 
-import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
-import { useAuth } from '@/contexts/auth-context'
-import toast from 'react-hot-toast'
-import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
-import {
-  getBlockStatus,
-  setBlockStatus,
-  deleteBlockStatus,
-  seedBlockStatusCache
-} from '@/lib/caches/user-status-cache'
+import { logger } from '@/lib/logger'
+import { blockStatusCache } from '@/lib/caches/user-status-cache'
+import { useToggleRelation } from './use-toggle-relation'
 
 export interface UseBlockResult {
   isBlocked: boolean
@@ -24,125 +16,32 @@ export interface UseBlockOptions {
   initialValue?: boolean
 }
 
-/**
- * Hook to manage block state for a target user
- */
+/** Whether the viewer blocks `targetUserId`, with an optimistic toggle. */
 export function useBlock(targetUserId: string, options: UseBlockOptions = {}): UseBlockResult {
-  const { initialValue } = options
-  const { user } = useAuth()
-  const { open: openLoginPrompt } = useLoginPromptModal()
-  const [isBlocked, setIsBlocked] = useState(initialValue ?? false)
-  // Only show loading if no initial value was provided
-  const [isLoading, setIsLoading] = useState(initialValue === undefined)
-
-  const cacheKey = user?.identityId ? `${user.identityId}:${targetUserId}` : ''
-
-  const checkBlockStatus = useCallback(async (forceRefresh = false) => {
-    if (!user?.identityId || !targetUserId || user.identityId === targetUserId) {
-      setIsLoading(false)
-      return
-    }
-
-    // Skip initial fetch if initialValue was provided (unless force refresh)
-    if (initialValue !== undefined && !forceRefresh) {
-      return
-    }
-
-    // Check shared cache unless forcing refresh
-    if (!forceRefresh && cacheKey) {
-      const cached = getBlockStatus(cacheKey)
-      if (cached !== null) {
-        setIsBlocked(cached)
-        setIsLoading(false)
-        return
-      }
-    }
-
-    setIsLoading(true)
-
-    try {
+  const { isOn, isLoading, toggle, refresh } = useToggleRelation<string | undefined, { success: boolean; error?: string; autoRevoked?: boolean }>({
+    subjectId: targetUserId,
+    initialValue: options.initialValue,
+    cache: blockStatusCache,
+    label: 'useBlock',
+    loginAction: 'block',
+    selfError: 'You cannot block yourself',
+    check: async (viewerId, subjectId) => {
       const { blockService } = await import('@/lib/services/block-service')
-      const blocked = await blockService.isBlocked(targetUserId, user.identityId)
-
-      // Cache the result
-      if (cacheKey) {
-        setBlockStatus(cacheKey, blocked)
-      }
-      setIsBlocked(blocked)
-    } catch (error) {
-      logger.error('useBlock: Error checking block status:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [user?.identityId, targetUserId, cacheKey, initialValue])
-
-  useEffect(() => {
-    checkBlockStatus().catch((error) => logger.error('useBlock: status check failed:', error))
-  }, [checkBlockStatus])
-
-  const toggleBlock = useCallback(async (message?: string) => {
-    if (!user?.identityId) {
-      openLoginPrompt('block')
-      return
-    }
-    if (!targetUserId || isLoading) return
-
-    if (user.identityId === targetUserId) {
-      toast.error('You cannot block yourself')
-      return
-    }
-
-    const wasBlocked = isBlocked
-
-    // Optimistic update
-    setIsBlocked(!wasBlocked)
-    setIsLoading(true)
-
-    // Update cache optimistically
-    if (cacheKey) {
-      setBlockStatus(cacheKey, !wasBlocked)
-    }
-
-    try {
+      return blockService.isBlocked(subjectId, viewerId)
+    },
+    turnOn: async (viewerId, subjectId, message) => {
       const { blockService } = await import('@/lib/services/block-service')
-
-      const result = wasBlocked
-        ? await blockService.unblockUser(user.identityId, targetUserId)
-        : await blockService.blockUser(user.identityId, targetUserId, message)
-
-      if (!result.success) {
-        throw new Error(result.error || 'Block operation failed')
-      }
-
-      // Show appropriate message based on whether auto-revocation occurred
-      if (wasBlocked) {
-        toast.success('User unblocked')
-      } else if ('autoRevoked' in result && result.autoRevoked) {
-        toast.success('User blocked and private feed access revoked')
-      } else {
-        toast.success('User blocked')
-      }
-    } catch (error) {
-      // Rollback
-      setIsBlocked(wasBlocked)
-      if (cacheKey) {
-        setBlockStatus(cacheKey, wasBlocked)
-      }
-      logger.error('useBlock: Error toggling block:', error)
-      toast.error('Failed to update block status')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [user?.identityId, targetUserId, isBlocked, isLoading, cacheKey, openLoginPrompt])
-
-  const refresh = useCallback(() => {
-    if (cacheKey) {
-      deleteBlockStatus(cacheKey)
-    }
-    checkBlockStatus(true).catch((error) => logger.error('useBlock: refresh failed:', error))
-  }, [cacheKey, checkBlockStatus])
-
-  return { isBlocked, isLoading, toggleBlock, refresh }
+      return blockService.blockUser(viewerId, subjectId, message)
+    },
+    turnOff: async (viewerId, subjectId) => {
+      const { blockService } = await import('@/lib/services/block-service')
+      return blockService.unblockUser(viewerId, subjectId)
+    },
+    onMessage: (result) => (result.autoRevoked ? 'User blocked and private feed access revoked' : 'User blocked'),
+    offMessage: 'User unblocked',
+    failedMessage: () => 'Failed to update block status',
+  })
+  return { isBlocked: isOn, isLoading, toggleBlock: toggle, refresh }
 }
 
 /**
@@ -180,6 +79,3 @@ export async function filterBlockedAuthors<T extends { author: { id: string } }>
   const blocked = await checkBlockedForAuthors(viewerId, authorIds)
   return posts.filter((post) => !blocked.get(post.author.id))
 }
-
-// Re-export for convenience
-export { seedBlockStatusCache }
