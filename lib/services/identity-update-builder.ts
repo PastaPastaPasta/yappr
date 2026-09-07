@@ -15,6 +15,7 @@ import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hash160 } from '../crypto/hash'
 import { requireBytes } from '@/lib/bytes'
+import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -347,7 +348,7 @@ export async function checkKeysRegistered(
 
   // Check for auth key (purpose=AUTHENTICATION, keyType=ECDSA_HASH160)
   const authKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
-    if (!keyMatchesPurposeAndType(key, 0, 'authentication', 2, 'ecdsa_hash160')) {
+    if (!keyMatchesPurposeAndType(key, KeyPurpose.AUTHENTICATION, 'authentication', KeyType.ECDSA_HASH160, 'ecdsa_hash160')) {
       return false
     }
     const keyData = getKeyData(key)
@@ -359,7 +360,7 @@ export async function checkKeysRegistered(
 
   // Check for encryption key (purpose=ENCRYPTION, keyType=ECDSA_SECP256K1)
   const encKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
-    if (!keyMatchesPurposeAndType(key, 1, 'encryption', 0, 'ecdsa_secp256k1')) {
+    if (!keyMatchesPurposeAndType(key, KeyPurpose.ENCRYPTION, 'encryption', KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1')) {
       return false
     }
     const keyData = getKeyData(key)

@@ -1,8 +1,8 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
-import { signerService, KeyPurpose, SecurityLevel } from './signer-service';
+import { signerService } from './signer-service';
 import { Identifier } from '@dashevo/evo-sdk';
-import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import { KeyPurpose, SecurityLevel, matchIdentityKey } from '@/lib/crypto/keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { extractErrorMessage } from '../error-utils';
@@ -212,34 +212,18 @@ class TokenService {
     return signerService.createSignerFromWasmKey(wif, authKey);
   }
 
-  /** Find the AUTHENTICATION key at an allowed security level that matches the provided WIF. */
+  /** The AUTHENTICATION key at an allowed security level that matches the provided WIF. */
   private findMatchingAuthKey(
     wif: string,
     wasmPublicKeys: WasmIdentityPublicKey[],
     allowedLevels: number[]
   ): WasmIdentityPublicKey | null {
-    const network = keyNetwork();
-    // Filter to the allowed levels BEFORE matching so a lower-security key
-    // derived from the same WIF (e.g. a MEDIUM key at a lower id after a
-    // rotation) can't win the match and mask a valid key.
-    const authKeys = wasmPublicKeys.filter(k =>
-      !k.disabledAt &&
-      k.purposeNumber === KeyPurpose.AUTHENTICATION &&
-      allowedLevels.includes(k.securityLevelNumber)
-    );
-    if (authKeys.length === 0) return null;
-
-    const keyInfos: IdentityPublicKeyInfo[] = authKeys.map(key => ({
-      id: key.keyId,
-      type: key.keyTypeNumber,
-      purpose: key.purposeNumber,
-      securityLevel: key.securityLevelNumber,
-      data: new Uint8Array(key.data.match(/.{1,2}/g)?.map(b => parseInt(b, 16)) || []),
-    }));
-
-    const match = findMatchingKeyIndex(wif, keyInfos, network);
-    if (!match) return null;
-    return authKeys.find(k => k.keyId === match.keyId) || null;
+    const result = matchIdentityKey(wif, wasmPublicKeys, {
+      network: keyNetwork(),
+      purpose: KeyPurpose.AUTHENTICATION,
+      allowedSecurityLevels: allowedLevels,
+    });
+    return result.ok ? result.key : null;
   }
 
   private toResult(error: unknown, fallback: string): TokenResult {

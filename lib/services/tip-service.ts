@@ -1,9 +1,9 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
-import { signerService, KeyPurpose } from './signer-service';
+import { signerService } from './signer-service';
 import { TipInfo } from '../../types';
-import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import { KeyPurpose, SecurityLevel, matchIdentityKey } from '@/lib/crypto/keys';
 import { isInsufficientTokenError } from '@/lib/error-utils';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { keyNetwork } from '@/lib/constants'
@@ -52,58 +52,30 @@ export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {
   /**
-   * Find the transfer key that matches the provided private key
-   *
-   * This verifies that the private key corresponds to one of the identity's
-   * transfer keys, preventing signer/key mismatches.
-   *
-   * @param privateKeyWif - The private key in WIF format
-   * @param wasmPublicKeys - The identity's WASM public keys
-   * @param specificKeyId - Optional specific key ID to use
-   * @returns The matching transfer key or null if not found
+   * The enabled transfer key the private key corresponds to, so signer and key
+   * can never disagree. `specificKeyId` pins the match to one key.
    */
   private findMatchingTransferKey(
     privateKeyWif: string,
     wasmPublicKeys: WasmIdentityPublicKey[],
     specificKeyId?: number
   ): WasmIdentityPublicKey | null {
-    const network = keyNetwork();
-    const activeKeys = wasmPublicKeys.filter(k => !k.disabledAt);
-    const transferKeys = activeKeys.filter(k => k.purposeNumber === KeyPurpose.TRANSFER);
-
-    if (transferKeys.length === 0) {
-      return null;
-    }
-
-    // Convert transfer keys to format for matching
-    const keyInfos: IdentityPublicKeyInfo[] = transferKeys.map(key => {
-      const dataHex = key.data;
-      const data = new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
-      return {
-        id: key.keyId,
-        type: key.keyTypeNumber,
-        purpose: key.purposeNumber,
-        securityLevel: key.securityLevelNumber,
-        data
-      };
+    const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
+      network: keyNetwork(),
+      purpose: KeyPurpose.TRANSFER,
+      allowedSecurityLevels: [SecurityLevel.MASTER, SecurityLevel.CRITICAL, SecurityLevel.HIGH, SecurityLevel.MEDIUM],
+      keyId: specificKeyId,
     });
-
-    // Find which transfer key matches the provided private key
-    const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
-
-    if (!match) {
-      logger.error('Transfer private key does not match any transfer key on this identity');
+    if (!result.ok) {
+      if (result.reason === 'wrong-key-id') {
+        logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${result.match?.keyId}`);
+      } else {
+        logger.error('Transfer private key does not match any transfer key on this identity');
+      }
       return null;
     }
-
-    // If a specific key ID was requested, verify it matches
-    if (specificKeyId !== undefined && match.keyId !== specificKeyId) {
-      logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${match.keyId}`);
-      return null;
-    }
-
-    logger.info(`Matched transfer key: id=${match.keyId}`);
-    return transferKeys.find(k => k.keyId === match.keyId) || null;
+    logger.info(`Matched transfer key: id=${result.match.keyId}`);
+    return result.key;
   }
 
   /**

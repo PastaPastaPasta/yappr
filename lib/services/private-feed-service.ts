@@ -32,6 +32,7 @@ import {
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
+import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { bytesEqual, normalizeBytes, requireBytes } from '@/lib/bytes';
@@ -229,7 +230,7 @@ class PrivateFeedService {
       const matchingKey = preferredKey?.data && matchesDerived(preferredKey.data)
         ? preferredKey
         : identity.publicKeys.find(key =>
-            key.purpose === 1 && key.type === 0 && !key.disabledAt && matchesDerived(key.data)
+            key.purpose === KeyPurpose.ENCRYPTION && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt && matchesDerived(key.data)
           );
 
       if (!matchingKey) {

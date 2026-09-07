@@ -1,18 +1,9 @@
 import { parsePrivateKey } from './wif'
 import { getPublicKey } from './keys'
+import { KeyPurpose as KeyPurposeEnum, KeyType } from './identity-keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
 
-/**
- * Key purpose constants matching Dash Platform identity key purposes
- */
-export const KEY_PURPOSE = {
-  AUTHENTICATION: 0,
-  ENCRYPTION: 1,
-  DECRYPTION: 2,
-  TRANSFER: 3,
-} as const
-
-export type KeyPurpose = (typeof KEY_PURPOSE)[keyof typeof KEY_PURPOSE]
+type KeyPurpose = (typeof KeyPurposeEnum)[keyof typeof KeyPurposeEnum]
 
 /**
  * Error types for key validation failures
@@ -41,7 +32,6 @@ export interface KeyValidationResult {
   noKeyOnIdentity?: boolean
 }
 
-// Legacy type aliases for backwards compatibility
 /**
  * Parse identity public-key data (Uint8Array, number[], hex, or base64).
  */
@@ -54,13 +44,13 @@ export function parsePublicKeyData(data: unknown): Uint8Array | null {
  */
 function getPurposeName(purpose: KeyPurpose): string {
   switch (purpose) {
-    case KEY_PURPOSE.AUTHENTICATION:
+    case KeyPurposeEnum.AUTHENTICATION:
       return 'authentication'
-    case KEY_PURPOSE.ENCRYPTION:
+    case KeyPurposeEnum.ENCRYPTION:
       return 'encryption'
-    case KEY_PURPOSE.DECRYPTION:
+    case KeyPurposeEnum.DECRYPTION:
       return 'decryption'
-    case KEY_PURPOSE.TRANSFER:
+    case KeyPurposeEnum.TRANSFER:
       return 'transfer'
     default:
       return 'unknown'
@@ -125,7 +115,7 @@ export async function validateKey(
   // Step 4: Find all candidate keys on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
   // Exclude disabled keys
   const candidateKeys = identityData.publicKeys.filter(
-    (key) => key.purpose === purpose && key.type === 0 && !key.disabledAt
+    (key) => key.purpose === purpose && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt
   )
 
   if (candidateKeys.length === 0) {
@@ -179,5 +169,5 @@ export async function validateEncryptionKey(
   identityId: string,
   matchType: KeyMatchType = 'EXACT_MATCH'
 ): Promise<KeyValidationResult> {
-  return validateKey(keyInput, identityId, KEY_PURPOSE.ENCRYPTION, matchType)
+  return validateKey(keyInput, identityId, KeyPurposeEnum.ENCRYPTION, matchType)
 }

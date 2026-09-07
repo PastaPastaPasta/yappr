@@ -6,6 +6,7 @@ import {
   getPurposeName,
   isSecurityLevelAllowedForLogin,
   isPurposeAllowedForLogin,
+  SecurityLevel,
   type IdentityPublicKeyInfo
 } from '@/lib/crypto/keys'
 import { wifToPrivateKey, validateWifNetwork } from '@/lib/crypto/wif'
@@ -170,7 +171,7 @@ class KeyValidationService {
       const levelName = getSecurityLevelName(match.securityLevel)
       // MASTER (0) is more powerful than CRITICAL/HIGH but shouldn't be used for login
       // MEDIUM (3) and lower are insufficient
-      const errorMessage = match.securityLevel === 0
+      const errorMessage = match.securityLevel === SecurityLevel.MASTER
         ? `This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.`
         : `This key's security level is too low (${levelName}) - need HIGH or CRITICAL`
       return {

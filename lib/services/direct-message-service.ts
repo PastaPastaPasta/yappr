@@ -25,6 +25,7 @@ import { YAPPR_DM_CONTRACT_ID } from '../constants'
 import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
+import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 
 /**
  * Direct Message Service for v3 contract
@@ -560,14 +561,12 @@ class DirectMessageService {
       const publicKeys = identity.publicKeys
       if (!publicKeys || publicKeys.length === 0) return null
 
-      // Find the authentication HIGH key (type 0, securityLevel 2, purpose 0)
-      interface PublicKeyInfo { type: number; securityLevel: number; purpose: number }
-      const authHighKey = publicKeys.find((pk: PublicKeyInfo) =>
-        pk.type === 0 && pk.securityLevel === 2 && pk.purpose === 0
-      )
-      const fallbackKey = !authHighKey ? publicKeys.find((pk: PublicKeyInfo) =>
-        pk.type === 0 && pk.securityLevel === 2
-      ) : null
+      // DMs use the HIGH authentication key (full secp256k1 point) for ECDH,
+      // falling back to any HIGH secp256k1 key.
+      const isHighSecp = (pk: { type: number; securityLevel: number }) =>
+        pk.type === KeyType.ECDSA_SECP256K1 && pk.securityLevel === SecurityLevel.HIGH
+      const authHighKey = publicKeys.find((pk) => isHighSecp(pk) && pk.purpose === KeyPurpose.AUTHENTICATION)
+      const fallbackKey = !authHighKey ? publicKeys.find(isHighSecp) : null
 
       const ecdsaKey = authHighKey || fallbackKey
       if (!ecdsaKey) return null
@@ -590,10 +589,9 @@ class DirectMessageService {
       const publicKeys = identity.publicKeys
       if (!publicKeys || publicKeys.length === 0) return false
 
-      // Check if all HIGH security keys are type 2 (ECDSA_HASH160)
-      interface PublicKeySecInfo { type: number; securityLevel: number }
-      const highKeys = publicKeys.filter((pk: PublicKeySecInfo) => pk.securityLevel === 2)
-      const hasType0 = highKeys.some((pk: PublicKeySecInfo) => pk.type === 0)
+      // Uses hash160 if no HIGH key carries a full secp256k1 point
+      const highKeys = publicKeys.filter((pk) => pk.securityLevel === SecurityLevel.HIGH)
+      const hasType0 = highKeys.some((pk) => pk.type === KeyType.ECDSA_SECP256K1)
 
       return !hasType0  // Uses hash160 if no type 0 keys at HIGH security level
     } catch {

@@ -1,9 +1,9 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
-import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
+import { signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
-import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import { KeyPurpose, SecurityLevel, getSecurityLevelName, matchIdentityKey } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
@@ -337,76 +337,24 @@ class DpnsService {
   }
 
   /**
-   * Find the WASM identity public key that matches the stored private key.
-   *
-   * This is critical for the typed API: we must use the key that matches our signer's private key.
-   * The signer only has one private key, so we find which identity key it corresponds to.
-   *
-   * DPNS registration operations require CRITICAL (1) or HIGH (2) security level keys.
-   *
-   * @param privateKeyWif - The private key in WIF format
-   * @param wasmPublicKeys - The identity's WASM public keys
-   * @param requiredSecurityLevel - Maximum allowed security level (lower = more secure)
-   * @returns The matching WASM key or null if not found/not suitable
+   * The enabled CRITICAL or HIGH authentication key the private key corresponds
+   * to. DPNS registration may not be signed with MASTER.
    */
   private findMatchingSigningKey(
     privateKeyWif: string,
-    wasmPublicKeys: WasmIdentityPublicKey[],
-    requiredSecurityLevel: number = SecurityLevel.CRITICAL
+    wasmPublicKeys: WasmIdentityPublicKey[]
   ): WasmIdentityPublicKey | null {
-    const network = keyNetwork();
-
-    // Filter out disabled keys before processing
-    const activeWasmKeys = wasmPublicKeys.filter(k => !k.disabledAt);
-
-    // Convert WASM keys to the format expected by findMatchingKeyIndex
-    const keyInfos: IdentityPublicKeyInfo[] = activeWasmKeys.map(key => {
-      // WASM key.data getter returns hex string - convert to Uint8Array
-      const dataHex = key.data;
-      const data = dataHex && dataHex.length > 0
-        ? new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || [])
-        : new Uint8Array(0);
-
-      return {
-        id: key.keyId ?? 0,
-        type: key.keyTypeNumber ?? 0,
-        purpose: key.purposeNumber ?? 0,
-        securityLevel: key.securityLevelNumber ?? 0,
-        data
-      };
+    const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
+      network: keyNetwork(),
+      purpose: KeyPurpose.AUTHENTICATION,
+      allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
     });
-
-    // Find which key matches our private key
-    const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
-
-    if (!match) {
-      logger.error('DPNS: Private key does not match any key on this identity');
+    if (!result.ok) {
+      logger.error(`DPNS: No CRITICAL/HIGH authentication key matches the private key (${result.reason})`);
       return null;
     }
-
-    logger.info(`DPNS: Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
-
-    // Check if the matched key is suitable for DPNS operations
-    // Must be AUTHENTICATION purpose
-    if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-      logger.error(`DPNS: Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
-      return null;
-    }
-
-    // Must be CRITICAL (1) or HIGH (2) - NOT MASTER (0) and not below required level
-    if (match.securityLevel < SecurityLevel.CRITICAL) {
-      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for DPNS operations (only CRITICAL or HIGH)`);
-      return null;
-    }
-
-    if (match.securityLevel > requiredSecurityLevel) {
-      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
-      return null;
-    }
-
-    // Return the WASM key object for the matched key (from filtered active keys)
-    const wasmKey = activeWasmKeys.find(k => k.keyId === match.keyId);
-    return wasmKey || null;
+    logger.info(`DPNS: Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);
+    return result.key;
   }
 
   /**
@@ -450,7 +398,7 @@ class DpnsService {
 
       // Find a signing key that matches the provided private key
       // DPNS operations require CRITICAL or HIGH security level
-      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH);
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }

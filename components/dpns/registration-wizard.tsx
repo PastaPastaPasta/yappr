@@ -7,9 +7,9 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
+import { identityService } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
-import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
+import { findMatchingKeyIndex, getSecurityLevelName, isSecurityLevelAllowedForLogin, toKeyInfo } from '@/lib/crypto/keys'
 import toast from 'react-hot-toast'
 
 import { UsernameEntryStep } from './steps/username-entry-step'
@@ -18,29 +18,11 @@ import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
-import { normalizeBytes } from '@/lib/bytes'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
   onSkip?: () => void
   hasExistingUsernames?: boolean
-}
-
-/**
- * Convert identity public keys to the format expected by findMatchingKeyIndex.
- * Handles both string (base64) and Uint8Array formats for the data field.
- */
-function convertToKeyInfo(keys: IdentityPublicKey[]): IdentityPublicKeyInfo[] {
-  return keys.map((key) => {
-    const data = normalizeBytes(key.data) ?? new Uint8Array()
-    return {
-      id: key.id,
-      type: key.type,
-      purpose: key.purpose,
-      securityLevel: key.securityLevel,
-      data,
-    }
-  })
 }
 
 export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsernames }: DpnsRegistrationWizardProps): React.ReactNode {
@@ -141,7 +123,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       const network = keyNetwork()
 
       // Convert identity public keys to the format expected by findMatchingKeyIndex
-      const keyInfos = convertToKeyInfo(identity.publicKeys)
+      const keyInfos = identity.publicKeys.flatMap((key) => toKeyInfo(key) ?? [])
 
       // Find which key matches the user's private key
       const matchedKey = findMatchingKeyIndex(privateKey, keyInfos, network)
@@ -152,7 +134,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       }
 
       // Verify the matched key has sufficient security level for DPNS (CRITICAL or HIGH)
-      if (matchedKey.securityLevel !== 1 && matchedKey.securityLevel !== 2) {
+      if (!isSecurityLevelAllowedForLogin(matchedKey.securityLevel)) {
         const levelName = getSecurityLevelName(matchedKey.securityLevel)
         toast.error(`Your key has ${levelName} security level. DPNS requires CRITICAL or HIGH security level.`)
         setStep('review')
