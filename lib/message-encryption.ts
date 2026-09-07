@@ -3,17 +3,19 @@
 /**
  * Message encryption using ECDH for end-to-end encrypted direct messages
  *
- * Flow:
- * 1. Derive shared secret using ECDH(senderPrivateKey, recipientPublicKey)
- * 2. Use HKDF to derive AES-256 key from shared secret
- * 3. Encrypt message with AES-GCM
- *
- * Decryption uses the same shared secret derived from ECDH(recipientPrivateKey, senderPublicKey)
+ * ECDH(senderPrivateKey, recipientPublicKey) → HKDF-SHA256 → AES-256-GCM with
+ * the IV prepended. The recipient derives the same key from
+ * ECDH(recipientPrivateKey, senderPublicKey). Private keys arrive as WIF and are
+ * checksum-verified on decode.
  */
 
-import * as secp256k1 from '@noble/secp256k1'
-import bs58 from 'bs58'
+import { wifToPrivateKey } from './crypto/wif'
+import { getPublicKey } from './crypto/keys'
+import { ecdhSharedX } from './crypto/ecdh'
+import { aesGcmDecrypt, aesGcmEncrypt, deriveKeyWithHkdf } from './crypto/aes-gcm'
 
+const DM_KDF_SALT = new TextEncoder().encode('yappr-dm-v1')
+const DM_KDF_INFO = new TextEncoder().encode('aes-key')
 /**
  * Generate a deterministic conversation ID from two participant IDs
  * Sorts alphabetically to ensure same ID regardless of sender/recipient order
@@ -31,62 +33,19 @@ export async function generateConversationId(userId1: string, userId2: string): 
 }
 
 /**
- * Convert WIF (Wallet Import Format) private key to raw bytes
+ * The AES key both parties derive: HKDF over the ECDH shared x-coordinate.
+ * ECDH(senderPriv, recipientPub) == ECDH(recipientPriv, senderPub).
  */
-function wifToPrivateKey(wif: string): Uint8Array {
-  const decoded = bs58.decode(wif)
-  // WIF format: version (1 byte) + key (32 bytes) + [compression flag (1 byte)] + checksum (4 bytes)
-  // Extract the 32-byte private key
-  return decoded.slice(1, 33)
-}
-
-/**
- * Derive a shared secret using ECDH
- * Both parties will derive the same secret:
- * - Sender: ECDH(senderPrivate, recipientPublic)
- * - Recipient: ECDH(recipientPrivate, senderPublic)
- */
-function deriveSharedSecret(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
-  // Use secp256k1 to compute shared point
-  const sharedPoint = secp256k1.getSharedSecret(privateKey, publicKey)
-  // The shared secret is the x-coordinate of the shared point (first 32 bytes after prefix)
-  // getSharedSecret returns 33 bytes (compressed) or 65 bytes (uncompressed)
-  // We take bytes 1-33 for the x-coordinate
-  return sharedPoint.slice(1, 33)
-}
-
-/**
- * Derive an AES-256 key from the shared secret using HKDF
- */
-async function deriveAesKey(sharedSecret: Uint8Array): Promise<CryptoKey> {
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    sharedSecret.buffer as ArrayBuffer,
-    'HKDF',
-    false,
-    ['deriveKey']
-  )
-
-  return crypto.subtle.deriveKey(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new TextEncoder().encode('yappr-dm-v1').buffer as ArrayBuffer,
-      info: new TextEncoder().encode('aes-key').buffer as ArrayBuffer
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  )
+async function deriveMessageKey(privateKeyWif: string, otherPublicKey: Uint8Array): Promise<CryptoKey> {
+  const { privateKey } = wifToPrivateKey(privateKeyWif)
+  return deriveKeyWithHkdf(ecdhSharedX(privateKey, otherPublicKey), DM_KDF_SALT, DM_KDF_INFO)
 }
 
 /**
  * Get public key from private key (for including sender's public key in message)
  */
 export function getPublicKeyFromPrivate(privateKeyWif: string): Uint8Array {
-  const privateKey = wifToPrivateKey(privateKeyWif)
-  return secp256k1.getPublicKey(privateKey, true) // compressed format (33 bytes)
+  return getPublicKey(wifToPrivateKey(privateKeyWif).privateKey)
 }
 
 /**
@@ -99,31 +58,8 @@ export async function encryptToBinary(
   senderPrivateKeyWif: string,
   recipientPublicKeyBytes: Uint8Array
 ): Promise<Uint8Array> {
-  // 1. Convert WIF to raw private key
-  const privateKey = wifToPrivateKey(senderPrivateKeyWif)
-
-  // 2. Derive shared secret using ECDH
-  const sharedSecret = deriveSharedSecret(privateKey, recipientPublicKeyBytes)
-
-  // 3. Derive AES key from shared secret
-  const aesKey = await deriveAesKey(sharedSecret)
-
-  // 4. Generate random IV (12 bytes for AES-GCM)
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-
-  // 5. Encrypt the message
-  const encoder = new TextEncoder()
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-    aesKey,
-    encoder.encode(message)
-  )
-
-  // 6. Prepend IV to ciphertext
-  const result = new Uint8Array(12 + ciphertext.byteLength)
-  result.set(iv, 0)
-  result.set(new Uint8Array(ciphertext), 12)
-  return result
+  const aesKey = await deriveMessageKey(senderPrivateKeyWif, recipientPublicKeyBytes)
+  return aesGcmEncrypt(aesKey, new TextEncoder().encode(message))
 }
 
 /**
@@ -135,25 +71,6 @@ export async function decryptFromBinary(
   recipientPrivateKeyWif: string,
   senderPublicKeyBytes: Uint8Array
 ): Promise<string> {
-  // 1. Convert WIF to raw private key
-  const privateKey = wifToPrivateKey(recipientPrivateKeyWif)
-
-  // 2. Derive shared secret using ECDH
-  const sharedSecret = deriveSharedSecret(privateKey, senderPublicKeyBytes)
-
-  // 3. Derive AES key from shared secret
-  const aesKey = await deriveAesKey(sharedSecret)
-
-  // 4. Extract IV (first 12 bytes) and ciphertext (rest)
-  const iv = encryptedContent.slice(0, 12)
-  const ciphertext = encryptedContent.slice(12)
-
-  // 5. Decrypt
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-    aesKey,
-    ciphertext
-  )
-
-  return new TextDecoder().decode(decrypted)
+  const aesKey = await deriveMessageKey(recipientPrivateKeyWif, senderPublicKeyBytes)
+  return new TextDecoder().decode(await aesGcmDecrypt(aesKey, encryptedContent))
 }

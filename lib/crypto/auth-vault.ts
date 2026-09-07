@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js'
-import { MIN_KDF_ITERATIONS, MAX_KDF_ITERATIONS } from '@/lib/onchain-key-encryption'
+import { aesGcmOpen, aesGcmSeal, deriveKeyFromPasswordAndSalt, deriveKeyWithHkdf, importAesKey, type AesGcmSealed } from './aes-gcm'
 
 export type AuthVaultSecretKind = 'login-key' | 'auth-key'
 export type AuthVaultSource = 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
@@ -17,21 +17,11 @@ export interface AuthVaultBundle {
   updatedAt: number
 }
 
-export interface EncryptResult {
-  ciphertext: Uint8Array
-  iv: Uint8Array
-}
-
 const BUNDLE_INFO = 'yappr/auth-vault/bundle/v1'
 const PRF_WRAP_INFO = 'yappr/auth-vault/dek-wrap/prf/v1'
-const IV_LENGTH = 12
 
 function utf8(value: string): Uint8Array {
   return new TextEncoder().encode(value)
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
 function randomBytes(length: number): Uint8Array {
@@ -70,89 +60,12 @@ function buildPrfSalt(identityId: string, vaultId: string, rpId: string): Uint8A
   return sha256(utf8(`yappr/auth-vault/prf-salt/v1:${identityId}:${vaultId}:${rpId}`))
 }
 
-async function importAesKey(rawKey: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    'raw',
-    toArrayBuffer(rawKey),
-    { name: 'AES-GCM', length: 256 },
-    false,
-    usages,
-  )
-}
-
-async function importHkdfMaterial(raw: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', toArrayBuffer(raw), 'HKDF', false, ['deriveKey'])
-}
-
-async function importPbkdf2Material(password: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', toArrayBuffer(utf8(password)), 'PBKDF2', false, ['deriveKey'])
-}
-
-async function aesGcmEncrypt(key: CryptoKey, plaintext: Uint8Array, aad: Uint8Array, iv = randomBytes(IV_LENGTH)): Promise<EncryptResult> {
-  const ciphertext = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: toArrayBuffer(iv),
-      additionalData: toArrayBuffer(aad),
-    },
-    key,
-    toArrayBuffer(plaintext),
-  )
-
-  return {
-    ciphertext: new Uint8Array(ciphertext),
-    iv,
-  }
-}
-
-async function aesGcmDecrypt(key: CryptoKey, ciphertext: Uint8Array, iv: Uint8Array, aad: Uint8Array): Promise<Uint8Array> {
-  const plaintext = await crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: toArrayBuffer(iv),
-      additionalData: toArrayBuffer(aad),
-    },
-    key,
-    toArrayBuffer(ciphertext),
-  )
-
-  return new Uint8Array(plaintext)
-}
-
 async function derivePasswordWrappingKey(password: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
-  if (iterations < MIN_KDF_ITERATIONS || iterations > MAX_KDF_ITERATIONS) {
-    throw new Error(`Iterations must be between ${MIN_KDF_ITERATIONS} and ${MAX_KDF_ITERATIONS}`)
-  }
-
-  const keyMaterial = await importPbkdf2Material(password)
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: toArrayBuffer(salt),
-      iterations,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  )
+  return deriveKeyFromPasswordAndSalt(password, salt, iterations)
 }
 
 async function derivePrfWrappingKey(prfOutput: Uint8Array, identityId: string, vaultId: string, rpId: string): Promise<CryptoKey> {
-  const keyMaterial = await importHkdfMaterial(prfOutput)
-  return crypto.subtle.deriveKey(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: toArrayBuffer(buildPrfSalt(identityId, vaultId, rpId)),
-      info: toArrayBuffer(utf8(PRF_WRAP_INFO)),
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  )
+  return deriveKeyWithHkdf(prfOutput, buildPrfSalt(identityId, vaultId, rpId), utf8(PRF_WRAP_INFO))
 }
 
 export function generateDek(): Uint8Array {
@@ -160,11 +73,11 @@ export function generateDek(): Uint8Array {
 }
 
 
-export async function encryptBundle(bundle: AuthVaultBundle, dek: Uint8Array, vaultId: string): Promise<EncryptResult & { bundleHash: Uint8Array }> {
+export async function encryptBundle(bundle: AuthVaultBundle, dek: Uint8Array, vaultId: string): Promise<AesGcmSealed & { bundleHash: Uint8Array }> {
   const aad = buildBundleAad(bundle.identityId, vaultId, bundle.secretKind, bundle.version)
   const key = await importAesKey(dek, ['encrypt'])
   const plaintext = encodeBundle(bundle)
-  const result = await aesGcmEncrypt(key, plaintext, aad)
+  const result = await aesGcmSeal(key, plaintext, { aad })
 
   return {
     ...result,
@@ -175,7 +88,7 @@ export async function encryptBundle(bundle: AuthVaultBundle, dek: Uint8Array, va
 export async function decryptBundle(bundleCiphertext: Uint8Array, iv: Uint8Array, dek: Uint8Array, vaultId: string, identityId: string, secretKind: AuthVaultSecretKind, version: number): Promise<AuthVaultBundle> {
   const aad = buildBundleAad(identityId, vaultId, secretKind, version)
   const key = await importAesKey(dek, ['decrypt'])
-  const plaintext = await aesGcmDecrypt(key, bundleCiphertext, iv, aad)
+  const plaintext = await aesGcmOpen(key, bundleCiphertext, iv, aad)
   return decodeBundle(plaintext)
 }
 
@@ -183,7 +96,7 @@ export async function wrapDekWithPassword(dek: Uint8Array, password: string, ite
   const pbkdf2Salt = randomBytes(32)
   const wrappingKey = await derivePasswordWrappingKey(password, pbkdf2Salt, iterations)
   const aad = buildWrapperAad(identityId, vaultId, 'password', 1)
-  const encrypted = await aesGcmEncrypt(wrappingKey, dek, aad)
+  const encrypted = await aesGcmSeal(wrappingKey, dek, { aad })
 
   return {
     wrappedDek: encrypted.ciphertext,
@@ -195,13 +108,13 @@ export async function wrapDekWithPassword(dek: Uint8Array, password: string, ite
 export async function unwrapDekWithPassword(wrappedDek: Uint8Array, iv: Uint8Array, password: string, pbkdf2Salt: Uint8Array, iterations: number, identityId: string, vaultId: string): Promise<Uint8Array> {
   const wrappingKey = await derivePasswordWrappingKey(password, pbkdf2Salt, iterations)
   const aad = buildWrapperAad(identityId, vaultId, 'password', 1)
-  return aesGcmDecrypt(wrappingKey, wrappedDek, iv, aad)
+  return aesGcmOpen(wrappingKey, wrappedDek, iv, aad)
 }
 
 export async function wrapDekWithPrf(dek: Uint8Array, prfOutput: Uint8Array, identityId: string, vaultId: string, rpId: string): Promise<{ wrappedDek: Uint8Array; iv: Uint8Array }> {
   const wrappingKey = await derivePrfWrappingKey(prfOutput, identityId, vaultId, rpId)
   const aad = buildWrapperAad(identityId, vaultId, 'passkey-prf', 1, rpId)
-  const encrypted = await aesGcmEncrypt(wrappingKey, dek, aad)
+  const encrypted = await aesGcmSeal(wrappingKey, dek, { aad })
 
   return {
     wrappedDek: encrypted.ciphertext,
@@ -212,5 +125,5 @@ export async function wrapDekWithPrf(dek: Uint8Array, prfOutput: Uint8Array, ide
 export async function unwrapDekWithPrf(wrappedDek: Uint8Array, iv: Uint8Array, prfOutput: Uint8Array, identityId: string, vaultId: string, rpId: string): Promise<Uint8Array> {
   const wrappingKey = await derivePrfWrappingKey(prfOutput, identityId, vaultId, rpId)
   const aad = buildWrapperAad(identityId, vaultId, 'passkey-prf', 1, rpId)
-  return aesGcmDecrypt(wrappingKey, wrappedDek, iv, aad)
+  return aesGcmOpen(wrappingKey, wrappedDek, iv, aad)
 }

@@ -7,14 +7,15 @@
  * Dependencies:
  * - @noble/ciphers for XChaCha20-Poly1305
  * - @noble/hashes for SHA256, HKDF
- * - @noble/secp256k1 for ECDH
+ * - lib/crypto/ecdh for the ECDH shared secret
  */
 
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { randomBytes } from '@noble/hashes/utils.js';
-import * as secp256k1 from '@noble/secp256k1';
+import { getPublicKey } from '@/lib/crypto/keys';
+import { ecdhSharedX } from '@/lib/crypto/ecdh';
 
 // Constants from SPEC
 export const TREE_CAPACITY = 1024;
@@ -383,63 +384,37 @@ class PrivateFeedCryptoService {
   // ============================================================
 
   /**
-   * ECIES Encrypt (SPEC §11.5.1)
-   *
-   * Uses ephemeral ECDH + XChaCha20-Poly1305
+   * Symmetric key and nonce for one ECIES message (SPEC §11.5.1 steps 2-3):
+   * HKDF(SHA256(ECDH x-coordinate), salt = ephemeral public key).
+   */
+  private eciesKeyAndNonce(sharedX: Uint8Array, ephemeralPubKey: Uint8Array): { encKey: Uint8Array; nonce: Uint8Array } {
+    const derived = hkdf(sha256, sha256(sharedX), ephemeralPubKey, utf8Encode(INFO_ECIES), KEY_SIZE + NONCE_SIZE);
+    return { encKey: derived.slice(0, KEY_SIZE), nonce: derived.slice(KEY_SIZE, KEY_SIZE + NONCE_SIZE) };
+  }
+
+  /**
+   * ECIES Encrypt (SPEC §11.5.1) with a fresh ephemeral keypair.
+   * Returns ephemeralPubKey || XChaCha20-Poly1305 ciphertext.
    */
   async eciesEncrypt(
     recipientPubKey: Uint8Array,
     plaintext: Uint8Array,
     aad: Uint8Array
   ): Promise<Uint8Array> {
-    // 1. Generate ephemeral keypair
-    const ephemeralPrivKey = randomBytes(KEY_SIZE);
-    const ephemeralPubKey = secp256k1.getPublicKey(ephemeralPrivKey, true); // compressed
-
-    // 2. Compute shared secret via ECDH
-    const sharedPoint = secp256k1.getSharedSecret(ephemeralPrivKey, recipientPubKey, true);
-    // Extract x-coordinate (skip first byte which is the prefix)
-    const sharedX = sharedPoint.slice(1, 33);
-    const sharedSecret = sha256(sharedX);
-
-    // 3. Derive encryption key and nonce via HKDF
-    const derived = hkdf(sha256, sharedSecret, ephemeralPubKey, utf8Encode(INFO_ECIES), 56);
-    const encKey = derived.slice(0, 32);
-    const nonce = derived.slice(32, 56);
-
-    // 4. Encrypt with XChaCha20-Poly1305
-    const cipher = xchacha20poly1305(encKey, nonce, aad);
-    const ciphertext = cipher.encrypt(plaintext);
-
-    // 5. Return: ephemeralPubKey || ciphertext
-    return concat(ephemeralPubKey, ciphertext);
+    return this.eciesEncryptWithEphemeralKey(randomBytes(KEY_SIZE), recipientPubKey, plaintext, aad);
   }
 
   /**
-   * ECIES Decrypt (SPEC §11.5.2)
+   * ECIES Decrypt (SPEC §11.5.2) as the recipient.
    */
   async eciesDecrypt(
     recipientPrivKey: Uint8Array,
     eciesCiphertext: Uint8Array,
     aad: Uint8Array
   ): Promise<Uint8Array> {
-    // 1. Parse eciesCiphertext
     const ephemeralPubKey = eciesCiphertext.slice(0, 33);
-    const ciphertext = eciesCiphertext.slice(33);
-
-    // 2. Compute shared secret via ECDH
-    const sharedPoint = secp256k1.getSharedSecret(recipientPrivKey, ephemeralPubKey, true);
-    const sharedX = sharedPoint.slice(1, 33);
-    const sharedSecret = sha256(sharedX);
-
-    // 3. Derive encryption key and nonce via HKDF
-    const derived = hkdf(sha256, sharedSecret, ephemeralPubKey, utf8Encode(INFO_ECIES), 56);
-    const encKey = derived.slice(0, 32);
-    const nonce = derived.slice(32, 56);
-
-    // 4. Decrypt with XChaCha20-Poly1305
-    const cipher = xchacha20poly1305(encKey, nonce, aad);
-    return cipher.decrypt(ciphertext);
+    const { encKey, nonce } = this.eciesKeyAndNonce(ecdhSharedX(recipientPrivKey, ephemeralPubKey), ephemeralPubKey);
+    return xchacha20poly1305(encKey, nonce, aad).decrypt(eciesCiphertext.slice(33));
   }
 
   // ============================================================
@@ -465,14 +440,9 @@ class PrivateFeedCryptoService {
   }
 
   /**
-   * ECIES Encrypt with a provided ephemeral key (instead of random).
-   * Used for order encryption where buyer needs to re-derive the ephemeral key.
-   *
-   * @param ephemeralPrivKey - Ephemeral private key (32 bytes)
-   * @param recipientPubKey - Recipient's public key (33 bytes compressed)
-   * @param plaintext - Data to encrypt
-   * @param aad - Additional authenticated data
-   * @returns ephemeralPubKey || ciphertext (same format as standard ECIES)
+   * ECIES Encrypt with a caller-supplied ephemeral key. Used for orders, where
+   * the buyer re-derives the ephemeral key deterministically to decrypt later.
+   * Same wire format as `eciesEncrypt`: ephemeralPubKey || ciphertext.
    */
   async eciesEncryptWithEphemeralKey(
     ephemeralPrivKey: Uint8Array,
@@ -480,36 +450,15 @@ class PrivateFeedCryptoService {
     plaintext: Uint8Array,
     aad: Uint8Array
   ): Promise<Uint8Array> {
-    // 1. Get ephemeral public key
-    const ephemeralPubKey = secp256k1.getPublicKey(ephemeralPrivKey, true);
-
-    // 2. Compute shared secret via ECDH
-    const sharedPoint = secp256k1.getSharedSecret(ephemeralPrivKey, recipientPubKey, true);
-    const sharedX = sharedPoint.slice(1, 33);
-    const sharedSecret = sha256(sharedX);
-
-    // 3. Derive encryption key and nonce via HKDF
-    const derived = hkdf(sha256, sharedSecret, ephemeralPubKey, utf8Encode(INFO_ECIES), 56);
-    const encKey = derived.slice(0, 32);
-    const nonce = derived.slice(32, 56);
-
-    // 4. Encrypt with XChaCha20-Poly1305
-    const cipher = xchacha20poly1305(encKey, nonce, aad);
-    const ciphertext = cipher.encrypt(plaintext);
-
-    // 5. Return: ephemeralPubKey || ciphertext
-    return concat(ephemeralPubKey, ciphertext);
+    const ephemeralPubKey = getPublicKey(ephemeralPrivKey);
+    const { encKey, nonce } = this.eciesKeyAndNonce(ecdhSharedX(ephemeralPrivKey, recipientPubKey), ephemeralPubKey);
+    return concat(ephemeralPubKey, xchacha20poly1305(encKey, nonce, aad).encrypt(plaintext));
   }
 
   /**
-   * ECIES Decrypt using a known ephemeral private key.
-   * Used by buyer who can re-derive the deterministic ephemeral key.
-   *
-   * @param ephemeralPrivKey - The ephemeral private key (re-derived by buyer)
-   * @param recipientPubKey - The recipient's (seller's) public key
-   * @param eciesCiphertext - The encrypted payload (ephemeralPubKey || ciphertext)
-   * @param aad - Additional authenticated data
-   * @returns Decrypted plaintext
+   * ECIES Decrypt with a known ephemeral private key (the buyer's re-derived
+   * one). ECDH(ephemeralPriv, recipientPub) equals ECDH(recipientPriv,
+   * ephemeralPub), so this reaches the same key the seller would.
    */
   async eciesDecryptWithEphemeralKey(
     ephemeralPrivKey: Uint8Array,
@@ -517,24 +466,9 @@ class PrivateFeedCryptoService {
     eciesCiphertext: Uint8Array,
     aad: Uint8Array
   ): Promise<Uint8Array> {
-    // 1. Parse eciesCiphertext
     const ephemeralPubKey = eciesCiphertext.slice(0, 33);
-    const ciphertext = eciesCiphertext.slice(33);
-
-    // 2. Compute shared secret via ECDH (ephemeralPriv + recipientPub)
-    // This produces the same shared secret as ECDH(recipientPriv + ephemeralPub)
-    const sharedPoint = secp256k1.getSharedSecret(ephemeralPrivKey, recipientPubKey, true);
-    const sharedX = sharedPoint.slice(1, 33);
-    const sharedSecret = sha256(sharedX);
-
-    // 3. Derive encryption key and nonce via HKDF
-    const derived = hkdf(sha256, sharedSecret, ephemeralPubKey, utf8Encode(INFO_ECIES), 56);
-    const encKey = derived.slice(0, 32);
-    const nonce = derived.slice(32, 56);
-
-    // 4. Decrypt with XChaCha20-Poly1305
-    const cipher = xchacha20poly1305(encKey, nonce, aad);
-    return cipher.decrypt(ciphertext);
+    const { encKey, nonce } = this.eciesKeyAndNonce(ecdhSharedX(ephemeralPrivKey, recipientPubKey), ephemeralPubKey);
+    return xchacha20poly1305(encKey, nonce, aad).decrypt(eciesCiphertext.slice(33));
   }
 
   // ============================================================
@@ -958,23 +892,6 @@ class PrivateFeedCryptoService {
     }
   }
 
-  // ============================================================
-  // Utility Functions
-  // ============================================================
-
-  /**
-   * Generate random bytes
-   */
-  randomBytes(length: number): Uint8Array {
-    return randomBytes(length);
-  }
-
-  /**
-   * Get a public key from private key (compressed format)
-   */
-  getPublicKey(privateKey: Uint8Array): Uint8Array {
-    return secp256k1.getPublicKey(privateKey, true);
-  }
 }
 
 // Export singleton instance

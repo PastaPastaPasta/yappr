@@ -10,10 +10,8 @@ import { logger } from '@/lib/logger';
  */
 
 import { base64ToBytes } from '@/lib/bytes'
+import { MAX_KDF_ITERATIONS, MIN_KDF_ITERATIONS, aesGcmOpen, deriveKeyFromPasswordAndSalt } from './crypto/aes-gcm'
 
-// Iteration limits (1M to 1B)
-export const MIN_KDF_ITERATIONS = 1_000_000
-export const MAX_KDF_ITERATIONS = 1_000_000_000
 export const DEFAULT_TARGET_MS = 2000
 
 // Current encryption version
@@ -169,39 +167,7 @@ export async function deriveOnchainKey(
   password: string,
   iterations: number
 ): Promise<CryptoKey> {
-  // Validate iterations
-  if (iterations < MIN_KDF_ITERATIONS || iterations > MAX_KDF_ITERATIONS) {
-    throw new Error(`Iterations must be between ${MIN_KDF_ITERATIONS} and ${MAX_KDF_ITERATIONS}`)
-  }
-
-  const encoder = new TextEncoder()
-  const passwordBuffer = encoder.encode(password)
-
-  // Generate salt from identity ID
-  const salt = await generateIdentitySalt(identityId)
-
-  // Import password as key material
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    passwordBuffer,
-    'PBKDF2',
-    false,
-    ['deriveBits', 'deriveKey']
-  )
-
-  // Derive AES key
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: salt.buffer as ArrayBuffer,
-      iterations,
-      hash: 'SHA-256'
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  )
+  return deriveKeyFromPasswordAndSalt(password, await generateIdentitySalt(identityId), iterations)
 }
 
 /**
@@ -226,10 +192,7 @@ export async function decryptKeyFromOnchain(
   const ciphertext = base64ToBytes(data.encryptedKey)
 
   try {
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
-
-    const decoder = new TextDecoder()
-    return decoder.decode(decrypted)
+    return new TextDecoder().decode(await aesGcmOpen(key, ciphertext, iv))
   } catch {
     throw new Error('Invalid password')
   }
