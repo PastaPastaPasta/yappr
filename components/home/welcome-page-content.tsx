@@ -1,7 +1,9 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowRightIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -11,10 +13,32 @@ import { useHomepageData } from '@/hooks/use-homepage-data'
 import { PlatformStats, FeaturedPosts, TopUsersSection } from '@/components/home'
 import { useLoginModal } from '@/hooks/use-login-modal'
 
-export function WelcomePageContent() {
+interface WelcomePageContentProps {
+  /** Send a logged-in viewer to their feed instead of showing the landing page. */
+  redirectAuthenticated?: boolean
+}
+
+/**
+ * The landing page: hero, platform stats, top users, featured posts. Rendered
+ * at `/` (bouncing logged-in viewers to `/feed`) and at `/welcome` (never
+ * bouncing, so the sidebar logo can always reach it).
+ */
+export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePageContentProps) {
+  const router = useRouter()
   const { user } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
   const { platformStats, featuredPosts, topUsers, refresh } = useHomepageData()
+
+  // Auth state comes from local storage, so the first client render can
+  // differ from the static HTML; show a skeleton until hydrated.
+  const [isHydrated, setIsHydrated] = useState(false)
+  useEffect(() => setIsHydrated(true), [])
+
+  useEffect(() => {
+    if (redirectAuthenticated && user) router.push('/feed')
+  }, [redirectAuthenticated, user, router])
+
+  if (!isHydrated) return <LandingSkeleton />
 
   return (
     <div className="min-h-[calc(100vh-40px)] flex">
@@ -119,6 +143,33 @@ export function WelcomePageContent() {
             </Button>
           )}
         </section>
+      </main>
+    </div>
+  )
+}
+
+function LandingSkeleton() {
+  return (
+    <div className="min-h-[calc(100vh-40px)] flex">
+      <div className="hidden md:block fixed h-[calc(100vh-40px)] w-[275px] px-2 py-4 top-[40px]">
+        <div className="h-8 w-20 bg-gray-200 dark:bg-gray-800 rounded mb-6 animate-pulse" />
+        <div className="space-y-2">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-12 bg-gray-100 dark:bg-gray-900 rounded-full animate-pulse" />
+          ))}
+        </div>
+        <div className="mt-8 h-12 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
+      </div>
+
+      <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 py-8 md:py-16">
+        <div className="text-center mb-8 md:mb-16">
+          <div className="h-10 md:h-16 w-full max-w-72 md:max-w-96 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-4 animate-pulse" />
+          <div className="h-5 md:h-6 w-full max-w-[300px] md:max-w-[500px] bg-gray-100 dark:bg-gray-900 rounded mx-auto mb-6 md:mb-8 animate-pulse" />
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-0">
+            <div className="h-12 w-full sm:w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+            <div className="h-12 w-full sm:w-32 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+          </div>
+        </div>
       </main>
     </div>
   )
